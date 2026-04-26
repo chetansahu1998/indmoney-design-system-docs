@@ -49,3 +49,8 @@ logs/
 # Sync staging dirs
 /tmp/sync-staging-*
 .env.local.bak
+
+# Playwright artifacts
+test-results/
+playwright-report/
+playwright/.cache/
