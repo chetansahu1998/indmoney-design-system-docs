@@ -1,0 +1,21 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_5994_161507)">
+<path d="M5.76138 15.0309H5.7607V8.77344H18.2398L18.24 15.2246C18.24 15.2275 18.2375 15.2299 18.2345 15.2299C18.1727 16.0853 17.5786 16.9242 16.4507 17.5647C14.0467 18.9297 10.0709 18.9297 7.61552 17.5647C6.37426 16.8747 5.75619 15.9541 5.76134 15.0309H5.76138Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M12.0135 3.67969L22.2002 9.47743L12.0135 15.1623L1.80019 9.42099L12.0135 3.67969Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M22.2002 9.5127V10.1716L12.0135 15.8564V15.1434L22.2002 9.5127Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M12.0137 15.8562V15.1432L1.80037 9.45605V10.1149L12.0137 15.8562Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M11.6692 9.87032L7.18447 12.4185L6.73707 12.1694L11.4372 9.45605L11.6692 9.87032Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M7.01978 12.4922V18.2145L6.57241 17.9039V12.2432L7.01978 12.4922Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M7.01908 12.4931L7.18408 12.419L6.73668 12.1699L6.57172 12.2441L7.01908 12.4931Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M7.01908 18.2153L7.18408 18.1412V12.4189L7.01908 12.493V18.2153Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M7.01978 18.2149L6.74189 20.3213L6.26132 19.9966L6.57241 17.9043L7.01978 18.2149Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M7.18431 18.1406L7.6272 19.8764L6.74142 20.3211L7.01931 18.2147L7.18431 18.1406Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M12.5535 9.10563C12.8886 9.29725 12.888 9.61227 12.5522 9.80573C12.2163 9.99915 11.6681 9.99915 11.3337 9.80573C10.9993 9.61224 10.9999 9.29725 11.3351 9.10563C11.6701 8.91401 12.2185 8.91401 12.5535 9.10563Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<circle cx="20.9252" cy="3.675" r="1.8" fill="currentColor"/>
+</g>
+<defs>
+<clipPath id="clip0_5994_161507">
+<rect width="24" height="24" fill="currentColor"/>
+</clipPath>
+</defs>
+</svg>

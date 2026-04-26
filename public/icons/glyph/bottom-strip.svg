@@ -1,0 +1,9 @@
+<svg width="449" height="42" viewBox="0 0 449 42" fill="none" xmlns="http://www.w3.org/2000/svg">
+<line x1="16" y1="0.5" x2="359" y2="0.5" stroke="currentColor" stroke-opacity="0.1"/>
+<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="16.25" y="28.6953">Explore</tspan></text>
+<path d="M16 42C16 40.8954 16.8954 40 18 40H70C71.1046 40 72 40.8954 72 42H16Z" fill="currentColor"/>
+<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="92" y="28.3613">My Funds</tspan></text>
+<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="181" y="28.3613">Orders</tspan></text>
+<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="249" y="28.3613">Watchlist</tspan></text>
+<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="335" y="28.3613">Switch Broker</tspan></text>
+</svg>

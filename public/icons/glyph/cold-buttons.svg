@@ -1,0 +1,22 @@
+<svg width="168" height="32" viewBox="0 0 168 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_2933_111795)">
+<rect width="168" height="32" rx="8" fill="currentColor"/>
+<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="8" y="20.9834">Activate Account</tspan></text>
+<g clip-path="url(#clip1_2933_111795)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M149.57 13.226L152.712 16.0036L149.57 18.7812C149.254 19.0604 149.254 19.5114 149.57 19.7906C149.886 20.0698 150.396 20.0698 150.712 19.7906L154.429 16.5047C154.745 16.2255 154.745 15.7745 154.429 15.4953L150.712 12.2094C150.396 11.9302 149.886 11.9302 149.57 12.2094C149.262 12.4886 149.254 12.9468 149.57 13.226Z" fill="currentColor"/>
+</g>
+<rect opacity="0.26" width="12.7298" height="125.013" transform="matrix(-0.895223 -0.444655 -0.450657 0.893099 10.4844 -30.6885)" fill="url(#paint0_linear_2933_111795)"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_2933_111795" x1="6.36491" y1="0" x2="6.36491" y2="125.013" gradientUnits="userSpaceOnUse">
+<stop offset="0.325" stop-color="white"/>
+<stop offset="1" stop-color="white" stop-opacity="0"/>
+</linearGradient>
+<clipPath id="clip0_2933_111795">
+<rect width="168" height="32" rx="8" fill="currentColor"/>
+</clipPath>
+<clipPath id="clip1_2933_111795">
+<rect width="16" height="16" fill="currentColor" transform="translate(144 8)"/>
+</clipPath>
+</defs>
+</svg>

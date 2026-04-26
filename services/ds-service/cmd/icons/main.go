@@ -22,7 +22,6 @@ import (
 func main() {
 	var (
 		fileKey = flag.String("file-key", "", "Figma file key (default: $FIGMA_FILE_KEY_INDMONEY_GLYPH)")
-		pageID  = flag.String("page", "", "Icons page node id (default: $FIGMA_NODE_ID_INDMONEY_GLYPH_ICONS)")
 		outDir  = flag.String("out", "", "Output dir (default: <repo>/public/icons/glyph/)")
 	)
 	flag.Parse()
@@ -38,11 +37,8 @@ func main() {
 	if *fileKey == "" {
 		*fileKey = os.Getenv("FIGMA_FILE_KEY_INDMONEY_GLYPH")
 	}
-	if *pageID == "" {
-		*pageID = os.Getenv("FIGMA_NODE_ID_INDMONEY_GLYPH_ICONS")
-	}
-	if *fileKey == "" || *pageID == "" {
-		fmt.Fprintln(os.Stderr, "file-key and page required")
+	if *fileKey == "" {
+		fmt.Fprintln(os.Stderr, "file-key required")
 		os.Exit(1)
 	}
 	if *outDir == "" {
@@ -53,12 +49,32 @@ func main() {
 	c := client.New(pat)
 	ctx := context.Background()
 
-	manifest, err := icons.Extract(ctx, c, *fileKey, *pageID, *outDir, log)
+	pages := []icons.PageSpec{
+		{
+			NodeID:     getenvOr("FIGMA_NODE_ID_INDMONEY_GLYPH_ICONS", "1440:29094"),
+			Source:     "icons-fresh",
+			NamePrefix: "Icons/",
+		},
+		{
+			NodeID:     getenvOr("FIGMA_NODE_ID_INDMONEY_GLYPH_ATOMS", "1583:36915"),
+			Source:     "atoms",
+			NamePrefix: "",
+		},
+	}
+
+	manifest, err := icons.Extract(ctx, c, *fileKey, pages, *outDir, log)
 	if err != nil {
 		log.Error("extract failed", "err", err)
 		os.Exit(1)
 	}
 	log.Info("DONE", "icons", len(manifest.Icons), "out", *outDir)
+}
+
+func getenvOr(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
 }
 
 func loadDotEnv() {

@@ -28,12 +28,20 @@ import (
 type Icon struct {
 	Slug      string `json:"slug"`       // "download-cloud"
 	Name      string `json:"name"`       // "Download Cloud"
-	Category  string `json:"category"`   // "2D"
+	Category  string `json:"category"`   // "2D" | "bank" | "merchant" | "stock" | "ui"
+	Source    string `json:"source"`     // "icons-fresh" | "atoms" — which page it came from
 	Sets      string `json:"set_id"`     // Figma component_set node id
-	VariantID string `json:"variant_id"` // The 24px BG=No variant id we exported
+	VariantID string `json:"variant_id"` // The variant id we exported
 	File      string `json:"file"`       // "download-cloud.svg" (relative to /icons/glyph/)
 	WidthPx   int    `json:"width"`
 	HeightPx  int    `json:"height"`
+}
+
+// PageSpec describes one input page to extract icons from.
+type PageSpec struct {
+	NodeID  string // Figma page node id
+	Source  string // friendly source name ("icons-fresh", "atoms")
+	NamePrefix string // strip if present (e.g. "Icons/" for Icons Fresh)
 }
 
 // variantInfo is the chosen export variant per icon set.
@@ -52,62 +60,121 @@ type Manifest struct {
 	Categories  []string  `json:"categories"`
 }
 
-// Extract downloads all 24px BG=No variants from the given Icons page.
+// Extract downloads icons from one or more Figma pages.
 //
-// outDir is the public/icons/glyph/ directory in the repo.
-// Concurrency is rate-limited at concurrencyLimit; Figma's image endpoint
-// allows ~100 IDs per call but the S3 downloads can saturate the network.
-func Extract(ctx context.Context, c *client.Client, fileKey, iconsPageID, outDir string, log *slog.Logger) (*Manifest, error) {
-	// 1. Fetch the page at depth=2 to enumerate component sets
-	resp, err := c.GetFileNodes(ctx, fileKey, []string{iconsPageID}, 2)
-	if err != nil {
-		return nil, fmt.Errorf("get icons page: %w", err)
-	}
-	page, _ := resp["nodes"].(map[string]any)
-	if page == nil {
-		return nil, fmt.Errorf("no nodes in response")
-	}
-	var doc map[string]any
-	for _, v := range page {
-		if m, ok := v.(map[string]any); ok && m != nil {
-			doc, _ = m["document"].(map[string]any)
-			break
-		}
-	}
-	if doc == nil {
-		return nil, fmt.Errorf("missing document")
-	}
-
+// pages is a list of (node_id, source_name, name_prefix) tuples — typically
+// the Icons Fresh page + the Atoms page (where banks/merchants/etc. live).
+// Each set's category is derived from its name prefix or assigned by the
+// source's namePrefix override.
+func Extract(ctx context.Context, c *client.Client, fileKey string, pages []PageSpec, outDir string, log *slog.Logger) (*Manifest, error) {
 	type setEntry struct {
 		setID    string
 		setName  string
 		category string
+		source   string
 		slug     string
 		display  string
 	}
-	children, _ := doc["children"].([]any)
+
 	var sets []setEntry
-	for _, ch := range children {
-		m, _ := ch.(map[string]any)
-		if m == nil || m["type"] != "COMPONENT_SET" {
+
+	// 1. Walk each page, enumerate COMPONENT_SETs at the top level + within SECTIONs
+	for _, page := range pages {
+		resp, err := c.GetFileNodes(ctx, fileKey, []string{page.NodeID}, 2)
+		if err != nil {
+			log.Warn("get page failed; skipping", "page", page.Source, "err", err)
 			continue
 		}
-		setID, _ := m["id"].(string)
-		setName, _ := m["name"].(string)
-		// "Icons/ 2D/ Download Cloud" → category="2D", display="Download Cloud", slug="download-cloud"
-		category, display := splitIconName(setName)
-		if display == "" {
+		nodes, _ := resp["nodes"].(map[string]any)
+		var doc map[string]any
+		for _, v := range nodes {
+			if m, ok := v.(map[string]any); ok && m != nil {
+				doc, _ = m["document"].(map[string]any)
+				break
+			}
+		}
+		if doc == nil {
+			log.Warn("no document in page response", "page", page.Source)
 			continue
 		}
-		sets = append(sets, setEntry{
-			setID:    setID,
-			setName:  setName,
-			category: category,
-			slug:     slugify(display),
-			display:  display,
-		})
+
+		// Walk children: COMPONENT_SETs at top-level OR inside SECTIONs
+		var collectSets func(node map[string]any)
+		collectSets = func(node map[string]any) {
+			if node == nil {
+				return
+			}
+			t, _ := node["type"].(string)
+			if t == "COMPONENT_SET" {
+				setID, _ := node["id"].(string)
+				setName, _ := node["name"].(string)
+				if setName == "" || setID == "" {
+					return
+				}
+				category, display := splitIconName(setName)
+				if page.NamePrefix != "" && strings.HasPrefix(setName, page.NamePrefix) {
+					// Use the rest of the name after prefix as display
+					rest := strings.TrimPrefix(setName, page.NamePrefix)
+					category, display = splitIconName(rest)
+				}
+				if category == "uncategorized" || category == strings.ToLower(category) {
+					// Inherit from source if no explicit category
+					if page.Source == "atoms" {
+						// Atoms page items default to "ui" except names matching banks
+						if isBankLike(setName) {
+							category = "bank"
+						} else if isMerchantLike(setName) {
+							category = "merchant"
+						} else {
+							category = "ui"
+						}
+					}
+				}
+				if display == "" {
+					return
+				}
+				sets = append(sets, setEntry{
+					setID:    setID,
+					setName:  setName,
+					category: category,
+					source:   page.Source,
+					slug:     slugify(display),
+					display:  display,
+				})
+				return
+			}
+			if t == "SECTION" || t == "FRAME" || t == "GROUP" {
+				children, _ := node["children"].([]any)
+				for _, ch := range children {
+					if m, ok := ch.(map[string]any); ok {
+						collectSets(m)
+					}
+				}
+			}
+		}
+		topChildren, _ := doc["children"].([]any)
+		for _, ch := range topChildren {
+			if m, ok := ch.(map[string]any); ok {
+				collectSets(m)
+			}
+		}
+		log.Info("page enumerated", "source", page.Source, "sets_so_far", len(sets))
 	}
-	log.Info("found icon sets", "count", len(sets))
+
+	// Dedupe by slug — multiple pages can have the same slug (e.g. "download-cloud" in both Icons Fresh and Atoms)
+	{
+		seen := map[string]bool{}
+		uniq := sets[:0]
+		for _, s := range sets {
+			if seen[s.slug] {
+				continue
+			}
+			seen[s.slug] = true
+			uniq = append(uniq, s)
+		}
+		sets = uniq
+	}
+	log.Info("found icon sets total", "count", len(sets))
 
 	// 2. For each set, fetch its variants at depth=2 and pick "BG=No, Size=24px"
 	// We batch the variant lookups
@@ -115,7 +182,7 @@ func Extract(ctx context.Context, c *client.Client, fileKey, iconsPageID, outDir
 		return nil, fmt.Errorf("mkdir %s: %w", outDir, err)
 	}
 
-	// Fetch variants in batches of 30 sets at a time (each set has ~14 variants;
+	// 2. Fetch variants in batches of 25 sets at a time, with 429 retry (each set has ~14 variants;
 	// fetching 30 sets = ~420 variants which is well within Figma's response size).
 	variants := make([]variantInfo, len(sets))
 	const batchSize = 25
@@ -128,9 +195,27 @@ func Extract(ctx context.Context, c *client.Client, fileKey, iconsPageID, outDir
 		for j := i; j < end; j++ {
 			ids[j-i] = sets[j].setID
 		}
-		setsResp, err := c.GetFileNodes(ctx, fileKey, ids, 2)
-		if err != nil {
-			log.Warn("get sets batch failed; skipping", "i", i, "err", err)
+		// Retry on 429 with exponential backoff
+		var setsResp map[string]any
+		for attempt := 0; attempt < 4; attempt++ {
+			r, err := c.GetFileNodes(ctx, fileKey, ids, 2)
+			if err == nil {
+				setsResp = r
+				break
+			}
+			if !is429Error(err) {
+				log.Warn("get sets batch failed (non-429); skipping", "i", i, "err", err)
+				break
+			}
+			wait := time.Duration(1<<attempt) * 5 * time.Second
+			log.Info("rate limited, backing off", "i", i, "attempt", attempt+1, "wait", wait)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(wait):
+			}
+		}
+		if setsResp == nil {
 			continue
 		}
 		setsNodes, _ := setsResp["nodes"].(map[string]any)
@@ -233,6 +318,7 @@ func Extract(ctx context.Context, c *client.Client, fileKey, iconsPageID, outDir
 			Slug:      s.slug,
 			Name:      s.display,
 			Category:  s.category,
+			Source:    s.source,
 			Sets:      s.setID,
 			VariantID: v.variantID,
 			File:      s.slug + ".svg",
@@ -249,10 +335,14 @@ func Extract(ctx context.Context, c *client.Client, fileKey, iconsPageID, outDir
 	}
 	sort.Strings(categories)
 
+	pageIDs := make([]string, 0, len(pages))
+	for _, p := range pages {
+		pageIDs = append(pageIDs, p.NodeID)
+	}
 	manifest := &Manifest{
 		GeneratedAt: time.Now().UTC(),
 		FileKey:     fileKey,
-		PageNodeID:  iconsPageID,
+		PageNodeID:  strings.Join(pageIDs, ","),
 		Icons:       icons,
 		Categories:  categories,
 	}
@@ -434,4 +524,33 @@ func slugify(s string) string {
 	s = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 	return s
+}
+
+func is429Error(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "rate limit")
+}
+
+// isBankLike heuristically detects bank logos from set names.
+func isBankLike(name string) bool {
+	lower := strings.ToLower(name)
+	for _, kw := range []string{"bank", "icici", "hdfc", "axis", "kotak", "punjab", "canara", "indusind", "yes ", "idbi", "uco", "federal", "syndicate", "vijaya", "dena", "allahabad", "andhra", "corporation", "central", "oriental", "lakshmi", "karnataka", "karur", "saraswat", "south indian", "city union", "paytm payments", "fino", "rbl", "bandhan", "csb", "tamilnad", "deutsche", "hsbc", "citi", "stanchart", "standard chartered", "barclays", "scotia", "bnp"} {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// isMerchantLike detects payment app / merchant brand logos.
+func isMerchantLike(name string) bool {
+	lower := strings.ToLower(name)
+	for _, kw := range []string{"phonepe", "google pay", "gpay", "paytm", "amazon pay", "bhim", "upi", "razorpay", "cred", "mobikwik", "freecharge"} {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
 }
