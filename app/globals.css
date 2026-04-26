@@ -1,0 +1,164 @@
+@import "tailwindcss";
+
+/* ── Map Tailwind/shadcn color names → our CSS custom properties ── */
+@theme inline {
+  --color-background:         var(--bg-page);
+  --color-foreground:         var(--text-1);
+  --color-card:               var(--bg-surface);
+  --color-card-foreground:    var(--text-1);
+  --color-popover:            var(--bg-surface);
+  --color-popover-foreground: var(--text-1);
+  --color-primary:            var(--accent);
+  --color-primary-foreground: #ffffff;
+  --color-secondary:          var(--bg-surface-2);
+  --color-secondary-foreground: var(--text-2);
+  --color-muted:              var(--bg-surface-2);
+  --color-muted-foreground:   var(--text-3);
+  --color-accent:             var(--bg-surface-2);
+  --color-accent-foreground:  var(--text-1);
+  --color-destructive:        #ef4444;
+  --color-border:             var(--border);
+  --color-input:              var(--border);
+  --color-ring:               var(--accent);
+  --radius-sm:                6px;
+  --radius-md:                8px;
+  --radius-lg:                10px;
+  --radius-xl:                12px;
+}
+
+@layer base {
+  :root, [data-theme="dark"] {
+    /* ── Docs chrome semantic vars (dark shell) ── */
+    --bg-page:       #000000;
+    --bg-surface:    #191919;
+    --bg-surface-2:  #222222;
+    --text-1:        #f7f7f7;
+    --text-2:        #8f8f8f;
+    --text-3:        #707070;
+    --accent:        #4d93fc;
+    --border:        #2e2e2e;
+    --border-strong: #404040;
+
+    /* ── Layout ── */
+    --sidebar-w:  296px;
+    --header-h:   72px;
+
+    /* ── Fonts ── */
+    --font-sans: "Noontree", -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: "SF Mono", "Fira Code", "Menlo", monospace;
+  }
+
+  /* ── Light theme ── */
+  [data-theme="light"] {
+    --bg-page:       #ffffff;
+    --bg-surface:    #f9f9fb;
+    --bg-surface-2:  #f2f3f7;
+    --text-1:        #1d2539;
+    --text-2:        #475067;
+    --text-3:        #666d85;
+    --accent:        #0f61ff;
+    --border:        #eaecf0;
+    --border-strong: #d0d4dd;
+  }
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-1);
+  background: var(--bg-page);
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+
+/* ── Responsive helpers ── */
+.ds-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ── Sidebar: always fixed so it never takes block space ── */
+.sidebar-desktop {
+  position: fixed;
+  top: var(--header-h);
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-w);
+  z-index: 50;
+  overflow: hidden;
+}
+
+/* ── Main content offset ── */
+.main-with-sidebar {
+  margin-left: var(--sidebar-w);
+}
+
+/* ── Header: hamburger always present, CSS shows/hides it ── */
+.header-hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Search text / kbd hidden on mobile */
+.search-text-label,
+.search-kbd {
+  display: inline;
+}
+
+/* ── Header ── */
+.site-header {
+  padding: 0 40px;
+  gap: 16px;
+}
+
+.header-brand {
+  font-size: 20px;
+}
+
+@media (max-width: 767px) {
+  :root {
+    --header-h: 56px;
+  }
+
+  .sidebar-desktop {
+    display: none;
+  }
+
+  .main-with-sidebar {
+    margin-left: 0;
+  }
+
+  .header-hamburger {
+    display: flex;
+  }
+
+  .search-text-label,
+  .search-kbd {
+    display: none;
+  }
+
+  .header-brand {
+    font-size: 17px;
+  }
+
+  .site-header {
+    padding: 0 16px;
+    gap: 8px;
+  }
+
+  .search-btn {
+    padding: 0 10px !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  :root {
+    --sidebar-w: 220px;
+  }
+}

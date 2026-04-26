@@ -1,0 +1,47 @@
+# Next.js
+.next/
+out/
+build/
+
+# Dependencies
+node_modules/
+
+# Env (NEVER commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Generated tokens (built per-brand at deploy time)
+lib/tokens/.generated/
+
+# Local SQLite (ds-service runs locally)
+services/ds-service/data/*.db
+services/ds-service/data/*.db-journal
+services/ds-service/data/*.db-wal
+services/ds-service/data/*.db-shm
+
+# Go build artifacts
+services/ds-service/bin/
+services/ds-service/cmd/extractor/extractor
+
+# Misc
+.DS_Store
+*.pem
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.tsbuildinfo
+
+# Vercel
+.vercel
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+logs/
+*.log
+
+# Sync staging dirs
+/tmp/sync-staging-*
