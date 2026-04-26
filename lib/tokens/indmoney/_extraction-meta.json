@@ -1,10 +1,10 @@
 {
-  "base_colors": 38,
+  "base_colors": 25,
   "brand": "indmoney",
   "frames": 28,
-  "observations": 1814,
+  "observations": 952,
   "pairs": 13,
-  "roles": 26,
+  "roles": 16,
   "sources": [
     {
       "file_key": "ePcuKLNGHwSubsfaiaryJv",

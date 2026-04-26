@@ -107,15 +107,30 @@ func (r *Result) PairCount() int {
 // SemanticRole is a clustered token: every observation that resolved to the same
 // (light, dark) color pair, regardless of original Figma node name.
 type SemanticRole struct {
-	Key             string // "#FFFFFF↔#171A1E"
-	Light           types.Color
-	Dark            types.Color
-	HasLight        bool
-	HasDark         bool
-	Names           []string // all node names that mapped here
-	NamesCanonical  string   // most descriptive name (longest non-default)
-	InstanceCount   int      // total observations
-	NearbyLabels    []string // labels found in adjacent TEXT nodes
+	Key            string // "#FFFFFF↔#171A1E"
+	Light          types.Color
+	Dark           types.Color
+	HasLight       bool
+	HasDark        bool
+	Names          []string // all node names that mapped here
+	NamesCanonical string   // most descriptive name (longest non-default)
+	InstanceCount  int      // total observations
+	NearbyLabels   []string // labels found in adjacent TEXT nodes
+	IsModeInvariant bool   // Light == Dark — color doesn't flip with theme
+	IsLowContrast   bool   // Light/Dark perceptually similar — likely shared accent
+}
+
+// ModeContrast returns the absolute lightness delta between light and dark sides.
+// 1.0 = max contrast (e.g. white ↔ black); 0.0 = same color.
+func (r *SemanticRole) ModeContrast() float64 {
+	if !r.HasLight || !r.HasDark {
+		return 0
+	}
+	delta := r.Light.Lightness() - r.Dark.Lightness()
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta
 }
 
 // TextStyle is a typography token sourced from Figma's published styles.
@@ -172,6 +187,10 @@ func Run(ctx context.Context, c *client.Client, brand string, sources []Source, 
 			"text_styles", len(sr.TextStyles),
 		)
 	}
+
+	beforeFilter := len(r.Observations)
+	r.Observations = FilterNoise(r.Observations)
+	log.Info("filtered noise observations", "before", beforeFilter, "after", len(r.Observations))
 
 	r.Roles = clusterRoles(r.Observations)
 	r.BasePalette = buildBasePalette(r.Observations)
@@ -300,12 +319,77 @@ func extractTextStyles(resp map[string]any, log *slog.Logger) []TextStyle {
 	return out
 }
 
+// IsNoiseObservation returns true for observations that come from device-chrome
+// or layout-decoration nodes that aren't real design tokens.
+//
+// Examples filtered:
+//   - iOS status bar elements: Battery, Wifi, Mobile Signal, "9:41", Time Style, Bars
+//   - Generic shape primitives with no semantic role: Vector, Path, Combined Shape
+//   - Layout indirection: "Right Text", "Right Icon", "Left Icon", "Time Indicator"
+//
+// These would otherwise pollute the role table — the iOS status bar alone
+// contributes 200+ #FFFFFF observations across every screen.
+func IsNoiseObservation(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "" {
+		return true
+	}
+	// Exact-match noise (case-insensitive)
+	for _, n := range []string{
+		"vector", "path", "oval", "combined shape", "rectangle", "ellipse", "group",
+		"wifi", "wifi-path", "battery", "mobile signal", "cellular_connection-path",
+		"9:41", "time style", "bars / status bar / iphone x", "bars",
+		"right text", "right icon", "left icon", "left text",
+		"frame", "frame 2147227755", "frame 2147228074", "frame 2147228069",
+	} {
+		if lower == n {
+			return true
+		}
+	}
+	// Prefix-match noise
+	for _, p := range []string{
+		"rectangle ", "frame ", "ellipse ", "group ", "vector ", "path ",
+		"combined shape ", "oval ",
+	} {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	// Contains-match for status-bar/chrome
+	for _, c := range []string{
+		"status bar", "iphone x", "battery", "wifi", "cellular", "mobile signal",
+	} {
+		if strings.Contains(lower, c) {
+			return true
+		}
+	}
+	return false
+}
+
+// FilterNoise removes observations whose names are device-chrome / decoration.
+// This dramatically improves cluster signal — Status Bar alone was contributing
+// 200+ #FFFFFF observations that misclassified as `border.primary`.
+func FilterNoise(obs []Observation) []Observation {
+	out := obs[:0]
+	for _, o := range obs {
+		if IsNoiseObservation(o.Name) {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
 // clusterRoles groups observations by their (Light, Dark) color tuple.
 //
 // Rationale: "Same UI, different colors, same name" is operationalized as
 // "same hex pair = same semantic token, regardless of which Figma node names hit it".
 // Multiple Figma nodes (Action Card, Cash flow, Frame 2147228069 etc) can share
 // the same role.
+//
+// Mode-invariant detection: when Light hex == Dark hex, the token is a fixed
+// (non-themed) color. We mark the role accordingly so the classifier can
+// route those into a `constant` bucket instead of mis-shaping them as a pair.
 func clusterRoles(obs []Observation) []SemanticRole {
 	groups := map[string]*SemanticRole{}
 	for _, o := range obs {
@@ -341,9 +425,13 @@ func clusterRoles(obs []Observation) []SemanticRole {
 		}
 	}
 
-	// Pick canonical name per role: longest non-generic name.
+	// Compute derived flags + canonical name per role.
 	for _, r := range groups {
 		r.NamesCanonical = pickCanonicalName(r.Names)
+		if r.HasLight && r.HasDark {
+			r.IsModeInvariant = r.Light.Hex() == r.Dark.Hex()
+			r.IsLowContrast = !r.IsModeInvariant && r.ModeContrast() < 0.15
+		}
 	}
 
 	// Sort by instance count descending (most-used roles first).
@@ -373,8 +461,15 @@ func buildBasePalette(obs []Observation) map[string]types.Color {
 }
 
 // pickCanonicalName chooses the most descriptive name from the observed names.
-// Heuristics: prefer named over auto-generated ("Rectangle 12345" / "Frame 12345").
-// Among the descriptive ones, prefer the longest (most specific).
+//
+// Scoring (higher = more canonical):
+//   +50 per design-system keyword (surface, action, success, danger, ...)
+//   +30 if name uses slash-grouped form ("Surface/Primary", "Text/Bold")
+//   +20 if shorter than 30 chars (semantic tokens are usually short)
+//   -1000 for auto-generated names ("Rectangle 12345", "Frame ...")
+//   -800 for screen-context phrases ("Quick Buy: indstock chart",
+//        "Current Handling: Trading Not Allowed") — these are screen titles, not roles
+//   -200 for sentence-form names (>4 words with no slash) — usually descriptions
 func pickCanonicalName(names []string) string {
 	if len(names) == 0 {
 		return ""
@@ -385,22 +480,71 @@ func pickCanonicalName(names []string) string {
 	}
 	cs := make([]cand, 0, len(names))
 	for _, n := range names {
-		score := len(n)
-		// Penalize auto-generated names heavily.
+		score := 0
 		lower := strings.ToLower(n)
+		nWords := len(strings.Fields(n))
+
+		// Heavy penalties first
 		if isAutoGenName(lower) {
 			score -= 1000
 		}
-		// Prefer names with descriptive words.
-		for _, kw := range []string{"surface", "text", "icon", "border", "card", "background", "primary", "secondary", "action", "muted", "elevated", "subtle", "bold", "success", "warning", "error", "danger"} {
+		if isScreenContextName(lower) {
+			score -= 800
+		}
+		if nWords > 4 && !strings.Contains(n, "/") {
+			score -= 200
+		}
+
+		// Boost design-system keywords
+		for _, kw := range []string{
+			"surface", "text", "icon", "border", "card", "background",
+			"primary", "secondary", "tertiary", "muted",
+			"action", "elevated", "subtle", "bold",
+			"success", "warning", "error", "danger", "info",
+			"masthead", "heading", "body", "caption", "overline",
+		} {
 			if strings.Contains(lower, kw) {
 				score += 50
 			}
 		}
+		// Slash-grouped DS-token form
+		if strings.Contains(n, "/") {
+			score += 30
+		}
+		// Length heuristic — prefer concise, semantic names
+		if len(n) <= 30 {
+			score += 20
+		}
+		// Tie-break: longer base score (descriptive)
+		score += len(n) / 4
+
 		cs = append(cs, cand{n, score})
 	}
-	sort.Slice(cs, func(i, j int) bool { return cs[i].score > cs[j].score })
+	sort.Slice(cs, func(i, j int) bool {
+		if cs[i].score != cs[j].score {
+			return cs[i].score > cs[j].score
+		}
+		return len(cs[i].s) < len(cs[j].s) // tie: prefer shorter
+	})
 	return cs[0].s
+}
+
+// isScreenContextName detects phrases that describe a screen state rather than a
+// reusable token role. These get heavily penalized in canonical-name selection.
+func isScreenContextName(lower string) bool {
+	for _, phrase := range []string{
+		"trading not allowed", "indstock chart", "quick buy", "introduction for",
+		"used for ", "to be used", "new introduction", "current handling",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	// Names containing colons usually have screen-state semantics (e.g. "Status: Live")
+	if strings.Contains(lower, ":") {
+		return true
+	}
+	return false
 }
 
 func isAutoGenName(lower string) bool {

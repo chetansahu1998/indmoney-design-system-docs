@@ -289,32 +289,61 @@ func isAutoGen(s string) bool {
 	return false
 }
 
-// classifyRole returns a high-level grouping for the semantic token.
-// This is heuristic — Phase 9 designer review will reassign mis-classified roles.
+// classifyRole returns a high-level grouping for the semantic token based on
+// (a) light/dark contrast pattern, (b) saturation (status colors), and
+// (c) mode-invariance signal.
+//
+// Buckets emitted:
+//   surface, surface-elevated, text-n-icon, border,
+//   success, danger, warning, info, accent (mode-invariant saturated),
+//   constant (mode-invariant neutral), other
 func classifyRole(r extractor.SemanticRole) string {
-	// If both modes present and they're a strong contrast (light surface ↔ dark surface), call surface
+	// Mode-invariant case: same color in both modes — these aren't theme tokens.
+	// Saturated → accent / status; neutral → constant.
+	if r.IsModeInvariant {
+		c := r.Light // == Dark
+		if isSaturated(c) {
+			return statusFamily(c, c)
+		}
+		if c.Lightness() > 0.85 {
+			return "constant-light" // platform white / on-dark text constant
+		}
+		if c.Lightness() < 0.15 {
+			return "constant-dark"
+		}
+		return "constant"
+	}
+
 	if r.HasLight && r.HasDark {
 		ll := r.Light.Lightness()
 		dl := r.Dark.Lightness()
-		// Strong contrast (likely surface bg pair)
-		if ll > 0.85 && dl < 0.15 {
-			return "surface"
-		}
-		// Mid-contrast (likely text/icon)
-		if ll < 0.6 && dl > 0.4 {
-			return "text-n-icon"
-		}
-		// Saturated pair — likely a status colour
+
+		// Saturated pair — status color regardless of contrast pattern.
 		if isSaturated(r.Light) || isSaturated(r.Dark) {
 			return statusFamily(r.Light, r.Dark)
 		}
-		// Default: border or muted surface
-		if ll > 0.7 {
+
+		// High contrast page-bg pair (light very light, dark very dark).
+		if ll > 0.92 && dl < 0.10 {
+			return "surface"
+		}
+		// Slightly less contrast — elevated surface (cards on page).
+		if ll > 0.85 && dl < 0.20 {
+			return "surface-elevated"
+		}
+		// Inverted contrast: dark on light, light on dark — text/icon.
+		if (ll < 0.45 && dl > 0.55) || (ll > 0.55 && dl < 0.45) {
+			return "text-n-icon"
+		}
+		// Both moderately light/dark — likely border or divider.
+		if ll > 0.55 && ll < 0.92 && dl > 0.20 && dl < 0.55 {
 			return "border"
 		}
+		// Default fallback.
 		return "surface-elevated"
 	}
-	// Single-mode entries are likely status accents
+
+	// Single-mode entries — likely status accents.
 	if r.HasLight && isSaturated(r.Light) {
 		return statusFamily(r.Light, r.Light)
 	}
@@ -343,22 +372,103 @@ func isSaturated(c types.Color) bool {
 	return max_-min_ > 0.3
 }
 
+// statusFamily classifies a saturated color into success/warning/danger/info
+// using HSL hue ranges. Operates on whichever side has more saturation (the
+// "signal" side); the other side is usually a desaturated container.
 func statusFamily(light, dark types.Color) string {
-	r, g, b := light.R, light.G, light.B
-	if r > g && r > b {
-		// red/orange
-		if g > 100 {
-			return "warning"
-		}
+	c := light
+	if saturationFloat(dark) > saturationFloat(light) {
+		c = dark
+	}
+	hue := hueDeg(c)
+	// Hue ranges (HSL), tuned to match common UI palettes:
+	//   red/danger:    340..360 OR 0..15
+	//   orange/warning:15..45
+	//   yellow/warning:45..70
+	//   green/success: 70..170
+	//   teal/info:     170..200
+	//   blue/info:     200..260
+	//   purple/info:   260..340
+	switch {
+	case hue >= 340 || hue < 15:
 		return "danger"
-	}
-	if g > r && g > b {
+	case hue < 45:
+		return "warning"
+	case hue < 70:
+		return "warning"
+	case hue < 170:
 		return "success"
-	}
-	if b > r && b > g {
+	case hue < 200:
 		return "info"
+	case hue < 260:
+		return "info"
+	default:
+		return "info" // purple → info bucket for now
 	}
-	return "neutral"
+}
+
+// hueDeg returns HSL hue in degrees [0, 360).
+func hueDeg(c types.Color) float64 {
+	r := float64(c.R) / 255
+	g := float64(c.G) / 255
+	b := float64(c.B) / 255
+	max_, min_ := r, r
+	if g > max_ {
+		max_ = g
+	}
+	if b > max_ {
+		max_ = b
+	}
+	if g < min_ {
+		min_ = g
+	}
+	if b < min_ {
+		min_ = b
+	}
+	chroma := max_ - min_
+	if chroma == 0 {
+		return 0
+	}
+	var h float64
+	switch max_ {
+	case r:
+		h = (g - b) / chroma
+		if g < b {
+			h += 6
+		}
+	case g:
+		h = (b-r)/chroma + 2
+	default:
+		h = (r-g)/chroma + 4
+	}
+	return h * 60
+}
+
+func saturationFloat(c types.Color) float64 {
+	r := float64(c.R) / 255
+	g := float64(c.G) / 255
+	b := float64(c.B) / 255
+	max_, min_ := r, r
+	if g > max_ {
+		max_ = g
+	}
+	if b > max_ {
+		max_ = b
+	}
+	if g < min_ {
+		min_ = g
+	}
+	if b < min_ {
+		min_ = b
+	}
+	l := (max_ + min_) / 2
+	if max_ == min_ {
+		return 0
+	}
+	if l < 0.5 {
+		return (max_ - min_) / (max_ + min_)
+	}
+	return (max_ - min_) / (2 - max_ - min_)
 }
 
 // setNested writes value at path into a nested Tree, creating intermediate maps.
