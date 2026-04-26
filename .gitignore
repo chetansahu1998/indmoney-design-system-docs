@@ -15,11 +15,13 @@ node_modules/
 lib/tokens/.generated/
 lib/tokens-generated/
 
-# Local SQLite (ds-service runs locally)
-services/ds-service/data/*.db
-services/ds-service/data/*.db-journal
-services/ds-service/data/*.db-wal
-services/ds-service/data/*.db-shm
+# Local SQLite (ds-service runs locally) — match anywhere under services/
+**/services/ds-service/data/*.db
+**/services/ds-service/data/*.db-journal
+**/services/ds-service/data/*.db-wal
+**/services/ds-service/data/*.db-shm
+**/data/ds.db
+**/data/ds.db-*
 
 # Go build artifacts
 services/ds-service/bin/
@@ -46,3 +48,4 @@ logs/
 
 # Sync staging dirs
 /tmp/sync-staging-*
+.env.local.bak

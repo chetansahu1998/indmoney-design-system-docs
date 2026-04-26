@@ -107,8 +107,11 @@ func main() {
 // ─── Config / bootstrap ─────────────────────────────────────────────────────
 
 func loadConfig(log *slog.Logger) (*config, error) {
+	// Default SQLite path resolves relative to REPO_DIR (not cwd), so the
+	// service can be launched from anywhere without doubling the path.
+	defaultSQLite := filepath.Join(getenv("REPO_DIR", absPath("../..")), "services/ds-service/data/ds.db")
 	c := &config{
-		SQLitePath:     getenv("SQLITE_PATH", "./services/ds-service/data/ds.db"),
+		SQLitePath:     getenv("SQLITE_PATH", defaultSQLite),
 		BootstrapToken: os.Getenv("BOOTSTRAP_TOKEN"),
 		RepoDir:        getenv("REPO_DIR", absPath("../..")),
 		SyncGitPush:    os.Getenv("SYNC_GIT_PUSH") == "true",
