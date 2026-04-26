@@ -31,6 +31,9 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@terrazzo/cli": "^2.1.0",
+    "@terrazzo/plugin-css": "^2.1.0",
+    "@terrazzo/plugin-js": "^2.1.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

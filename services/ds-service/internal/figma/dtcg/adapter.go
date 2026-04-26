@@ -66,11 +66,24 @@ func Adapt(r *extractor.Result) (*Files, error) {
 		return nil, fmt.Errorf("encode text-styles: %w", err)
 	}
 
+	sourceSummaries := make([]map[string]any, 0, len(r.Sources))
+	for _, s := range r.Sources {
+		sourceSummaries = append(sourceSummaries, map[string]any{
+			"kind":         string(s.Source.Kind),
+			"file_key":     s.Source.FileKey,
+			"file_name":    s.Name,
+			"node_id":      s.Source.NodeID,
+			"frames":       s.CandidateCount,
+			"pairs":        s.PairCount,
+			"observations": len(s.Observations),
+			"text_styles":  len(s.TextStyles),
+		})
+	}
 	contract := map[string]any{
 		"brand":          r.Brand,
-		"file_key":       r.FileKey,
-		"frames":         r.CandidateCount,
-		"pairs":          r.PairCount,
+		"sources":        sourceSummaries,
+		"frames":         r.CandidateCount(),
+		"pairs":          r.PairCount(),
 		"observations":   len(r.Observations),
 		"roles":          len(r.Roles),
 		"base_colors":    len(r.BasePalette),

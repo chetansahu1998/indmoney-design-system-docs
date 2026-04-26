@@ -23,14 +23,20 @@ import (
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/extractor"
 )
 
+// stringSlice is a flag.Value that collects repeated --source flags into a list.
+type stringSlice []string
+
+func (s *stringSlice) String() string     { return strings.Join(*s, ",") }
+func (s *stringSlice) Set(v string) error { *s = append(*s, v); return nil }
+
 func main() {
 	var (
 		brand   = flag.String("brand", "indmoney", "Brand slug (indmoney|tickertape)")
 		outDir  = flag.String("out", "", "Output directory (default: lib/tokens/<brand>)")
-		fileKey = flag.String("file-key", "", "Figma file key override (default: FIGMA_FILE_KEY_<BRAND>)")
-		nodeID  = flag.String("node-id", "9578:198724", "Section node id to extract from (empty = whole file). Default targets INDstocks V4 'Phase 1' section.")
 		verbose = flag.Bool("v", false, "Verbose logging")
+		sources stringSlice
 	)
+	flag.Var(&sources, "source", "Repeatable source spec 'kind:file_key[:node_id]' where kind ∈ {design-system, product}. If absent, sources are read from FIGMA_SOURCES env (comma-separated) OR a default mix derived from FIGMA_FILE_KEY_<BRAND>* env vars.")
 	flag.Parse()
 
 	level := slog.LevelInfo
@@ -46,19 +52,23 @@ func main() {
 		fatalf(log, "FIGMA_PAT not set. Copy .env.example to .env.local and fill in.")
 	}
 
-	if *fileKey == "" {
-		envKey := "FIGMA_FILE_KEY_" + strings.ToUpper(*brand)
-		*fileKey = os.Getenv(envKey)
-		if *fileKey == "" {
-			fatalf(log, "%s not set. Add to .env.local or pass --file-key", envKey)
-		}
-	}
 	if *outDir == "" {
 		*outDir = filepath.Join("lib/tokens", *brand)
 	}
-
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
 		fatalf(log, "mkdir %s: %v", *outDir, err)
+	}
+
+	srcs, err := resolveSources(sources, *brand)
+	if err != nil {
+		fatalf(log, "%v", err)
+	}
+	if len(srcs) == 0 {
+		fatalf(log, "no sources configured. Pass --source flags, set FIGMA_SOURCES env, or set FIGMA_FILE_KEY_<BRAND>* envs.")
+	}
+	log.Info("sources resolved", "count", len(srcs))
+	for _, s := range srcs {
+		log.Info("  source", "kind", s.Kind, "file_key", s.FileKey, "node_id", s.NodeID)
 	}
 
 	ctx := context.Background()
@@ -72,7 +82,7 @@ func main() {
 	log.Info("authenticated", "email", me["email"], "handle", me["handle"])
 
 	// Run extraction
-	result, err := extractor.Run(ctx, c, *brand, *fileKey, *nodeID, log)
+	result, err := extractor.Run(ctx, c, *brand, srcs, log)
 	if err != nil {
 		fatalf(log, "extraction failed: %v", err)
 	}
@@ -98,11 +108,13 @@ func main() {
 
 	log.Info("DONE",
 		"out", *outDir,
-		"frames", result.CandidateCount,
-		"pairs", result.PairCount,
+		"sources", len(result.Sources),
+		"frames", result.CandidateCount(),
+		"pairs", result.PairCount(),
 		"obs", len(result.Observations),
 		"roles", len(result.Roles),
 		"base_colors", len(result.BasePalette),
+		"text_styles", len(result.TextStyles),
 	)
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Top 10 roles by usage:")
@@ -132,6 +144,66 @@ func must(log *slog.Logger, err error) {
 func fatalf(log *slog.Logger, format string, args ...any) {
 	log.Error(fmt.Sprintf(format, args...))
 	os.Exit(1)
+}
+
+// resolveSources figures out the extraction sources from (in priority order):
+//   1. --source CLI flags (repeatable)
+//   2. FIGMA_SOURCES env (comma-separated source specs)
+//   3. Auto-derived from FIGMA_FILE_KEY_<BRAND>* env vars:
+//        FIGMA_FILE_KEY_<BRAND>_GLYPH       → design-system source
+//        FIGMA_FILE_KEY_<BRAND>             → product source
+//        FIGMA_NODE_ID_<BRAND>              → optional node_id for product
+func resolveSources(cliSources stringSlice, brand string) ([]extractor.Source, error) {
+	parse := func(specs []string) ([]extractor.Source, error) {
+		out := make([]extractor.Source, 0, len(specs))
+		for _, raw := range specs {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			s, err := extractor.ParseSource(raw)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	}
+
+	if len(cliSources) > 0 {
+		return parse(cliSources)
+	}
+	if env := os.Getenv("FIGMA_SOURCES"); env != "" {
+		return parse(strings.Split(env, ","))
+	}
+
+	// Auto-derive
+	bUp := strings.ToUpper(brand)
+	var auto []extractor.Source
+	if v := os.Getenv("FIGMA_FILE_KEY_" + bUp + "_GLYPH"); v != "" {
+		// Design-system file — fetch styles + optionally a token-display node
+		spec := string(extractor.SourceDesignSystem) + ":" + v
+		if nid := os.Getenv("FIGMA_NODE_ID_" + bUp + "_GLYPH"); nid != "" {
+			spec += ":" + nid
+		}
+		s, err := extractor.ParseSource(spec)
+		if err != nil {
+			return nil, err
+		}
+		auto = append(auto, s)
+	}
+	if v := os.Getenv("FIGMA_FILE_KEY_" + bUp); v != "" {
+		spec := string(extractor.SourceProduct) + ":" + v
+		if nid := os.Getenv("FIGMA_NODE_ID_" + bUp); nid != "" {
+			spec += ":" + nid
+		}
+		s, err := extractor.ParseSource(spec)
+		if err != nil {
+			return nil, err
+		}
+		auto = append(auto, s)
+	}
+	return auto, nil
 }
 
 // loadDotEnv reads .env.local from cwd (or any ancestor) and applies KEY=VALUE
