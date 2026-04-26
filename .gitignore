@@ -13,6 +13,7 @@ node_modules/
 
 # Generated tokens (built per-brand at deploy time)
 lib/tokens/.generated/
+lib/tokens-generated/
 
 # Local SQLite (ds-service runs locally)
 services/ds-service/data/*.db

@@ -4,132 +4,300 @@
       "-background": {
         "$description": "Observed in 25 Figma nodes; canonical name: \"⬛ Background\". Other names: ⬛ Background",
         "$type": "color",
-        "$value": "#F7F7F7"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9686,
+            0.9686,
+            0.9686
+          ]
+        }
       },
       "buy-now": {
         "$description": "Observed in 20 Figma nodes; canonical name: \"Buy Now\". Other names: Sell, Buy, Buy Now",
         "$type": "color",
-        "$value": "#FFFFFE"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            1,
+            0.9961
+          ]
+        }
       },
       "primary-003": {
         "$description": "Observed in 207 Figma nodes; canonical name: \"Right Text\". Other names: Bars / Status Bar / iPhone X, Battery, Rectangle, Time Style, Option Chain/No/20px +9 more",
         "$type": "color",
-        "$value": "#FFFFFF"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            1,
+            1
+          ]
+        }
       }
     },
     "danger": {
       "single-button-set": {
         "$description": "Observed in 9 Figma nodes; canonical name: \"Single Button Set\". Other names: Single Button Set",
         "$type": "color",
-        "$value": "#DD2625"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8667,
+            0.149,
+            0.1451
+          ]
+        }
       }
     },
     "success": {
-      "accent-023": {
+      "accent-024": {
         "$description": "Observed in 6 Figma nodes; canonical name: \"Ellipse 3057\". Other names: Ellipse 3057",
         "$type": "color",
-        "$value": "#038568"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.0118,
+            0.5216,
+            0.4078
+          ]
+        }
       }
     },
     "surface": {
       "1d": {
         "$description": "Observed in 9 Figma nodes; canonical name: \"1D\". Other names: 1D, 1W",
         "$type": "color",
-        "$value": "#FFFFFB"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            1,
+            0.9843
+          ]
+        }
       },
-      "accent-024": {
+      "accent-023": {
         "$description": "Observed in 6 Figma nodes; canonical name: \"Frame 2147227817\". Other names: Frame 2147227817",
         "$type": "color",
-        "$value": "#FFE6E4"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            0.902,
+            0.8941
+          ]
+        }
       },
       "action-card": {
         "$description": "Observed in 55 Figma nodes; canonical name: \"Action Card\". Other names: Frame 2147228069, Ellipse, Action Card, Rectangle 427320371, Rectangle 427320372 +2 more",
         "$type": "color",
-        "$value": "#FFFFFF"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            1,
+            1
+          ]
+        }
       },
       "current-handling-trading-not-allowed": {
         "$description": "Observed in 81 Figma nodes; canonical name: \"Current Handling: Trading Not Allowed\". Other names: Quick Buy: indstock chart, Frame 1321320154, Frame 1321320155, Frame 1321320156, Frame 1321320158 +5 more",
         "$type": "color",
-        "$value": "#F9F9F9"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9765,
+            0.9765,
+            0.9765
+          ]
+        }
       },
       "quick-buy-indstock-chart": {
         "$description": "Observed in 4 Figma nodes; canonical name: \"Quick Buy: indstock chart\". Other names: Quick Buy: indstock chart",
         "$type": "color",
-        "$value": "#FFFFFF"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            1,
+            1
+          ]
+        }
       },
       "secondary-009": {
         "$description": "Observed in 55 Figma nodes; canonical name: \"Rectangle 427321327\". Other names: Frame 2147228074, Frame 2147227755, Vector 7073, Rectangle 427321327, Frame 2147227849",
         "$type": "color",
-        "$value": "#F3F3F2"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9529,
+            0.9529,
+            0.949
+          ]
+        }
       },
       "single-button-set": {
         "$description": "Observed in 33 Figma nodes; canonical name: \"Single Button Set\". Other names: Single Button Set, Frame 2147227817, Frame 2147227819, Frame 2147227820, Frame 2147227818",
         "$type": "color",
-        "$value": "#E9FBEC"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9137,
+            0.9843,
+            0.9255
+          ]
+        }
       }
     },
     "surface-elevated": {
       "cellular-connection-path": {
         "$description": "Observed in 175 Figma nodes; canonical name: \"Cellular_Connection-path\". Other names: Wifi-path, Cellular_Connection-path",
         "$type": "color",
-        "$value": "#455154"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.2706,
+            0.3176,
+            0.3294
+          ]
+        }
       },
       "muted-019": {
         "$description": "Observed in 12 Figma nodes; canonical name: \"Rectangle 427320567\". Other names: Rectangle 427320567",
         "$type": "color",
-        "$value": "#191C1E"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.098,
+            0.1098,
+            0.1176
+          ]
+        }
       },
       "rectangle": {
         "$description": "Observed in 50 Figma nodes; canonical name: \"Rectangle\". Other names: Oval, Rectangle",
         "$type": "color",
-        "$value": "#3E5155"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.2431,
+            0.3176,
+            0.3333
+          ]
+        }
       }
     },
     "text-n-icon": {
       "mobile-signal": {
         "$description": "Observed in 37 Figma nodes; canonical name: \"Mobile Signal\". Other names: Rectangle, Wifi, Mobile Signal, Vector",
         "$type": "color",
-        "$value": "#47494D"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.2784,
+            0.2863,
+            0.302
+          ]
+        }
       },
       "muted-018": {
         "$description": "Observed in 16 Figma nodes; canonical name: \"Frame 1321320162\". Other names: Frame 1321320162",
         "$type": "color",
-        "$value": "#2D374F"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1765,
+            0.2157,
+            0.3098
+          ]
+        }
       },
       "roundedrectangle": {
         "$description": "Observed in 146 Figma nodes; canonical name: \"RoundedRectangle\". Other names: Rectangle 427320405, RoundedRectangle, SIP, Rectangle 427320406, Rectangle 427320370 +5 more",
         "$type": "color",
-        "$value": "#089958"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.0314,
+            0.6,
+            0.3451
+          ]
+        }
       },
       "secondary-012": {
         "$description": "Observed in 36 Figma nodes; canonical name: \"Combined Shape\". Other names: Combined Shape, 9:41",
         "$type": "color",
-        "$value": "#191C1E"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.098,
+            0.1098,
+            0.1176
+          ]
+        }
       },
       "single-button-set": {
         "$description": "Observed in 17 Figma nodes; canonical name: \"Single Button Set\". Other names: Single Button Set, Badges",
         "$type": "color",
-        "$value": "#089959"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.0314,
+            0.6,
+            0.349
+          ]
+        }
       },
       "target-price-130230": {
         "$description": "Observed in 257 Figma nodes; canonical name: \"Target Price ₹1,30,230\". Other names: Rectangle, Wifi, Mobile Signal, 1W, 1M +26 more",
         "$type": "color",
-        "$value": "#5E6063"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.3686,
+            0.3765,
+            0.3882
+          ]
+        }
       },
       "text": {
         "$description": "Observed in 163 Figma nodes; canonical name: \"Text\". Other names: Combined Shape, 9:41, Overview, Text, Ticker Name +14 more",
         "$type": "color",
-        "$value": "#121313"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.0706,
+            0.0745,
+            0.0745
+          ]
+        }
       },
       "this-is-a-text-placeholder-for-a-one-line-or-two-line-only": {
         "$description": "Observed in 368 Figma nodes; canonical name: \"This is a text placeholder for a one line or two line only\". Other names: Chart, My Portfolio, Live, F\u0026O, Orders +28 more",
         "$type": "color",
-        "$value": "#393B3E"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.2235,
+            0.2314,
+            0.2431
+          ]
+        }
       },
       "ticker-name": {
         "$description": "Observed in 7 Figma nodes; canonical name: \"Ticker Name\". Other names: ▼0.94%, Ticker Name",
         "$type": "color",
-        "$value": "#DD2624"
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8667,
+            0.149,
+            0.1412
+          ]
+        }
       }
     }
   }

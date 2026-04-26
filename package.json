@@ -4,13 +4,14 @@
   "private": true,
   "description": "INDmoney Design System documentation site — Foundations + Components, Figma-synced",
   "scripts": {
-    "dev": "next dev --port 3001",
-    "build": "next build",
+    "dev": "tz build && next dev --port 3001",
+    "build": "tz build && next build",
     "start": "next start --port 3001",
     "lint": "next lint",
     "sync:tokens": "tsx scripts/sync-tokens.ts",
-    "extract:figma": "go run ./services/ds-service/cmd/extractor",
-    "tokens:build": "tsx scripts/build-tokens.ts"
+    "extract:figma": "cd services/ds-service && go run ./cmd/extractor",
+    "tokens:build": "tz build",
+    "prebuild": "tz build"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

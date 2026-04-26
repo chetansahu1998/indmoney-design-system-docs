@@ -106,8 +106,13 @@ func encode(t Tree) ([]byte, error) {
 
 // buildBase emits primitives keyed by a deterministic name derived from the hex.
 //
-// Naming: `colour.<bucket>.<token-id>` where bucket is `light|dark|gray|brand`
-// and token-id is the hex (lowercase, no #). Example: `colour.light.fffffe`.
+// Naming: `colour.<bucket>.<token-id>` where bucket is one of {green, red, orange,
+// blue, grey, neutral-light, neutral-dark, other} and token-id is the hex (lowercase, no #).
+// Example: `base.colour.surface.ffffff`.
+//
+// Color values use W3C-DTCG 2024 object form per Terrazzo 2.x:
+//
+//	{ "colorSpace": "srgb", "components": [r, g, b], "alpha": <0-1> }
 func buildBase(palette map[string]types.Color) Tree {
 	colours := Tree{}
 	hexes := make([]string, 0, len(palette))
@@ -125,10 +130,9 @@ func buildBase(palette map[string]types.Color) Tree {
 			}
 		}
 		bucketTree := colours[bucket].(Tree)
-		// Token id: strip the leading #, lowercase
 		id := strings.ToLower(strings.TrimPrefix(h, "#"))
 		bucketTree[id] = Tree{
-			"$value": h,
+			"$value": colorValue(c),
 		}
 	}
 
@@ -137,6 +141,31 @@ func buildBase(palette map[string]types.Color) Tree {
 			"colour": colours,
 		},
 	}
+}
+
+// colorValue converts a Color to the W3C-DTCG 2024 sRGB object form.
+// Components are 0..1 floats; alpha is omitted when >= 1.0.
+func colorValue(c types.Color) Tree {
+	out := Tree{
+		"colorSpace": "srgb",
+		"components": []float64{
+			roundFloat(float64(c.R)/255, 4),
+			roundFloat(float64(c.G)/255, 4),
+			roundFloat(float64(c.B)/255, 4),
+		},
+	}
+	if c.A < 0.999 {
+		out["alpha"] = roundFloat(c.A, 3)
+	}
+	return out
+}
+
+func roundFloat(v float64, places int) float64 {
+	scale := 1.0
+	for i := 0; i < places; i++ {
+		scale *= 10
+	}
+	return float64(int(v*scale+0.5)) / scale
 }
 
 // paletteBucket assigns a colour to a high-level family bucket based on lightness/saturation.
@@ -196,7 +225,7 @@ func buildSemantic(roles []extractor.SemanticRole) (Tree, Tree) {
 		if r.HasLight {
 			setNested(light, path, Tree{
 				"$type":  "color",
-				"$value": r.Light.HexWithAlpha(),
+				"$value": colorValue(r.Light),
 				"$description": fmt.Sprintf("Observed in %d Figma nodes; canonical name: %q. Other names: %s",
 					r.InstanceCount, r.NamesCanonical, joinShort(r.Names, 5)),
 			})
@@ -204,7 +233,7 @@ func buildSemantic(roles []extractor.SemanticRole) (Tree, Tree) {
 		if r.HasDark {
 			setNested(dark, path, Tree{
 				"$type":  "color",
-				"$value": r.Dark.HexWithAlpha(),
+				"$value": colorValue(r.Dark),
 			})
 		}
 	}
@@ -349,25 +378,34 @@ func setNested(t Tree, path []string, value any) {
 	}
 }
 
+// buildTextStyles emits typography tokens only if the style has resolved font metadata.
+// /v1/files/<key>/styles returns names + node_ids only — actual font data requires
+// follow-up /v1/files/<key>/nodes calls (deferred to v1.1). Until then we skip
+// emission so Field's existing text-styles.tokens.json is preserved.
 func buildTextStyles(styles []extractor.TextStyle) Tree {
 	if len(styles) == 0 {
 		return Tree{}
 	}
 	t := Tree{}
 	for _, s := range styles {
+		if s.FontFamily == "" || s.FontSize <= 0 {
+			continue // metadata not yet resolved; leave Field's defaults in place
+		}
 		key := slugify(s.Name)
 		t[key] = Tree{
 			"$type": "typography",
 			"$value": Tree{
-				"fontFamily":     s.FontFamily,
+				"fontFamily":     []string{s.FontFamily},
 				"fontWeight":     s.FontWeight,
-				"fontSize":       fmt.Sprintf("%.0fpx", s.FontSize),
-				"lineHeight":     fmt.Sprintf("%.0fpx", s.LineHeight),
-				"letterSpacing":  fmt.Sprintf("%.2fpx", s.LetterSpace),
-				"textDecoration": s.TextDecor,
+				"fontSize":       Tree{"value": s.FontSize, "unit": "px"},
+				"lineHeight":     s.LineHeight,
+				"letterSpacing":  Tree{"value": s.LetterSpace, "unit": "px"},
 			},
 			"$description": fmt.Sprintf("Source: Figma TEXT style %q", s.Name),
 		}
+	}
+	if len(t) == 0 {
+		return Tree{}
 	}
 	return Tree{"text": t}
 }
