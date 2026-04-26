@@ -1,0 +1,118 @@
+{
+  "colour": {
+    "border": {
+      "-background": {
+        "$type": "color",
+        "$value": "#F7F7F7"
+      },
+      "buy-now": {
+        "$type": "color",
+        "$value": "#FFFFFE"
+      },
+      "primary-003": {
+        "$type": "color",
+        "$value": "#FFFFFF"
+      }
+    },
+    "danger": {
+      "single-button-set": {
+        "$type": "color",
+        "$value": "#DA4343"
+      }
+    },
+    "other": {
+      "accent-026": {
+        "$type": "color",
+        "$value": "#171A1E"
+      }
+    },
+    "success": {
+      "accent-023": {
+        "$type": "color",
+        "$value": "#026A53"
+      }
+    },
+    "surface": {
+      "1d": {
+        "$type": "color",
+        "$value": "#101311"
+      },
+      "accent-024": {
+        "$type": "color",
+        "$value": "#2E191B"
+      },
+      "action-card": {
+        "$type": "color",
+        "$value": "#171A1E"
+      },
+      "current-handling-trading-not-allowed": {
+        "$type": "color",
+        "$value": "#101314"
+      },
+      "quick-buy-indstock-chart": {
+        "$type": "color",
+        "$value": "#101314"
+      },
+      "secondary-008": {
+        "$type": "color",
+        "$value": "#1E2227"
+      },
+      "single-button-set": {
+        "$type": "color",
+        "$value": "#11231C"
+      }
+    },
+    "surface-elevated": {
+      "cellular-connection-path": {
+        "$type": "color",
+        "$value": "#455154"
+      },
+      "muted-019": {
+        "$type": "color",
+        "$value": "#191C1E"
+      },
+      "rectangle": {
+        "$type": "color",
+        "$value": "#3E5155"
+      }
+    },
+    "text-n-icon": {
+      "mobile-signal": {
+        "$type": "color",
+        "$value": "#CDD2D5"
+      },
+      "muted-018": {
+        "$type": "color",
+        "$value": "#FFFFFA"
+      },
+      "roundedrectangle": {
+        "$type": "color",
+        "$value": "#1DD08F"
+      },
+      "secondary-012": {
+        "$type": "color",
+        "$value": "#FFFFFE"
+      },
+      "single-button-set": {
+        "$type": "color",
+        "$value": "#189A60"
+      },
+      "target-price-130230": {
+        "$type": "color",
+        "$value": "#BDC0C4"
+      },
+      "text": {
+        "$type": "color",
+        "$value": "#FFFFFE"
+      },
+      "this-is-a-text-placeholder-for-a-one-line-or-two-line-only": {
+        "$type": "color",
+        "$value": "#D7DBDD"
+      },
+      "ticker-name": {
+        "$type": "color",
+        "$value": "#FF5151"
+      }
+    }
+  }
+}

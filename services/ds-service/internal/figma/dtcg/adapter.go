@@ -1,0 +1,380 @@
+// Package dtcg converts extractor.Result into W3C Design Tokens (DTCG) JSON files.
+//
+// Output shape:
+//
+//	lib/tokens/<brand>/
+//	  base.tokens.json       — primitives (one entry per distinct hex)
+//	  semantic.tokens.json   — semantic aliases (light = default mode)
+//	  semantic-dark.tokens.json — dark-mode overrides
+//	  text-styles.tokens.json — typography (from published TEXT styles)
+//
+// Token shape (v1 — kept simple):
+//
+//	{
+//	  "colour": {
+//	    "surface": {
+//	      "primary": {
+//	        "$type": "color",
+//	        "$value": "{base.colour.token-c-FFFFFF}"
+//	      }
+//	    }
+//	  }
+//	}
+package dtcg
+
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/extractor"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/types"
+)
+
+// Tree is a recursive map that JSON-encodes to a DTCG document.
+type Tree map[string]any
+
+// AdaptResult converts a Result into the four DTCG files.
+type Files struct {
+	Base         []byte // base.tokens.json
+	Semantic     []byte // semantic.tokens.json (light)
+	SemanticDark []byte // semantic-dark.tokens.json
+	TextStyles   []byte // text-styles.tokens.json
+	ContractMeta []byte // _contract_check block — sidecar for CI
+}
+
+func Adapt(r *extractor.Result) (*Files, error) {
+	base := buildBase(r.BasePalette)
+	semLight, semDark := buildSemantic(r.Roles)
+
+	baseBytes, err := encode(base)
+	if err != nil {
+		return nil, fmt.Errorf("encode base: %w", err)
+	}
+	semBytes, err := encode(semLight)
+	if err != nil {
+		return nil, fmt.Errorf("encode semantic: %w", err)
+	}
+	semDarkBytes, err := encode(semDark)
+	if err != nil {
+		return nil, fmt.Errorf("encode semantic-dark: %w", err)
+	}
+	textStyles := buildTextStyles(r.TextStyles)
+	textBytes, err := encode(textStyles)
+	if err != nil {
+		return nil, fmt.Errorf("encode text-styles: %w", err)
+	}
+
+	contract := map[string]any{
+		"brand":          r.Brand,
+		"file_key":       r.FileKey,
+		"frames":         r.CandidateCount,
+		"pairs":          r.PairCount,
+		"observations":   len(r.Observations),
+		"roles":          len(r.Roles),
+		"base_colors":    len(r.BasePalette),
+		"text_styles":    len(r.TextStyles),
+	}
+	contractBytes, _ := json.MarshalIndent(contract, "", "  ")
+
+	return &Files{
+		Base:         baseBytes,
+		Semantic:     semBytes,
+		SemanticDark: semDarkBytes,
+		TextStyles:   textBytes,
+		ContractMeta: contractBytes,
+	}, nil
+}
+
+func encode(t Tree) ([]byte, error) {
+	return json.MarshalIndent(t, "", "  ")
+}
+
+// buildBase emits primitives keyed by a deterministic name derived from the hex.
+//
+// Naming: `colour.<bucket>.<token-id>` where bucket is `light|dark|gray|brand`
+// and token-id is the hex (lowercase, no #). Example: `colour.light.fffffe`.
+func buildBase(palette map[string]types.Color) Tree {
+	colours := Tree{}
+	hexes := make([]string, 0, len(palette))
+	for h := range palette {
+		hexes = append(hexes, h)
+	}
+	sort.Strings(hexes)
+
+	for _, h := range hexes {
+		c := palette[h]
+		bucket := paletteBucket(c)
+		if _, ok := colours[bucket]; !ok {
+			colours[bucket] = Tree{
+				"$type": "color",
+			}
+		}
+		bucketTree := colours[bucket].(Tree)
+		// Token id: strip the leading #, lowercase
+		id := strings.ToLower(strings.TrimPrefix(h, "#"))
+		bucketTree[id] = Tree{
+			"$value": h,
+		}
+	}
+
+	return Tree{
+		"base": Tree{
+			"colour": colours,
+		},
+	}
+}
+
+// paletteBucket assigns a colour to a high-level family bucket based on lightness/saturation.
+func paletteBucket(c types.Color) string {
+	r, g, b := float64(c.R)/255, float64(c.G)/255, float64(c.B)/255
+	max_ := r
+	if g > max_ {
+		max_ = g
+	}
+	if b > max_ {
+		max_ = b
+	}
+	min_ := r
+	if g < min_ {
+		min_ = g
+	}
+	if b < min_ {
+		min_ = b
+	}
+	chroma := max_ - min_
+	l := c.Lightness()
+
+	switch {
+	case chroma < 0.05 && l > 0.85:
+		return "neutral-light"
+	case chroma < 0.05 && l < 0.15:
+		return "neutral-dark"
+	case chroma < 0.05:
+		return "grey"
+	case r > 0.6 && g < 0.5 && b < 0.5:
+		return "red"
+	case r > 0.7 && g > 0.4 && b < 0.4:
+		return "orange"
+	case g > 0.5 && r < 0.6 && b < 0.6:
+		return "green"
+	case b > 0.5 && r < 0.5:
+		return "blue"
+	}
+	return "other"
+}
+
+// buildSemantic emits the (light, dark) mode-paired semantic tokens.
+//
+// We emit ONE token per role, keyed by a path derived from the canonical name,
+// with $value = the light hex. Dark mode overrides go into a parallel file with
+// the same paths but dark hex values. Terrazzo merges both via permutations.
+func buildSemantic(roles []extractor.SemanticRole) (Tree, Tree) {
+	light := Tree{}
+	dark := Tree{}
+
+	for i, r := range roles {
+		path, _ := derivePath(r, i)
+		if path == nil {
+			continue
+		}
+		// Light value
+		if r.HasLight {
+			setNested(light, path, Tree{
+				"$type":  "color",
+				"$value": r.Light.HexWithAlpha(),
+				"$description": fmt.Sprintf("Observed in %d Figma nodes; canonical name: %q. Other names: %s",
+					r.InstanceCount, r.NamesCanonical, joinShort(r.Names, 5)),
+			})
+		}
+		if r.HasDark {
+			setNested(dark, path, Tree{
+				"$type":  "color",
+				"$value": r.Dark.HexWithAlpha(),
+			})
+		}
+	}
+
+	return wrapColour(light), wrapColour(dark)
+}
+
+func wrapColour(t Tree) Tree {
+	if len(t) == 0 {
+		return Tree{}
+	}
+	return Tree{"colour": t}
+}
+
+// derivePath turns a SemanticRole into a structured DTCG path like
+// ["surface", "primary"] or ["text-n-icon", "secondary"].
+//
+// Strategy v1: bucket by role characteristics (lightness, dark mode pair),
+// then derive a per-token leaf name from canonical Figma name OR from
+// instance-rank within the bucket. Real semantic naming requires designer review (Phase 9).
+func derivePath(r extractor.SemanticRole, idx int) ([]string, error) {
+	bucket := classifyRole(r)
+	leaf := deriveLeaf(r, idx)
+	return []string{bucket, leaf}, nil
+}
+
+// deriveLeaf picks the most descriptive token-leaf name from a role's observations.
+// Priority: descriptive canonical name → instance-count rank label → numeric fallback.
+func deriveLeaf(r extractor.SemanticRole, idx int) string {
+	if r.NamesCanonical != "" && !isAutoGen(r.NamesCanonical) {
+		return slugify(r.NamesCanonical)
+	}
+	// Rank-based label: tokens with most observations get descriptive names.
+	switch {
+	case r.InstanceCount >= 100:
+		return fmt.Sprintf("primary-%03d", idx+1)
+	case r.InstanceCount >= 30:
+		return fmt.Sprintf("secondary-%03d", idx+1)
+	case r.InstanceCount >= 10:
+		return fmt.Sprintf("muted-%03d", idx+1)
+	default:
+		return fmt.Sprintf("accent-%03d", idx+1)
+	}
+}
+
+func isAutoGen(s string) bool {
+	lower := strings.ToLower(s)
+	for _, p := range []string{"rectangle ", "frame ", "ellipse ", "vector", "path", "group ", "instance ", "oval", "combined shape", "right text", "right icon", "left icon"} {
+		if strings.HasPrefix(lower, p) || lower == p {
+			return true
+		}
+	}
+	return false
+}
+
+// classifyRole returns a high-level grouping for the semantic token.
+// This is heuristic — Phase 9 designer review will reassign mis-classified roles.
+func classifyRole(r extractor.SemanticRole) string {
+	// If both modes present and they're a strong contrast (light surface ↔ dark surface), call surface
+	if r.HasLight && r.HasDark {
+		ll := r.Light.Lightness()
+		dl := r.Dark.Lightness()
+		// Strong contrast (likely surface bg pair)
+		if ll > 0.85 && dl < 0.15 {
+			return "surface"
+		}
+		// Mid-contrast (likely text/icon)
+		if ll < 0.6 && dl > 0.4 {
+			return "text-n-icon"
+		}
+		// Saturated pair — likely a status colour
+		if isSaturated(r.Light) || isSaturated(r.Dark) {
+			return statusFamily(r.Light, r.Dark)
+		}
+		// Default: border or muted surface
+		if ll > 0.7 {
+			return "border"
+		}
+		return "surface-elevated"
+	}
+	// Single-mode entries are likely status accents
+	if r.HasLight && isSaturated(r.Light) {
+		return statusFamily(r.Light, r.Light)
+	}
+	if r.HasDark && isSaturated(r.Dark) {
+		return statusFamily(r.Dark, r.Dark)
+	}
+	return "other"
+}
+
+func isSaturated(c types.Color) bool {
+	r, g, b := float64(c.R)/255, float64(c.G)/255, float64(c.B)/255
+	max_ := r
+	if g > max_ {
+		max_ = g
+	}
+	if b > max_ {
+		max_ = b
+	}
+	min_ := r
+	if g < min_ {
+		min_ = g
+	}
+	if b < min_ {
+		min_ = b
+	}
+	return max_-min_ > 0.3
+}
+
+func statusFamily(light, dark types.Color) string {
+	r, g, b := light.R, light.G, light.B
+	if r > g && r > b {
+		// red/orange
+		if g > 100 {
+			return "warning"
+		}
+		return "danger"
+	}
+	if g > r && g > b {
+		return "success"
+	}
+	if b > r && b > g {
+		return "info"
+	}
+	return "neutral"
+}
+
+// setNested writes value at path into a nested Tree, creating intermediate maps.
+func setNested(t Tree, path []string, value any) {
+	cursor := t
+	for i, seg := range path {
+		if i == len(path)-1 {
+			cursor[seg] = value
+			return
+		}
+		next, ok := cursor[seg].(Tree)
+		if !ok {
+			next = Tree{}
+			cursor[seg] = next
+		}
+		cursor = next
+	}
+}
+
+func buildTextStyles(styles []extractor.TextStyle) Tree {
+	if len(styles) == 0 {
+		return Tree{}
+	}
+	t := Tree{}
+	for _, s := range styles {
+		key := slugify(s.Name)
+		t[key] = Tree{
+			"$type": "typography",
+			"$value": Tree{
+				"fontFamily":     s.FontFamily,
+				"fontWeight":     s.FontWeight,
+				"fontSize":       fmt.Sprintf("%.0fpx", s.FontSize),
+				"lineHeight":     fmt.Sprintf("%.0fpx", s.LineHeight),
+				"letterSpacing":  fmt.Sprintf("%.2fpx", s.LetterSpace),
+				"textDecoration": s.TextDecor,
+			},
+			"$description": fmt.Sprintf("Source: Figma TEXT style %q", s.Name),
+		}
+	}
+	return Tree{"text": t}
+}
+
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, " ", "-")
+	s = strings.ReplaceAll(s, "_", "-")
+	out := strings.Builder{}
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			out.WriteRune(r)
+		}
+	}
+	return out.String()
+}
+
+func joinShort(ss []string, max int) string {
+	if len(ss) > max {
+		return strings.Join(ss[:max], ", ") + fmt.Sprintf(" +%d more", len(ss)-max)
+	}
+	return strings.Join(ss, ", ")
+}

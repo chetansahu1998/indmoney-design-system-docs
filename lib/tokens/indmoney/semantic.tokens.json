@@ -1,592 +1,136 @@
 {
   "colour": {
-    "text-n-icon": {
-      "primary": {
+    "border": {
+      "-background": {
+        "$description": "Observed in 25 Figma nodes; canonical name: \"⬛ Background\". Other names: ⬛ Background",
         "$type": "color",
-        "$value": "{base.colour.grey.900}"
+        "$value": "#F7F7F7"
       },
-      "secondary": {
+      "buy-now": {
+        "$description": "Observed in 20 Figma nodes; canonical name: \"Buy Now\". Other names: Sell, Buy, Buy Now",
         "$type": "color",
-        "$value": "{base.colour.grey.700}"
+        "$value": "#FFFFFE"
       },
-      "tertiary": {
+      "primary-003": {
+        "$description": "Observed in 207 Figma nodes; canonical name: \"Right Text\". Other names: Bars / Status Bar / iPhone X, Battery, Rectangle, Time Style, Option Chain/No/20px +9 more",
         "$type": "color",
-        "$value": "{base.colour.grey.600}"
-      },
-      "muted": {
+        "$value": "#FFFFFF"
+      }
+    },
+    "danger": {
+      "single-button-set": {
+        "$description": "Observed in 9 Figma nodes; canonical name: \"Single Button Set\". Other names: Single Button Set",
         "$type": "color",
-        "$value": "{base.colour.grey.500}"
-      },
-      "on-surface-bold": {
+        "$value": "#DD2625"
+      }
+    },
+    "success": {
+      "accent-023": {
+        "$description": "Observed in 6 Figma nodes; canonical name: \"Ellipse 3057\". Other names: Ellipse 3057",
         "$type": "color",
-        "$value": "{base.colour.neutral.white}"
-      },
-      "on-surface-subtle": {
-        "$type": "color",
-        "$value": "{base.colour.alpha-light.80}"
-      },
-      "action": {
-        "$type": "color",
-        "$value": "{base.colour.brand-blue.700}"
-      },
-      "supermall": {
-        "$type": "color",
-        "$value": "{base.colour.supermall.800}"
-      },
-      "error": {
-        "$type": "color",
-        "$value": "{base.colour.red.700}"
-      },
-      "warning": {
-        "$type": "color",
-        "$value": "{base.colour.orange.700}"
-      },
-      "yellow-light": {
-        "$type": "color",
-        "$value": "{base.colour.noon.400}"
-      },
-      "yellow-dark": {
-        "$type": "color",
-        "$value": "{base.colour.noon.800}"
-      },
-      "success": {
-        "$type": "color",
-        "$value": "{base.colour.green.700}"
+        "$value": "#038568"
       }
     },
     "surface": {
-      "primary": {
+      "1d": {
+        "$description": "Observed in 9 Figma nodes; canonical name: \"1D\". Other names: 1D, 1W",
         "$type": "color",
-        "$value": "{base.colour.neutral.white}"
+        "$value": "#FFFFFB"
       },
-      "secondary": {
+      "accent-024": {
+        "$description": "Observed in 6 Figma nodes; canonical name: \"Frame 2147227817\". Other names: Frame 2147227817",
         "$type": "color",
-        "$value": "{base.colour.grey.100}"
+        "$value": "#FFE6E4"
       },
-      "tertiary": {
+      "action-card": {
+        "$description": "Observed in 55 Figma nodes; canonical name: \"Action Card\". Other names: Frame 2147228069, Ellipse, Action Card, Rectangle 427320371, Rectangle 427320372 +2 more",
         "$type": "color",
-        "$value": "{base.colour.grey.200}"
+        "$value": "#FFFFFF"
       },
-      "muted": {
+      "current-handling-trading-not-allowed": {
+        "$description": "Observed in 81 Figma nodes; canonical name: \"Current Handling: Trading Not Allowed\". Other names: Quick Buy: indstock chart, Frame 1321320154, Frame 1321320155, Frame 1321320156, Frame 1321320158 +5 more",
         "$type": "color",
-        "$value": "{base.colour.grey.300}"
+        "$value": "#F9F9F9"
       },
-      "tertiary-inverted": {
+      "quick-buy-indstock-chart": {
+        "$description": "Observed in 4 Figma nodes; canonical name: \"Quick Buy: indstock chart\". Other names: Quick Buy: indstock chart",
         "$type": "color",
-        "$value": "{base.colour.grey.800}"
+        "$value": "#FFFFFF"
       },
-      "secondary-inverted": {
+      "secondary-008": {
+        "$description": "Observed in 55 Figma nodes; canonical name: \"Rectangle 427321327\". Other names: Frame 2147228074, Frame 2147227755, Vector 7073, Rectangle 427321327, Frame 2147227849",
         "$type": "color",
-        "$value": "{base.colour.grey.900}"
+        "$value": "#F3F3F2"
       },
-      "primary-inverted": {
+      "single-button-set": {
+        "$description": "Observed in 33 Figma nodes; canonical name: \"Single Button Set\". Other names: Single Button Set, Frame 2147227817, Frame 2147227819, Frame 2147227820, Frame 2147227818",
         "$type": "color",
-        "$value": "{base.colour.grey.1000}"
-      },
-      "action-subtle": {
-        "$type": "color",
-        "$value": "{base.colour.brand-blue.100}"
-      },
-      "action-bold": {
-        "$type": "color",
-        "$value": "{base.colour.brand-blue.600}"
-      },
-      "supermall-subtle": {
-        "$type": "color",
-        "$value": "{base.colour.supermall.100}"
-      },
-      "supermall-bold": {
-        "$type": "color",
-        "$value": "{base.colour.supermall.800}"
-      },
-      "error-subtle": {
-        "$type": "color",
-        "$value": "{base.colour.red.100}"
-      },
-      "error-bold": {
-        "$type": "color",
-        "$value": "{base.colour.red.700}"
-      },
-      "warning-subtle": {
-        "$type": "color",
-        "$value": "{base.colour.orange.100}"
-      },
-      "warning-bold": {
-        "$type": "color",
-        "$value": "{base.colour.orange.700}"
-      },
-      "yellow-subtle": {
-        "$type": "color",
-        "$value": "{base.colour.noon.100}"
-      },
-      "yellow-mild": {
-        "$type": "color",
-        "$value": "{base.colour.noon.200}"
-      },
-      "brand-primary": {
-        "$type": "color",
-        "$value": "{base.colour.noon.400}"
-      },
-      "yellow-bold": {
-        "$type": "color",
-        "$value": "{base.colour.noon.600}"
-      },
-      "success-subtle": {
-        "$type": "color",
-        "$value": "{base.colour.green.100}"
-      },
-      "success-bold": {
-        "$type": "color",
-        "$value": "{base.colour.green.700}"
-      },
-      "overlay-subtle": {
-        "$type": "color",
-        "$value": "{base.colour.alpha-dark.24}"
-      },
-      "overlay-bold": {
-        "$type": "color",
-        "$value": "{base.colour.alpha-dark.80}"
+        "$value": "#E9FBEC"
       }
     },
-    "border": {
-      "primary": {
+    "surface-elevated": {
+      "cellular-connection-path": {
+        "$description": "Observed in 175 Figma nodes; canonical name: \"Cellular_Connection-path\". Other names: Wifi-path, Cellular_Connection-path",
         "$type": "color",
-        "$value": "{base.colour.grey.300}"
+        "$value": "#455154"
       },
-      "subtle": {
+      "muted-019": {
+        "$description": "Observed in 12 Figma nodes; canonical name: \"Rectangle 427320567\". Other names: Rectangle 427320567",
         "$type": "color",
-        "$value": "{base.colour.grey.200}"
+        "$value": "#191C1E"
       },
-      "bold": {
+      "rectangle": {
+        "$description": "Observed in 50 Figma nodes; canonical name: \"Rectangle\". Other names: Oval, Rectangle",
         "$type": "color",
-        "$value": "{base.colour.grey.400}"
-      },
-      "action": {
-        "$type": "color",
-        "$value": "{base.colour.brand-blue.300}"
-      },
-      "supermall": {
-        "$type": "color",
-        "$value": "{base.colour.supermall.300}"
-      },
-      "error": {
-        "$type": "color",
-        "$value": "{base.colour.red.300}"
-      },
-      "warning": {
-        "$type": "color",
-        "$value": "{base.colour.orange.300}"
-      },
-      "yellow": {
-        "$type": "color",
-        "$value": "{base.colour.noon.200}"
-      },
-      "success": {
-        "$type": "color",
-        "$value": "{base.colour.green.300}"
-      }
-    }
-  },
-  "font": {
-    "heading": {
-      "h40": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.40}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.48}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.negative-point-25}"
-        }
-      },
-      "h32": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.32}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.40}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.negative-point-25}"
-        }
-      },
-      "h28": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.28}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.36}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.negative-point-25}"
-        }
-      },
-      "h24": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.24}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.32}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.negative-point-25}"
-        }
-      },
-      "h20": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.20}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.28}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.negative-point-25}"
-        }
-      },
-      "h18": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.18}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.24}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.negative-point-15}"
-        }
-      },
-      "h16": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.16}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.20}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.negative-point-15}"
-        }
+        "$value": "#3E5155"
       }
     },
-    "body": {
-      "b16": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.16}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.20}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.negative-point-15}"
-        }
+    "text-n-icon": {
+      "mobile-signal": {
+        "$description": "Observed in 37 Figma nodes; canonical name: \"Mobile Signal\". Other names: Rectangle, Wifi, Mobile Signal, Vector",
+        "$type": "color",
+        "$value": "#47494D"
       },
-      "b14": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.14}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.18}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.negative-point-1}"
-        }
+      "muted-018": {
+        "$description": "Observed in 16 Figma nodes; canonical name: \"Frame 1321320162\". Other names: Frame 1321320162",
+        "$type": "color",
+        "$value": "#2D374F"
       },
-      "b12": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.12}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.16}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.negative-point-1}"
-        }
+      "roundedrectangle": {
+        "$description": "Observed in 146 Figma nodes; canonical name: \"RoundedRectangle\". Other names: Rectangle 427320405, RoundedRectangle, SIP, Rectangle 427320406, Rectangle 427320370 +5 more",
+        "$type": "color",
+        "$value": "#089958"
       },
-      "b11": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.11}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.14}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.negative-point-1}"
-        }
+      "secondary-012": {
+        "$description": "Observed in 36 Figma nodes; canonical name: \"Combined Shape\". Other names: Combined Shape, 9:41",
+        "$type": "color",
+        "$value": "#191C1E"
+      },
+      "single-button-set": {
+        "$description": "Observed in 17 Figma nodes; canonical name: \"Single Button Set\". Other names: Single Button Set, Badges",
+        "$type": "color",
+        "$value": "#089959"
+      },
+      "target-price-130230": {
+        "$description": "Observed in 257 Figma nodes; canonical name: \"Target Price ₹1,30,230\". Other names: Rectangle, Wifi, Mobile Signal, 1W, 1M +26 more",
+        "$type": "color",
+        "$value": "#5E6063"
+      },
+      "text": {
+        "$description": "Observed in 163 Figma nodes; canonical name: \"Text\". Other names: Combined Shape, 9:41, Overview, Text, Ticker Name +14 more",
+        "$type": "color",
+        "$value": "#121313"
+      },
+      "this-is-a-text-placeholder-for-a-one-line-or-two-line-only": {
+        "$description": "Observed in 368 Figma nodes; canonical name: \"This is a text placeholder for a one line or two line only\". Other names: Chart, My Portfolio, Live, F\u0026O, Orders +28 more",
+        "$type": "color",
+        "$value": "#393B3E"
+      },
+      "ticker-name": {
+        "$description": "Observed in 7 Figma nodes; canonical name: \"Ticker Name\". Other names: ▼0.94%, Ticker Name",
+        "$type": "color",
+        "$value": "#DD2624"
       }
-    },
-    "action": {
-      "a17": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.17}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.24}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.negative-point-25}"
-        }
-      },
-      "a16": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.16}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.24}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.0}"
-        }
-      },
-      "a14": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.14}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.20}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.0}"
-        }
-      },
-      "a12": {
-        "size": {
-          "$type": "dimension",
-          "$value": "{base.number.12}"
-        },
-        "line-height": {
-          "$type": "dimension",
-          "$value": "{base.number.16}"
-        },
-        "letter-spacing": {
-          "$type": "dimension",
-          "$value": "{base.number.0}"
-        }
-      }
-    }
-  },
-  "space": {
-    "0": {
-      "$type": "dimension",
-      "$value": "{base.number.0}"
-    },
-    "1": {
-      "$type": "dimension",
-      "$value": "{base.number.1}"
-    },
-    "2": {
-      "$type": "dimension",
-      "$value": "{base.number.2}"
-    },
-    "4": {
-      "$type": "dimension",
-      "$value": "{base.number.4}"
-    },
-    "6": {
-      "$type": "dimension",
-      "$value": "{base.number.6}"
-    },
-    "8": {
-      "$type": "dimension",
-      "$value": "{base.number.8}"
-    },
-    "10": {
-      "$type": "dimension",
-      "$value": "{base.number.10}"
-    },
-    "12": {
-      "$type": "dimension",
-      "$value": "{base.number.12}"
-    },
-    "14": {
-      "$type": "dimension",
-      "$value": "{base.number.14}"
-    },
-    "16": {
-      "$type": "dimension",
-      "$value": "{base.number.16}"
-    },
-    "18": {
-      "$type": "dimension",
-      "$value": "{base.number.18}"
-    },
-    "20": {
-      "$type": "dimension",
-      "$value": "{base.number.20}"
-    },
-    "24": {
-      "$type": "dimension",
-      "$value": "{base.number.24}"
-    },
-    "28": {
-      "$type": "dimension",
-      "$value": "{base.number.28}"
-    },
-    "32": {
-      "$type": "dimension",
-      "$value": "{base.number.32}"
-    },
-    "36": {
-      "$type": "dimension",
-      "$value": "{base.number.36}"
-    },
-    "40": {
-      "$type": "dimension",
-      "$value": "{base.number.40}"
-    },
-    "44": {
-      "$type": "dimension",
-      "$value": "{base.number.44}"
-    },
-    "48": {
-      "$type": "dimension",
-      "$value": "{base.number.48}"
-    },
-    "52": {
-      "$type": "dimension",
-      "$value": "{base.number.52}"
-    },
-    "56": {
-      "$type": "dimension",
-      "$value": "{base.number.56}"
-    },
-    "60": {
-      "$type": "dimension",
-      "$value": "{base.number.60}"
-    },
-    "64": {
-      "$type": "dimension",
-      "$value": "{base.number.64}"
-    },
-    "72": {
-      "$type": "dimension",
-      "$value": "{base.number.72}"
-    },
-    "-2": {
-      "$type": "dimension",
-      "$value": "{base.number.negative-2}"
-    },
-    "-4": {
-      "$type": "dimension",
-      "$value": "{base.number.negative-4}"
-    },
-    "-6": {
-      "$type": "dimension",
-      "$value": "{base.number.negative-6}"
-    },
-    "-8": {
-      "$type": "dimension",
-      "$value": "{base.number.negative-8}"
-    },
-    "-12": {
-      "$type": "dimension",
-      "$value": "{base.number.negative-12}"
-    }
-  },
-  "radius": {
-    "2": {
-      "$type": "dimension",
-      "$value": "{base.number.2}"
-    },
-    "4": {
-      "$type": "dimension",
-      "$value": "{base.number.4}"
-    },
-    "6": {
-      "$type": "dimension",
-      "$value": "{base.number.6}"
-    },
-    "8": {
-      "$type": "dimension",
-      "$value": "{base.number.8}"
-    },
-    "10": {
-      "$type": "dimension",
-      "$value": "{base.number.10}"
-    },
-    "12": {
-      "$type": "dimension",
-      "$value": "{base.number.12}"
-    },
-    "14": {
-      "$type": "dimension",
-      "$value": "{base.number.14}"
-    },
-    "16": {
-      "$type": "dimension",
-      "$value": "{base.number.16}"
-    },
-    "18": {
-      "$type": "dimension",
-      "$value": "{base.number.18}"
-    },
-    "20": {
-      "$type": "dimension",
-      "$value": "{base.number.20}"
-    },
-    "24": {
-      "$type": "dimension",
-      "$value": "{base.number.24}"
-    },
-    "28": {
-      "$type": "dimension",
-      "$value": "{base.number.28}"
-    },
-    "32": {
-      "$type": "dimension",
-      "$value": "{base.number.32}"
-    },
-    "36": {
-      "$type": "dimension",
-      "$value": "{base.number.36}"
-    },
-    "40": {
-      "$type": "dimension",
-      "$value": "{base.number.40}"
-    },
-    "rounded": {
-      "$type": "dimension",
-      "$value": "{base.number.9999}"
     }
   }
 }
