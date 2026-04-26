@@ -260,6 +260,8 @@ func runSource(ctx context.Context, c *client.Client, src Source, log *slog.Logg
 		} else {
 			sr.TextStyles = extractTextStyles(stylesResp, log)
 			log.Info("text styles fetched", "source", src.String(), "count", len(sr.TextStyles))
+			// Dereference each style's node to pull font properties
+			dereferenceTextStyles(ctx, c, src.FileKey, sr.TextStyles, log)
 		}
 	}
 
@@ -317,10 +319,10 @@ func fetchRoot(ctx context.Context, c *client.Client, src Source, log *slog.Logg
 
 // extractTextStyles converts /v1/files/<key>/styles response into TextStyle entries.
 //
-// Only TEXT-typed styles are kept. Field/font metadata (size, weight, line height)
-// is NOT in this endpoint — that requires a follow-up /v1/files/<key>/nodes call
-// using the style's node_id. v1 captures just name + style_id; v1.1 will
-// dereference the typography metadata.
+// Only TEXT-typed styles are kept. Step 1 captures name + style_id + node_id.
+// Step 2 (when c is provided) batches /v1/files/<key>/nodes calls to dereference
+// each style's node, pulling fontFamily, fontSize, fontWeight, lineHeight, and
+// letterSpacing from the style's `style` block.
 func extractTextStyles(resp map[string]any, log *slog.Logger) []TextStyle {
 	meta, _ := resp["meta"].(map[string]any)
 	if meta == nil {
@@ -346,6 +348,72 @@ func extractTextStyles(resp map[string]any, log *slog.Logger) []TextStyle {
 		})
 	}
 	return out
+}
+
+// dereferenceTextStyles fetches each TextStyle's node_id and reads the actual
+// font properties from the node's `style` block. Mutates the input slice.
+func dereferenceTextStyles(ctx context.Context, c *client.Client, fileKey string, styles []TextStyle, log *slog.Logger) {
+	if len(styles) == 0 {
+		return
+	}
+	ids := make([]string, len(styles))
+	idxByID := map[string]int{}
+	for i, s := range styles {
+		ids[i] = s.NodeID
+		idxByID[s.NodeID] = i
+	}
+	resp, err := c.GetFileNodes(ctx, fileKey, ids, 0)
+	if err != nil {
+		log.Warn("dereference text styles failed", "err", err)
+		return
+	}
+	nodes, _ := resp["nodes"].(map[string]any)
+	if nodes == nil {
+		return
+	}
+	resolved := 0
+	for nid, payload := range nodes {
+		i, ok := idxByID[nid]
+		if !ok {
+			continue
+		}
+		pm, _ := payload.(map[string]any)
+		if pm == nil {
+			continue
+		}
+		doc, _ := pm["document"].(map[string]any)
+		if doc == nil {
+			continue
+		}
+		style, _ := doc["style"].(map[string]any)
+		if style == nil {
+			continue
+		}
+		s := &styles[i]
+		if v, ok := style["fontFamily"].(string); ok {
+			s.FontFamily = v
+		}
+		if v, ok := style["fontWeight"].(float64); ok {
+			s.FontWeight = int(v)
+		}
+		if v, ok := style["fontSize"].(float64); ok {
+			s.FontSize = v
+		}
+		if v, ok := style["lineHeightPx"].(float64); ok {
+			s.LineHeight = v
+		} else if v, ok := style["lineHeightPercent"].(float64); ok {
+			// Convert percent → multiplier (used relative to fontSize)
+			s.LineHeight = v / 100 * s.FontSize
+		}
+		if v, ok := style["letterSpacing"].(float64); ok {
+			s.LetterSpace = v
+		}
+		if v, ok := style["textDecoration"].(string); ok {
+			s.TextDecor = v
+		}
+		resolved++
+	}
+	log.Info("text styles dereferenced", "resolved", resolved, "of", len(styles))
 }
 
 // IsNoiseObservation returns true for observations that come from device-chrome
