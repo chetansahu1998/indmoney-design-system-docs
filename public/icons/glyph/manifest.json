@@ -1,58 +1,8 @@
 {
-  "generated_at": "2026-04-26T15:41:17.190658Z",
+  "generated_at": "2026-04-26T15:48:31.283773Z",
   "file_key": "ePcuKLNGHwSubsfaiaryJv",
   "page_node_id": "1440:29094",
   "icons": [
-    {
-      "slug": "2-users",
-      "name": "2 users",
-      "category": "2D",
-      "set_id": "3519:1831",
-      "variant_id": "3519:1841",
-      "file": "2-users.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "2-users-add",
-      "name": "2 users add",
-      "category": "2D",
-      "set_id": "3519:1603",
-      "variant_id": "3519:1613",
-      "file": "2-users-add.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "2-users-edit",
-      "name": "2 users edit",
-      "category": "2D",
-      "set_id": "3519:1546",
-      "variant_id": "3519:1556",
-      "file": "2-users-edit.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "2-users-minus",
-      "name": "2 users minus",
-      "category": "2D",
-      "set_id": "3519:1660",
-      "variant_id": "3519:1670",
-      "file": "2-users-minus.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "2d-foreclose",
-      "name": "2D · Foreclose",
-      "category": "Icon",
-      "set_id": "6369:6305",
-      "variant_id": "6369:6301",
-      "file": "2d-foreclose.svg",
-      "width": 24,
-      "height": 24
-    },
     {
       "slug": "52w-down",
       "name": "52W down",
@@ -74,12 +24,52 @@
       "height": 24
     },
     {
+      "slug": "ab-bank",
+      "name": "AB Bank",
+      "category": "Logo",
+      "set_id": "3396:60412",
+      "variant_id": "3396:60449",
+      "file": "ab-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "abudhabi-commercial-bank",
+      "name": "AbuDhabi Commercial Bank",
+      "category": "Logo",
+      "set_id": "3396:56852",
+      "variant_id": "3396:56853",
+      "file": "abudhabi-commercial-bank.svg",
+      "width": 160,
+      "height": 48
+    },
+    {
+      "slug": "accenture",
+      "name": "accenture",
+      "category": "Logo",
+      "set_id": "3396:54073",
+      "variant_id": "3396:54086",
+      "file": "accenture.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
       "slug": "accident",
       "name": "Accident",
       "category": "2D",
       "set_id": "1552:30464",
       "variant_id": "1552:30463",
       "file": "accident.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "acko",
+      "name": "acko",
+      "category": "Logo",
+      "set_id": "3396:52458",
+      "variant_id": "3396:52495",
+      "file": "acko.svg",
       "width": 24,
       "height": 24
     },
@@ -114,12 +104,52 @@
       "height": 24
     },
     {
+      "slug": "aditya-birla",
+      "name": "Aditya Birla",
+      "category": "Logo",
+      "set_id": "3396:50558",
+      "variant_id": "3396:50640",
+      "file": "aditya-birla.svg",
+      "width": 23,
+      "height": 23
+    },
+    {
+      "slug": "adobe",
+      "name": "Adobe",
+      "category": "Logo",
+      "set_id": "3396:50288",
+      "variant_id": "3396:50307",
+      "file": "adobe.svg",
+      "width": 23,
+      "height": 23
+    },
+    {
       "slug": "ai",
       "name": "AI",
       "category": "2D",
       "set_id": "2275:37403",
       "variant_id": "2275:37401",
       "file": "ai.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "aia-engineering",
+      "name": "Aia Engineering",
+      "category": "Logo",
+      "set_id": "3396:50748",
+      "variant_id": "3396:50758",
+      "file": "aia-engineering.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
+      "slug": "airtel-payments",
+      "name": "Airtel Payments",
+      "category": "Logo",
+      "set_id": "3396:57990",
+      "variant_id": "3396:58006",
+      "file": "airtel-payments.svg",
       "width": 24,
       "height": 24
     },
@@ -134,122 +164,122 @@
       "height": 24
     },
     {
-      "slug": "arrow-back-circle",
-      "name": "Arrow back circle",
-      "category": "2D",
-      "set_id": "3468:1870",
-      "variant_id": "3468:1880",
-      "file": "arrow-back-circle.svg",
+      "slug": "ali-baba",
+      "name": "Ali baba",
+      "category": "Logo",
+      "set_id": "3396:50186",
+      "variant_id": "3396:50199",
+      "file": "ali-baba.svg",
+      "width": 23,
+      "height": 23
+    },
+    {
+      "slug": "allahabad-bank",
+      "name": "Allahabad Bank",
+      "category": "Logo",
+      "set_id": "3396:58532",
+      "variant_id": "3396:58554",
+      "file": "allahabad-bank.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "arrow-broken-back",
-      "name": "Arrow broken back",
-      "category": "2D",
-      "set_id": "3468:2041",
-      "variant_id": "3468:2051",
-      "file": "arrow-broken-back.svg",
+      "slug": "amdocs",
+      "name": "amdocs",
+      "category": "Logo",
+      "set_id": "3396:51764",
+      "variant_id": "3396:51795",
+      "file": "amdocs.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
+      "slug": "american-express",
+      "name": "American express",
+      "category": "Logo",
+      "set_id": "3396:57076",
+      "variant_id": "3396:57077",
+      "file": "american-express.svg",
+      "width": 60,
+      "height": 60
+    },
+    {
+      "slug": "amex",
+      "name": "Amex",
+      "category": "Logo",
+      "set_id": "3323:37367",
+      "variant_id": "3323:37366",
+      "file": "amex.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "arrow-broken-down",
-      "name": "Arrow broken down",
-      "category": "2D",
-      "set_id": "3468:1984",
-      "variant_id": "3468:1994",
-      "file": "arrow-broken-down.svg",
+      "slug": "amro",
+      "name": "AMRO",
+      "category": "Logo",
+      "set_id": "3396:57106",
+      "variant_id": "3396:57107",
+      "file": "amro.svg",
+      "width": 162,
+      "height": 40
+    },
+    {
+      "slug": "andhra-bank",
+      "name": "Andhra Bank",
+      "category": "Logo",
+      "set_id": "3396:58874",
+      "variant_id": "3396:58896",
+      "file": "andhra-bank.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "arrow-circle-broken-right-3",
-      "name": "Arrow circle broken right 3",
-      "category": "2D",
-      "set_id": "3468:2098",
-      "variant_id": "3468:2108",
-      "file": "arrow-circle-broken-right-3.svg",
+      "slug": "angel-one",
+      "name": "angel one",
+      "category": "Logo",
+      "set_id": "3396:61576",
+      "variant_id": "3396:61582",
+      "file": "angel-one.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "apartment",
+      "name": "Apartment",
+      "category": "3D",
+      "set_id": "4017:3129",
+      "variant_id": "4017:3125",
+      "file": "apartment.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "arrow-circle-broken-up",
-      "name": "Arrow circle broken up",
-      "category": "2D",
-      "set_id": "3468:2155",
-      "variant_id": "3468:2165",
-      "file": "arrow-circle-broken-up.svg",
-      "width": 24,
-      "height": 24
+      "slug": "apollo-pharmacy",
+      "name": "apollo pharmacy",
+      "category": "Logo",
+      "set_id": "3396:62465",
+      "variant_id": "3396:62471",
+      "file": "apollo-pharmacy.svg",
+      "width": 16,
+      "height": 16
     },
     {
-      "slug": "arrow-circle-down-2",
-      "name": "Arrow circle down 2",
-      "category": "2D",
-      "set_id": "3468:1756",
-      "variant_id": "3468:1766",
-      "file": "arrow-circle-down-2.svg",
-      "width": 24,
-      "height": 24
+      "slug": "apple",
+      "name": "Apple",
+      "category": "Logo",
+      "set_id": "3396:50501",
+      "variant_id": "3396:50526",
+      "file": "apple.svg",
+      "width": 23,
+      "height": 23
     },
     {
-      "slug": "arrow-down",
-      "name": "Arrow down",
-      "category": "2D",
-      "set_id": "3468:1642",
-      "variant_id": "3468:1652",
-      "file": "arrow-down.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "arrow-down-left",
-      "name": "Arrow down left",
-      "category": "2D",
-      "set_id": "3468:1699",
-      "variant_id": "3468:1709",
-      "file": "arrow-down-left.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "arrow-down-right",
-      "name": "Arrow down right",
-      "category": "2D",
-      "set_id": "3468:1585",
-      "variant_id": "3468:1595",
-      "file": "arrow-down-right.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "arrow-left",
-      "name": "Arrow left",
-      "category": "2D",
-      "set_id": "3468:1414",
-      "variant_id": "3468:1424",
-      "file": "arrow-left.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "arrow-right",
-      "name": "Arrow right",
-      "category": "2D",
-      "set_id": "3468:1528",
-      "variant_id": "3468:1538",
-      "file": "arrow-right.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "arrow-right-circle",
-      "name": "Arrow right circle",
-      "category": "2D",
-      "set_id": "3468:1927",
-      "variant_id": "3468:1937",
-      "file": "arrow-right-circle.svg",
+      "slug": "apple-pay",
+      "name": "Apple pay",
+      "category": "Logo",
+      "set_id": "3323:37376",
+      "variant_id": "3323:37375",
+      "file": "apple-pay.svg",
       "width": 24,
       "height": 24
     },
@@ -274,24 +304,14 @@
       "height": 24
     },
     {
-      "slug": "arrow-up-left",
-      "name": "Arrow up left",
-      "category": "2D",
-      "set_id": "3468:1357",
-      "variant_id": "3468:1367",
-      "file": "arrow-up-left.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "arrow-up-right",
-      "name": "Arrow up right",
-      "category": "2D",
-      "set_id": "3468:1471",
-      "variant_id": "3468:1481",
-      "file": "arrow-up-right.svg",
-      "width": 24,
-      "height": 24
+      "slug": "ashok-lyeland",
+      "name": "ashok lyeland",
+      "category": "Logo",
+      "set_id": "3396:55359",
+      "variant_id": "3396:55363",
+      "file": "ashok-lyeland.svg",
+      "width": 16,
+      "height": 15
     },
     {
       "slug": "asterisk",
@@ -314,6 +334,26 @@
       "height": 24
     },
     {
+      "slug": "au-small-finance-bank",
+      "name": "AU Small finance bank",
+      "category": "Logo",
+      "set_id": "3396:56987",
+      "variant_id": "3396:56988",
+      "file": "au-small-finance-bank.svg",
+      "width": 115,
+      "height": 60
+    },
+    {
+      "slug": "australia-and-new-zealand-banking-group",
+      "name": "Australia and New Zealand Banking Group",
+      "category": "Logo",
+      "set_id": "3396:57069",
+      "variant_id": "3396:57070",
+      "file": "australia-and-new-zealand-banking-group.svg",
+      "width": 152,
+      "height": 48
+    },
+    {
       "slug": "auto-pay",
       "name": "Auto Pay",
       "category": "2D",
@@ -322,6 +362,26 @@
       "file": "auto-pay.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "awaited",
+      "name": "Awaited",
+      "category": "Filled Icons",
+      "set_id": "2630:32063",
+      "variant_id": "2630:32059",
+      "file": "awaited.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "axis-bank",
+      "name": "Axis bank",
+      "category": "Logo",
+      "set_id": "3396:56148",
+      "variant_id": "3396:56149",
+      "file": "axis-bank.svg",
+      "width": 64,
+      "height": 64
     },
     {
       "slug": "back-arrow-page",
@@ -334,14 +394,94 @@
       "height": 24
     },
     {
-      "slug": "bank",
-      "name": "Bank",
-      "category": "2D",
-      "set_id": "3607:43053",
-      "variant_id": "3607:43047",
-      "file": "bank.svg",
+      "slug": "bajaj-allianz",
+      "name": "Bajaj Allianz",
+      "category": "Logo",
+      "set_id": "3396:48257",
+      "variant_id": "3396:48273",
+      "file": "bajaj-allianz.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "bank-of-america",
+      "name": "Bank of america",
+      "category": "Logo",
+      "set_id": "3396:57189",
+      "variant_id": "3396:57190",
+      "file": "bank-of-america.svg",
+      "width": 394,
+      "height": 40
+    },
+    {
+      "slug": "bank-of-bahrain-and-kuwait",
+      "name": "Bank of Bahrain and kuwait",
+      "category": "Logo",
+      "set_id": "3396:57152",
+      "variant_id": "3396:57153",
+      "file": "bank-of-bahrain-and-kuwait.svg",
+      "width": 71,
+      "height": 40
+    },
+    {
+      "slug": "bank-of-baroda",
+      "name": "Bank of Baroda",
+      "category": "Logo",
+      "set_id": "3396:49691",
+      "variant_id": "3396:49692",
+      "file": "bank-of-baroda.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "bank-of-ceylon",
+      "name": "Bank of Ceylon",
+      "category": "Logo",
+      "set_id": "3396:58104",
+      "variant_id": "3396:58288",
+      "file": "bank-of-ceylon.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "bank-of-china",
+      "name": "Bank of China",
+      "category": "Logo",
+      "set_id": "3396:57141",
+      "variant_id": "3396:57142",
+      "file": "bank-of-china.svg",
+      "width": 155,
+      "height": 44
+    },
+    {
+      "slug": "bank-of-india",
+      "name": "Bank of India",
+      "category": "Logo",
+      "set_id": "3396:56247",
+      "variant_id": "3396:56248",
+      "file": "bank-of-india.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "bank-of-maharashtra",
+      "name": "Bank of Maharashtra",
+      "category": "Logo",
+      "set_id": "3396:56364",
+      "variant_id": "3396:56365",
+      "file": "bank-of-maharashtra.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "barclays",
+      "name": "Barclays",
+      "category": "Logo",
+      "set_id": "3396:56141",
+      "variant_id": "3396:56142",
+      "file": "barclays.svg",
+      "width": 64,
+      "height": 64
     },
     {
       "slug": "basic-materials-stocks",
@@ -374,6 +514,86 @@
       "height": 24
     },
     {
+      "slug": "bharat-connect",
+      "name": "Bharat connect",
+      "category": "Logo",
+      "set_id": "3272:5148",
+      "variant_id": "3272:5147",
+      "file": "bharat-connect.svg",
+      "width": 40,
+      "height": 40
+    },
+    {
+      "slug": "bharat-connect-assured",
+      "name": "Bharat connect assured",
+      "category": "Logo",
+      "set_id": "3272:4849",
+      "variant_id": "3272:4848",
+      "file": "bharat-connect-assured.svg",
+      "width": 40,
+      "height": 40
+    },
+    {
+      "slug": "big-basket",
+      "name": "big basket",
+      "category": "Logo",
+      "set_id": "3396:61612",
+      "variant_id": "3396:61622",
+      "file": "big-basket.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "big-basket",
+      "name": "Big basket",
+      "category": "Logo",
+      "set_id": "3396:55719",
+      "variant_id": "3396:55735",
+      "file": "big-basket.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "bikanerwala",
+      "name": "Bikanerwala",
+      "category": "Logo",
+      "set_id": "3396:62321",
+      "variant_id": "3396:62327",
+      "file": "bikanerwala.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "billdesk",
+      "name": "Billdesk",
+      "category": "Logo",
+      "set_id": "3396:48473",
+      "variant_id": "3396:48495",
+      "file": "billdesk.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "biocon",
+      "name": "Biocon",
+      "category": "Logo",
+      "set_id": "3396:54860",
+      "variant_id": "3396:54864",
+      "file": "biocon.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
+      "slug": "blinkit",
+      "name": "Blinkit",
+      "category": "Logo",
+      "set_id": "3396:48920",
+      "variant_id": "3396:48963",
+      "file": "blinkit.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "block",
       "name": "Block",
       "category": "2D",
@@ -384,12 +604,82 @@
       "height": 24
     },
     {
+      "slug": "blu-smart",
+      "name": "Blu Smart",
+      "category": "Logo",
+      "set_id": "3396:49820",
+      "variant_id": "3396:49836",
+      "file": "blu-smart.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "bnp-paribas",
+      "name": "BNP Paribas",
+      "category": "Logo",
+      "set_id": "3396:57026",
+      "variant_id": "3396:57027",
+      "file": "bnp-paribas.svg",
+      "width": 183,
+      "height": 40
+    },
+    {
+      "slug": "bookmyshow",
+      "name": "BookMyshow",
+      "category": "Logo",
+      "set_id": "3396:62191",
+      "variant_id": "3396:62196",
+      "file": "bookmyshow.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "bosch",
+      "name": "bosch",
+      "category": "Logo",
+      "set_id": "3396:51969",
+      "variant_id": "3396:51997",
+      "file": "bosch.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
+      "slug": "broadband",
+      "name": "Broadband",
+      "category": "3D",
+      "set_id": "4022:82899",
+      "variant_id": "4022:82895",
+      "file": "broadband.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "brokers",
       "name": "Brokers",
       "category": "2D",
       "set_id": "2177:8847",
       "variant_id": "2177:8840",
       "file": "brokers.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "bse",
+      "name": "BSE",
+      "category": "Logo",
+      "set_id": "3396:49892",
+      "variant_id": "3396:49908",
+      "file": "bse.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "bsnl",
+      "name": "BSNL",
+      "category": "Logo",
+      "set_id": "3396:50006",
+      "variant_id": "3396:50022",
+      "file": "bsnl.svg",
       "width": 24,
       "height": 24
     },
@@ -414,22 +704,22 @@
       "height": 24
     },
     {
+      "slug": "byjus",
+      "name": "Byjus",
+      "category": "Logo",
+      "set_id": "3396:52986",
+      "variant_id": "3396:53007",
+      "file": "byjus.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
       "slug": "calculator",
       "name": "calculator",
       "category": "2D",
       "set_id": "2275:37493",
       "variant_id": "2275:37484",
       "file": "calculator.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "calendar",
-      "name": "Calendar",
-      "category": "2D",
-      "set_id": "4920:8991",
-      "variant_id": "4920:8986",
-      "file": "calendar.svg",
       "width": 24,
       "height": 24
     },
@@ -444,6 +734,76 @@
       "height": 24
     },
     {
+      "slug": "canara-bank",
+      "name": "Canara bank",
+      "category": "Logo",
+      "set_id": "3396:56191",
+      "variant_id": "3396:56192",
+      "file": "canara-bank.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "capgemini",
+      "name": "capgemini",
+      "category": "Logo",
+      "set_id": "3396:53348",
+      "variant_id": "3396:53358",
+      "file": "capgemini.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
+      "slug": "capital-small-finance",
+      "name": "Capital Small Finance",
+      "category": "Logo",
+      "set_id": "3396:60312",
+      "variant_id": "3396:60340",
+      "file": "capital-small-finance.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "cashfree-payments",
+      "name": "Cashfree Payments",
+      "category": "Logo",
+      "set_id": "3396:49177",
+      "variant_id": "3396:49193",
+      "file": "cashfree-payments.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "catholic-syrian-bank",
+      "name": "Catholic Syrian Bank",
+      "category": "Logo",
+      "set_id": "3396:58767",
+      "variant_id": "3396:58789",
+      "file": "catholic-syrian-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "central-bank-of-india",
+      "name": "central bank of india",
+      "category": "Logo",
+      "set_id": "3396:62537",
+      "variant_id": "3396:62544",
+      "file": "central-bank-of-india.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "central-bank-of-india",
+      "name": "Central bank of India",
+      "category": "Logo",
+      "set_id": "3396:56198",
+      "variant_id": "3396:56199",
+      "file": "central-bank-of-india.svg",
+      "width": 235,
+      "height": 60
+    },
+    {
       "slug": "charts",
       "name": "Charts",
       "category": "2D",
@@ -452,6 +812,16 @@
       "file": "charts.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "chatgpt",
+      "name": "ChatGPT",
+      "category": "Logo",
+      "set_id": "3396:56026",
+      "variant_id": "3396:56031",
+      "file": "chatgpt.svg",
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "check",
@@ -494,14 +864,14 @@
       "height": 24
     },
     {
-      "slug": "chevron-down",
-      "name": "Chevron down",
-      "category": "2D",
-      "set_id": "3607:43113",
-      "variant_id": "3607:43108",
-      "file": "chevron-down.svg",
-      "width": 24,
-      "height": 24
+      "slug": "cheq",
+      "name": "Cheq",
+      "category": "Logo",
+      "set_id": "3396:62220",
+      "variant_id": "3396:62225",
+      "file": "cheq.svg",
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "chevron-down-circle",
@@ -510,16 +880,6 @@
       "set_id": "4248:62207",
       "variant_id": "4248:62204",
       "file": "chevron-down-circle.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "chevron-left",
-      "name": "Chevron left",
-      "category": "2D",
-      "set_id": "3607:43098",
-      "variant_id": "3607:43092",
-      "file": "chevron-left.svg",
       "width": 24,
       "height": 24
     },
@@ -534,32 +894,12 @@
       "height": 24
     },
     {
-      "slug": "chevron-right",
-      "name": "Chevron right",
-      "category": "2D",
-      "set_id": "3607:43128",
-      "variant_id": "3607:43122",
-      "file": "chevron-right.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
       "slug": "chevron-right-circle",
       "name": "Chevron right circle",
       "category": "2D",
       "set_id": "4248:62177",
       "variant_id": "4248:62175",
       "file": "chevron-right-circle.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "chevron-up",
-      "name": "Chevron up",
-      "category": "2D",
-      "set_id": "3607:43083",
-      "variant_id": "3607:43080",
-      "file": "chevron-up.svg",
       "width": 24,
       "height": 24
     },
@@ -574,94 +914,54 @@
       "height": 24
     },
     {
-      "slug": "clipboard",
-      "name": "clipboard",
-      "category": "2D",
-      "set_id": "3468:6259",
-      "variant_id": "3468:6269",
-      "file": "clipboard.svg",
+      "slug": "cisco",
+      "name": "cisco",
+      "category": "Logo",
+      "set_id": "3396:51835",
+      "variant_id": "3396:51893",
+      "file": "cisco.svg",
+      "width": 23,
+      "height": 23
+    },
+    {
+      "slug": "citi-bank",
+      "name": "Citi bank",
+      "category": "Logo",
+      "set_id": "3396:56180",
+      "variant_id": "3396:56181",
+      "file": "citi-bank.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "city-union-bank",
+      "name": "City Union bank",
+      "category": "Logo",
+      "set_id": "3396:56426",
+      "variant_id": "3396:56427",
+      "file": "city-union-bank.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "clubs",
+      "name": "Clubs",
+      "category": "3D",
+      "set_id": "4021:2146",
+      "variant_id": "4021:2142",
+      "file": "clubs.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "clipboard-attachment",
-      "name": "clipboard-attachment",
-      "category": "2D",
-      "set_id": "3468:6202",
-      "variant_id": "3468:6212",
-      "file": "clipboard-attachment.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "clipboard-check",
-      "name": "clipboard-check",
-      "category": "2D",
-      "set_id": "3468:6088",
-      "variant_id": "3468:6098",
-      "file": "clipboard-check.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "clipboard-download",
-      "name": "clipboard-download",
-      "category": "2D",
-      "set_id": "3468:6145",
-      "variant_id": "3468:6155",
-      "file": "clipboard-download.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "clipboard-minus",
-      "name": "clipboard-minus",
-      "category": "2D",
-      "set_id": "3468:5917",
-      "variant_id": "3468:5927",
-      "file": "clipboard-minus.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "clipboard-plus",
-      "name": "clipboard-plus",
-      "category": "2D",
-      "set_id": "3468:5974",
-      "variant_id": "3468:5984",
-      "file": "clipboard-plus.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "clipboard-x",
-      "name": "clipboard-x",
-      "category": "2D",
-      "set_id": "3468:6031",
-      "variant_id": "3468:6041",
-      "file": "clipboard-x.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "coin-stack",
-      "name": "Coin stack",
-      "category": "2D",
-      "set_id": "3607:43068",
-      "variant_id": "3607:43065",
-      "file": "coin-stack.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "coin-swap",
-      "name": "Coin swap",
-      "category": "uncategorized",
-      "set_id": "3468:16396",
-      "variant_id": "3468:16441",
-      "file": "coin-swap.svg",
-      "width": 24,
-      "height": 24
+      "slug": "cognizant",
+      "name": "cognizant",
+      "category": "Logo",
+      "set_id": "3396:53827",
+      "variant_id": "3396:53863",
+      "file": "cognizant.svg",
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "contact-book",
@@ -684,6 +984,16 @@
       "height": 24
     },
     {
+      "slug": "convergys",
+      "name": "Convergys",
+      "category": "Logo",
+      "set_id": "3396:50970",
+      "variant_id": "3396:51013",
+      "file": "convergys.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
       "slug": "copy",
       "name": "Copy",
       "category": "2D",
@@ -694,21 +1004,61 @@
       "height": 24
     },
     {
+      "slug": "corporation-bank",
+      "name": "Corporation Bank",
+      "category": "Logo",
+      "set_id": "3396:60141",
+      "variant_id": "3396:60175",
+      "file": "corporation-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "cosmos-co-operation-bank",
+      "name": "Cosmos Co-Operation Bank",
+      "category": "Logo",
+      "set_id": "3396:58724",
+      "variant_id": "3396:58743",
+      "file": "cosmos-co-operation-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "cred",
+      "name": "Cred",
+      "category": "Logo",
+      "set_id": "3396:50885",
+      "variant_id": "3396:50922",
+      "file": "cred.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "credit-agricole",
+      "name": "Credit Agricole",
+      "category": "Logo",
+      "set_id": "3396:56921",
+      "variant_id": "3396:56922",
+      "file": "credit-agricole.svg",
+      "width": 343,
+      "height": 40
+    },
+    {
       "slug": "credit-card",
-      "name": "Credit Card",
-      "category": "2D",
-      "set_id": "1552:30494",
-      "variant_id": "1552:30489",
+      "name": "credit card",
+      "category": "3D",
+      "set_id": "4017:3108",
+      "variant_id": "4017:3105",
       "file": "credit-card.svg",
       "width": 24,
       "height": 24
     },
     {
       "slug": "credit-card",
-      "name": "Credit card",
+      "name": "Credit Card",
       "category": "2D",
-      "set_id": "3468:14539",
-      "variant_id": "3468:14549",
+      "set_id": "1552:30494",
+      "variant_id": "1552:30489",
       "file": "credit-card.svg",
       "width": 24,
       "height": 24
@@ -804,6 +1154,16 @@
       "height": 24
     },
     {
+      "slug": "credit-suisse",
+      "name": "Credit Suisse",
+      "category": "Logo",
+      "set_id": "3396:56812",
+      "variant_id": "3396:56813",
+      "file": "credit-suisse.svg",
+      "width": 312,
+      "height": 40
+    },
+    {
       "slug": "creditscore",
       "name": "Creditscore",
       "category": "2D",
@@ -812,6 +1172,26 @@
       "file": "creditscore.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "crocs",
+      "name": "Crocs",
+      "category": "Logo",
+      "set_id": "3396:55976",
+      "variant_id": "3396:55984",
+      "file": "crocs.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "croma",
+      "name": "croma",
+      "category": "Logo",
+      "set_id": "3396:62616",
+      "variant_id": "3396:62628",
+      "file": "croma.svg",
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "cross",
@@ -834,6 +1214,16 @@
       "height": 24
     },
     {
+      "slug": "ctbc-bank",
+      "name": "CTBC Bank",
+      "category": "Logo",
+      "set_id": "3396:60376",
+      "variant_id": "3396:60392",
+      "file": "ctbc-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "cursor-click",
       "name": "Cursor Click",
       "category": "2D",
@@ -842,6 +1232,36 @@
       "file": "cursor-click.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "d-mart",
+      "name": "D mart",
+      "category": "Logo",
+      "set_id": "3396:62694",
+      "variant_id": "3396:62702",
+      "file": "d-mart.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "dashboard",
+      "name": "Dashboard",
+      "category": "2D",
+      "set_id": "1805:17211",
+      "variant_id": "1805:17207",
+      "file": "dashboard.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "dbs-bank",
+      "name": "DBS Bank",
+      "category": "Logo",
+      "set_id": "3396:56599",
+      "variant_id": "3396:56600",
+      "file": "dbs-bank.svg",
+      "width": 64,
+      "height": 64
     },
     {
       "slug": "delete",
@@ -854,6 +1274,66 @@
       "height": 24
     },
     {
+      "slug": "dell",
+      "name": "dell",
+      "category": "Logo",
+      "set_id": "3396:51579",
+      "variant_id": "3396:51625",
+      "file": "dell.svg",
+      "width": 23,
+      "height": 23
+    },
+    {
+      "slug": "deloitte",
+      "name": "deloitte",
+      "category": "Logo",
+      "set_id": "3396:53149",
+      "variant_id": "3396:53167",
+      "file": "deloitte.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
+      "slug": "dena-bank",
+      "name": "Dena Bank",
+      "category": "Logo",
+      "set_id": "3396:56573",
+      "variant_id": "3396:56574",
+      "file": "dena-bank.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "deutsche-bank",
+      "name": "Deutsche Bank",
+      "category": "Logo",
+      "set_id": "3396:56566",
+      "variant_id": "3396:56567",
+      "file": "deutsche-bank.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "development-credit-bank",
+      "name": "Development credit bank",
+      "category": "Logo",
+      "set_id": "3396:57280",
+      "variant_id": "3396:57281",
+      "file": "development-credit-bank.svg",
+      "width": 195,
+      "height": 47
+    },
+    {
+      "slug": "dhanlaxmi-bank",
+      "name": "Dhanlaxmi bank",
+      "category": "Logo",
+      "set_id": "3396:56639",
+      "variant_id": "3396:56640",
+      "file": "dhanlaxmi-bank.svg",
+      "width": 204,
+      "height": 48
+    },
+    {
       "slug": "digital-authentication",
       "name": "Digital Authentication",
       "category": "2D",
@@ -864,6 +1344,36 @@
       "height": 24
     },
     {
+      "slug": "diners",
+      "name": "Diners",
+      "category": "Logo",
+      "set_id": "3323:37352",
+      "variant_id": "3323:37351",
+      "file": "diners.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "discover",
+      "name": "Discover",
+      "category": "Logo",
+      "set_id": "3323:37370",
+      "variant_id": "3323:37369",
+      "file": "discover.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "disney",
+      "name": "Disney",
+      "category": "Logo",
+      "set_id": "3396:50266",
+      "variant_id": "3396:50276",
+      "file": "disney.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
       "slug": "disputed",
       "name": "Disputed",
       "category": "2D",
@@ -872,6 +1382,36 @@
       "file": "disputed.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "dlf",
+      "name": "DLF",
+      "category": "Logo",
+      "set_id": "3396:55825",
+      "variant_id": "3396:55829",
+      "file": "dlf.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
+      "slug": "doha-bank",
+      "name": "Doha Bank",
+      "category": "Logo",
+      "set_id": "3396:60533",
+      "variant_id": "3396:60558",
+      "file": "doha-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "dominos",
+      "name": "Dominos",
+      "category": "Logo",
+      "set_id": "3396:61845",
+      "variant_id": "3396:61858",
+      "file": "dominos.svg",
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "dots-grid",
@@ -934,6 +1474,16 @@
       "height": 24
     },
     {
+      "slug": "dr-lal-path-labs",
+      "name": "Dr Lal Path Labs",
+      "category": "Logo",
+      "set_id": "3396:48827",
+      "variant_id": "3396:48855",
+      "file": "dr-lal-path-labs.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "drop-down",
       "name": "Drop Down",
       "category": "2D",
@@ -954,12 +1504,42 @@
       "height": 24
     },
     {
-      "slug": "edit-02",
-      "name": "Edit 02",
-      "category": "2D",
-      "set_id": "3468:3124",
-      "variant_id": "3468:3134",
-      "file": "edit-02.svg",
+      "slug": "education",
+      "name": "Education",
+      "category": "3D",
+      "set_id": "4021:2151",
+      "variant_id": "4021:2147",
+      "file": "education.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "eicher",
+      "name": "Eicher",
+      "category": "Logo",
+      "set_id": "3396:50770",
+      "variant_id": "3396:50780",
+      "file": "eicher.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
+      "slug": "electricity",
+      "name": "electricity",
+      "category": "3D",
+      "set_id": "4017:3103",
+      "variant_id": "4017:3100",
+      "file": "electricity.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "emirates-nbd",
+      "name": "Emirates NBD",
+      "category": "Logo",
+      "set_id": "3396:58817",
+      "variant_id": "3396:58842",
+      "file": "emirates-nbd.svg",
       "width": 24,
       "height": 24
     },
@@ -974,44 +1554,54 @@
       "height": 24
     },
     {
-      "slug": "exchange",
-      "name": "Exchange",
-      "category": "uncategorized",
-      "set_id": "6322:6404",
-      "variant_id": "6322:6403",
-      "file": "exchange.svg",
+      "slug": "equitas",
+      "name": "Equitas",
+      "category": "Logo",
+      "set_id": "3396:59683",
+      "variant_id": "3396:59723",
+      "file": "equitas.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "expand-1",
-      "name": "Expand 1",
-      "category": "2D",
-      "set_id": "3468:8881",
-      "variant_id": "3468:8891",
-      "file": "expand-1.svg",
+      "slug": "equitas-small-finance-bank",
+      "name": "Equitas small finance bank",
+      "category": "Logo",
+      "set_id": "3396:49321",
+      "variant_id": "3396:49337",
+      "file": "equitas-small-finance-bank.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "expand-2",
-      "name": "Expand 2",
-      "category": "2D",
-      "set_id": "3468:8938",
-      "variant_id": "3468:8948",
-      "file": "expand-2.svg",
+      "slug": "esaf",
+      "name": "ESAF",
+      "category": "Logo",
+      "set_id": "3396:56764",
+      "variant_id": "3396:56765",
+      "file": "esaf.svg",
+      "width": 123,
+      "height": 48
+    },
+    {
+      "slug": "et-money",
+      "name": "ET Money",
+      "category": "Logo",
+      "set_id": "3396:49213",
+      "variant_id": "3396:49229",
+      "file": "et-money.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "expand-3",
-      "name": "Expand 3",
+      "slug": "expense-ratio",
+      "name": "Expense Ratio",
       "category": "2D",
-      "set_id": "3468:8995",
-      "variant_id": "3468:9005",
-      "file": "expand-3.svg",
-      "width": 24,
-      "height": 24
+      "set_id": "1557:31715",
+      "variant_id": "1557:31702",
+      "file": "expense-ratio.svg",
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "expire",
@@ -1022,6 +1612,16 @@
       "file": "expire.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "ey",
+      "name": "EY",
+      "category": "Logo",
+      "set_id": "3396:52843",
+      "variant_id": "3396:52853",
+      "file": "ey.svg",
+      "width": 16,
+      "height": 15
     },
     {
       "slug": "eye",
@@ -1074,32 +1674,22 @@
       "height": 24
     },
     {
-      "slug": "family-add",
-      "name": "Family add",
-      "category": "2D",
-      "set_id": "3468:10722",
-      "variant_id": "3468:10805",
-      "file": "family-add.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "fast",
-      "name": "Fast",
-      "category": "2D",
-      "set_id": "3468:15883",
-      "variant_id": "3468:15928",
-      "file": "fast.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
       "slug": "fast",
       "name": "Fast",
       "category": "2D",
       "set_id": "1496:71300",
       "variant_id": "1496:71292",
       "file": "fast.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "fast-tag",
+      "name": "fast tag",
+      "category": "3D",
+      "set_id": "4017:3093",
+      "variant_id": "4017:3089",
+      "file": "fast-tag.svg",
       "width": 24,
       "height": 24
     },
@@ -1112,6 +1702,26 @@
       "file": "fd.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "federal",
+      "name": "Federal",
+      "category": "2D",
+      "set_id": "3055:7833",
+      "variant_id": "3055:7831",
+      "file": "federal.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "federal-bank",
+      "name": "Federal Bank",
+      "category": "Logo",
+      "set_id": "3396:56547",
+      "variant_id": "3396:56548",
+      "file": "federal-bank.svg",
+      "width": 64,
+      "height": 64
     },
     {
       "slug": "file",
@@ -1224,102 +1834,52 @@
       "height": 24
     },
     {
-      "slug": "folder",
-      "name": "Folder",
-      "category": "2D",
-      "set_id": "3468:5575",
-      "variant_id": "3468:5585",
-      "file": "folder.svg",
+      "slug": "first-abu-dhabi-bank",
+      "name": "First Abu Dhabi Bank",
+      "category": "Logo",
+      "set_id": "3396:59775",
+      "variant_id": "3396:59908",
+      "file": "first-abu-dhabi-bank.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "folder-check",
-      "name": "folder check",
-      "category": "2D",
-      "set_id": "3468:5518",
-      "variant_id": "3468:5528",
-      "file": "folder-check.svg",
+      "slug": "first-rand-bank",
+      "name": "First Rand Bank",
+      "category": "Logo",
+      "set_id": "3396:56119",
+      "variant_id": "3396:56120",
+      "file": "first-rand-bank.svg",
+      "width": 128,
+      "height": 64
+    },
+    {
+      "slug": "flinto-box",
+      "name": "Flinto Box",
+      "category": "Logo",
+      "set_id": "3396:49357",
+      "variant_id": "3396:49373",
+      "file": "flinto-box.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "folder-closed",
-      "name": "folder closed",
-      "category": "2D",
-      "set_id": "3468:5119",
-      "variant_id": "3468:5129",
-      "file": "folder-closed.svg",
+      "slug": "flipkart",
+      "name": "flipkart",
+      "category": "Logo",
+      "set_id": "3396:52083",
+      "variant_id": "3396:52117",
+      "file": "flipkart.svg",
       "width": 24,
-      "height": 24
+      "height": 23
     },
     {
-      "slug": "folder-download",
-      "name": "folder download",
-      "category": "2D",
-      "set_id": "3468:5461",
-      "variant_id": "3468:5471",
-      "file": "folder-download.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "folder-lock",
-      "name": "folder lock",
-      "category": "2D",
-      "set_id": "3468:5404",
-      "variant_id": "3468:5414",
-      "file": "folder-lock.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "folder-minus",
-      "name": "folder minus",
-      "category": "2D",
-      "set_id": "3468:5347",
-      "variant_id": "3468:5357",
-      "file": "folder-minus.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "folder-plus",
-      "name": "folder plus",
-      "category": "2D",
-      "set_id": "3468:5290",
-      "variant_id": "3468:5300",
-      "file": "folder-plus.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "folder-question",
-      "name": "folder question",
-      "category": "2D",
-      "set_id": "3468:5233",
-      "variant_id": "3468:5243",
-      "file": "folder-question.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "folder-search",
-      "name": "folder search",
-      "category": "2D",
-      "set_id": "3468:5176",
-      "variant_id": "3468:5186",
-      "file": "folder-search.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "folder-x",
-      "name": "folder x",
-      "category": "2D",
-      "set_id": "3468:6373",
-      "variant_id": "3468:6383",
-      "file": "folder-x.svg",
+      "slug": "fresh-mart",
+      "name": "Fresh Mart",
+      "category": "Logo",
+      "set_id": "3396:49105",
+      "variant_id": "3396:49121",
+      "file": "fresh-mart.svg",
       "width": 24,
       "height": 24
     },
@@ -1334,6 +1894,26 @@
       "height": 24
     },
     {
+      "slug": "gainers",
+      "name": "Gainers",
+      "category": "Filled Icons",
+      "set_id": "3054:75653",
+      "variant_id": "3054:75651",
+      "file": "gainers.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "genpact",
+      "name": "genpact",
+      "category": "Logo",
+      "set_id": "3396:52765",
+      "variant_id": "3396:52777",
+      "file": "genpact.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
       "slug": "globe",
       "name": "Globe",
       "category": "2D",
@@ -1344,12 +1924,42 @@
       "height": 24
     },
     {
+      "slug": "gmail",
+      "name": "Gmail",
+      "category": "Logo",
+      "set_id": "3396:56055",
+      "variant_id": "3396:56065",
+      "file": "gmail.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
       "slug": "goals",
       "name": "Goals",
       "category": "2D",
       "set_id": "1496:70619",
       "variant_id": "1496:70616",
       "file": "goals.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "godrej",
+      "name": "Godrej",
+      "category": "Logo",
+      "set_id": "3396:54954",
+      "variant_id": "3396:54958",
+      "file": "godrej.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
+      "slug": "goibibo",
+      "name": "goibibo",
+      "category": "Logo",
+      "set_id": "3396:51685",
+      "variant_id": "3396:51695",
+      "file": "goibibo.svg",
       "width": 24,
       "height": 24
     },
@@ -1364,12 +1974,92 @@
       "height": 24
     },
     {
+      "slug": "goldman-sachs",
+      "name": "Goldman sachs",
+      "category": "Logo",
+      "set_id": "3396:50237",
+      "variant_id": "3396:50250",
+      "file": "goldman-sachs.svg",
+      "width": 23,
+      "height": 23
+    },
+    {
+      "slug": "google-play",
+      "name": "Google play",
+      "category": "Logo",
+      "set_id": "3396:50079",
+      "variant_id": "3396:50113",
+      "file": "google-play.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "gpay",
+      "name": "Gpay",
+      "category": "Logo",
+      "set_id": "3323:37379",
+      "variant_id": "3323:37378",
+      "file": "gpay.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "groww",
+      "name": "Groww",
+      "category": "Logo",
+      "set_id": "3396:48652",
+      "variant_id": "3396:48668",
+      "file": "groww.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "hana-bank",
+      "name": "Hana Bank",
+      "category": "Logo",
+      "set_id": "3396:57114",
+      "variant_id": "3396:57115",
+      "file": "hana-bank.svg",
+      "width": 219,
+      "height": 48
+    },
+    {
+      "slug": "handelsbanken",
+      "name": "Handelsbanken",
+      "category": "Logo",
+      "set_id": "3396:61456",
+      "variant_id": "3396:61508",
+      "file": "handelsbanken.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "hash",
       "name": "Hash",
       "category": "2D",
       "set_id": "1496:70695",
       "variant_id": "1496:70687",
       "file": "hash.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "hdfc",
+      "name": "HDFC",
+      "category": "Logo",
+      "set_id": "3396:49670",
+      "variant_id": "3396:49671",
+      "file": "hdfc.svg",
+      "width": 240,
+      "height": 40
+    },
+    {
+      "slug": "hdfc-security",
+      "name": "HDFC Security",
+      "category": "Logo",
+      "set_id": "3396:49599",
+      "variant_id": "3396:49630",
+      "file": "hdfc-security.svg",
       "width": 24,
       "height": 24
     },
@@ -1394,14 +2084,34 @@
       "height": 24
     },
     {
-      "slug": "highlight",
-      "name": "Highlight",
-      "category": "2D",
-      "set_id": "5424:8810",
-      "variant_id": "5424:8796",
-      "file": "highlight.svg",
-      "width": 24,
-      "height": 24
+      "slug": "hindustan-petroleum",
+      "name": "hindustan petroleum",
+      "category": "Logo",
+      "set_id": "3396:55288",
+      "variant_id": "3396:55299",
+      "file": "hindustan-petroleum.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "hindustan-unilever",
+      "name": "Hindustan unilever",
+      "category": "Logo",
+      "set_id": "3396:55536",
+      "variant_id": "3396:55589",
+      "file": "hindustan-unilever.svg",
+      "width": 19,
+      "height": 19
+    },
+    {
+      "slug": "hinsutan-zinc",
+      "name": "hinsutan zinc",
+      "category": "Logo",
+      "set_id": "3396:52907",
+      "variant_id": "3396:52911",
+      "file": "hinsutan-zinc.svg",
+      "width": 16,
+      "height": 15
     },
     {
       "slug": "home-02",
@@ -1410,6 +2120,16 @@
       "set_id": "1496:71209",
       "variant_id": "1496:71196",
       "file": "home-02.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "hospital",
+      "name": "hospital",
+      "category": "3D",
+      "set_id": "4021:2156",
+      "variant_id": "4021:2152",
+      "file": "hospital.svg",
       "width": 24,
       "height": 24
     },
@@ -1424,6 +2144,66 @@
       "height": 24
     },
     {
+      "slug": "housing",
+      "name": "Housing",
+      "category": "3D",
+      "set_id": "4017:3134",
+      "variant_id": "4017:3130",
+      "file": "housing.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "hsbc",
+      "name": "HSBC",
+      "category": "Logo",
+      "set_id": "3396:56535",
+      "variant_id": "3396:56536",
+      "file": "hsbc.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "ibm",
+      "name": "IBM",
+      "category": "Logo",
+      "set_id": "3396:53553",
+      "variant_id": "3396:53632",
+      "file": "ibm.svg",
+      "width": 19,
+      "height": 19
+    },
+    {
+      "slug": "icici-bank",
+      "name": "ICICI Bank",
+      "category": "Logo",
+      "set_id": "3396:48767",
+      "variant_id": "3396:48768",
+      "file": "icici-bank.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "icici-prudential",
+      "name": "ICICI Prudential",
+      "category": "Logo",
+      "set_id": "3396:48731",
+      "variant_id": "3396:48747",
+      "file": "icici-prudential.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "idbi",
+      "name": "IDBI",
+      "category": "Logo",
+      "set_id": "3396:56380",
+      "variant_id": "3396:56381",
+      "file": "idbi.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
       "slug": "image",
       "name": "Image",
       "category": "2D",
@@ -1432,6 +2212,76 @@
       "file": "image.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "ind-credit",
+      "name": "IND credit",
+      "category": "Logo",
+      "set_id": "3218:80011",
+      "variant_id": "3218:80010",
+      "file": "ind-credit.svg",
+      "width": 20,
+      "height": 20
+    },
+    {
+      "slug": "ind-global",
+      "name": "IND global",
+      "category": "Logo",
+      "set_id": "3218:79854",
+      "variant_id": "3218:79853",
+      "file": "ind-global.svg",
+      "width": 20,
+      "height": 20
+    },
+    {
+      "slug": "ind-money",
+      "name": "IND money",
+      "category": "Logo",
+      "set_id": "3218:80112",
+      "variant_id": "3218:80111",
+      "file": "ind-money.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "ind-pay",
+      "name": "IND pay",
+      "category": "Logo",
+      "set_id": "3218:79799",
+      "variant_id": "3218:79798",
+      "file": "ind-pay.svg",
+      "width": 20,
+      "height": 20
+    },
+    {
+      "slug": "ind-stocks",
+      "name": "IND stocks",
+      "category": "Logo",
+      "set_id": "3218:79723",
+      "variant_id": "3218:79722",
+      "file": "ind-stocks.svg",
+      "width": 20,
+      "height": 20
+    },
+    {
+      "slug": "indian-bank",
+      "name": "Indian bank",
+      "category": "Logo",
+      "set_id": "3396:56322",
+      "variant_id": "3396:56323",
+      "file": "indian-bank.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "indigo",
+      "name": "Indigo",
+      "category": "Logo",
+      "set_id": "3396:55919",
+      "variant_id": "3396:55928",
+      "file": "indigo.svg",
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "indstocks",
@@ -1444,6 +2294,56 @@
       "height": 24
     },
     {
+      "slug": "indusind-bank",
+      "name": "IndusIND Bank",
+      "category": "Logo",
+      "set_id": "3396:56203",
+      "variant_id": "3396:56204",
+      "file": "indusind-bank.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "industrial-bank-of-korea",
+      "name": "Industrial bank of Korea",
+      "category": "Logo",
+      "set_id": "3396:57016",
+      "variant_id": "3396:57017",
+      "file": "industrial-bank-of-korea.svg",
+      "width": 165,
+      "height": 48
+    },
+    {
+      "slug": "industrial-commercial-bank-of-china",
+      "name": "Industrial \u0026 Commercial Bank of China",
+      "category": "Logo",
+      "set_id": "3396:56718",
+      "variant_id": "3396:56719",
+      "file": "industrial-commercial-bank-of-china.svg",
+      "width": 301,
+      "height": 40
+    },
+    {
+      "slug": "indwheels",
+      "name": "INDwheels",
+      "category": "Logo",
+      "set_id": "3218:80027",
+      "variant_id": "3218:80026",
+      "file": "indwheels.svg",
+      "width": 20,
+      "height": 20
+    },
+    {
+      "slug": "indwheels",
+      "name": "INDwheels",
+      "category": "Logo",
+      "set_id": "5658:15402",
+      "variant_id": "5658:15403",
+      "file": "indwheels.svg",
+      "width": 20,
+      "height": 20
+    },
+    {
       "slug": "info-circle",
       "name": "Info-Circle",
       "category": "2D",
@@ -1452,6 +2352,16 @@
       "file": "info-circle.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "infoedge",
+      "name": "Infoedge",
+      "category": "Logo",
+      "set_id": "3396:55096",
+      "variant_id": "3396:55100",
+      "file": "infoedge.svg",
+      "width": 16,
+      "height": 15
     },
     {
       "slug": "instacash",
@@ -1484,22 +2394,202 @@
       "height": 24
     },
     {
-      "slug": "ipo",
-      "name": "IPO",
-      "category": "2D",
-      "set_id": "5424:15121",
-      "variant_id": "5424:15114",
-      "file": "ipo.svg",
+      "slug": "intel",
+      "name": "Intel",
+      "category": "Logo",
+      "set_id": "3396:50215",
+      "variant_id": "3396:50225",
+      "file": "intel.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
+      "slug": "inusrance-premium",
+      "name": "inusrance premium",
+      "category": "3D",
+      "set_id": "4017:3113",
+      "variant_id": "4017:3110",
+      "file": "inusrance-premium.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "key",
-      "name": "Key",
-      "category": "2D",
-      "set_id": "3468:11009",
-      "variant_id": "3468:11054",
-      "file": "key.svg",
+      "slug": "irctc",
+      "name": "IRCTC",
+      "category": "Logo",
+      "set_id": "3396:62141",
+      "variant_id": "3396:62149",
+      "file": "irctc.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "itc-infoedge",
+      "name": "ITC infoedge",
+      "category": "Logo",
+      "set_id": "3396:55182",
+      "variant_id": "3396:55213",
+      "file": "itc-infoedge.svg",
+      "width": 19,
+      "height": 19
+    },
+    {
+      "slug": "jammu-kashmir-bank",
+      "name": "Jammu Kashmir Bank",
+      "category": "Logo",
+      "set_id": "3396:60084",
+      "variant_id": "3396:60109",
+      "file": "jammu-kashmir-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "jana-small-finance-bank",
+      "name": "Jana Small Finance Bank",
+      "category": "Logo",
+      "set_id": "3396:60497",
+      "variant_id": "3396:60513",
+      "file": "jana-small-finance-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "jar",
+      "name": "Jar",
+      "category": "Logo",
+      "set_id": "3396:62357",
+      "variant_id": "3396:62365",
+      "file": "jar.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "jindal-steel-and-power",
+      "name": "jindal steel and power",
+      "category": "Logo",
+      "set_id": "3396:55381",
+      "variant_id": "3396:55426",
+      "file": "jindal-steel-and-power.svg",
+      "width": 19,
+      "height": 19
+    },
+    {
+      "slug": "jio",
+      "name": "Jio",
+      "category": "Logo",
+      "set_id": "3396:48784",
+      "variant_id": "3396:48803",
+      "file": "jio.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "jio-mart",
+      "name": "JIO mart",
+      "category": "Logo",
+      "set_id": "3396:49928",
+      "variant_id": "3396:49962",
+      "file": "jio-mart.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "jio-payments",
+      "name": "Jio Payments",
+      "category": "Logo",
+      "set_id": "3396:56961",
+      "variant_id": "3396:56962",
+      "file": "jio-payments.svg",
+      "width": 340,
+      "height": 48
+    },
+    {
+      "slug": "jp-morgan",
+      "name": "JP morgan",
+      "category": "Logo",
+      "set_id": "3396:50367",
+      "variant_id": "3396:50425",
+      "file": "jp-morgan.svg",
+      "width": 23,
+      "height": 23
+    },
+    {
+      "slug": "jubilant",
+      "name": "Jubilant",
+      "category": "Logos",
+      "set_id": "3396:54619",
+      "variant_id": "3396:54648",
+      "file": "jubilant.svg",
+      "width": 19,
+      "height": 19
+    },
+    {
+      "slug": "karnatka-bank",
+      "name": "Karnatka bank",
+      "category": "Logo",
+      "set_id": "3396:56953",
+      "variant_id": "3396:56954",
+      "file": "karnatka-bank.svg",
+      "width": 370,
+      "height": 48
+    },
+    {
+      "slug": "karur-vysya",
+      "name": "Karur Vysya",
+      "category": "Logo",
+      "set_id": "3396:56154",
+      "variant_id": "3396:56155",
+      "file": "karur-vysya.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "kookbin-bank",
+      "name": "Kookbin bank",
+      "category": "Logo",
+      "set_id": "3396:57295",
+      "variant_id": "3396:57296",
+      "file": "kookbin-bank.svg",
+      "width": 122,
+      "height": 40
+    },
+    {
+      "slug": "kotak-mahindra",
+      "name": "Kotak Mahindra",
+      "category": "Logo",
+      "set_id": "3396:56628",
+      "variant_id": "3396:56629",
+      "file": "kotak-mahindra.svg",
+      "width": 230,
+      "height": 60
+    },
+    {
+      "slug": "krung-thai-bank",
+      "name": "Krung Thai Bank",
+      "category": "Logo",
+      "set_id": "3396:61229",
+      "variant_id": "3396:61251",
+      "file": "krung-thai-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "l-t",
+      "name": "L\u0026T",
+      "category": "Logo",
+      "set_id": "3396:55118",
+      "variant_id": "3396:55128",
+      "file": "l-t.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
+      "slug": "lakshmi-vilas-bank",
+      "name": "Lakshmi vilas bank",
+      "category": "Logo",
+      "set_id": "3396:59661",
+      "variant_id": "3396:59671",
+      "file": "lakshmi-vilas-bank.svg",
       "width": 24,
       "height": 24
     },
@@ -1524,6 +2614,16 @@
       "height": 24
     },
     {
+      "slug": "lazy-pay",
+      "name": "Lazy pay",
+      "category": "Logo",
+      "set_id": "3396:50043",
+      "variant_id": "3396:50059",
+      "file": "lazy-pay.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "learn",
       "name": "Learn",
       "category": "2D",
@@ -1532,6 +2632,16 @@
       "file": "learn.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "lic",
+      "name": "LIC",
+      "category": "Logo",
+      "set_id": "3396:61676",
+      "variant_id": "3396:61701",
+      "file": "lic.svg",
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "link",
@@ -1564,6 +2674,16 @@
       "height": 24
     },
     {
+      "slug": "linkedin",
+      "name": "Linkedin",
+      "category": "Logo",
+      "set_id": "3396:49784",
+      "variant_id": "3396:49800",
+      "file": "linkedin.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "loader",
       "name": "Loader",
       "category": "2D",
@@ -1574,12 +2694,12 @@
       "height": 24
     },
     {
-      "slug": "lock-open",
-      "name": "Lock open",
-      "category": "2D",
-      "set_id": "3468:11066",
-      "variant_id": "3468:11111",
-      "file": "lock-open.svg",
+      "slug": "loan",
+      "name": "Loan",
+      "category": "3D",
+      "set_id": "4022:82893",
+      "variant_id": "4022:82889",
+      "file": "loan.svg",
       "width": 24,
       "height": 24
     },
@@ -1624,12 +2744,12 @@
       "height": 24
     },
     {
-      "slug": "mail",
-      "name": "Mail",
-      "category": "2D",
-      "set_id": "3468:9237",
-      "variant_id": "3468:9247",
-      "file": "mail.svg",
+      "slug": "losers",
+      "name": "Losers",
+      "category": "Filled Icons",
+      "set_id": "3054:75645",
+      "variant_id": "3054:75642",
+      "file": "losers.svg",
       "width": 24,
       "height": 24
     },
@@ -1644,6 +2764,16 @@
       "height": 24
     },
     {
+      "slug": "makemytrip",
+      "name": "Makemytrip",
+      "category": "Logo",
+      "set_id": "3396:54718",
+      "variant_id": "3396:54731",
+      "file": "makemytrip.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
       "slug": "manage",
       "name": "Manage",
       "category": "2D",
@@ -1652,6 +2782,66 @@
       "file": "manage.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "manpower-group",
+      "name": "Manpower group",
+      "category": "Logo",
+      "set_id": "3396:51218",
+      "variant_id": "3396:51264",
+      "file": "manpower-group.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
+      "slug": "marico",
+      "name": "marico",
+      "category": "Logo",
+      "set_id": "3396:52429",
+      "variant_id": "3396:52442",
+      "file": "marico.svg",
+      "width": 23,
+      "height": 23
+    },
+    {
+      "slug": "mashreq",
+      "name": "Mashreq",
+      "category": "Logo",
+      "set_id": "3396:58582",
+      "variant_id": "3396:58613",
+      "file": "mashreq.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "mastercard",
+      "name": "Mastercard",
+      "category": "Logo",
+      "set_id": "3323:37361",
+      "variant_id": "3323:37360",
+      "file": "mastercard.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "mastercard",
+      "name": "Mastercard",
+      "category": "Logo",
+      "set_id": "3396:50331",
+      "variant_id": "3396:50347",
+      "file": "mastercard.svg",
+      "width": 23,
+      "height": 23
+    },
+    {
+      "slug": "medical",
+      "name": "Medical",
+      "category": "2D",
+      "set_id": "1496:70634",
+      "variant_id": "1496:70632",
+      "file": "medical.svg",
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "medical-square",
@@ -1704,26 +2894,6 @@
       "height": 24
     },
     {
-      "slug": "merge",
-      "name": "Merge",
-      "category": "2D",
-      "set_id": "3468:9109",
-      "variant_id": "3468:9119",
-      "file": "merge.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "mic",
-      "name": "Mic",
-      "category": "2D",
-      "set_id": "5591:1275",
-      "variant_id": "5591:1264",
-      "file": "mic.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
       "slug": "mid-building",
       "name": "Mid Building",
       "category": "2D",
@@ -1734,6 +2904,16 @@
       "height": 24
     },
     {
+      "slug": "mindstree",
+      "name": "mindstree",
+      "category": "Logo",
+      "set_id": "3396:52715",
+      "variant_id": "3396:52723",
+      "file": "mindstree.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
       "slug": "mini-save",
       "name": "Mini save",
       "category": "2D",
@@ -1742,6 +2922,16 @@
       "file": "mini-save.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "ministry-of-coal",
+      "name": "Ministry of coal",
+      "category": "Logo",
+      "set_id": "3396:54491",
+      "variant_id": "3396:54495",
+      "file": "ministry-of-coal.svg",
+      "width": 16,
+      "height": 15
     },
     {
       "slug": "minus",
@@ -1764,54 +2954,44 @@
       "height": 24
     },
     {
-      "slug": "missed-call",
-      "name": "Missed call",
-      "category": "2D",
-      "set_id": "3468:9166",
-      "variant_id": "3468:9179",
-      "file": "missed-call.svg",
+      "slug": "mizuho",
+      "name": "Mizuho",
+      "category": "Logo",
+      "set_id": "3396:57130",
+      "variant_id": "3396:57131",
+      "file": "mizuho.svg",
+      "width": 134,
+      "height": 40
+    },
+    {
+      "slug": "mobikwik",
+      "name": "Mobikwik",
+      "category": "Logo",
+      "set_id": "3396:62285",
+      "variant_id": "3396:62291",
+      "file": "mobikwik.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "mswipe",
+      "name": "Mswipe",
+      "category": "Logo",
+      "set_id": "3396:49141",
+      "variant_id": "3396:49157",
+      "file": "mswipe.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "mobile",
-      "name": "Mobile",
-      "category": "2D",
-      "set_id": "3468:10035",
-      "variant_id": "3468:10045",
-      "file": "mobile.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "more",
-      "name": "More",
-      "category": "uncategorized",
-      "set_id": "3594:2941",
-      "variant_id": "3594:2939",
-      "file": "more.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "mtf",
-      "name": "MTF",
-      "category": "2D",
-      "set_id": "6122:6615",
-      "variant_id": "6122:6608",
-      "file": "mtf.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "mtf-statement",
-      "name": "MTF statement",
-      "category": "2D",
-      "set_id": "5424:8780",
-      "variant_id": "5424:8769",
-      "file": "mtf-statement.svg",
-      "width": 24,
-      "height": 24
+      "slug": "mufg",
+      "name": "MUFG",
+      "category": "Logo",
+      "set_id": "3396:56845",
+      "variant_id": "3396:56846",
+      "file": "mufg.svg",
+      "width": 203,
+      "height": 48
     },
     {
       "slug": "mutual-fund",
@@ -1824,6 +3004,36 @@
       "height": 24
     },
     {
+      "slug": "myntra",
+      "name": "Myntra",
+      "category": "Logo",
+      "set_id": "3396:54462",
+      "variant_id": "3396:54471",
+      "file": "myntra.svg",
+      "width": 20,
+      "height": 18
+    },
+    {
+      "slug": "nainital-bank",
+      "name": "Nainital Bank",
+      "category": "Logo",
+      "set_id": "3396:57303",
+      "variant_id": "3396:57598",
+      "file": "nainital-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "nalco",
+      "name": "Nalco",
+      "category": "Logo",
+      "set_id": "3396:54882",
+      "variant_id": "3396:54897",
+      "file": "nalco.svg",
+      "width": 19,
+      "height": 19
+    },
+    {
       "slug": "nasdaq-100",
       "name": "Nasdaq 100",
       "category": "2D",
@@ -1834,12 +3044,32 @@
       "height": 24
     },
     {
-      "slug": "networth",
-      "name": "Networth",
-      "category": "2D",
-      "set_id": "5486:6523",
-      "variant_id": "5486:6514",
-      "file": "networth.svg",
+      "slug": "natwest",
+      "name": "NatWest",
+      "category": "Logo",
+      "set_id": "3396:61371",
+      "variant_id": "3396:61408",
+      "file": "natwest.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "netflix",
+      "name": "Netflix",
+      "category": "Logo",
+      "set_id": "3396:48891",
+      "variant_id": "3396:48904",
+      "file": "netflix.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "new-india-association",
+      "name": "New India Association",
+      "category": "Logo",
+      "set_id": "3396:48293",
+      "variant_id": "3396:48309",
+      "file": "new-india-association.svg",
       "width": 24,
       "height": 24
     },
@@ -1854,6 +3084,16 @@
       "height": 24
     },
     {
+      "slug": "nike",
+      "name": "Nike",
+      "category": "Logo",
+      "set_id": "3396:49748",
+      "variant_id": "3396:49764",
+      "file": "nike.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "not-equal",
       "name": "Not Equal",
       "category": "2D",
@@ -1864,24 +3104,14 @@
       "height": 24
     },
     {
-      "slug": "note",
-      "name": "Note",
-      "category": "uncategorized",
-      "set_id": "3468:16453",
-      "variant_id": "3468:16498",
-      "file": "note.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "notification-message",
-      "name": "notification message",
+      "slug": "notification-dot",
+      "name": "Notification Dot",
       "category": "2D",
-      "set_id": "3734:2378",
-      "variant_id": "3734:2388",
-      "file": "notification-message.svg",
-      "width": 24,
-      "height": 24
+      "set_id": "4841:50224",
+      "variant_id": "4841:50223",
+      "file": "notification-dot.svg",
+      "width": 8,
+      "height": 8
     },
     {
       "slug": "notification-message",
@@ -1890,6 +3120,16 @@
       "set_id": "1552:31016",
       "variant_id": "1552:31011",
       "file": "notification-message.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "notification-with-badge",
+      "name": "Notification with Badge",
+      "category": "2D",
+      "set_id": "2846:197659",
+      "variant_id": "2846:197658",
+      "file": "notification-with-badge.svg",
       "width": 24,
       "height": 24
     },
@@ -1914,6 +3154,36 @@
       "height": 24
     },
     {
+      "slug": "nsdl-payments-bank",
+      "name": "NSDL Payments Bank",
+      "category": "Logo",
+      "set_id": "3396:58653",
+      "variant_id": "3396:58684",
+      "file": "nsdl-payments-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "ola",
+      "name": "Ola",
+      "category": "Logo",
+      "set_id": "3396:48581",
+      "variant_id": "3396:48612",
+      "file": "ola.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "onecard",
+      "name": "Onecard",
+      "category": "Logo",
+      "set_id": "3396:49249",
+      "variant_id": "3396:49265",
+      "file": "onecard.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "option-chain",
       "name": "Option chain",
       "category": "2D",
@@ -1922,6 +3192,26 @@
       "file": "option-chain.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "optum",
+      "name": "optum",
+      "category": "Logo",
+      "set_id": "3396:52543",
+      "variant_id": "3396:52568",
+      "file": "optum.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
+      "slug": "oracle",
+      "name": "oracle",
+      "category": "Logo",
+      "set_id": "3396:53127",
+      "variant_id": "3396:53131",
+      "file": "oracle.svg",
+      "width": 16,
+      "height": 15
     },
     {
       "slug": "otp",
@@ -1944,6 +3234,16 @@
       "height": 24
     },
     {
+      "slug": "paanch-paisa",
+      "name": "Paanch Paisa",
+      "category": "Logo",
+      "set_id": "3396:48523",
+      "variant_id": "3396:48539",
+      "file": "paanch-paisa.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "paperclip",
       "name": "Paperclip",
       "category": "2D",
@@ -1954,22 +3254,22 @@
       "height": 24
     },
     {
-      "slug": "passcode-locked",
-      "name": "Passcode locked",
-      "category": "2D",
-      "set_id": "3468:11237",
-      "variant_id": "3468:11282",
-      "file": "passcode-locked.svg",
+      "slug": "park",
+      "name": "Park+",
+      "category": "Logo",
+      "set_id": "4613:49205",
+      "variant_id": "4613:49204",
+      "file": "park.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "pause",
-      "name": "Pause",
-      "category": "2D",
-      "set_id": "5072:8293",
-      "variant_id": "5072:8289",
-      "file": "pause.svg",
+      "slug": "payment-error",
+      "name": "Payment Error",
+      "category": "Filled Icons",
+      "set_id": "2633:32147",
+      "variant_id": "2633:32143",
+      "file": "payment-error.svg",
       "width": 24,
       "height": 24
     },
@@ -1984,14 +3284,44 @@
       "height": 24
     },
     {
-      "slug": "pending",
-      "name": "Pending",
-      "category": "2D",
-      "set_id": "6020:2015",
-      "variant_id": "6020:2012",
-      "file": "pending.svg",
+      "slug": "paypal",
+      "name": "Paypal",
+      "category": "Logo",
+      "set_id": "3396:54976",
+      "variant_id": "3396:54994",
+      "file": "paypal.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "paytm",
+      "name": "Paytm",
+      "category": "Logo",
+      "set_id": "3396:48559",
+      "variant_id": "3396:48560",
+      "file": "paytm.svg",
+      "width": 233,
+      "height": 40
+    },
+    {
+      "slug": "paytm-money",
+      "name": "Paytm Money",
+      "category": "Logo",
+      "set_id": "3396:49285",
+      "variant_id": "3396:49301",
+      "file": "paytm-money.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "payu",
+      "name": "payu",
+      "category": "Logo",
+      "set_id": "3396:62501",
+      "variant_id": "3396:62507",
+      "file": "payu.svg",
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "percentage",
@@ -2014,6 +3344,16 @@
       "height": 24
     },
     {
+      "slug": "persistent-systems",
+      "name": "persistent systems",
+      "category": "Logo",
+      "set_id": "3396:51707",
+      "variant_id": "3396:51732",
+      "file": "persistent-systems.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
       "slug": "phone",
       "name": "Phone",
       "category": "2D",
@@ -2032,6 +3372,26 @@
       "file": "phone-call.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "phonepe",
+      "name": "PhonePe",
+      "category": "Logo",
+      "set_id": "3396:48401",
+      "variant_id": "3396:48417",
+      "file": "phonepe.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "pidilite",
+      "name": "Pidilite",
+      "category": "Logo",
+      "set_id": "3396:54513",
+      "variant_id": "3396:54544",
+      "file": "pidilite.svg",
+      "width": 19,
+      "height": 19
     },
     {
       "slug": "pie-chart",
@@ -2054,22 +3414,12 @@
       "height": 24
     },
     {
-      "slug": "pledge",
-      "name": "Pledge",
+      "slug": "placeholder",
+      "name": "Placeholder",
       "category": "2D",
-      "set_id": "5424:8750",
-      "variant_id": "5424:8745",
-      "file": "pledge.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "pledge-statement",
-      "name": "Pledge statement",
-      "category": "2D",
-      "set_id": "5424:8765",
-      "variant_id": "5424:8763",
-      "file": "pledge-statement.svg",
+      "set_id": "4494:69540",
+      "variant_id": "4494:69536",
+      "file": "placeholder.svg",
       "width": 24,
       "height": 24
     },
@@ -2094,14 +3444,24 @@
       "height": 24
     },
     {
-      "slug": "price-alert",
-      "name": "price alert",
-      "category": "2D",
-      "set_id": "2275:37358",
-      "variant_id": "2275:37350",
-      "file": "price-alert.svg",
-      "width": 24,
-      "height": 24
+      "slug": "power-grid",
+      "name": "power grid",
+      "category": "Logo",
+      "set_id": "3396:54209",
+      "variant_id": "3396:54282",
+      "file": "power-grid.svg",
+      "width": 19,
+      "height": 19
+    },
+    {
+      "slug": "practo",
+      "name": "practo",
+      "category": "Logo",
+      "set_id": "3396:62580",
+      "variant_id": "3396:62586",
+      "file": "practo.svg",
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "price-alert",
@@ -2114,12 +3474,12 @@
       "height": 24
     },
     {
-      "slug": "price-tick",
-      "name": "Price tick",
+      "slug": "price-alert",
+      "name": "price alert",
       "category": "2D",
-      "set_id": "7129:10511",
-      "variant_id": "7129:10504",
-      "file": "price-tick.svg",
+      "set_id": "2275:37358",
+      "variant_id": "2275:37350",
+      "file": "price-alert.svg",
       "width": 24,
       "height": 24
     },
@@ -2132,6 +3492,126 @@
       "file": "profile.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "profile-picture",
+      "name": "Profile picture",
+      "category": "2D",
+      "set_id": "2766:22620",
+      "variant_id": "2766:22618",
+      "file": "profile-picture.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "punjab-and-sindh-bank",
+      "name": "Punjab and Sindh Bank",
+      "category": "Logo",
+      "set_id": "3396:60219",
+      "variant_id": "3396:60238",
+      "file": "punjab-and-sindh-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "punjab-national-bank",
+      "name": "Punjab national bank",
+      "category": "Logo",
+      "set_id": "3396:56339",
+      "variant_id": "3396:56340",
+      "file": "punjab-national-bank.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "pvr",
+      "name": "PVR",
+      "category": "Logo",
+      "set_id": "3396:49556",
+      "variant_id": "3396:49575",
+      "file": "pvr.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "qatar-national-bank",
+      "name": "Qatar National Bank",
+      "category": "Logo",
+      "set_id": "3396:60590",
+      "variant_id": "3396:60615",
+      "file": "qatar-national-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "qr-code",
+      "name": "QR code",
+      "category": "2D",
+      "set_id": "1565:33028",
+      "variant_id": "1565:33022",
+      "file": "qr-code.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "qualcomm",
+      "name": "Qualcomm",
+      "category": "Logo",
+      "set_id": "3396:51069",
+      "variant_id": "3396:51094",
+      "file": "qualcomm.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
+      "slug": "quess",
+      "name": "quess",
+      "category": "Logo",
+      "set_id": "3396:53319",
+      "variant_id": "3396:53324",
+      "file": "quess.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
+      "slug": "rabo-bank",
+      "name": "Rabo Bank",
+      "category": "Logo",
+      "set_id": "3396:59513",
+      "variant_id": "3396:59577",
+      "file": "rabo-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "randstad",
+      "name": "randstad",
+      "category": "Logo",
+      "set_id": "3396:52651",
+      "variant_id": "3396:52661",
+      "file": "randstad.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
+      "slug": "razorpay",
+      "name": "Razorpay",
+      "category": "Logo",
+      "set_id": "3396:49499",
+      "variant_id": "3396:49524",
+      "file": "razorpay.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "rbl-bank",
+      "name": "RBL Bank",
+      "category": "Logo",
+      "set_id": "3396:56614",
+      "variant_id": "3396:56615",
+      "file": "rbl-bank.svg",
+      "width": 64,
+      "height": 64
     },
     {
       "slug": "receive-money",
@@ -2154,12 +3634,42 @@
       "height": 24
     },
     {
+      "slug": "redbus",
+      "name": "Redbus",
+      "category": "Logo",
+      "set_id": "3396:62744",
+      "variant_id": "3396:62750",
+      "file": "redbus.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
       "slug": "refresh",
       "name": "Refresh",
       "category": "2D",
       "set_id": "1557:31332",
       "variant_id": "1557:31327",
       "file": "refresh.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "reliance",
+      "name": "reliance",
+      "category": "Logo",
+      "set_id": "3396:52344",
+      "variant_id": "3396:52381",
+      "file": "reliance.svg",
+      "width": 23,
+      "height": 23
+    },
+    {
+      "slug": "reliance-retail",
+      "name": "Reliance Retail",
+      "category": "Logo",
+      "set_id": "3396:50157",
+      "variant_id": "3396:50170",
+      "file": "reliance-retail.svg",
       "width": 24,
       "height": 24
     },
@@ -2204,12 +3714,72 @@
       "height": 24
     },
     {
+      "slug": "rupay",
+      "name": "Rupay",
+      "category": "Logo",
+      "set_id": "3323:37364",
+      "variant_id": "3323:37363",
+      "file": "rupay.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "s-p",
       "name": "S\u0026P",
       "category": "2D",
       "set_id": "2457:7423",
       "variant_id": "2457:7419",
       "file": "s-p.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "sap-labs",
+      "name": "SAP Labs",
+      "category": "Logo",
+      "set_id": "3396:51126",
+      "variant_id": "3396:51166",
+      "file": "sap-labs.svg",
+      "width": 23,
+      "height": 23
+    },
+    {
+      "slug": "sber-bank",
+      "name": "SBER Bank",
+      "category": "Logo",
+      "set_id": "3396:57085",
+      "variant_id": "3396:57086",
+      "file": "sber-bank.svg",
+      "width": 308,
+      "height": 48
+    },
+    {
+      "slug": "sbi",
+      "name": "SBI",
+      "category": "Logo",
+      "set_id": "3396:56371",
+      "variant_id": "3396:56372",
+      "file": "sbi.svg",
+      "width": 137,
+      "height": 48
+    },
+    {
+      "slug": "sbi-mutual-fund",
+      "name": "SBI Mutual Fund",
+      "category": "Logo",
+      "set_id": "3396:49698",
+      "variant_id": "3396:49720",
+      "file": "sbi-mutual-fund.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "sbm-bank",
+      "name": "SBM Bank",
+      "category": "Logo",
+      "set_id": "3396:60262",
+      "variant_id": "3396:60284",
+      "file": "sbm-bank.svg",
       "width": 24,
       "height": 24
     },
@@ -2234,6 +3804,16 @@
       "height": 24
     },
     {
+      "slug": "scotiabank",
+      "name": "Scotiabank",
+      "category": "Logo",
+      "set_id": "3396:56903",
+      "variant_id": "3396:56904",
+      "file": "scotiabank.svg",
+      "width": 168,
+      "height": 24
+    },
+    {
       "slug": "search",
       "name": "Search",
       "category": "2D",
@@ -2250,6 +3830,16 @@
       "set_id": "2782:1389",
       "variant_id": "2782:1385",
       "file": "sell.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "send",
+      "name": "Send",
+      "category": "Filled Icons",
+      "set_id": "2773:22653",
+      "variant_id": "2773:22651",
+      "file": "send.svg",
       "width": 24,
       "height": 24
     },
@@ -2280,16 +3870,6 @@
       "set_id": "2787:12226",
       "variant_id": "2787:12224",
       "file": "share-1.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "share-2",
-      "name": "Share 2",
-      "category": "2D",
-      "set_id": "1496:70378",
-      "variant_id": "1496:70372",
-      "file": "share-2.svg",
       "width": 24,
       "height": 24
     },
@@ -2334,6 +3914,16 @@
       "height": 24
     },
     {
+      "slug": "shinhan-bank",
+      "name": "Shinhan Bank",
+      "category": "Logo",
+      "set_id": "3396:57233",
+      "variant_id": "3396:57234",
+      "file": "shinhan-bank.svg",
+      "width": 283,
+      "height": 48
+    },
+    {
       "slug": "shop",
       "name": "Shop",
       "category": "2D",
@@ -2348,10 +3938,10 @@
       "name": "Shopping Bag",
       "category": "2D",
       "set_id": "2457:7408",
-      "variant_id": "2457:7407",
+      "variant_id": "2457:7405",
       "file": "shopping-bag.svg",
-      "width": 12,
-      "height": 12
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "shopping-cart",
@@ -2360,6 +3950,16 @@
       "set_id": "2455:5025",
       "variant_id": "2455:5015",
       "file": "shopping-cart.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "simpl",
+      "name": "Simpl",
+      "category": "Logo",
+      "set_id": "3396:48437",
+      "variant_id": "3396:48453",
+      "file": "simpl.svg",
       "width": 24,
       "height": 24
     },
@@ -2374,22 +3974,102 @@
       "height": 24
     },
     {
-      "slug": "small-building",
-      "name": "Small building",
-      "category": "2D",
-      "set_id": "3468:16624",
-      "variant_id": "3468:16669",
-      "file": "small-building.svg",
+      "slug": "smbc",
+      "name": "SMBC",
+      "category": "Logo",
+      "set_id": "3396:58026",
+      "variant_id": "3396:58060",
+      "file": "smbc.svg",
       "width": 24,
       "height": 24
     },
     {
-      "slug": "streak",
-      "name": "Streak",
+      "slug": "societe-general",
+      "name": "Societe general",
+      "category": "Logo",
+      "set_id": "3396:57257",
+      "variant_id": "3396:57258",
+      "file": "societe-general.svg",
+      "width": 245,
+      "height": 48
+    },
+    {
+      "slug": "sonali-bank",
+      "name": "Sonali Bank",
+      "category": "Logo",
+      "set_id": "3396:61279",
+      "variant_id": "3396:61319",
+      "file": "sonali-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "south-indian-bank",
+      "name": "South Indian Bank",
+      "category": "Logo",
+      "set_id": "3396:56505",
+      "variant_id": "3396:56506",
+      "file": "south-indian-bank.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "speaker",
+      "name": "Speaker",
+      "category": "uncategorized",
+      "set_id": "2440:780",
+      "variant_id": "2440:778",
+      "file": "speaker.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "standard-chartered",
+      "name": "Standard Chartered",
+      "category": "Logo",
+      "set_id": "3396:56398",
+      "variant_id": "3396:56399",
+      "file": "standard-chartered.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "star",
+      "name": "Star",
       "category": "2D",
-      "set_id": "5261:6215",
-      "variant_id": "5261:6208",
-      "file": "streak.svg",
+      "set_id": "1557:31902",
+      "variant_id": "1557:31899",
+      "file": "star.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "star",
+      "name": "Star",
+      "category": "Filled Icons",
+      "set_id": "3054:75637",
+      "variant_id": "3054:75634",
+      "file": "star.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "starbucks",
+      "name": "Starbucks",
+      "category": "Logo",
+      "set_id": "3396:49069",
+      "variant_id": "3396:49085",
+      "file": "starbucks.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "successful",
+      "name": "Successful",
+      "category": "Filled Icons",
+      "set_id": "2633:32115",
+      "variant_id": "2633:32109",
+      "file": "successful.svg",
       "width": 24,
       "height": 24
     },
@@ -2414,6 +4094,16 @@
       "height": 24
     },
     {
+      "slug": "swiggy",
+      "name": "Swiggy",
+      "category": "Logo",
+      "set_id": "3396:50828",
+      "variant_id": "3396:50853",
+      "file": "swiggy.svg",
+      "width": 23,
+      "height": 23
+    },
+    {
       "slug": "switch",
       "name": "Switch",
       "category": "2D",
@@ -2424,34 +4114,44 @@
       "height": 24
     },
     {
-      "slug": "switch-vertical-1",
-      "name": "Switch vertical 1",
-      "category": "2D",
-      "set_id": "3468:2554",
-      "variant_id": "3468:2564",
-      "file": "switch-vertical-1.svg",
+      "slug": "syntel",
+      "name": "Syntel",
+      "category": "Logo",
+      "set_id": "3396:51324",
+      "variant_id": "3396:51364",
+      "file": "syntel.svg",
       "width": 24,
-      "height": 24
+      "height": 23
     },
     {
-      "slug": "switch-vertical-2",
-      "name": "Switch vertical 2",
-      "category": "2D",
-      "set_id": "3468:2611",
-      "variant_id": "3468:2621",
-      "file": "switch-vertical-2.svg",
-      "width": 24,
-      "height": 24
+      "slug": "tamilnadu-mecantile-bank",
+      "name": "Tamilnadu mecantile bank",
+      "category": "Logo",
+      "set_id": "3396:56707",
+      "variant_id": "3396:56708",
+      "file": "tamilnadu-mecantile-bank.svg",
+      "width": 64,
+      "height": 64
     },
     {
-      "slug": "tablet",
-      "name": "Tablet",
-      "category": "2D",
-      "set_id": "3468:10149",
-      "variant_id": "3468:10159",
-      "file": "tablet.svg",
-      "width": 24,
-      "height": 24
+      "slug": "tanishq",
+      "name": "Tanishq",
+      "category": "Logo",
+      "set_id": "3396:62249",
+      "variant_id": "3396:62255",
+      "file": "tanishq.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "tata",
+      "name": "Tata",
+      "category": "Logo",
+      "set_id": "3396:50792",
+      "variant_id": "3396:50808",
+      "file": "tata.svg",
+      "width": 23,
+      "height": 23
     },
     {
       "slug": "tax-report",
@@ -2484,6 +4184,16 @@
       "height": 24
     },
     {
+      "slug": "techmahindra",
+      "name": "techmahindra",
+      "category": "Logo",
+      "set_id": "3396:53412",
+      "variant_id": "3396:53453",
+      "file": "techmahindra.svg",
+      "width": 19,
+      "height": 19
+    },
+    {
       "slug": "technical",
       "name": "Technical",
       "category": "2D",
@@ -2492,6 +4202,16 @@
       "file": "technical.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "teleperformance",
+      "name": "teleperformance",
+      "category": "Logo",
+      "set_id": "3396:51515",
+      "variant_id": "3396:51543",
+      "file": "teleperformance.svg",
+      "width": 24,
+      "height": 23
     },
     {
       "slug": "text-input",
@@ -2524,14 +4244,14 @@
       "height": 24
     },
     {
-      "slug": "ticket",
-      "name": "Ticket",
-      "category": "2D",
-      "set_id": "3468:16795",
-      "variant_id": "3468:16840",
-      "file": "ticket.svg",
-      "width": 24,
-      "height": 24
+      "slug": "timelease-services",
+      "name": "timelease services",
+      "category": "Logo",
+      "set_id": "3396:52929",
+      "variant_id": "3396:52938",
+      "file": "timelease-services.svg",
+      "width": 16,
+      "height": 16
     },
     {
       "slug": "timer",
@@ -2544,34 +4264,14 @@
       "height": 24
     },
     {
-      "slug": "timer-2",
-      "name": "Timer 2",
-      "category": "2D",
-      "set_id": "6020:2045",
-      "variant_id": "6020:2042",
-      "file": "timer-2.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "tool-1",
-      "name": "Tool 1",
-      "category": "2D",
-      "set_id": "3468:15712",
-      "variant_id": "3468:15757",
-      "file": "tool-1.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "tool-2",
-      "name": "Tool 2",
-      "category": "2D",
-      "set_id": "3468:15769",
-      "variant_id": "3468:15814",
-      "file": "tool-2.svg",
-      "width": 24,
-      "height": 24
+      "slug": "torrent-pharma",
+      "name": "Torrent pharma",
+      "category": "Logo",
+      "set_id": "3396:54932",
+      "variant_id": "3396:54936",
+      "file": "torrent-pharma.svg",
+      "width": 16,
+      "height": 15
     },
     {
       "slug": "transaction",
@@ -2624,14 +4324,124 @@
       "height": 24
     },
     {
-      "slug": "tv",
-      "name": "TV",
-      "category": "2D",
-      "set_id": "3468:10552",
-      "variant_id": "3468:10562",
-      "file": "tv.svg",
+      "slug": "trustmarker",
+      "name": "Trustmarker",
+      "category": "Filled Icons",
+      "set_id": "1845:26438",
+      "variant_id": "1845:26432",
+      "file": "trustmarker.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "tvs-motors",
+      "name": "TVS motors",
+      "category": "Logo",
+      "set_id": "3396:55897",
+      "variant_id": "3396:55901",
+      "file": "tvs-motors.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
+      "slug": "uber",
+      "name": "Uber",
+      "category": "Logo",
+      "set_id": "3396:48688",
+      "variant_id": "3396:48707",
+      "file": "uber.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "uco-bank",
+      "name": "UCO bank",
+      "category": "Logo",
+      "set_id": "3396:56445",
+      "variant_id": "3396:56446",
+      "file": "uco-bank.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "ujjivan-small-finance-bank",
+      "name": "Ujjivan small finance bank",
+      "category": "Logo",
+      "set_id": "3396:57200",
+      "variant_id": "3396:57201",
+      "file": "ujjivan-small-finance-bank.svg",
+      "width": 422,
+      "height": 40
+    },
+    {
+      "slug": "ultratech-cement",
+      "name": "ultratech cement",
+      "category": "Logo",
+      "set_id": "3396:54187",
+      "variant_id": "3396:54191",
+      "file": "ultratech-cement.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
+      "slug": "union-bank",
+      "name": "Union Bank",
+      "category": "Logo",
+      "set_id": "3396:56478",
+      "variant_id": "3396:56479",
+      "file": "union-bank.svg",
+      "width": 64,
+      "height": 64
+    },
+    {
+      "slug": "united-bank-of-india",
+      "name": "United Bank of India",
+      "category": "Logo",
+      "set_id": "3396:58924",
+      "variant_id": "3396:59177",
+      "file": "united-bank-of-india.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "united-breqeries",
+      "name": "United breqeries",
+      "category": "Logo",
+      "set_id": "3396:55847",
+      "variant_id": "3396:55862",
+      "file": "united-breqeries.svg",
+      "width": 19,
+      "height": 19
+    },
+    {
+      "slug": "united-overseas-bank",
+      "name": "United overseas bank",
+      "category": "Logo",
+      "set_id": "3396:56687",
+      "variant_id": "3396:56688",
+      "file": "united-overseas-bank.svg",
+      "width": 141,
+      "height": 40
+    },
+    {
+      "slug": "united-spirits",
+      "name": "united spirits",
+      "category": "Logo",
+      "set_id": "3396:53269",
+      "variant_id": "3396:53277",
+      "file": "united-spirits.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
+      "slug": "upi",
+      "name": "UPI",
+      "category": "Logo",
+      "set_id": "3267:1598",
+      "variant_id": "3267:1597",
+      "file": "upi.svg",
+      "width": 40,
+      "height": 40
     },
     {
       "slug": "upload",
@@ -2654,6 +4464,26 @@
       "height": 24
     },
     {
+      "slug": "upstox",
+      "name": "Upstox",
+      "category": "Logo",
+      "set_id": "3396:48365",
+      "variant_id": "3396:48381",
+      "file": "upstox.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "urban-company",
+      "name": "Urban Company",
+      "category": "Logo",
+      "set_id": "3396:49856",
+      "variant_id": "3396:49872",
+      "file": "urban-company.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "us-stocks",
       "name": "US Stocks",
       "category": "2D",
@@ -2664,31 +4494,11 @@
       "height": 24
     },
     {
-      "slug": "user-add",
-      "name": "User add",
-      "category": "2D",
-      "set_id": "3519:1489",
-      "variant_id": "3519:1499",
-      "file": "user-add.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
       "slug": "user-check",
       "name": "User-Check",
       "category": "2D",
       "set_id": "1557:31474",
       "variant_id": "1557:31470",
-      "file": "user-check.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "user-check",
-      "name": "User check",
-      "category": "2D",
-      "set_id": "3519:1261",
-      "variant_id": "3519:1271",
       "file": "user-check.svg",
       "width": 24,
       "height": 24
@@ -2714,26 +4524,6 @@
       "height": 24
     },
     {
-      "slug": "user-profile-1",
-      "name": "User profile 1",
-      "category": "2D",
-      "set_id": "3468:6886",
-      "variant_id": "3468:6896",
-      "file": "user-profile-1.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
-      "slug": "user-profile-2",
-      "name": "User profile 2",
-      "category": "2D",
-      "set_id": "3468:6829",
-      "variant_id": "3468:6839",
-      "file": "user-profile-2.svg",
-      "width": 24,
-      "height": 24
-    },
-    {
       "slug": "video-recording",
       "name": "Video Recording",
       "category": "2D",
@@ -2754,6 +4544,46 @@
       "height": 24
     },
     {
+      "slug": "vijetha",
+      "name": "Vijetha",
+      "category": "Logo",
+      "set_id": "3396:62407",
+      "variant_id": "3396:62412",
+      "file": "vijetha.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "visa",
+      "name": "Visa",
+      "category": "Logo",
+      "set_id": "3323:37336",
+      "variant_id": "3323:37335",
+      "file": "visa.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "vmware",
+      "name": "vmware",
+      "category": "Logo",
+      "set_id": "3396:51416",
+      "variant_id": "3396:51459",
+      "file": "vmware.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
+      "slug": "vodafone-idea",
+      "name": "Vodafone Idea",
+      "category": "Logo",
+      "set_id": "3396:49393",
+      "variant_id": "3396:49439",
+      "file": "vodafone-idea.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
       "slug": "wallet",
       "name": "Wallet",
       "category": "2D",
@@ -2762,6 +4592,16 @@
       "file": "wallet.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "walmart-tech-services",
+      "name": "walmart tech services",
+      "category": "Logo",
+      "set_id": "3396:52622",
+      "variant_id": "3396:52627",
+      "file": "walmart-tech-services.svg",
+      "width": 16,
+      "height": 15
     },
     {
       "slug": "watchlist",
@@ -2804,6 +4644,86 @@
       "height": 24
     },
     {
+      "slug": "water",
+      "name": "water",
+      "category": "3D",
+      "set_id": "4021:2135",
+      "variant_id": "4021:2132",
+      "file": "water.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "wellsfargo",
+      "name": "wellsfargo",
+      "category": "Logo",
+      "set_id": "3396:52600",
+      "variant_id": "3396:52604",
+      "file": "wellsfargo.svg",
+      "width": 16,
+      "height": 15
+    },
+    {
+      "slug": "west-pac",
+      "name": "West Pac",
+      "category": "Logo",
+      "set_id": "3396:56700",
+      "variant_id": "3396:56701",
+      "file": "west-pac.svg",
+      "width": 211,
+      "height": 40
+    },
+    {
+      "slug": "whatsapp",
+      "name": "Whatsapp",
+      "category": "2D",
+      "set_id": "2871:17546",
+      "variant_id": "2871:17542",
+      "file": "whatsapp.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "winzopay",
+      "name": "Winzopay",
+      "category": "Logo",
+      "set_id": "3396:48329",
+      "variant_id": "3396:48345",
+      "file": "winzopay.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "wns",
+      "name": "WNS",
+      "category": "Logo",
+      "set_id": "3396:52033",
+      "variant_id": "3396:52055",
+      "file": "wns.svg",
+      "width": 24,
+      "height": 23
+    },
+    {
+      "slug": "woori-bank",
+      "name": "Woori bank",
+      "category": "Logo",
+      "set_id": "3396:60647",
+      "variant_id": "3396:60897",
+      "file": "woori-bank.svg",
+      "width": 24,
+      "height": 24
+    },
+    {
+      "slug": "yes-bank",
+      "name": "Yes bank",
+      "category": "Logo",
+      "set_id": "3396:57051",
+      "variant_id": "3396:57052",
+      "file": "yes-bank.svg",
+      "width": 111,
+      "height": 40
+    },
+    {
       "slug": "zap-fast",
       "name": "Zap-Fast",
       "category": "2D",
@@ -2812,12 +4732,35 @@
       "file": "zap-fast.svg",
       "width": 24,
       "height": 24
+    },
+    {
+      "slug": "zerodha",
+      "name": "Zerodha",
+      "category": "Logo",
+      "set_id": "3396:62436",
+      "variant_id": "3396:62441",
+      "file": "zerodha.svg",
+      "width": 16,
+      "height": 16
+    },
+    {
+      "slug": "zs-associates",
+      "name": "zs associates",
+      "category": "Logo",
+      "set_id": "3396:52161",
+      "variant_id": "3396:52240",
+      "file": "zs-associates.svg",
+      "width": 24,
+      "height": 24
     }
   ],
   "categories": [
     "2D",
-    "Icon",
+    "3D",
+    "Filled Icons",
     "Icons",
+    "Logo",
+    "Logos",
     "uncategorized"
   ]
 }

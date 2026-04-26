@@ -1,0 +1,77 @@
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_3396_53863)">
+<mask id="mask0_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
+<path d="M16 0H0V16H16V0Z" fill="currentColor"/>
+</mask>
+<g mask="url(#mask0_3396_53863)">
+<g filter="url(#filter0_d_3396_53863)">
+<path d="M7.99999 15.5C12.2802 15.5 15.75 12.0302 15.75 7.75C15.75 3.4698 12.2802 0 7.99999 0C3.71979 0 0.25 3.4698 0.25 7.75C0.25 12.0302 3.71979 15.5 7.99999 15.5Z" fill="currentColor"/>
+<mask id="mask1_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="1" y="2" width="14" height="11">
+<path d="M14.25 2.5H1.75V13H14.25V2.5Z" fill="currentColor"/>
+</mask>
+<g mask="url(#mask1_3396_53863)">
+<mask id="mask2_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="1" y="2" width="14" height="11">
+<path d="M1.75 2.5H14.274V13H1.75V2.5Z" fill="currentColor"/>
+</mask>
+<g mask="url(#mask2_3396_53863)">
+<mask id="mask3_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="1" y="7" width="9" height="6">
+<path d="M1.75 7.75L5.42788 13L9.22595 10.733L7.08655 7.75H1.75Z" fill="currentColor"/>
+</mask>
+<g mask="url(#mask3_3396_53863)">
+<path d="M1.75 7.75H9.22595V13H1.75V7.75Z" fill="url(#paint0_linear_3396_53863)"/>
+</g>
+<mask id="mask4_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="5" y="7" width="10" height="6">
+<path d="M5.42871 13H10.6691L14.2749 7.75L5.42871 13Z" fill="currentColor"/>
+</mask>
+<g mask="url(#mask4_3396_53863)">
+<path d="M5.42871 7.75H14.2749V13H5.42871V7.75Z" fill="url(#paint1_linear_3396_53863)"/>
+</g>
+<mask id="mask5_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="1" y="2" width="9" height="6">
+<path d="M5.42788 2.5L1.75 7.75H7.08655L9.22595 4.76705L5.42788 2.5Z" fill="currentColor"/>
+</mask>
+<g mask="url(#mask5_3396_53863)">
+<path d="M1.75 2.5H9.22595V7.75H1.75V2.5Z" fill="url(#paint2_linear_3396_53863)"/>
+</g>
+<mask id="mask6_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="5" y="2" width="10" height="6">
+<path d="M5.42871 2.5L14.2749 7.75L10.6691 2.5H5.42871Z" fill="currentColor"/>
+</mask>
+<g mask="url(#mask6_3396_53863)">
+<path d="M5.42871 2.5H14.2749V7.75H5.42871V2.5Z" fill="url(#paint3_linear_3396_53863)"/>
+</g>
+</g>
+</g>
+</g>
+</g>
+</g>
+<defs>
+<filter id="filter0_d_3396_53863" x="-5.95" y="-5.16667" width="27.9" height="27.9" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="1.03333"/>
+<feGaussianBlur stdDeviation="3.1"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.08 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3396_53863"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3396_53863" result="shape"/>
+</filter>
+<linearGradient id="paint0_linear_3396_53863" x1="1.75177" y1="10.3691" x2="9.2293" y2="10.3691" gradientUnits="userSpaceOnUse">
+<stop stop-color="#3D54CE"/>
+<stop offset="1" stop-color="#35CACF"/>
+</linearGradient>
+<linearGradient id="paint1_linear_3396_53863" x1="5.42694" y1="10.3691" x2="14.2845" y2="10.3691" gradientUnits="userSpaceOnUse">
+<stop stop-color="#13457D"/>
+<stop offset="1" stop-color="#279698"/>
+</linearGradient>
+<linearGradient id="paint2_linear_3396_53863" x1="1.74879" y1="5.12105" x2="9.23235" y2="5.12105" gradientUnits="userSpaceOnUse">
+<stop stop-color="#090086"/>
+<stop offset="1" stop-color="#2F96A9"/>
+</linearGradient>
+<linearGradient id="paint3_linear_3396_53863" x1="5.42694" y1="5.12105" x2="14.2845" y2="5.12105" gradientUnits="userSpaceOnUse">
+<stop stop-color="#3B62CA"/>
+<stop offset="1" stop-color="#93DFE3"/>
+</linearGradient>
+<clipPath id="clip0_3396_53863">
+<rect width="16" height="16" fill="currentColor"/>
+</clipPath>
+</defs>
+</svg>

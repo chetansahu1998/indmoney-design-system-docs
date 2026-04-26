@@ -36,6 +36,13 @@ type Icon struct {
 	HeightPx  int    `json:"height"`
 }
 
+// variantInfo is the chosen export variant per icon set.
+type variantInfo struct {
+	variantID string
+	width     int
+	height    int
+}
+
 // Manifest is the JSON written to public/icons/glyph/manifest.json.
 type Manifest struct {
 	GeneratedAt time.Time `json:"generated_at"`
@@ -108,13 +115,6 @@ func Extract(ctx context.Context, c *client.Client, fileKey, iconsPageID, outDir
 		return nil, fmt.Errorf("mkdir %s: %w", outDir, err)
 	}
 
-	type variantInfo struct {
-		idx       int
-		variantID string
-		width     int
-		height    int
-	}
-
 	// Fetch variants in batches of 30 sets at a time (each set has ~14 variants;
 	// fetching 30 sets = ~420 variants which is well within Figma's response size).
 	variants := make([]variantInfo, len(sets))
@@ -144,33 +144,7 @@ func Extract(ctx context.Context, c *client.Client, fileKey, iconsPageID, outDir
 				continue
 			}
 			vchildren, _ := setDoc["children"].([]any)
-			for _, vc := range vchildren {
-				vm, _ := vc.(map[string]any)
-				if vm == nil || vm["type"] != "COMPONENT" {
-					continue
-				}
-				vname, _ := vm["name"].(string)
-				if !strings.Contains(vname, "BG=No") {
-					continue
-				}
-				if !strings.Contains(vname, "Size=24") {
-					continue
-				}
-				vid, _ := vm["id"].(string)
-				bbox, _ := vm["absoluteBoundingBox"].(map[string]any)
-				w := 24
-				h := 24
-				if bbox != nil {
-					if wv, ok := bbox["width"].(float64); ok {
-						w = int(wv)
-					}
-					if hv, ok := bbox["height"].(float64); ok {
-						h = int(hv)
-					}
-				}
-				variants[j] = variantInfo{idx: j, variantID: vid, width: w, height: h}
-				break
-			}
+			variants[j] = pickBestVariant(vchildren)
 		}
 		log.Info("variants resolved", "progress", fmt.Sprintf("%d/%d", end, len(sets)))
 	}
@@ -290,6 +264,79 @@ func Extract(ctx context.Context, c *client.Client, fileKey, iconsPageID, outDir
 	log.Info("manifest written", "icons", len(icons), "categories", len(categories), "path", filepath.Join(outDir, "manifest.json"))
 
 	return manifest, nil
+}
+
+// pickBestVariant chooses the most representative COMPONENT child from a set:
+//
+//   1. BG=No + Size=24 (the canonical icon variant)
+//   2. BG=No + any size in [20, 24, 32, 16, 40, 48, 64]
+//   3. Any variant + Size=24
+//   4. Any variant matching a known size
+//   5. The first COMPONENT child as last resort
+//
+// This catches the ~574 sets that weren't strict-matched in the first pass.
+func pickBestVariant(vchildren []any) variantInfo {
+	type cand struct {
+		id   string
+		name string
+		w, h int
+	}
+	var cands []cand
+	for _, vc := range vchildren {
+		vm, _ := vc.(map[string]any)
+		if vm == nil || vm["type"] != "COMPONENT" {
+			continue
+		}
+		vid, _ := vm["id"].(string)
+		vname, _ := vm["name"].(string)
+		bbox, _ := vm["absoluteBoundingBox"].(map[string]any)
+		w := 24
+		h := 24
+		if bbox != nil {
+			if wv, ok := bbox["width"].(float64); ok {
+				w = int(wv)
+			}
+			if hv, ok := bbox["height"].(float64); ok {
+				h = int(hv)
+			}
+		}
+		cands = append(cands, cand{id: vid, name: vname, w: w, h: h})
+	}
+	if len(cands) == 0 {
+		return variantInfo{}
+	}
+
+	// Score each candidate; higher is better
+	bestScore := -1
+	bestIdx := 0
+	for i, c := range cands {
+		score := 0
+		nm := strings.ToLower(c.name)
+		if strings.Contains(nm, "bg=no") {
+			score += 100
+		}
+		if strings.Contains(nm, "size=24") {
+			score += 50
+		} else if strings.Contains(nm, "size=20") {
+			score += 40
+		} else if strings.Contains(nm, "size=32") {
+			score += 35
+		} else if strings.Contains(nm, "size=16") {
+			score += 30
+		} else if strings.Contains(nm, "size=40") {
+			score += 25
+		}
+		// Prefer reasonable bbox sizes too
+		if c.w >= 16 && c.w <= 32 {
+			score += 5
+		}
+		if score > bestScore {
+			bestScore = score
+			bestIdx = i
+		}
+	}
+	c := cands[bestIdx]
+	return variantInfo{variantID: c.id, width: c.w, height: c.h}
 }
 
 // getImageURLs calls /v1/images for a batch of node IDs and returns id → S3 URL.

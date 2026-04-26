@@ -1,0 +1,23 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_4021_2147)">
+<path d="M5.76052 15.031H5.75985V8.77344H18.2389L18.2391 15.2246C18.2391 15.2275 18.2367 15.2299 18.2337 15.2299C18.1718 16.0853 17.5778 16.9243 16.4498 17.5647C14.0459 18.9297 10.07 18.9297 7.61466 17.5647C6.37341 16.8747 5.75533 15.9542 5.76048 15.031H5.76052Z" fill="currentColor" stroke="currentColor" stroke-width="0.0864"/>
+<path d="M16.4031 6.22792C18.8327 7.63338 18.8537 9.90012 16.4498 11.2652C14.0459 12.6301 10.07 12.6301 7.61463 11.2652C5.15932 9.90012 5.13831 7.63338 7.56796 6.22792C9.99761 4.82246 13.9734 4.82246 16.4031 6.22792H16.4031Z" fill="currentColor"/>
+<path d="M12.0134 4.33789L22.2001 10.1357L12.0134 15.8206L1.80007 10.0792L12.0134 4.33789Z" fill="currentColor"/>
+<path d="M12.0131 3.67969L22.1998 9.47746L12.0131 15.1623L1.79983 9.42103L12.0131 3.67969Z" fill="currentColor" stroke="currentColor" stroke-width="0.0864"/>
+<path d="M22.2001 9.5127V10.1716L12.0134 15.8564V15.1435L22.2001 9.5127Z" fill="currentColor" stroke="currentColor" stroke-width="0.0864"/>
+<path d="M12.0135 15.8562V15.1433L1.80025 9.45605V10.1149L12.0135 15.8562Z" fill="currentColor" stroke="currentColor" stroke-width="0.0864"/>
+<path d="M11.6677 9.87032L7.18301 12.4185L6.73561 12.1694L11.4357 9.45605L11.6677 9.87032Z" fill="currentColor" stroke="currentColor" stroke-width="0.0864"/>
+<path d="M12.6095 9.07047C12.9446 9.2621 12.944 9.57712 12.6081 9.77058C12.2723 9.964 11.724 9.964 11.3897 9.77058C11.0553 9.57708 11.0559 9.2621 11.3911 9.07047C11.7261 8.87885 12.2744 8.87885 12.6095 9.07047Z" fill="currentColor"/>
+<path d="M7.18512 12.419V18.1413L6.73772 17.8307V12.1699L7.18512 12.419Z" fill="currentColor"/>
+<path d="M7.01904 12.4932V18.2155L6.57168 17.9049V12.2441L7.01904 12.4932Z" fill="currentColor" stroke="currentColor" stroke-width="0.0864"/>
+<path d="M7.02012 12.4931L7.18512 12.419L6.73772 12.1699L6.57276 12.2441L7.02012 12.4931Z" fill="currentColor" stroke="currentColor" stroke-width="0.0864"/>
+<path d="M7.02012 18.2143L7.18512 18.1403V12.418L7.02012 12.4921V18.2143Z" fill="currentColor" stroke="currentColor" stroke-width="0.0864"/>
+<path d="M7.01904 18.2149L6.74116 20.3213L6.26059 19.9966L6.57168 17.9043L7.01904 18.2149Z" fill="currentColor" stroke="currentColor" stroke-width="0.0864"/>
+<path d="M7.1851 18.1406L7.62799 19.8764L6.74222 20.3211L7.0201 18.2147L7.1851 18.1406Z" fill="currentColor" stroke="currentColor" stroke-width="0.0864"/>
+</g>
+<defs>
+<clipPath id="clip0_4021_2147">
+<rect width="24" height="24" fill="currentColor"/>
+</clipPath>
+</defs>
+</svg>
