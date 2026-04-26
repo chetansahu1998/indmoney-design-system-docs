@@ -1,30 +1,20 @@
 {
-  "base_colors": 25,
+  "base_colors": 67,
   "brand": "indmoney",
-  "frames": 28,
-  "observations": 952,
-  "pairs": 13,
-  "roles": 16,
+  "frames": 0,
+  "observations": 0,
+  "pairs": 0,
+  "roles": 0,
   "sources": [
     {
       "file_key": "ePcuKLNGHwSubsfaiaryJv",
-      "file_name": "",
+      "file_name": "Glyph- Design System",
       "frames": 0,
       "kind": "design-system",
-      "node_id": "",
+      "node_id": "1631:49817",
       "observations": 0,
       "pairs": 0,
       "text_styles": 18
-    },
-    {
-      "file_key": "2m7ouydXKfxYk7hhjQxrt7",
-      "file_name": "INDstocks V4",
-      "frames": 28,
-      "kind": "product",
-      "node_id": "9578:198724",
-      "observations": 1814,
-      "pairs": 13,
-      "text_styles": 0
     }
   ],
   "text_styles": 18

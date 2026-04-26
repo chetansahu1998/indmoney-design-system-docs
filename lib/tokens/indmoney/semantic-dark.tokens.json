@@ -1,101 +1,31 @@
 {
   "colour": {
-    "constant-light": {
-      "-background": {
+    "special": {
+      "spl-green": {
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            0.9686,
-            0.9686,
-            0.9686
+            0.5725,
+            0.2745,
+            0.2235
           ]
         }
       },
-      "option-chainno20px": {
+      "spl-mustard-yellow": {
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            1,
-            1,
-            1
-          ]
-        }
-      },
-      "sell": {
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            1,
-            1,
-            0.9961
-          ]
-        }
-      }
-    },
-    "danger": {
-      "094": {
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            1,
-            0.3176,
-            0.3176
-          ]
-        }
-      },
-      "single-button-set": {
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.8549,
-            0.2627,
-            0.2627
-          ]
-        }
-      }
-    },
-    "success": {
-      "roundedrectangle": {
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.1137,
-            0.8157,
-            0.5608
-          ]
-        }
-      },
-      "single-button-set": {
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.0941,
-            0.6039,
-            0.3765
+            0.7059,
+            0.549,
+            0.2863
           ]
         }
       }
     },
     "surface": {
-      "1d": {
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.0627,
-            0.0745,
-            0.0667
-          ]
-        }
-      },
-      "all": {
+      "surface-grey-bg": {
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -106,20 +36,40 @@
           ]
         }
       },
-      "quick-buy-indstock-chart": {
+      "surface-grey-bg-dark": {
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            0.0627,
-            0.0745,
-            0.0784
+            0.0392,
+            0.0471,
+            0.051
           ]
         }
-      }
-    },
-    "surface-elevated": {
-      "action-card": {
+      },
+      "surface-grey-separator": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1451,
+            0.1647,
+            0.1922
+          ]
+        }
+      },
+      "surface-grey-separator-dark": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.149,
+            0.1725,
+            0.2039
+          ]
+        }
+      },
+      "surface-white": {
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -129,8 +79,133 @@
             0.1176
           ]
         }
+      }
+    },
+    "surface-market-ticker": {
+      "surface-base-blue": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1294,
+            0.1451,
+            0.1647
+          ]
+        }
       },
-      "single-button-set": {
+      "surface-green": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.0941,
+            0.6039,
+            0.3765
+          ]
+        }
+      },
+      "surface-grey-light": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.3294,
+            0.3451,
+            0.3608
+          ]
+        }
+      },
+      "surface-orange": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9608,
+            0.4902,
+            0.2275
+          ]
+        }
+      },
+      "surface-red": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8549,
+            0.2627,
+            0.2627
+          ]
+        }
+      },
+      "surface-strip-blue": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.102,
+            0.1137,
+            0.1255
+          ]
+        }
+      },
+      "surface-tab": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            1,
+            0.9804
+          ]
+        }
+      },
+      "surface-ticker-green": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1176,
+            0.8314,
+            0.5765
+          ]
+        }
+      },
+      "surface-ticker-red": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9961,
+            0.3765,
+            0.3765
+          ]
+        }
+      }
+    },
+    "tertiary": {
+      "tertiary-aqua": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.0392,
+            0.1882,
+            0.2
+          ]
+        }
+      },
+      "tertiary-blue": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.0863,
+            0.1333,
+            0.2314
+          ]
+        }
+      },
+      "tertiary-green": {
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -141,49 +216,115 @@
           ]
         }
       },
-      "ticker-name": {
+      "tertiary-grey": {
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            0.5725,
-            0.5843,
-            0.5922
+            0.1451,
+            0.1647,
+            0.1922
+          ]
+        }
+      },
+      "tertiary-grey-2": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1176,
+            0.1333,
+            0.1529
+          ]
+        }
+      },
+      "tertiary-orange": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.2667,
+            0.1765,
+            0.1255
+          ]
+        }
+      },
+      "tertiary-purple": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1412,
+            0.1137,
+            0.2118
+          ]
+        }
+      },
+      "tertiary-red": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1804,
+            0.098,
+            0.1059
+          ]
+        }
+      },
+      "tertiary-yellow": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.3137,
+            0.2275,
+            0
           ]
         }
       }
     },
     "text-n-icon": {
-      "add-stop-losstarget-price": {
+      "dark-blue": {
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            0.8431,
-            0.8588,
-            0.8667
+            0.9686,
+            0.9686,
+            0.9686
           ]
         }
       },
-      "company-information": {
+      "grey": {
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            1,
-            1,
-            0.9961
+            0.2902,
+            0.3098,
+            0.3216
           ]
         }
       },
-      "heading": {
+      "tab-text": {
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            0.7412,
-            0.7529,
-            0.7686
+            0.0627,
+            0.0745,
+            0.0667
+          ]
+        }
+      },
+      "white-00": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.2392,
+            0.6,
+            1
           ]
         }
       }

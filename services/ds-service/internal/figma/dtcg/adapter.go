@@ -46,7 +46,17 @@ type Files struct {
 
 func Adapt(r *extractor.Result) (*Files, error) {
 	base := buildBase(r.BasePalette)
-	semLight, semDark := buildSemantic(r.Roles)
+
+	// Glyph-mode: when text-pair tokens were extracted from a design-system
+	// file's Colours section, those are the AUTHORITATIVE semantic tokens
+	// (designer-named, deterministic). Pair-walker output becomes ignored
+	// for the semantic layer.
+	var semLight, semDark Tree
+	if len(r.GlyphColors) > 0 {
+		semLight, semDark = buildGlyphSemantic(r.GlyphColors)
+	} else {
+		semLight, semDark = buildSemantic(r.Roles)
+	}
 
 	baseBytes, err := encode(base)
 	if err != nil {
@@ -205,6 +215,75 @@ func paletteBucket(c types.Color) string {
 		return "blue"
 	}
 	return "other"
+}
+
+// buildGlyphSemantic emits semantic tokens directly from designer-authored
+// Glyph text-pair tokens (the proper source). Each token uses the designer's
+// own name, slugified. Categories come from the section headers in the
+// Glyph Colours frame ("Text & Icons", "Surface", etc.).
+func buildGlyphSemantic(colors []extractor.GlyphColor) (Tree, Tree) {
+	light := Tree{}
+	dark := Tree{}
+
+	for _, c := range colors {
+		category := c.Category
+		if category == "" {
+			category = "other"
+		}
+		leaf := slugify(c.Name)
+		if leaf == "" {
+			continue
+		}
+		path := []string{category, leaf}
+
+		if c.Light != "" {
+			setNested(light, path, Tree{
+				"$type":        "color",
+				"$value":       colorValue(parseHexLocal(c.Light)),
+				"$description": fmt.Sprintf("Glyph: %s · %s", c.Category, c.Name),
+			})
+		}
+		if c.Dark != "" {
+			setNested(dark, path, Tree{
+				"$type":  "color",
+				"$value": colorValue(parseHexLocal(c.Dark)),
+			})
+		}
+	}
+
+	return wrapColour(light), wrapColour(dark)
+}
+
+// parseHexLocal mirrors extractor.parseHex; duplicated here to avoid an extra
+// public surface on extractor.
+func parseHexLocal(hex string) types.Color {
+	h := strings.TrimPrefix(strings.ToUpper(hex), "#")
+	if len(h) < 6 {
+		return types.Color{}
+	}
+	parseByte := func(s string) uint8 {
+		var v uint8
+		for _, c := range s {
+			v <<= 4
+			switch {
+			case c >= '0' && c <= '9':
+				v |= uint8(c - '0')
+			case c >= 'A' && c <= 'F':
+				v |= uint8(c - 'A' + 10)
+			}
+		}
+		return v
+	}
+	c := types.Color{
+		R: parseByte(h[0:2]),
+		G: parseByte(h[2:4]),
+		B: parseByte(h[4:6]),
+		A: 1.0,
+	}
+	if len(h) >= 8 {
+		c.A = float64(parseByte(h[6:8])) / 255
+	}
+	return c
 }
 
 // buildSemantic emits the (light, dark) mode-paired semantic tokens.

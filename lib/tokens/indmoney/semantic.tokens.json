@@ -1,110 +1,34 @@
 {
   "colour": {
-    "constant-light": {
-      "-background": {
-        "$description": "Observed in 25 Figma nodes; canonical name: \"⬛ Background\". Other names: ⬛ Background",
+    "special": {
+      "spl-green": {
+        "$description": "Glyph: special · Spl/ Green",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            0.9686,
-            0.9686,
-            0.9686
+            0.5216,
+            0.2588,
+            0.2118
           ]
         }
       },
-      "option-chainno20px": {
-        "$description": "Observed in 46 Figma nodes; canonical name: \"Option Chain/No/20px\". Other names: Option Chain/No/20px, Expense Ratio/No/24px, search, Arrow right/No/16px, BUY +2 more",
+      "spl-mustard-yellow": {
+        "$description": "Glyph: special · Spl Mustard Yellow",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            1,
-            1,
-            1
-          ]
-        }
-      },
-      "sell": {
-        "$description": "Observed in 20 Figma nodes; canonical name: \"Sell\". Other names: Sell, Buy, Buy Now",
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            1,
-            1,
-            0.9961
-          ]
-        }
-      }
-    },
-    "danger": {
-      "094": {
-        "$description": "Observed in 7 Figma nodes; canonical name: \"▼0.94%\". Other names: ▼0.94%, Ticker Name",
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.8667,
-            0.149,
-            0.1412
-          ]
-        }
-      },
-      "single-button-set": {
-        "$description": "Observed in 9 Figma nodes; canonical name: \"Single Button Set\". Other names: Single Button Set",
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.8667,
-            0.149,
-            0.1451
-          ]
-        }
-      }
-    },
-    "success": {
-      "roundedrectangle": {
-        "$description": "Observed in 73 Figma nodes; canonical name: \"RoundedRectangle\". Other names: RoundedRectangle, SIP, Polygon 10, This Stock, ▲1.02% +1 more",
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.0314,
-            0.6,
-            0.3451
-          ]
-        }
-      },
-      "single-button-set": {
-        "$description": "Observed in 17 Figma nodes; canonical name: \"Single Button Set\". Other names: Single Button Set, Badges",
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.0314,
-            0.6,
-            0.349
+            0.5216,
+            0.2588,
+            0.2118
           ]
         }
       }
     },
     "surface": {
-      "1d": {
-        "$description": "Observed in 9 Figma nodes; canonical name: \"1D\". Other names: 1D, 1W",
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            1,
-            1,
-            0.9843
-          ]
-        }
-      },
-      "all": {
-        "$description": "Observed in 15 Figma nodes; canonical name: \"All\". Other names: Quick Buy: indstock chart, All, Current Handling: Trading Not Allowed",
+      "surface-grey-bg": {
+        "$description": "Glyph: surface · Surface Grey BG",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -115,8 +39,44 @@
           ]
         }
       },
-      "quick-buy-indstock-chart": {
-        "$description": "Observed in 4 Figma nodes; canonical name: \"Quick Buy: indstock chart\". Other names: Quick Buy: indstock chart",
+      "surface-grey-bg-dark": {
+        "$description": "Glyph: surface · Surface Grey BG Dark",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9373,
+            0.9373,
+            0.9451
+          ]
+        }
+      },
+      "surface-grey-separator": {
+        "$description": "Glyph: surface · Surface Grey Separator",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9373,
+            0.9373,
+            0.9373
+          ]
+        }
+      },
+      "surface-grey-separator-dark": {
+        "$description": "Glyph: surface · Surface Grey Separator Dark",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.898,
+            0.898,
+            0.898
+          ]
+        }
+      },
+      "surface-white": {
+        "$description": "Glyph: surface · Surface White",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -128,21 +88,143 @@
         }
       }
     },
-    "surface-elevated": {
-      "action-card": {
-        "$description": "Observed in 18 Figma nodes; canonical name: \"Action Card\". Other names: Action Card, Cash flow",
+    "surface-market-ticker": {
+      "surface-base-blue": {
+        "$description": "Glyph: surface-market-ticker · Surface Base Blue",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1333,
+            0.2039,
+            0.3922
+          ]
+        }
+      },
+      "surface-green": {
+        "$description": "Glyph: surface-market-ticker · Surface Green",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.0314,
+            0.6,
+            0.349
+          ]
+        }
+      },
+      "surface-grey-light": {
+        "$description": "Glyph: surface-market-ticker · Surface Grey Light",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8078,
+            0.8078,
+            0.8078
+          ]
+        }
+      },
+      "surface-orange": {
+        "$description": "Glyph: surface-market-ticker · Surface Orange",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
             1,
-            1,
+            0.4627,
+            0.1922
+          ]
+        }
+      },
+      "surface-red": {
+        "$description": "Glyph: surface-market-ticker · Surface Red",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8667,
+            0.149,
+            0.1451
+          ]
+        }
+      },
+      "surface-strip-blue": {
+        "$description": "Glyph: surface-market-ticker · Surface Strip Blue",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1059,
+            0.1647,
+            0.3137
+          ]
+        }
+      },
+      "surface-tab": {
+        "$description": "Glyph: surface-market-ticker · Surface Tab",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1765,
+            0.2157,
+            0.3098
+          ]
+        }
+      },
+      "surface-ticker-green": {
+        "$description": "Glyph: surface-market-ticker · Surface Ticker Green",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1216,
+            0.8471,
+            0.5882
+          ]
+        }
+      },
+      "surface-ticker-red": {
+        "$description": "Glyph: surface-market-ticker · Surface Ticker Red",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9961,
+            0.3765,
+            0.3765
+          ]
+        }
+      }
+    },
+    "tertiary": {
+      "tertiary-aqua": {
+        "$description": "Glyph: tertiary · Tertiary/ Aqua",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8863,
+            0.9843,
+            0.9843
+          ]
+        }
+      },
+      "tertiary-blue": {
+        "$description": "Glyph: tertiary · Tertiary/ Blue",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8863,
+            0.9569,
             1
           ]
         }
       },
-      "single-button-set": {
-        "$description": "Observed in 9 Figma nodes; canonical name: \"Single Button Set\". Other names: Single Button Set",
+      "tertiary-green": {
+        "$description": "Glyph: tertiary · Tertiary/ Green",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -153,34 +235,94 @@
           ]
         }
       },
-      "ticker-name": {
-        "$description": "Observed in 18 Figma nodes; canonical name: \"Ticker Name\". Other names: Ticker Name, •",
+      "tertiary-grey": {
+        "$description": "Glyph: tertiary · Tertiary/ Grey",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            0.5333,
-            0.5373,
-            0.5412
+            0.9608,
+            0.9686,
+            0.9765
+          ]
+        }
+      },
+      "tertiary-grey-2": {
+        "$description": "Glyph: tertiary · Tertiary/ Grey (2)",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9529,
+            0.9529,
+            0.949
+          ]
+        }
+      },
+      "tertiary-orange": {
+        "$description": "Glyph: tertiary · Tertiary/ Orange",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            0.9294,
+            0.8745
+          ]
+        }
+      },
+      "tertiary-pink": {
+        "$description": "Glyph: tertiary · Tertiary/ Pink",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            0.9373,
+            0.9608
+          ]
+        }
+      },
+      "tertiary-purple": {
+        "$description": "Glyph: tertiary · Tertiary/ Purple",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9608,
+            0.9451,
+            1
+          ]
+        }
+      },
+      "tertiary-red": {
+        "$description": "Glyph: tertiary · Tertiary/ Red",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            0.902,
+            0.8941
+          ]
+        }
+      },
+      "tertiary-yellow": {
+        "$description": "Glyph: tertiary · Tertiary/ Yellow",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            0.9725,
+            0.8863
           ]
         }
       }
     },
     "text-n-icon": {
-      "add-stop-losstarget-price": {
-        "$description": "Observed in 368 Figma nodes; canonical name: \"Add Stop Loss/Target Price\". Other names: Chart, My Portfolio, Live, F\u0026O, Orders +28 more",
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.2235,
-            0.2314,
-            0.2431
-          ]
-        }
-      },
-      "company-information": {
-        "$description": "Observed in 124 Figma nodes; canonical name: \"Company Information\". Other names: Overview, Text, Ticker Name, Insights, Performance +12 more",
+      "black": {
+        "$description": "Glyph: text-n-icon · Black",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -191,8 +333,68 @@
           ]
         }
       },
-      "heading": {
-        "$description": "Observed in 190 Figma nodes; canonical name: \"Heading\". Other names: 1W, 1M, 3M, 1Y, 3Y +21 more",
+      "blue": {
+        "$description": "Glyph: text-n-icon · Blue",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.0039,
+            0.4784,
+            0.9961
+          ]
+        }
+      },
+      "dark-blue": {
+        "$description": "Glyph: text-n-icon · Dark Blue",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1333,
+            0.2039,
+            0.4
+          ]
+        }
+      },
+      "green": {
+        "$description": "Glyph: text-n-icon · Green",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.0314,
+            0.6,
+            0.3451
+          ]
+        }
+      },
+      "grey": {
+        "$description": "Glyph: text-n-icon · Grey",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.5333,
+            0.5373,
+            0.5412
+          ]
+        }
+      },
+      "grey-dark": {
+        "$description": "Glyph: text-n-icon · Grey Dark",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.2235,
+            0.2314,
+            0.2431
+          ]
+        }
+      },
+      "grey-medium": {
+        "$description": "Glyph: text-n-icon · Grey Medium",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -200,6 +402,102 @@
             0.3686,
             0.3765,
             0.3882
+          ]
+        }
+      },
+      "orange": {
+        "$description": "Glyph: text-n-icon · Orange",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            0.4667,
+            0.2039
+          ]
+        }
+      },
+      "red": {
+        "$description": "Glyph: text-n-icon · Red",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8667,
+            0.149,
+            0.1412
+          ]
+        }
+      },
+      "tab-text": {
+        "$description": "Glyph: text-n-icon · Tab Text",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            1,
+            0.9843
+          ]
+        }
+      },
+      "ticker-green": {
+        "$description": "Glyph: text-n-icon · Ticker Green",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.1216,
+            0.8471,
+            0.6784
+          ]
+        }
+      },
+      "ticker-red": {
+        "$description": "Glyph: text-n-icon · Ticker Red",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.9961,
+            0.3765,
+            0.3843
+          ]
+        }
+      },
+      "white-00": {
+        "$description": "Glyph: text-n-icon · White 00",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            1,
+            0.9961
+          ]
+        }
+      },
+      "white-10": {
+        "$description": "Glyph: text-n-icon · White 10",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8431,
+            0.8549,
+            0.8784
+          ]
+        }
+      },
+      "white-20": {
+        "$description": "Glyph: text-n-icon · White 20",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.7529,
+            0.7608,
+            0.7765
           ]
         }
       }

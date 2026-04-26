@@ -76,6 +76,7 @@ type SourceResult struct {
 	Pairs          []types.FramePair
 	Observations   []Observation
 	TextStyles     []TextStyle
+	GlyphColors    []GlyphColor // text-pair tokens from a Glyph Colours section
 }
 
 // Result is the aggregate of one extraction run across all sources.
@@ -86,6 +87,7 @@ type Result struct {
 	Roles        []SemanticRole
 	BasePalette  map[string]types.Color // unique colors observed across all sources
 	TextStyles   []TextStyle            // pooled across all SourceDesignSystem sources
+	GlyphColors  []GlyphColor           // pooled named tokens from any design-system source's Colours section
 }
 
 // CandidateCount and PairCount aggregate across sources for top-level reporting.
@@ -192,8 +194,22 @@ func Run(ctx context.Context, c *client.Client, brand string, sources []Source, 
 	r.Observations = FilterNoise(r.Observations)
 	log.Info("filtered noise observations", "before", beforeFilter, "after", len(r.Observations))
 
+	// Pool Glyph colors from all design-system sources
+	for _, sr := range r.Sources {
+		r.GlyphColors = append(r.GlyphColors, sr.GlyphColors...)
+	}
+
 	r.Roles = clusterRoles(r.Observations)
 	r.BasePalette = buildBasePalette(r.Observations)
+	// If Glyph colors were extracted, augment base palette with their hex values.
+	for _, gc := range r.GlyphColors {
+		if gc.Light != "" {
+			r.BasePalette[gc.Light] = parseHex(gc.Light)
+		}
+		if gc.Dark != "" {
+			r.BasePalette[gc.Dark] = parseHex(gc.Dark)
+		}
+	}
 
 	log.Info("aggregate",
 		"sources", len(r.Sources),
@@ -203,6 +219,7 @@ func Run(ctx context.Context, c *client.Client, brand string, sources []Source, 
 		"roles", len(r.Roles),
 		"base_colors", len(r.BasePalette),
 		"text_styles", len(r.TextStyles),
+		"glyph_colors", len(r.GlyphColors),
 	)
 
 	return r, nil
@@ -243,6 +260,18 @@ func runSource(ctx context.Context, c *client.Client, src Source, log *slog.Logg
 		} else {
 			sr.TextStyles = extractTextStyles(stylesResp, log)
 			log.Info("text styles fetched", "source", src.String(), "count", len(sr.TextStyles))
+		}
+	}
+
+	// 3. Glyph Colours section pass — design-system sources with a node_id
+	// pointing at the Colours SECTION on the Design System page.
+	if src.Kind == SourceDesignSystem && src.NodeID != "" {
+		glyph, err := RunGlyphColours(ctx, c, src.FileKey, src.NodeID, log)
+		if err != nil {
+			log.Warn("glyph colours extraction failed", "err", err)
+		} else {
+			sr.GlyphColors = glyph.Colors
+			log.Info("glyph colours extracted", "count", len(glyph.Colors))
 		}
 	}
 
