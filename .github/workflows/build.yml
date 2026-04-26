@@ -1,0 +1,83 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "*.md", "lib/sync-meta.json"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install:
+    runs-on: ubuntu-22.04
+    outputs:
+      node-version: ${{ steps.read-nvmrc.outputs.node }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read-nvmrc
+        run: echo "node=20" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.read-nvmrc.outputs.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint --if-present
+      - run: npm run tokens:build
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_BRAND: indmoney
+      - uses: actions/upload-artifact@v4
+        with:
+          name: next-build
+          path: |
+            .next
+            lib/tokens-generated
+          retention-days: 1
+
+  go:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: services/ds-service/go.sum
+      - name: Build ds-service
+        working-directory: services/ds-service
+        run: go build ./...
+      - name: Vet
+        working-directory: services/ds-service
+        run: go vet ./...
+
+  token-parity:
+    needs: install
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ hashFiles('package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
+      - run: npm run tokens:build
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_BRAND: indmoney
+      - run: npx playwright test --project=indmoney-light
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3001
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

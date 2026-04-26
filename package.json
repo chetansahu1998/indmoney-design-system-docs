@@ -11,7 +11,8 @@
     "sync:tokens": "tsx scripts/sync-tokens.ts",
     "extract:figma": "cd services/ds-service && go run ./cmd/extractor",
     "tokens:build": "tz build",
-    "prebuild": "tz build"
+    "prebuild": "tz build",
+    "test:parity": "playwright test --project=indmoney-light"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
@@ -35,6 +36,7 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4",
     "@terrazzo/cli": "^2.1.0",
     "@terrazzo/plugin-css": "^2.1.0",
