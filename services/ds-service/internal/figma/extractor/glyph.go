@@ -164,65 +164,139 @@ type glyphPair struct {
 	category string
 }
 
-// extractGlyphPairs walks one frame in DFS order, pairs name TEXT with next hex TEXT,
-// keeps the FIRST occurrence per name, and tags each pair with its current category.
+// textNode is a flat record of one TEXT element's content + bbox.
+type textNode struct {
+	text     string
+	x, y     float64
+	width    float64
+	parentID string // closest non-generic ancestor name (for category attribution)
+}
+
+// extractGlyphPairs walks a frame and pairs (name TEXT, hex TEXT) by SPATIAL
+// PROXIMITY. Each hex's pair is the closest non-hex TEXT (Euclidean) that
+// hasn't already been claimed. This is robust against DFS order and tile
+// layout variation between light and dark frames.
 func extractGlyphPairs(frame map[string]any) []glyphPair {
-	var pairs []glyphPair
-	seen := map[string]bool{}
-	var lastName string
-	currentCategory := ""
+	allTexts := collectTexts(frame, "")
 
-	var walk func(node map[string]any)
-	walk = func(node map[string]any) {
-		if node == nil {
-			return
+	// Find category headers in document order; each subsequent text inherits the
+	// most recent header until a new one appears.
+	type categorized struct {
+		t        textNode
+		category string
+		isHex    bool
+	}
+	current := ""
+	categorized_list := make([]categorized, 0, len(allTexts))
+	for _, t := range allTexts {
+		if cat, ok := glyphCategoryHeaders[t.text]; ok {
+			current = cat
+			continue
 		}
-		t := stringKey(node, "type")
-		name := stringKey(node, "name")
-
-		if t == "TEXT" {
-			chars := strings.TrimSpace(stringKey(node, "characters"))
-			if chars == "" {
-				goto recurse
-			}
-			// Hex match → pair with last name
-			if hexRe.MatchString(chars) {
-				if lastName != "" && !seen[lastName] {
-					pairs = append(pairs, glyphPair{
-						name:     lastName,
-						hex:      strings.ToUpper(chars),
-						category: currentCategory,
-					})
-					seen[lastName] = true
-				}
-				lastName = ""
-				goto recurse
-			}
-			// Category header
-			if cat, ok := glyphCategoryHeaders[chars]; ok {
-				currentCategory = cat
-				lastName = ""
-				goto recurse
-			}
-			// Skip ignored names + headers
-			if glyphIgnoreNames[chars] {
-				goto recurse
-			}
-			// Otherwise, it's a token-name candidate
-			if len(chars) <= 60 {
-				lastName = chars
-			}
+		isHex := hexRe.MatchString(t.text)
+		if !isHex && glyphIgnoreNames[t.text] {
+			continue
 		}
+		categorized_list = append(categorized_list, categorized{t, current, isHex})
+	}
 
-	recurse:
-		_ = name // suppress unused warning when we don't use name
-		for _, c := range arrayKey(node, "children") {
-			walk(asMap(c))
+	// Separate names + hexes
+	var names, hexes []categorized
+	for _, c := range categorized_list {
+		if c.isHex {
+			hexes = append(hexes, c)
+		} else if len(c.t.text) <= 60 {
+			names = append(names, c)
 		}
 	}
 
-	walk(frame)
+	// Greedy pairing by Euclidean distance: for each hex, find the closest
+	// unmatched name. This handles cases where light/dark tile layout differs.
+	used := make([]bool, len(names))
+	pairs := make([]glyphPair, 0, len(hexes))
+	seen := map[string]bool{}
+
+	for _, hx := range hexes {
+		bestI := -1
+		bestDist := 1e18
+		for i, nm := range names {
+			if used[i] {
+				continue
+			}
+			dx := nm.t.x - hx.t.x
+			dy := nm.t.y - hx.t.y
+			// Penalize horizontal distance more than vertical, since name+hex tiles
+			// are typically vertically stacked within a swatch tile.
+			dist := dx*dx*4 + dy*dy
+			// Strong bonus when same y row (within 30px) and name is to the LEFT
+			// of hex — common pattern in Glyph swatch tiles.
+			if absF(dy) < 30 && nm.t.x < hx.t.x {
+				dist *= 0.25
+			}
+			if dist < bestDist {
+				bestDist = dist
+				bestI = i
+			}
+		}
+		if bestI >= 0 {
+			n := names[bestI]
+			if !seen[n.t.text] {
+				pairs = append(pairs, glyphPair{
+					name:     n.t.text,
+					hex:      strings.ToUpper(hx.t.text),
+					category: hx.category,
+				})
+				seen[n.t.text] = true
+			}
+			used[bestI] = true
+		}
+	}
 	return pairs
+}
+
+// collectTexts flattens all TEXT nodes in a frame in DFS order with their bboxes.
+func collectTexts(node map[string]any, parentName string) []textNode {
+	var out []textNode
+	var walk func(n map[string]any, parent string)
+	walk = func(n map[string]any, parent string) {
+		if n == nil {
+			return
+		}
+		t := stringKey(n, "type")
+		nm := stringKey(n, "name")
+		if t == "TEXT" {
+			chars := strings.TrimSpace(stringKey(n, "characters"))
+			if chars != "" {
+				bbox := mapKey(n, "absoluteBoundingBox")
+				out = append(out, textNode{
+					text:     chars,
+					x:        floatKey(bbox, "x"),
+					y:        floatKey(bbox, "y"),
+					width:    floatKey(bbox, "width"),
+					parentID: parent,
+				})
+			}
+		}
+		// Pass non-generic name as parent context
+		nextParent := parent
+		if nm != "" && !strings.HasPrefix(nm, "Frame ") && !strings.HasPrefix(nm, "Rectangle ") &&
+			!strings.HasPrefix(nm, "Group ") && !strings.HasPrefix(nm, "Vector") &&
+			!strings.HasPrefix(nm, "Ellipse ") && !strings.HasPrefix(nm, "Path") {
+			nextParent = nm
+		}
+		for _, c := range arrayKey(n, "children") {
+			walk(asMap(c), nextParent)
+		}
+	}
+	walk(node, parentName)
+	return out
+}
+
+func absF(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // parseHex converts "#RRGGBB[AA]" to types.Color.

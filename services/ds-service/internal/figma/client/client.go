@@ -144,6 +144,10 @@ func (c *Client) Identity(ctx context.Context) (map[string]any, error) {
 	return out, nil
 }
 
+// Token returns the bearer token (used by helper packages that make their own
+// HTTP requests against /v1/images, etc.).
+func (c *Client) Token() string { return c.token }
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s

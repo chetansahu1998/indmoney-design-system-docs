@@ -3,6 +3,16 @@
     "colour": {
       "blue": {
         "$type": "color",
+        "0078b0": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0,
+              0.4706,
+              0.6902
+            ]
+          }
+        },
         "017afe": {
           "$value": {
             "colorSpace": "srgb",
@@ -10,6 +20,36 @@
               0.0039,
               0.4784,
               0.9961
+            ]
+          }
+        },
+        "017aff": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0039,
+              0.4784,
+              1
+            ]
+          }
+        },
+        "0e4b90": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0549,
+              0.2941,
+              0.5647
+            ]
+          }
+        },
+        "185496": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0941,
+              0.3294,
+              0.5882
             ]
           }
         },
@@ -30,6 +70,36 @@
               0.2392,
               0.6,
               1
+            ]
+          }
+        },
+        "492f92": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.2863,
+              0.1843,
+              0.5725
+            ]
+          }
+        },
+        "493388": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.2863,
+              0.2,
+              0.5333
+            ]
+          }
+        },
+        "7e39ac": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.4941,
+              0.2235,
+              0.6745
             ]
           }
         }
@@ -66,13 +136,23 @@
             ]
           }
         },
-        "1ed493": {
+        "1dd08f": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.1137,
+              0.8157,
+              0.5608
+            ]
+          }
+        },
+        "1ed492": {
           "$value": {
             "colorSpace": "srgb",
             "components": [
               0.1176,
               0.8314,
-              0.5765
+              0.5725
             ]
           }
         },
@@ -149,6 +229,16 @@
             ]
           }
         },
+        "979ba2": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.5922,
+              0.6078,
+              0.6353
+            ]
+          }
+        },
         "c0c2c6": {
           "$value": {
             "colorSpace": "srgb",
@@ -156,6 +246,16 @@
               0.7529,
               0.7608,
               0.7765
+            ]
+          }
+        },
+        "cdd2d5": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.8039,
+              0.8235,
+              0.8353
             ]
           }
         },
@@ -387,10 +487,30 @@
               0.2863
             ]
           }
+        },
+        "ff8d4d": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              0.5529,
+              0.302
+            ]
+          }
         }
       },
       "other": {
         "$type": "color",
+        "026a53": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.0078,
+              0.4157,
+              0.3255
+            ]
+          }
+        },
         "0a3033": {
           "$value": {
             "colorSpace": "srgb",
@@ -491,6 +611,36 @@
             ]
           }
         },
+        "351326": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.2078,
+              0.0745,
+              0.149
+            ]
+          }
+        },
+        "384874": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.2196,
+              0.2824,
+              0.4549
+            ]
+          }
+        },
+        "39404a": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.2235,
+              0.251,
+              0.2902
+            ]
+          }
+        },
         "442d20": {
           "$value": {
             "colorSpace": "srgb",
@@ -508,6 +658,26 @@
               0.3137,
               0.2275,
               0
+            ]
+          }
+        },
+        "7b233b": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.4824,
+              0.1373,
+              0.2314
+            ]
+          }
+        },
+        "8540b3": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.5216,
+              0.251,
+              0.702
             ]
           }
         },
@@ -614,6 +784,26 @@
       },
       "red": {
         "$type": "color",
+        "b93e74": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.7255,
+              0.2431,
+              0.4549
+            ]
+          }
+        },
+        "c02569": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.7529,
+              0.1451,
+              0.4118
+            ]
+          }
+        },
         "da4343": {
           "$value": {
             "colorSpace": "srgb",
@@ -671,6 +861,16 @@
               0.9961,
               0.3765,
               0.3843
+            ]
+          }
+        },
+        "ff5151": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              0.3176,
+              0.3176
             ]
           }
         },
