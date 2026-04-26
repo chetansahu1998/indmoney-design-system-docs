@@ -164,31 +164,59 @@ type glyphPair struct {
 	category string
 }
 
+// category attribute for textNode (so categorized inherits from text bucket)
+
 // textNode is a flat record of one TEXT element's content + bbox.
 type textNode struct {
 	text     string
 	x, y     float64
 	width    float64
-	parentID string // closest non-generic ancestor name (for category attribution)
+	parentID string // immediate-parent's id (for tile-grouping)
+	categoryID string // closest non-generic ancestor name
 }
 
-// extractGlyphPairs walks a frame and pairs (name TEXT, hex TEXT) by SPATIAL
-// PROXIMITY. Each hex's pair is the closest non-hex TEXT (Euclidean) that
-// hasn't already been claimed. This is robust against DFS order and tile
-// layout variation between light and dark frames.
+// extractGlyphPairs walks a frame and pairs (name TEXT, hex TEXT) within the
+// SAME parent group (the swatch tile). Tiles in Figma are typically:
+//
+//   GROUP "Token"            ← parent we group by
+//     RECTANGLE swatch fill
+//     TEXT "Blue"            ← name
+//     TEXT "#017AFE"         ← hex
+//
+// Pass 1: group texts by parentID. Tiles with exactly one hex text + at least
+// one name text get paired.
+// Pass 2 (fallback): unmatched hex texts get paired by Euclidean distance to
+// the nearest unmatched name text.
+//
+// Category is taken from the closest non-generic ancestor name OR from the
+// most recent category-header TEXT seen in document order.
 func extractGlyphPairs(frame map[string]any) []glyphPair {
-	allTexts := collectTexts(frame, "")
+	allTexts := collectTexts(frame, "", "")
 
-	// Find category headers in document order; each subsequent text inherits the
-	// most recent header until a new one appears.
+	// Track running category from header TEXTs (top-down y order).
 	type categorized struct {
 		t        textNode
 		category string
 		isHex    bool
 	}
+	sortedTexts := make([]textNode, len(allTexts))
+	copy(sortedTexts, allTexts)
+	// Sort top-down for category pass
+	sortByY := func(a, b textNode) bool {
+		if absF(a.y-b.y) < 4 {
+			return a.x < b.x
+		}
+		return a.y < b.y
+	}
+	for i := 1; i < len(sortedTexts); i++ {
+		for j := i; j > 0 && sortByY(sortedTexts[j], sortedTexts[j-1]); j-- {
+			sortedTexts[j-1], sortedTexts[j] = sortedTexts[j], sortedTexts[j-1]
+		}
+	}
+
 	current := ""
-	categorized_list := make([]categorized, 0, len(allTexts))
-	for _, t := range allTexts {
+	categorized_list := make([]categorized, 0, len(sortedTexts))
+	for _, t := range sortedTexts {
 		if cat, ok := glyphCategoryHeaders[t.text]; ok {
 			current = cat
 			continue
@@ -200,36 +228,86 @@ func extractGlyphPairs(frame map[string]any) []glyphPair {
 		categorized_list = append(categorized_list, categorized{t, current, isHex})
 	}
 
-	// Separate names + hexes
-	var names, hexes []categorized
+	// Pass 1: group by parentID (the immediate Figma parent). For tiles with
+	// 1 hex + 1+ names → pair them.
+	byParent := map[string][]categorized{}
 	for _, c := range categorized_list {
-		if c.isHex {
-			hexes = append(hexes, c)
-		} else if len(c.t.text) <= 60 {
-			names = append(names, c)
+		byParent[c.t.parentID] = append(byParent[c.t.parentID], c)
+	}
+
+	pairs := make([]glyphPair, 0)
+	seen := map[string]bool{}
+	usedHex := map[string]bool{} // key: "x,y,text"
+	usedName := map[string]bool{}
+
+	keyOf := func(t textNode) string {
+		return fmt.Sprintf("%.1f,%.1f,%s", t.x, t.y, t.text)
+	}
+
+	for _, group := range byParent {
+		var hexes []categorized
+		var names []categorized
+		for _, g := range group {
+			if g.isHex {
+				hexes = append(hexes, g)
+			} else if len(g.t.text) <= 60 {
+				names = append(names, g)
+			}
+		}
+		if len(hexes) == 0 || len(names) == 0 {
+			continue
+		}
+		// One hex with one+ name candidates → pick the FIRST name (closest in y to the hex).
+		for _, hx := range hexes {
+			bestI := -1
+			bestDist := 1e18
+			for i, nm := range names {
+				if usedName[keyOf(nm.t)] {
+					continue
+				}
+				dy := absF(nm.t.y - hx.t.y)
+				dx := absF(nm.t.x - hx.t.x)
+				dist := dy*dy + dx*dx*0.25
+				if dist < bestDist {
+					bestDist = dist
+					bestI = i
+				}
+			}
+			if bestI < 0 {
+				continue
+			}
+			n := names[bestI]
+			if !seen[n.t.text] {
+				cat := hx.category
+				if cat == "" {
+					cat = n.category
+				}
+				pairs = append(pairs, glyphPair{
+					name:     n.t.text,
+					hex:      strings.ToUpper(hx.t.text),
+					category: cat,
+				})
+				seen[n.t.text] = true
+			}
+			usedHex[keyOf(hx.t)] = true
+			usedName[keyOf(n.t)] = true
 		}
 	}
 
-	// Greedy pairing by Euclidean distance: for each hex, find the closest
-	// unmatched name. This handles cases where light/dark tile layout differs.
-	used := make([]bool, len(names))
-	pairs := make([]glyphPair, 0, len(hexes))
-	seen := map[string]bool{}
-
-	for _, hx := range hexes {
+	// Pass 2: fallback for hexes whose parent didn't have a name TEXT.
+	for _, hx := range categorized_list {
+		if !hx.isHex || usedHex[keyOf(hx.t)] {
+			continue
+		}
 		bestI := -1
 		bestDist := 1e18
-		for i, nm := range names {
-			if used[i] {
+		for i, nm := range categorized_list {
+			if nm.isHex || usedName[keyOf(nm.t)] || len(nm.t.text) > 60 {
 				continue
 			}
-			dx := nm.t.x - hx.t.x
-			dy := nm.t.y - hx.t.y
-			// Penalize horizontal distance more than vertical, since name+hex tiles
-			// are typically vertically stacked within a swatch tile.
+			dy := absF(nm.t.y - hx.t.y)
+			dx := absF(nm.t.x - hx.t.x)
 			dist := dx*dx*4 + dy*dy
-			// Strong bonus when same y row (within 30px) and name is to the LEFT
-			// of hex — common pattern in Glyph swatch tiles.
 			if absF(dy) < 30 && nm.t.x < hx.t.x {
 				dist *= 0.25
 			}
@@ -239,7 +317,7 @@ func extractGlyphPairs(frame map[string]any) []glyphPair {
 			}
 		}
 		if bestI >= 0 {
-			n := names[bestI]
+			n := categorized_list[bestI]
 			if !seen[n.t.text] {
 				pairs = append(pairs, glyphPair{
 					name:     n.t.text,
@@ -248,47 +326,54 @@ func extractGlyphPairs(frame map[string]any) []glyphPair {
 				})
 				seen[n.t.text] = true
 			}
-			used[bestI] = true
+			usedHex[keyOf(hx.t)] = true
+			usedName[keyOf(n.t)] = true
 		}
 	}
+
 	return pairs
 }
 
-// collectTexts flattens all TEXT nodes in a frame in DFS order with their bboxes.
-func collectTexts(node map[string]any, parentName string) []textNode {
+// collectTexts flattens all TEXT nodes in a frame in DFS order with their
+// bboxes + IMMEDIATE parent id (for tile grouping) + closest non-generic
+// ancestor name (for category attribution).
+func collectTexts(node map[string]any, parentID, categoryID string) []textNode {
 	var out []textNode
-	var walk func(n map[string]any, parent string)
-	walk = func(n map[string]any, parent string) {
+	var walk func(n map[string]any, pID, catID string)
+	walk = func(n map[string]any, pID, catID string) {
 		if n == nil {
 			return
 		}
 		t := stringKey(n, "type")
 		nm := stringKey(n, "name")
+		nodeID := stringKey(n, "id")
 		if t == "TEXT" {
 			chars := strings.TrimSpace(stringKey(n, "characters"))
 			if chars != "" {
 				bbox := mapKey(n, "absoluteBoundingBox")
 				out = append(out, textNode{
-					text:     chars,
-					x:        floatKey(bbox, "x"),
-					y:        floatKey(bbox, "y"),
-					width:    floatKey(bbox, "width"),
-					parentID: parent,
+					text:       chars,
+					x:          floatKey(bbox, "x"),
+					y:          floatKey(bbox, "y"),
+					width:      floatKey(bbox, "width"),
+					parentID:   pID,
+					categoryID: catID,
 				})
 			}
 		}
-		// Pass non-generic name as parent context
-		nextParent := parent
+		// Pass node id as next parent
+		nextParent := nodeID
+		nextCat := catID
 		if nm != "" && !strings.HasPrefix(nm, "Frame ") && !strings.HasPrefix(nm, "Rectangle ") &&
 			!strings.HasPrefix(nm, "Group ") && !strings.HasPrefix(nm, "Vector") &&
 			!strings.HasPrefix(nm, "Ellipse ") && !strings.HasPrefix(nm, "Path") {
-			nextParent = nm
+			nextCat = nm
 		}
 		for _, c := range arrayKey(n, "children") {
-			walk(asMap(c), nextParent)
+			walk(asMap(c), nextParent, nextCat)
 		}
 	}
-	walk(node, parentName)
+	walk(node, parentID, categoryID)
 	return out
 }
 

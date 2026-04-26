@@ -1,8 +1,8 @@
 {
   "colour": {
     "special": {
-      "spl-dark-blue": {
-        "$description": "Glyph: special · Spl/ Dark Blue",
+      "spl-brown": {
+        "$description": "Glyph: special · Spl/ Brown",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -13,8 +13,8 @@
           ]
         }
       },
-      "spl-dark-purple": {
-        "$description": "Glyph: special · Spl/ Dark Purple",
+      "spl-dark-blue": {
+        "$description": "Glyph: special · Spl/ Dark Blue",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -25,15 +25,27 @@
           ]
         }
       },
+      "spl-dark-purple": {
+        "$description": "Glyph: special · Spl/ Dark Purple",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.2863,
+            0.1843,
+            0.5725
+          ]
+        }
+      },
       "spl-green": {
         "$description": "Glyph: special · Spl/ Green",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            0,
-            0.4706,
-            0.6902
+            0.0118,
+            0.5216,
+            0.4078
           ]
         }
       },
@@ -43,9 +55,9 @@
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            0.4824,
-            0.1373,
-            0.2314
+            0,
+            0.4706,
+            0.6902
           ]
         }
       },
@@ -61,15 +73,27 @@
           ]
         }
       },
+      "spl-maroon": {
+        "$description": "Glyph: special · Spl/ Maroon",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.4824,
+            0.1373,
+            0.2314
+          ]
+        }
+      },
       "spl-mustard-yellow": {
         "$description": "Glyph: special · Spl Mustard Yellow",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            0.2863,
-            0.1843,
-            0.5725
+            0.5216,
+            0.2588,
+            0.2118
           ]
         }
       },
@@ -108,6 +132,18 @@
             0.9373,
             0.9373,
             0.9451
+          ]
+        }
+      },
+      "surface-grey-light": {
+        "$description": "Glyph: surface · Surface Grey Light",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8078,
+            0.8078,
+            0.8078
           ]
         }
       },
@@ -167,9 +203,9 @@
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            0.0039,
-            0.4784,
-            1
+            0.2196,
+            0.2824,
+            0.4549
           ]
         }
       },
@@ -179,21 +215,9 @@
         "$value": {
           "colorSpace": "srgb",
           "components": [
-            0.2196,
-            0.2824,
-            0.4549
-          ]
-        }
-      },
-      "surface-grey-light": {
-        "$description": "Glyph: surface-market-ticker · Surface Grey Light",
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.8078,
-            0.8078,
-            0.8078
+            0.0314,
+            0.6,
+            0.349
           ]
         }
       },
@@ -268,57 +292,9 @@
             0.3765
           ]
         }
-      },
-      "tertiary-blue": {
-        "$description": "Glyph: surface-market-ticker · Tertiary/ Blue",
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.0039,
-            0.4784,
-            1
-          ]
-        }
-      },
-      "tertiary-purple": {
-        "$description": "Glyph: surface-market-ticker · Tertiary/ Purple",
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.0314,
-            0.6,
-            0.349
-          ]
-        }
       }
     },
     "tertiary": {
-      "spl-brown": {
-        "$description": "Glyph: tertiary · Spl/ Brown",
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            1,
-            0.902,
-            0.8941
-          ]
-        }
-      },
-      "spl-maroon": {
-        "$description": "Glyph: tertiary · Spl/ Maroon",
-        "$type": "color",
-        "$value": {
-          "colorSpace": "srgb",
-          "components": [
-            0.8863,
-            0.9569,
-            1
-          ]
-        }
-      },
       "tertiary-aqua": {
         "$description": "Glyph: tertiary · Tertiary/ Aqua",
         "$type": "color",
@@ -328,6 +304,18 @@
             0.8863,
             0.9843,
             0.9843
+          ]
+        }
+      },
+      "tertiary-blue": {
+        "$description": "Glyph: tertiary · Tertiary/ Blue",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            0.8863,
+            0.9569,
+            1
           ]
         }
       },
@@ -391,8 +379,8 @@
           ]
         }
       },
-      "tertiary-red": {
-        "$description": "Glyph: tertiary · Tertiary/ Red",
+      "tertiary-purple": {
+        "$description": "Glyph: tertiary · Tertiary/ Purple",
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -400,6 +388,18 @@
             0.9608,
             0.9451,
             1
+          ]
+        }
+      },
+      "tertiary-red": {
+        "$description": "Glyph: tertiary · Tertiary/ Red",
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [
+            1,
+            0.902,
+            0.8941
           ]
         }
       },
