@@ -34,6 +34,9 @@ interface UIState {
   exportOpen: boolean;
   setExportOpen: (open: boolean) => void;
 
+  syncOpen: boolean;
+  setSyncOpen: (open: boolean) => void;
+
   /** Recent search hits — surface in cmdk as the empty-state list. */
   recents: string[];
   pushRecent: (id: string) => void;
@@ -79,6 +82,9 @@ export const useUIStore = create<UIState>()(
 
       exportOpen: false,
       setExportOpen: (open) => set({ exportOpen: open }),
+
+      syncOpen: false,
+      setSyncOpen: (open) => set({ syncOpen: open }),
 
       recents: [],
       pushRecent: (id) =>

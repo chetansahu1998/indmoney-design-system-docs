@@ -28,6 +28,7 @@ export default function Header({
 }) {
   const brand = currentBrand();
   const setExportOpen = useUIStore((s) => s.setExportOpen);
+  const setSyncOpen = useUIStore((s) => s.setSyncOpen);
   const density = useUIStore((s) => s.density);
   const setDensity = useUIStore((s) => s.setDensity);
   const meta = getExtractionMeta();
@@ -173,6 +174,43 @@ export default function Header({
         >
           ⌘K
         </kbd>
+      </motion.button>
+
+      {/* Sync now */}
+      <motion.button
+        onClick={() => setSyncOpen(true)}
+        whileHover={{ scale: 1.04 }}
+        whileTap={{ scale: 0.94 }}
+        transition={{ type: "spring", stiffness: 300, damping: 22 }}
+        title="Sync tokens from Figma"
+        aria-label="Sync tokens from Figma"
+        style={{
+          marginLeft: 8,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          height: 36,
+          padding: "0 12px",
+          background: "var(--accent)",
+          border: "1px solid var(--accent)",
+          borderRadius: 8,
+          cursor: "pointer",
+          color: "#fff",
+          fontSize: 13,
+          fontWeight: 600,
+        }}
+        className="sync-btn"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path
+            d="M2.5 5.5a5.5 5.5 0 019.49-3.79M13.5 10.5a5.5 5.5 0 01-9.49 3.79M14 2v3.5h-3.5M2 14v-3.5h3.5"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <span className="sync-text-label">Sync</span>
       </motion.button>
 
       {/* Download tokens */}

@@ -6,6 +6,7 @@ import Sidebar from "@/components/Sidebar";
 import Footer from "@/components/Footer";
 import SearchModal from "@/components/SearchModal";
 import TokenExportDialog from "@/components/extensions/TokenExportDialog";
+import SyncModal from "@/components/SyncModal";
 import TypographySection from "@/components/sections/TypographySection";
 import ColorSection from "@/components/sections/ColorSection";
 import SpacingSection from "@/components/sections/SpacingSection";
@@ -138,6 +139,11 @@ export default function DocsShell() {
       </AnimatePresence>
 
       <TokenExportDialog />
+
+      <SyncModal
+        open={useUIStore((s) => s.syncOpen)}
+        onClose={() => useUIStore.getState().setSyncOpen(false)}
+      />
 
       <Sidebar
         activeSection={activeSection}
