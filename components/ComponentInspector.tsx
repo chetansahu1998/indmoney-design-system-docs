@@ -1,14 +1,23 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { iconURL, slugifyCategory, type IconEntry, type VariantEntry } from "@/lib/icons/manifest";
 import { useIsMobile } from "@/lib/use-mobile";
 import DataGapPreview from "@/components/ui/DataGapPreview";
 
 /**
- * Component gallery + inline detail inspector. Click a tile → expands in
- * place into a horizontal variant rail with property chips, mirroring
- * Zeplin's component inspector.
+ * Component gallery + Zeplin-style inspector panel.
+ *
+ * Layout:
+ *   [grid taking remaining width] [sticky right-side inspector, 380px]
+ *
+ * The inspector docks to the right when a component is selected. The grid
+ * compresses to fit the remaining space — tiles don't move, they just rewrap
+ * because the parent flex shrinks. Click X or another tile to swap target;
+ * Esc closes.
+ *
+ * Mobile (≤900px): the inspector becomes a bottom sheet instead. Real estate
+ * is too tight for a side dock.
  */
 export default function ComponentInspector({
   entries,
@@ -37,50 +46,175 @@ export default function ComponentInspector({
     [grouped],
   );
 
+  const openEntry = useMemo(
+    () => entries.find((e) => e.slug === openSlug) ?? null,
+    [entries, openSlug],
+  );
+
+  // Esc closes the inspector — keyboard-first UX.
+  useEffect(() => {
+    if (!openSlug) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenSlug(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openSlug]);
+
   return (
     <div>
       <SearchBar value={query} onChange={setQuery} total={entries.length} matches={total} />
 
-      <LayoutGroup>
-        {Array.from(grouped.entries()).map(([cat, list]) => (
-          <div
-            key={cat}
-            id={`cat-${slugifyCategory(cat)}`}
-            style={{ marginBottom: 36, scrollMarginTop: "calc(var(--header-h) + 32px)" }}
-          >
-            <CategoryHeader label={cat} count={list.length} />
+      {/* Two-column layout when inspector is open on desktop; single column
+       *  on mobile (inspector becomes bottom sheet). */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: openEntry && !isMobile ? 24 : 0,
+        }}
+      >
+        {/* Grid column — flex:1 so it absorbs remaining width when the
+         *  inspector is closed (single-column) and shrinks when open. */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <LayoutGroup id="component-grid">
+            {Array.from(grouped.entries()).map(([cat, list]) => (
+              <div
+                key={cat}
+                id={`cat-${slugifyCategory(cat)}`}
+                style={{ marginBottom: 36, scrollMarginTop: "calc(var(--header-h) + 32px)" }}
+              >
+                <CategoryHeader label={cat} count={list.length} />
+                <div
+                  style={{
+                    display: "grid",
+                    // Tile minmax adapts to whether the inspector is docked.
+                    // 240px when docked (more density), 280px otherwise.
+                    gridTemplateColumns: `repeat(auto-fill, minmax(${
+                      isMobile ? 200 : openEntry ? 240 : 280
+                    }px, 1fr))`,
+                    gap: 12,
+                  }}
+                >
+                  {list.map((e) => (
+                    <ComponentTile
+                      key={e.slug + e.variant_id}
+                      entry={e}
+                      open={openSlug === e.slug}
+                      onToggle={() =>
+                        setOpenSlug((v) => (v === e.slug ? null : e.slug))
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </LayoutGroup>
+
+          {total === 0 && (
             <div
               style={{
-                display: "grid",
-                gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 220 : 280}px, 1fr))`,
-                gap: 12,
+                padding: "48px 0",
+                textAlign: "center",
+                color: "var(--text-3)",
+                fontSize: 14,
               }}
             >
-              {list.map((e) => (
-                <ComponentTile
-                  key={e.slug + e.variant_id}
-                  entry={e}
-                  open={openSlug === e.slug}
-                  onToggle={() => setOpenSlug((v) => (v === e.slug ? null : e.slug))}
-                />
-              ))}
+              No components match &ldquo;{query}&rdquo;
             </div>
-
-            <AnimatePresence mode="wait">
-              {(() => {
-                const open = list.find((e) => e.slug === openSlug);
-                if (!open) return null;
-                return <DetailPanel key={open.slug} entry={open} onClose={() => setOpenSlug(null)} />;
-              })()}
-            </AnimatePresence>
-          </div>
-        ))}
-      </LayoutGroup>
-
-      {total === 0 && (
-        <div style={{ padding: "48px 0", textAlign: "center", color: "var(--text-3)", fontSize: 14 }}>
-          No components match &ldquo;{query}&rdquo;
+          )}
         </div>
+
+        {/* Desktop: sticky inspector docks to the right of the grid. Width
+         *  fixed at 380px; sticky so it stays in view as user scrolls the
+         *  grid below.
+         *  Mobile: switches to a bottom sheet (handled below). */}
+        {!isMobile && (
+          <AnimatePresence>
+            {openEntry && (
+              <motion.aside
+                key={openEntry.slug}
+                initial={{ opacity: 0, x: 16 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 16 }}
+                transition={{ type: "spring", stiffness: 320, damping: 28 }}
+                style={{
+                  flex: "0 0 380px",
+                  position: "sticky",
+                  top: "calc(var(--header-h) + 24px)",
+                  maxHeight: "calc(100vh - var(--header-h) - 48px)",
+                  overflow: "hidden",
+                  background: "var(--bg-surface)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 12,
+                  display: "flex",
+                  flexDirection: "column",
+                  boxShadow: "var(--elev-shadow-2)",
+                }}
+              >
+                <InspectorBody entry={openEntry} onClose={() => setOpenSlug(null)} />
+              </motion.aside>
+            )}
+          </AnimatePresence>
+        )}
+      </div>
+
+      {/* Mobile bottom sheet for the inspector — same body, different shell. */}
+      {isMobile && (
+        <AnimatePresence>
+          {openEntry && (
+            <motion.div
+              key="mobile-sheet-backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              onClick={() => setOpenSlug(null)}
+              style={{
+                position: "fixed",
+                inset: 0,
+                background: "var(--scrim)",
+                zIndex: 80,
+              }}
+            >
+              <motion.div
+                initial={{ y: "100%" }}
+                animate={{ y: 0 }}
+                exit={{ y: "100%" }}
+                transition={{ type: "spring", stiffness: 320, damping: 30 }}
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  position: "absolute",
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  maxHeight: "85vh",
+                  background: "var(--bg-page)",
+                  borderTopLeftRadius: 16,
+                  borderTopRightRadius: 16,
+                  border: "1px solid var(--border)",
+                  borderBottom: "none",
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                {/* Drag handle */}
+                <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 0" }}>
+                  <div
+                    style={{
+                      width: 40,
+                      height: 4,
+                      background: "var(--border-strong)",
+                      borderRadius: 2,
+                    }}
+                  />
+                </div>
+                <InspectorBody entry={openEntry} onClose={() => setOpenSlug(null)} />
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       )}
     </div>
   );
@@ -165,22 +299,22 @@ function ComponentTile({
                 flexShrink: 0,
               }}
             >
-              {variantCount} variants
+              {variantCount}
             </span>
           )}
         </div>
         <span style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>
           {entry.width} × {entry.height}
-          {variantCount === 0 && " · single variant"}
+          {variantCount === 0 && " · single"}
         </span>
       </div>
     </motion.button>
   );
 }
 
-/* ── Detail Panel (click-to-expand) ─────────────────────────────────────── */
+/* ── Inspector Body — shared between desktop dock + mobile sheet ────────── */
 
-function DetailPanel({ entry, onClose }: { entry: IconEntry; onClose: () => void }) {
+function InspectorBody({ entry, onClose }: { entry: IconEntry; onClose: () => void }) {
   const variants = entry.variants ?? [];
   const propertyKeys = useMemo(() => {
     const set = new Set<string>();
@@ -189,68 +323,120 @@ function DetailPanel({ entry, onClose }: { entry: IconEntry; onClose: () => void
   }, [variants]);
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, height: 0, marginTop: 0 }}
-      animate={{ opacity: 1, height: "auto", marginTop: 16 }}
-      exit={{ opacity: 0, height: 0, marginTop: 0 }}
-      transition={{ duration: 0.3, ease: [0.33, 1, 0.68, 1] }}
-      style={{
-        overflow: "hidden",
-        background: "var(--bg-surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 12,
-      }}
-    >
+    <>
+      {/* Sticky header inside the inspector — name, slug/meta, close. */}
       <div
         style={{
-          padding: "16px 20px",
+          padding: "16px 18px",
           borderBottom: "1px solid var(--border)",
           display: "flex",
-          alignItems: "center",
-          gap: 16,
-          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: 12,
+          flexShrink: 0,
         }}
       >
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.2px", color: "var(--text-1)" }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div
+            style={{
+              fontSize: 15,
+              fontWeight: 600,
+              letterSpacing: "-0.2px",
+              color: "var(--text-1)",
+              wordBreak: "break-word",
+            }}
+          >
             {entry.name}
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)", marginTop: 4 }}>
-            {entry.slug} · {entry.category} · {variants.length} variant{variants.length === 1 ? "" : "s"}
-            {propertyKeys.length > 0 && ` · ${propertyKeys.join(" · ")}`}
+          <div
+            style={{
+              fontSize: 11,
+              color: "var(--text-3)",
+              fontFamily: "var(--font-mono)",
+              marginTop: 4,
+              wordBreak: "break-all",
+            }}
+          >
+            {entry.slug}
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              color: "var(--text-2)",
+              marginTop: 8,
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 6,
+            }}
+          >
+            <Pill>{entry.category}</Pill>
+            <Pill>
+              {variants.length} variant{variants.length === 1 ? "" : "s"}
+            </Pill>
+            {propertyKeys.length > 0 && (
+              <Pill>{propertyKeys.join(" · ")}</Pill>
+            )}
           </div>
         </div>
         <button
           onClick={onClose}
-          aria-label="Close"
+          aria-label="Close inspector (Esc)"
+          title="Close (Esc)"
           style={{
-            background: "none",
-            border: "none",
+            background: "var(--bg-surface-2)",
+            border: "1px solid var(--border)",
             cursor: "pointer",
-            color: "var(--text-3)",
+            color: "var(--text-2)",
             padding: 6,
+            borderRadius: 6,
             display: "flex",
+            flexShrink: 0,
           }}
         >
-          <svg width="18" height="18" viewBox="0 0 16 16" fill="none">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
           </svg>
         </button>
       </div>
 
-      {variants.length === 0 ? (
-        <EmptyVariants slug={entry.slug} />
-      ) : (
-        <VariantRail variants={variants} />
-      )}
-    </motion.div>
+      {/* Body — variants list, vertical (one per row) so each fills the
+       *  panel width comfortably and shows its property chips beneath. */}
+      <div style={{ overflowY: "auto", flex: 1 }}>
+        {variants.length === 0 ? (
+          <EmptyVariants slug={entry.slug} />
+        ) : (
+          <div style={{ padding: "12px 14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+            {variants.map((v) => (
+              <VariantRow key={v.variant_id} variant={v} />
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function Pill({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: 10,
+        padding: "2px 7px",
+        background: "var(--bg-surface-2)",
+        border: "1px solid var(--border)",
+        borderRadius: 4,
+        color: "var(--text-2)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </span>
   );
 }
 
 function EmptyVariants({ slug }: { slug: string }) {
   return (
-    <div style={{ padding: "20px 8px 8px" }}>
+    <div style={{ padding: "16px 14px" }}>
       <DataGapPreview
         diagnosis={
           <>
@@ -259,16 +445,12 @@ function EmptyVariants({ slug }: { slug: string }) {
               {slug}
             </strong>{" "}
             yet. Variants are each property combination of a Glyph component
-            set (state × size × intent). The variant rail stays empty until
-            the pipeline downloads them.
+            set (state × size × intent).
           </>
         }
         unlock={
           <>
-            Run the variants extractor against the Glyph file. The first run
-            walks every component set; passing{" "}
-            <code style={{ fontFamily: "var(--font-mono)" }}>--max 1</code>{" "}
-            limits to a single set if you&apos;re iterating. Output writes to{" "}
+            Run the variants extractor against the Glyph file. Output writes to{" "}
             <code style={{ fontFamily: "var(--font-mono)" }}>
               public/icons/glyph/variants/
             </code>{" "}
@@ -277,14 +459,7 @@ function EmptyVariants({ slug }: { slug: string }) {
         }
         command="go run ./services/ds-service/cmd/variants"
         preview={
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              opacity: 0.6,
-            }}
-          >
+          <div style={{ display: "flex", gap: 6, opacity: 0.6 }}>
             {[0, 1, 2].map((i) => (
               <motion.div
                 key={i}
@@ -292,8 +467,8 @@ function EmptyVariants({ slug }: { slug: string }) {
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: i * 0.08, duration: 0.4 }}
                 style={{
-                  width: 60,
-                  height: 60,
+                  width: 50,
+                  height: 50,
                   borderRadius: 8,
                   background: "var(--bg-surface-2)",
                   border: "1px dashed var(--border-strong)",
@@ -307,35 +482,17 @@ function EmptyVariants({ slug }: { slug: string }) {
   );
 }
 
-function VariantRail({ variants }: { variants: VariantEntry[] }) {
-  return (
-    <div
-      style={{
-        padding: "20px 8px 24px",
-        overflowX: "auto",
-        WebkitOverflowScrolling: "touch",
-      }}
-    >
-      <div style={{ display: "flex", gap: 14, padding: "0 12px" }}>
-        {variants.map((v) => (
-          <VariantCard key={v.variant_id} variant={v} />
-        ))}
-      </div>
-    </div>
-  );
-}
+/* ── Variant Row (vertical, one per panel row) ──────────────────────────── */
 
-function VariantCard({ variant }: { variant: VariantEntry }) {
+function VariantRow({ variant }: { variant: VariantEntry }) {
   const url = `/icons/glyph/${variant.file.replace(/^variants\//, "variants/")}`;
   return (
     <div
       style={{
-        flex: "0 0 auto",
-        width: Math.min(280, Math.max(140, variant.width / 1.3)),
         display: "flex",
         flexDirection: "column",
-        gap: 10,
-        padding: 12,
+        gap: 8,
+        padding: 10,
         background: "var(--bg-surface-2)",
         border: "1px solid var(--border)",
         borderRadius: 8,
@@ -343,7 +500,7 @@ function VariantCard({ variant }: { variant: VariantEntry }) {
     >
       <div
         style={{
-          minHeight: 96,
+          minHeight: 80,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -357,7 +514,7 @@ function VariantCard({ variant }: { variant: VariantEntry }) {
           src={url}
           alt={variant.name}
           loading="lazy"
-          style={{ maxWidth: "100%", maxHeight: 120, objectFit: "contain" }}
+          style={{ maxWidth: "100%", maxHeight: 110, objectFit: "contain" }}
         />
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
@@ -372,11 +529,9 @@ function VariantCard({ variant }: { variant: VariantEntry }) {
           fontSize: 10,
           fontFamily: "var(--font-mono)",
           color: "var(--text-3)",
-          display: "flex",
-          gap: 8,
         }}
       >
-        <span>{variant.width} × {variant.height}</span>
+        {variant.width} × {variant.height}
       </div>
     </div>
   );

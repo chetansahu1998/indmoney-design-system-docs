@@ -15,12 +15,16 @@ export default function ComponentsPage() {
     .sort((a, b) => b[1].length - a[1].length)
     .map(([cat, list]) => ({ cat, count: list.length }));
 
+  // Each sidebar entry shows the category name + variant/component count
+  // so designers can see "Buttons (13)" before clicking. Without the count
+  // the nav felt static — just a list of words. With counts it's an
+  // information surface.
   const nav: NavGroup[] = [
     {
       label: "Categories",
       defaultOpen: true,
-      sub: cats.map(({ cat }) => ({
-        label: cat,
+      sub: cats.map(({ cat, count }) => ({
+        label: `${cat} · ${count}`,
         href: `#cat-${slugifyCategory(cat)}`,
       })),
     },
