@@ -609,10 +609,11 @@ async function applyFix(p: ApplyFixPayload) {
   const variable = await resolveVariable(p);
   if (!variable) {
     const tried = p.figma_name || p.token_path;
-    toast(
-      `"${tried}" not found locally or in any team library. Make sure the Glyph DS library is enabled in this file (Assets → Libraries).`,
-      "error",
-    );
+    const looksLikeTokenPath = tried.startsWith("colour.") || tried.startsWith("base.");
+    const hint = looksLikeTokenPath
+      ? "This is a DTCG path, not a Figma Variable name — your audit ran before the figma-name fix landed. Re-audit to pick up the proper variable name, or reload the plugin (Plugins → Development → INDmoney DS Sync → Reload plugin)."
+      : "Make sure the Glyph DS library is enabled in this file (Assets → Libraries → Glyph), then retry.";
+    toast(`Couldn't bind "${tried}". ${hint}`, "error");
     return;
   }
   try {
@@ -691,10 +692,11 @@ async function applyGroup(p: ApplyGroupPayload) {
   const variable = await resolveVariable(p);
   if (!variable) {
     const tried = p.figma_name || p.token_path;
-    toast(
-      `"${tried}" not found locally or in any team library. Make sure the Glyph DS library is enabled in this file (Assets → Libraries).`,
-      "error",
-    );
+    const looksLikeTokenPath = tried.startsWith("colour.") || tried.startsWith("base.");
+    const hint = looksLikeTokenPath
+      ? "This is a DTCG path, not a Figma Variable name — your audit ran before the figma-name fix landed. Re-audit to pick up the proper variable name, or reload the plugin (Plugins → Development → INDmoney DS Sync → Reload plugin)."
+      : "Make sure the Glyph DS library is enabled in this file (Assets → Libraries → Glyph), then retry.";
+    toast(`Couldn't bind "${tried}". ${hint}`, "error");
     return;
   }
   let applied = 0;

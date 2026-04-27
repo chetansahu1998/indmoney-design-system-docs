@@ -183,9 +183,11 @@ func TestMatchRejectsWhenNothingFires(t *testing.T) {
 
 func TestFindClosestColor(t *testing.T) {
 	tokens := []DSToken{
-		{Path: "text-1", Hex: "#0E1117", Kind: "color"},
-		{Path: "surface-grey-separator-dark", Hex: "#6F7686", Kind: "color"},
-		{Path: "danger", Hex: "#FE6060", Kind: "color"},
+		// FigmaName populated — only tokens with a real published Variable
+		// are bindable. Empty FigmaName tokens (base primitives) are skipped.
+		{Path: "text-1", Hex: "#0E1117", Kind: "color", FigmaName: "Text-1"},
+		{Path: "surface-grey-separator-dark", Hex: "#6F7686", Kind: "color", FigmaName: "Surface Grey Separator Dark"},
+		{Path: "danger", Hex: "#FE6060", Kind: "color", FigmaName: "Danger"},
 	}
 	tok, d := FindClosestColor("#6B7280", tokens, 0.03)
 	if tok == nil {

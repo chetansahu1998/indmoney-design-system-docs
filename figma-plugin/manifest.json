@@ -15,7 +15,7 @@
     ],
     "reasoning": "Talks to the docs site / ds-service to push selections, fetch tokens, and inject the latest extracted components and icons."
   },
-  "permissions": ["currentuser"],
+  "permissions": ["currentuser", "teamlibrary"],
   "menu": [
     { "name": "Publish selection to DS", "command": "publishSelection" },
     { "separator": true },

@@ -53,8 +53,8 @@ func TestAudit_DetectsScreenAndComputesCoverage(t *testing.T) {
 	}
 
 	tokens := []DSToken{
-		{Path: "surface.surface-grey-separator-dark", Hex: "#6F7686", Kind: "color"},
-		{Path: "text-1", Hex: "#0E1117", Kind: "color"},
+		{Path: "surface.surface-grey-separator-dark", Hex: "#6F7686", Kind: "color", FigmaName: "Surface Grey Separator Dark"},
+		{Path: "text-1", Hex: "#0E1117", Kind: "color", FigmaName: "Text-1"},
 	}
 
 	res := Audit(tree, tokens, nil, Options{

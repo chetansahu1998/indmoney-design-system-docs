@@ -3,6 +3,7 @@ title: "feat: Files tab + audit pipeline + living docs + plugin guardrails (Foun
 type: feat
 status: active
 date: 2026-04-28
+deepened: 2026-04-28
 origin: docs/brainstorms/2026-04-28-files-tab-audit-pipeline-requirements.md
 ---
 
@@ -56,6 +57,15 @@ Existing UX gap: Foundations is the only page in the docs site that *feels* like
 - R26. **Theme-aware tokens chip + audit panels.** No hardcoded grays / blues / blacks in audit UI. Every color reads from `--text-1`, `--text-2`, `--text-3`, `--accent`, `--border`, `--bg-surface`, `--bg-surface-2` already in `app/globals.css`. The audit UI is itself dogfooding the token system it audits.
 - R27. **Real loading + empty states.** Skeleton states match the eventual layout (no "Loading…" text). Empty states are designed (icon + headline + sub + the unlock command) — never bare strings. Stale-data states render at amber-bordered banner above the content.
 - R28. **⌘K cross-index.** Search modal indexes all four asset kinds (icons, components, illustrations, logos) AND all audited files + screens, with section labels matching the page nav. A user typing "trade" finds both the Trade screen audit and the Trade button component.
+
+**Plan-local — added during 2026-04-28 deepening pass:**
+
+- R29. **Multi-file token extraction.** `cmd/variables` extends to walk every Figma file in `lib/audit-files.json` (not just Glyph + Atoms) and aggregate observed dimensions into a single cross-file histogram. Provenance line on the produced JSON names every file scanned.
+- R30. **4-pt grid snap rule for spacing/padding.** No raw px value ships as a token. Every observed value is snapped to the nearest member of the *allowed set*: `{2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72}` (extending in 4-pt steps). Anything off-grid (18, 15, 11, 9, 7, …) becomes a *drift fix*, not a token: "18 used 47× → use 16 or 20", "11 used 12× → use 12". The snapper picks the nearer of the two surrounding grid points; ties prefer the larger value (designer instruction: 15 → 16, not 12).
+- R31. **Radius is property-derived.** Border radius is no longer a free numeric token. The detector classifies each cornerRadius observation by comparing it to the host component's height: `cornerRadius >= height/2 - 1px` ⇒ pill (emit `radius.pill` rule, never a px token); else snap to `{2, 4, 6, 8, 12, 16}`. Off-rule values (23, 19.5, 7, 12.5) become drift fixes naming the nearest allowed value or `radius.pill` when the component is pill-like.
+- R32. **No FOUC on page load.** Section-reveal animations (`fadeUp` + `stagger`) must not fire after a frame of unstyled markup. Each animated section sets its initial opacity to `0` via inline CSS so the SSR/hydration handoff is invisible; the `whileInView` trigger remains the same.
+- R33. **One unified active-state mechanism across all shells.** Foundations + Files + every gallery page share a single `LayoutGroup` + scroll-spy resolver, so the active-pill animation works identically on all routes. Scroll-spy id-mismatch bugs (active state lights up wrong entry) are caught by a dev-mode invariant: every nav `href` must resolve to an existing in-page id.
+- R34. **Extraction philosophy is documented.** A new `docs/extraction-philosophy.md` records the grid + radius rules as project conventions, not CLI flags. CI gate (Phase F follow-on) refuses to commit a `spacing.tokens.json` whose keys aren't in the allowed set.
 
 **Origin actors:** A1 (Designer), A2 (DS lead / engineering owner = Admin Designer), A3 (Operator), A4 (ds-service Go core), A5 (Plugin), A6 (Docs site).
 **Origin flows:** F1 (server sweep), F2 (designer audits in plugin), F3 (DS lead reviews rollup), F4 (designer browses living docs), F5 (DS owner previews token-change blast radius), F6 (staleness banner).
@@ -827,6 +837,210 @@ flowchart TB
 
 ---
 
+### Phase H — Multi-file extraction + grid-snap rules (deepening pass)
+
+- U17. **Multi-file Figma walker + cross-file histogram**
+
+**Goal:** Walk every entry in `lib/audit-files.json` (today: 13 product files) plus the Glyph + Atoms pages, harvest auto-layout dimensions + cornerRadius observations, aggregate into a single histogram with per-file usage counts.
+
+**Requirements:** R29.
+
+**Dependencies:** None (extends the existing `cmd/variables` walker; the 1 GB Figma response cap is already in place).
+
+**Files:**
+- Modify: `services/ds-service/cmd/variables/main.go`
+- Modify: `services/ds-service/internal/figma/extractor/layout_scan.go` (split scan from emission so multiple sources feed one aggregator)
+- Test: `services/ds-service/internal/figma/extractor/layout_scan_test.go`
+
+**Approach:**
+- Add a new mode to `cmd/variables`: `--source manifest` (default `--source glyph-atoms`). Manifest mode reads `lib/audit-files.json` and invokes `RunLayoutPatterns` per file_key, then merges the per-file histograms into a single map keyed by `(propertyKind, value) → {count, files: Set}`.
+- Provenance line on the produced JSON enumerates every file scanned + sweepRun timestamp.
+- Glyph-atoms mode stays so the existing flow keeps working — the new mode is opt-in until U18 lands.
+
+**Test scenarios:**
+- *Happy path.* Two fixture files share `itemSpacing: 16` → merged histogram shows `value=16, count=N1+N2, files=[a,b]`.
+- *Edge case.* Manifest with 0 entries → emit empty histogram + log a warning, exit 0.
+- *Error path.* One file fetch returns a Figma 404 → continue with remaining files, surface failure count in the run summary.
+- *Integration.* End-to-end against the 13 audit-files: aggregate produces a histogram with > 50 distinct spacing values across files.
+
+**Verification:** `go run ./services/ds-service/cmd/variables --source manifest --dry-run` prints a histogram covering every audit-files entry; observed counts match a hand-tally on a 200-node fixture.
+
+---
+
+- U18. **Grid-snap token emitter (4-pt + escape hatches)**
+
+**Goal:** Convert the multi-file histogram into `spacing.tokens.json` containing only allowed-set values; surface every off-grid observation as a drift fix.
+
+**Requirements:** R30.
+
+**Dependencies:** U17.
+
+**Files:**
+- Create: `services/ds-service/internal/audit/grid.go`
+- Modify: `services/ds-service/cmd/variables/main.go` (replace direct emission with snapper)
+- Modify: `services/ds-service/internal/audit/drift.go` (add spacing/padding drift suggestions for off-grid values)
+- Test: `services/ds-service/internal/audit/grid_test.go`
+
+**Approach:**
+- `Snap(observed float64) → (snapped float64, isExact bool, candidates []float64)` returns the nearest allowed value plus alternatives within tolerance. Allowed set: `{2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80, 96, 120}`.
+- Tie-breaking: prefer the larger value (15 → 16, not 12). Designer rule: when in doubt, round up to the next 4-pt step.
+- Emission rule: only snapped values land in `spacing.tokens.json`; the histogram bucket count carries through as `usage_count`. Off-grid values populate a sidecar `lib/audit/spacing-drift.json` listing every observation, its nearest allowed value, and the file/screen/node it came from.
+- Audit drift integration: when a node's observed spacing/padding doesn't match any snapped token, the audit core (existing) uses Snap to produce the FixCandidate's `token_path` + suggestion text.
+
+**Technical design (directional):**
+
+```
+Snap(15) = (16, false, [16, 20])     # ties broken upward
+Snap(11) = (12, false, [12])
+Snap(18) = (16, false, [16, 20])     # equally close to both → list both as candidates
+Snap(16) = (16, true, [16])
+Snap(7)  = (8,  false, [6, 8])       # 6 and 8 in the allowed set
+Snap(2.5)= (2,  false, [2])          # below the floor stays at 2
+```
+
+**Test scenarios:**
+- *Happy path.* `Snap(15) = 16`, `Snap(11) = 12`, `Snap(18) ∈ {16, 20}` with both surfaced as candidates.
+- *Edge case.* `Snap(0) = 0` (no-op), `Snap(72.5) = 72`, `Snap(150) = 120` (top of allowed set; flag overshoot).
+- *Edge case.* Emission keeps `2` and `6` (escape hatches per designer rule); rejects `5`.
+- *Error path.* Off-grid value with usage_count > heat threshold becomes a P1 fix; near-grid (within 1px) becomes P2.
+- *Integration.* Full run on the 13 files: produced `spacing.tokens.json` has every key in the allowed set; sidecar drift file lists every off-grid observation grouped by `(value, nearest)`.
+
+**Verification:** `go run ./services/ds-service/cmd/variables --source manifest` produces a `spacing.tokens.json` whose keys are a strict subset of the allowed set; sidecar `lib/audit/spacing-drift.json` enumerates every rejected value.
+
+---
+
+- U19. **Radius rule + pill detection**
+
+**Goal:** Distinguish pill-style radius (`radius ≈ height/2`) from numeric radius tokens; emit `radius.pill` as a *rule* token; snap numeric radii to `{2, 4, 6, 8, 12, 16}`. Surface off-rule radii as drift fixes.
+
+**Requirements:** R31.
+
+**Dependencies:** U17 (for the histogram with `(radius, host_height)` pairs), U18 (Snap helper).
+
+**Files:**
+- Modify: `services/ds-service/internal/audit/grid.go` (add `ClassifyRadius`)
+- Modify: `services/ds-service/internal/figma/extractor/layout_scan.go` (capture host height alongside cornerRadius)
+- Modify: `services/ds-service/cmd/variables/main.go` (radius emission path)
+- Modify: `services/ds-service/internal/audit/drift.go` (radius drift fixes call `ClassifyRadius`)
+- Test: `services/ds-service/internal/audit/grid_radius_test.go`
+
+**Approach:**
+- Layout scanner emits `(cornerRadius, hostHeight, hostWidth)` triples instead of standalone cornerRadius observations.
+- `ClassifyRadius(r, h)` returns:
+  - `Pill` when `r >= h/2 - 1px` (within 1px tolerance of the pill rule)
+  - `Numeric{snapped, candidates, isExact}` otherwise, snapping to `{2, 4, 6, 8, 12, 16}`
+- Token JSON: `radius.tokens.json` (or merged into spacing.tokens.json under `radius.*`) emits `pill` as a rule entry + numeric tokens for the snapped values. No raw px tokens for `radius.7`, `radius.12.5`, `radius.19.5`.
+- Audit drift: a node with `cornerRadius=23` and `height=46` is flagged with reason "use radius.pill" since 23 = 46/2; a node with `cornerRadius=7` and `height=40` is flagged "drift — use radius.8" (snapped).
+
+**Technical design (directional):**
+
+```
+ClassifyRadius(r=20, h=40)  = Pill                        # 20 >= 40/2
+ClassifyRadius(r=23, h=46)  = Pill                        # 23 >= 46/2
+ClassifyRadius(r=7,  h=40)  = Numeric{snapped=8,  cands=[6,8]}
+ClassifyRadius(r=12.5, h=64) = Numeric{snapped=12, cands=[12,16]}
+ClassifyRadius(r=8,  h=64)  = Numeric{snapped=8,  isExact=true}
+ClassifyRadius(r=4,  h=8)   = Numeric{snapped=4,  isExact=true}   # short component, doesn't auto-pill
+```
+
+**Test scenarios:**
+- *Happy path.* `ClassifyRadius(20, 40)` returns Pill; `ClassifyRadius(8, 64)` returns Numeric exact.
+- *Edge case.* `ClassifyRadius(19.5, 40)` returns Pill (tolerance band).
+- *Edge case.* Square-ish components: `ClassifyRadius(4, 8)` returns Numeric (don't false-positive pill on tiny chips).
+- *Error path.* Radius observed without a host_height (root frame) — fall back to Numeric snap, never claim Pill.
+- *Integration.* Full run on the 13 files: every Pill case is detected; `radius.pill` lands as the only rule entry; numeric radii are all in `{2, 4, 6, 8, 12, 16}`.
+
+**Verification:** Re-extract on the 13 files; sample 20 button instances by hand and confirm every pill-shaped one classifies as Pill; sample 20 card-style components and confirm their radii snap correctly.
+
+---
+
+### Phase J — Foundations + nav UX cleanup (deepening pass)
+
+- U20. **Unified active-state + LayoutGroup across all shells**
+
+**Goal:** One scroll-spy + active-pill animation mechanism shared across DocsShell (Foundations) and FilesShell (every other route). Eliminate the per-shell layoutId duplication that breaks the active state on /files and gallery pages.
+
+**Requirements:** R33; honors R23 (Foundations parity).
+
+**Dependencies:** U11 (FilesShell) — already shipped.
+
+**Files:**
+- Create: `lib/use-active-section.ts` — exported hook wrapping IntersectionObserver + URL hash sync.
+- Modify: `components/DocsShell.tsx` — adopt the hook + a single `<LayoutGroup id="sidebar">` wrapping the sidebar.
+- Modify: `components/files/FilesShell.tsx` — same hook + LayoutGroup id, so the pill animation rolls between Foundations and File Detail navs visually.
+- Modify: `components/Sidebar.tsx` — read `activeSection` from the hook instead of `useUIStore` (the store still owns mobile-drawer state but stops being the source of truth for scroll-spy).
+
+**Approach:**
+- `useActiveSection(sectionIds: string[])` returns the active id and writes the URL hash. Centralizes the IntersectionObserver options (`rootMargin: "-15% 0px -75% 0px"`, sort by top-position) so every consumer behaves identically.
+- Dev-mode invariant: hook iterates the input ids and `console.warn`s if any id has no DOM match — flushes the silent-mismatch class of bugs the user reported.
+- All sidebar `motion.div` layoutId values derive from the same `LayoutGroup id="sidebar"`. Switching routes preserves the pill animation by virtue of route-level page transitions in Next App Router.
+
+**Test scenarios:**
+- *Happy path.* On /, scrolling from `#color-surface` to `#color-text-n-icon` updates the active pill within one frame; URL hash matches.
+- *Happy path.* On /files/<slug>, scrolling between `#screen-trade` and `#screen-watchlist` produces identical pill behavior.
+- *Edge case.* A nav `href` that doesn't resolve to any in-page id: hook console.warns, sidebar entry stays inactive, no JS error.
+- *Integration.* Switch route from / to /components: page-level transition handles unmount; new nav's pill animates from rest position (no cross-route layoutId leak).
+
+**Verification:** Manual sweep of /, /icons, /components, /illustrations, /logos, /files, /files/<slug> on dark + light + each density: active pill behavior is visually identical. Console clean.
+
+---
+
+- U21. **Eliminate FOUC + design page-load animations**
+
+**Goal:** Server-rendered HTML never flashes unstyled before client hydration applies `fadeUp` + `stagger`. Designed page-load animations (no jank).
+
+**Requirements:** R32; honors R23.
+
+**Dependencies:** U20 (uses the hydration sentinel pattern).
+
+**Files:**
+- Modify: `app/globals.css` — add a `[data-pre-hydrate] [data-anim]` rule that pins opacity to 0 until hydration completes.
+- Modify: `app/layout.tsx` — set `data-pre-hydrate` on `<html>` server-side; clear in a tiny inline script that runs at the end of `<body>` (before React mounts).
+- Modify: `lib/motion-variants.ts` — every section variant gets a matching `data-anim` selector hint in its `initial` state; CSS pre-hydration rule mirrors the same opacity.
+- Modify: `components/sections/*.tsx` — sprinkle `data-anim` on the section root that already uses `fadeUp` (~6 sections).
+
+**Approach:**
+- The CSS rule `html[data-pre-hydrate] [data-anim] { opacity: 0 !important; }` ensures the SSR HTML never paints animated sections at full opacity. The inline script removes the attribute once the DOM is parsed; React hydrates and the `whileInView`/`fadeUp` variants take over.
+- Add a `useHydrated()` hook (one-line state flip) for components that need to gate other behavior on hydration.
+- `prefers-reduced-motion`: the existing motion-variants already collapse to opacity-only fades; the new CSS rule respects it via `@media (prefers-reduced-motion: reduce) { html[data-pre-hydrate] [data-anim] { opacity: 1 !important; } }` so reduced-motion users don't see a flash either.
+
+**Test scenarios:**
+- *Happy path.* Slow-3G simulated load of `/`: no white-on-light flash of section text before animation. The hero + sections appear via `fadeUp` as expected.
+- *Edge case.* JavaScript disabled: `data-pre-hydrate` never gets cleared; sections stay at opacity 0. **Acceptable**: this site is JS-mandatory (Next.js App Router with client effects). Document in the Operational Notes.
+- *Integration.* Reduced-motion user: section is visible immediately (opacity 1 via the media-query escape hatch), no fade-up animation.
+
+**Verification:** Lighthouse + manual slow-network test on / and /files: no visible FOUC. CLS doesn't regress.
+
+---
+
+### Phase K — Extraction philosophy doc (deepening pass)
+
+- U22. **`docs/extraction-philosophy.md` + CI invariant for spacing.tokens.json**
+
+**Goal:** Capture the 4-pt grid + radius rules as a project convention, not buried in CLI flags. Code-checked invariant ensures `spacing.tokens.json` keys never drift off-grid.
+
+**Requirements:** R34.
+
+**Dependencies:** U18 (spacing rule), U19 (radius rule).
+
+**Files:**
+- Create: `docs/extraction-philosophy.md`
+- Create: `services/ds-service/internal/audit/invariant_test.go` — reads `lib/tokens/indmoney/spacing.tokens.json` + `radius.tokens.json` and asserts every key is in the allowed set.
+- Modify: `.github/workflows/build.yml` — runs the new invariant test on every push.
+
+**Approach:**
+- The doc spells out the 4-pt grid + escape hatches (2px, 6px), the radius rule (height/2 OR `{2,4,6,8,12,16}`), and the noise-report sidecar format. Calls out the "round up on ties" rule.
+- The Go test loads the produced JSON and walks every leaf, asserting `Snap(value).isExact == true`. Hard fail if a freehand value (15, 18, 23, 19.5) lands in the canonical token JSON.
+- CI hook is a single `go test ./services/ds-service/internal/audit/... -run TestSpacingTokensOnGrid -v`.
+
+**Test scenarios:**
+- *Happy path.* `lib/tokens/indmoney/spacing.tokens.json` with all keys in the allowed set → invariant passes.
+- *Error path.* Adding `space.18` manually to the JSON → invariant fails with "space.18 not in allowed set; nearest = 16 or 20".
+
+**Verification:** Doc lands at `docs/extraction-philosophy.md`; CI step passes on a fresh checkout.
+
+---
+
 ### Phase G — Polish (deferred to follow-up PRs)
 
 - U16. **Drift threshold tuning + ds-service hosting helper + plugin error states + cross-file canonical promotion**
@@ -874,33 +1088,60 @@ flowchart TB
 | Audit JSON committed bloat | Low | Low | `lib/audit/*.json` size budget: 100 KB per file; CI fails if exceeded. Trim node-level detail to what FixCard actually shows. |
 | Designer applies a fix that visually regresses | Medium | Medium | Plugin click-to-apply leaves Figma's native ⌘Z stack intact — undo works as expected. Doc the undo behavior in `figma-plugin/README.md`. |
 | OKLCH threshold (0.03) is wrong for INDmoney's palette | Medium | Low | Sweep logs P50/P95 distances; tune in U16 based on data, not guesses. |
+| Grid-snap rule rejects a legitimate one-off value (e.g. 14 used in one Insta Cash flow) | Medium | Low | Sidecar drift report lists every rejection; designer can review and either: (a) accept the drift suggestion to bring the file on-grid, or (b) extend the allowed set in `grid.go` if it's a genuine pattern. |
+| Pill detection false-positives on tiny chips (radius=4, height=8) | Low | Medium | `ClassifyRadius` uses a 1px tolerance band; small-component tests in U19 catch it explicitly. |
+| Multi-file extractor hits Figma rate limits | Medium | Medium | Existing `cmd/icons` retry-on-429 with exponential backoff is pattern-portable; fold the same retry policy into `cmd/variables` walker. |
+| FOUC fix breaks JS-disabled progressive enhancement | Low | Low | Documented as a non-goal; site is JS-mandatory. The CSS escape hatch under `prefers-reduced-motion` ensures accessibility users still see content. |
+| LayoutGroup id collision between DocsShell + FilesShell | Low | Medium | Each shell uses a distinct id (`sidebar-foundations` / `sidebar-files`) — no shared layoutId; Next route transitions tear down the wrong-shell DOM before the new one mounts. |
 
 ---
 
 ## Phased Delivery
 
-### Phase 1 (lands first — designer-perceived value priority)
+> Phases 1–5 below have already shipped to `main`; phases 6–10 are the
+> deepening-pass additions and remaining work. The bump in sequencing
+> (H + J + K ahead of F) reflects the designer's signal that
+> spacing/radius accuracy + nav UX cleanup are user-facing-now while
+> guardrails are infra that can wait.
+
+### Phase 1 — SHIPPED (designer-perceived value priority)
 
 - A (audit core): U1, U2, U3, U4 — pipeline produces real JSON; ds-service serves it.
 - D (living docs): U5, U6, U7 — usage chips light up Foundations + Components.
 
-### Phase 2 (designer friction killer)
+### Phase 2 — SHIPPED (designer friction killer)
 
-- E (plugin): U8, U9, U10 — click-to-apply ships; staleness banner.
+- E (plugin): U8, U9, U10 — click-to-apply ships; staleness banner. Iterated to a single-scroll publish-first UI with bulk apply + team-library variable resolution + figma-name extension fix (commits up to 74f7083).
 
-### Phase 3 (governance)
+### Phase 3 — SHIPPED (governance)
 
 - B (Files tab): U11, U12 — DS leads get the rollup view.
 
-### Phase 4 (guardrails)
+### Phase 4 — SHIPPED (parity sweep)
 
-- F (CI): U13, U14 — PR-time diff + deprecation propagation.
+- C (gallery upgrade): U15 — `/components`, `/illustrations`, `/logos`, plus the new `/icons` route, reach Foundations parity via FilesShell.
 
-### Phase 5 (parity sweep)
+### Phase 5 — SHIPPED (mid-execution fix)
 
-- C (gallery upgrade): U15 — `/components`, `/illustrations`, `/logos` reach Foundations parity.
+- figma-name capture (74f7083) — extractor stamps Glyph swatch label on every color token; plugin walks team library + imports via `importVariableByKeyAsync`. Resolves the "Token X isn't a local variable" failure mode the designer hit on the first apply attempt.
 
-### Phase 6 (polish)
+### Phase 6 — Multi-file extraction + grid-snap (deepening, lands NEXT)
+
+- H: **U17** (multi-file walker), **U18** (grid-snap emitter), **U19** (radius rule + pill detection). Re-extracts spacing/radius from all 13 product files; emits only allowed-set tokens; surfaces every off-grid value as a drift fix.
+
+### Phase 7 — Foundations + nav UX cleanup (deepening, parallel with Phase 6)
+
+- J: **U20** (unified active-state + LayoutGroup), **U21** (FOUC elimination + page-load animations). Foundations sidebar invariant catches scroll-spy mismatches in dev; SSR/hydration handoff is invisible.
+
+### Phase 8 — Extraction philosophy + invariant (deepening)
+
+- K: **U22** (`docs/extraction-philosophy.md` + CI invariant on `spacing.tokens.json`). Locks the rules so off-grid values can't sneak back in.
+
+### Phase 9 — Guardrails (was Phase 4 in original sequencing — bumped)
+
+- F (CI): U13, U14 — PR-time diff comment + coverage thresholds + deprecation propagation. Bumped because spacing/radius accuracy + UX cleanup are user-facing-now while guardrails are infra.
+
+### Phase 10 — Polish
 
 - G: U16 — bundled follow-up.
 

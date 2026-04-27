@@ -24,6 +24,13 @@ type DSToken struct {
 // FindClosestColor returns the closest DS color token within the drift
 // threshold (or threshold * 1.5 to surface borderline candidates as ambiguous).
 // Returns (nil, ∞) if no candidate is within the wider band.
+//
+// Bindable-only filter: base palette primitives (path prefix "base.colour.")
+// are NOT published as Figma Variables and have no figma-name — recommending
+// a designer bind to them would always fail in the plugin. The candidate
+// pool is restricted to tokens that carry FigmaName, which in practice means
+// semantic tokens only. Base tokens stay in the loaded set so distance math
+// still observes them, but they're filtered before returning.
 func FindClosestColor(observed string, tokens []DSToken, threshold float64) (*DSToken, float64) {
 	if threshold <= 0 {
 		threshold = DefaultColorDriftThreshold
@@ -34,6 +41,12 @@ func FindClosestColor(observed string, tokens []DSToken, threshold float64) (*DS
 	for i := range tokens {
 		t := &tokens[i]
 		if t.Kind != "color" || t.Hex == "" {
+			continue
+		}
+		// Skip tokens without a real Figma Variable identity. Base primitives
+		// (4a4f52, ffffff, etc.) get no figma-name from the extractor and
+		// can't be bound by the plugin.
+		if t.FigmaName == "" {
 			continue
 		}
 		d := OKLCHDistance(observed, t.Hex)
