@@ -345,6 +345,7 @@ function PageNav() {
 function PageNavLinks({ pathname }: { pathname: string }) {
   const items = [
     { href: "/",              label: "Foundations" },
+    { href: "/icons",         label: "Icons" },
     { href: "/components",    label: "Components" },
     { href: "/illustrations", label: "Illustrations" },
     { href: "/logos",         label: "Logos" },

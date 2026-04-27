@@ -50,6 +50,7 @@ function PageNav() {
   const items = [
     { href: "/",              label: "Foundations" },
     { href: "/components",    label: "Components" },
+    { href: "/icons",         label: "Icons" },
     { href: "/illustrations", label: "Illustrations" },
     { href: "/logos",         label: "Logos" },
     { href: "/files",         label: "Files" },

@@ -92,6 +92,14 @@ export function iconsByKind(kind: AssetKind): IconEntry[] {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** kebab-cased anchor slug for a category — used as section id + nav href. */
+export function slugifyCategory(c: IconCategory): string {
+  return (c || "uncategorized")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "uncategorized";
+}
+
 export function iconsByCategory(kind?: AssetKind): Map<IconCategory, IconEntry[]> {
   const map = new Map<IconCategory, IconEntry[]>();
   const pool = kind ? iconsByKind(kind) : MANIFEST.icons;

@@ -1,7 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
-import { iconURL, type IconEntry, type VariantEntry } from "@/lib/icons/manifest";
+import { iconURL, slugifyCategory, type IconEntry, type VariantEntry } from "@/lib/icons/manifest";
 import { useIsMobile } from "@/lib/use-mobile";
 
 /**
@@ -42,7 +42,11 @@ export default function ComponentInspector({
 
       <LayoutGroup>
         {Array.from(grouped.entries()).map(([cat, list]) => (
-          <div key={cat} style={{ marginBottom: 36 }}>
+          <div
+            key={cat}
+            id={`cat-${slugifyCategory(cat)}`}
+            style={{ marginBottom: 36, scrollMarginTop: "calc(var(--header-h) + 32px)" }}
+          >
             <CategoryHeader label={cat} count={list.length} />
             <div
               style={{

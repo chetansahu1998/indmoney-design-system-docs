@@ -11,7 +11,6 @@ import TypographySection from "@/components/sections/TypographySection";
 import ColorSection from "@/components/sections/ColorSection";
 import SpacingSection from "@/components/sections/SpacingSection";
 import MotionSection from "@/components/sections/MotionSection";
-import IconographySection from "@/components/sections/IconographySection";
 import EffectsSection from "@/components/sections/EffectsSection";
 import { useIsMobile } from "@/lib/use-mobile";
 import { useUIStore, applyDensityFromStore } from "@/lib/ui-store";
@@ -44,7 +43,6 @@ const SECTIONS = [
   "motion-spring",
   "motion-opacity",
   "motion-scale",
-  "iconography",
   "effects",
 ];
 
@@ -215,7 +213,6 @@ export default function DocsShell() {
           <TypographySection />
           <SpacingSection />
           <MotionSection />
-          <IconographySection />
           <EffectsSection />
 
           {/* Bottom nav */}

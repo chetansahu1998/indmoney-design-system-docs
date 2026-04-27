@@ -1,7 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { iconURL, type IconEntry } from "@/lib/icons/manifest";
+import { iconURL, slugifyCategory, type IconEntry } from "@/lib/icons/manifest";
 import { useIsMobile } from "@/lib/use-mobile";
 
 /**
@@ -51,13 +51,7 @@ export default function AssetGallery({
     : (isMobile ? 78 : 104);
 
   return (
-    <main
-      style={{
-        maxWidth: 1100,
-        margin: "0 auto",
-        padding: isMobile ? "32px 16px 80px" : "72px 80px 120px",
-      }}
-    >
+    <>
       <div style={{ borderBottom: "1px solid var(--border)", paddingBottom: 32, marginBottom: 32 }}>
         <h1
           style={{
@@ -85,7 +79,11 @@ export default function AssetGallery({
         <Grid entries={filtered} layout={layout} tileMin={tileMin} emptyHint={emptyHint} />
       ) : (
         Array.from(grouped.entries()).map(([cat, list]) => (
-          <div key={cat} style={{ marginBottom: 36 }}>
+          <div
+            key={cat}
+            id={`cat-${slugifyCategory(cat)}`}
+            style={{ marginBottom: 36, scrollMarginTop: "calc(var(--header-h) + 32px)" }}
+          >
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
               <span
                 style={{
@@ -117,7 +115,7 @@ export default function AssetGallery({
           </div>
         ))
       )}
-    </main>
+    </>
   );
 }
 

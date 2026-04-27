@@ -51,11 +51,6 @@ export const FOUNDATIONS_NAV: NavGroup[] = [
     ],
   },
   {
-    label: "Iconography",
-    defaultOpen: true,
-    sub: [{ label: "All icons", href: "#iconography" }],
-  },
-  {
     label: "Spacing",
     sub: [
       { label: "Scale",   href: "#spacing-scale" },
