@@ -1,11 +1,12 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { motion } from "framer-motion";
 import SectionHeading from "@/components/ui/SectionHeading";
 import { fadeUp, stagger, itemFadeUp } from "@/lib/motion-variants";
 import { useIsMobile } from "@/lib/use-mobile";
 import { loadTypography, typographyByCategory, type DereferencedTypography } from "@/lib/tokens/typography";
 import UsageChip from "@/components/audit/UsageChip";
+import { showToast } from "@/components/ui/Toast";
 
 const CATEGORY_ORDER = ["heading", "subtitle", "body", "caption", "overline", "small", "other"];
 const CATEGORY_LABEL: Record<string, string> = {
@@ -51,7 +52,6 @@ function weightName(w: number): string {
 
 function TypographyRow({ token, sample }: { token: DereferencedTypography; sample: string }) {
   const isMobile = useIsMobile();
-  const [copied, setCopied] = useState(false);
   const cssSnippet = useMemo(
     () =>
       `font-family: "${token.fontFamily}";\nfont-weight: ${token.fontWeight};\nfont-size: ${token.fontSize}px;\nline-height: ${token.lineHeight}px;\nletter-spacing: ${token.letterSpacing}px;`,
@@ -60,8 +60,11 @@ function TypographyRow({ token, sample }: { token: DereferencedTypography; sampl
 
   const copy = () => {
     navigator.clipboard.writeText(cssSnippet).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+    showToast({
+      message: `Copied CSS for ${token.slug}`,
+      detail: `${token.fontSize}px / ${token.fontWeight}`,
+      tone: "success",
+    });
   };
 
   return (
@@ -117,11 +120,11 @@ function TypographyRow({ token, sample }: { token: DereferencedTypography; sampl
         style={{
           fontFamily: "var(--font-mono)",
           fontSize: 10,
-          color: copied ? "var(--accent)" : "var(--text-3)",
+          color: "var(--text-3)",
           whiteSpace: "nowrap",
         }}
       >
-        {copied ? "Copied CSS" : "Click to copy"}
+        Click to copy
       </div>
     </motion.div>
   );

@@ -1,6 +1,5 @@
 "use client";
-import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import SectionHeading from "@/components/ui/SectionHeading";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { fadeUp, stagger, itemFadeUp } from "@/lib/motion-variants";
@@ -11,6 +10,7 @@ import {
   getExtractionMeta,
 } from "@/lib/tokens/loader";
 import UsageChip from "@/components/audit/UsageChip";
+import { showToast } from "@/components/ui/Toast";
 
 // Source data — resolved at module load. The lib/tokens/loader walks the
 // extractor's DTCG JSON; values are derived from real Figma observations.
@@ -65,17 +65,20 @@ function ModeTile({
   mode: "light" | "dark";
   token: string;
 }) {
-  const [copied, setCopied] = useState(false);
   const copy = () => {
     navigator.clipboard.writeText(hex).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1100);
+    showToast({
+      message: `Copied ${hex}`,
+      detail: `${token} · ${mode}`,
+      tone: "success",
+    });
   };
   return (
     <button
       onClick={copy}
       data-token={token}
       data-mode={mode}
+      aria-label={`Copy ${hex} (${mode} mode)`}
       style={{
         flex: 1,
         height: 56,
@@ -105,30 +108,6 @@ function ModeTile({
         <span>{mode}</span>
         <span>{hex}</span>
       </div>
-      <AnimatePresence>
-        {copied && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.12 }}
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "rgba(0,0,0,0.45)",
-              fontSize: 11,
-              color: "#fff",
-              letterSpacing: "0.05em",
-              fontWeight: 600,
-            }}
-          >
-            COPIED
-          </motion.div>
-        )}
-      </AnimatePresence>
     </button>
   );
 }
@@ -232,17 +211,16 @@ function PairCard({
 
 /* ── Base palette tile (single mode-agnostic primitive) ── */
 function PaletteTile({ hex, path }: { hex: string; path: string }) {
-  const [copied, setCopied] = useState(false);
   const copy = () => {
     navigator.clipboard.writeText(hex).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1100);
+    showToast({ message: `Copied ${hex}`, detail: path, tone: "success" });
   };
   return (
     <button
       onClick={copy}
       data-token-scope="base"
       data-token={path}
+      aria-label={`Copy ${hex}`}
       style={{
         flex: 1,
         minWidth: 0,
@@ -259,36 +237,11 @@ function PaletteTile({ hex, path }: { hex: string; path: string }) {
         style={{
           height: 44,
           background: hex,
-          borderRight: "1px solid rgba(0,0,0,0.06)",
+          borderRight: "1px solid var(--border)",
           position: "relative",
           overflow: "hidden",
         }}
-      >
-        <AnimatePresence>
-          {copied && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.1 }}
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: "rgba(0,0,0,0.4)",
-                color: "#fff",
-                fontSize: 9,
-                letterSpacing: "0.06em",
-                fontWeight: 600,
-              }}
-            >
-              COPIED
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+      />
       <div
         style={{
           padding: "5px 6px",

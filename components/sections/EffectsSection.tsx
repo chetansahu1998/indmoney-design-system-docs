@@ -1,10 +1,10 @@
 "use client";
-import { useState } from "react";
 import { motion } from "framer-motion";
 import SectionHeading from "@/components/ui/SectionHeading";
 import DataGapPreview from "@/components/ui/DataGapPreview";
 import { fadeUp } from "@/lib/motion-variants";
 import { shadowTokens, shadowsProvenance, toCSS, type ShadowToken } from "@/lib/tokens/effects";
+import { showToast } from "@/components/ui/Toast";
 
 /* Sample preview — shows what an "elevation 1 / 2 / 3" ramp looks like,
    so the empty state previews the SHAPE of the data instead of being blank. */
@@ -47,13 +47,15 @@ function SamplePreview() {
 }
 
 function ShadowCard({ token }: { token: ShadowToken }) {
-  const [copied, setCopied] = useState(false);
   const css = toCSS(token);
 
   const copy = () => {
     navigator.clipboard.writeText(css).catch(() => {});
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+    showToast({
+      message: `Copied shadow CSS`,
+      detail: token.path,
+      tone: "success",
+    });
   };
 
   return (
@@ -97,7 +99,7 @@ function ShadowCard({ token }: { token: ShadowToken }) {
             wordBreak: "break-all",
           }}
         >
-          {copied ? "Copied CSS" : token.path}
+          {token.path}
         </div>
       </div>
     </button>

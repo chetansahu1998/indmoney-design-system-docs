@@ -5,6 +5,7 @@ import SectionHeading from "@/components/ui/SectionHeading";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { fadeUp } from "@/lib/motion-variants";
 import { useIsMobile } from "@/lib/use-mobile";
+import { showToast } from "@/components/ui/Toast";
 import {
   iconURL,
   iconsByKind,
@@ -126,8 +127,13 @@ function IconDetail({ icon, onClose }: { icon: IconEntry; onClose: () => void })
       .catch(() => setSvg(""));
   }, [url]);
 
-  const copy = (value: string) => {
+  const copy = (value: string, kind: string) => {
     navigator.clipboard.writeText(value).catch(() => {});
+    showToast({
+      message: `Copied ${kind}`,
+      detail: icon.slug,
+      tone: "success",
+    });
     setCopied(true);
     setTimeout(() => setCopied(false), 1300);
   };
@@ -218,9 +224,9 @@ function IconDetail({ icon, onClose }: { icon: IconEntry; onClose: () => void })
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <CopyButton label="Copy SVG" onClick={() => copy(svg)} disabled={!svg} highlight={copied} />
-          <CopyButton label="Copy slug" onClick={() => copy(icon.slug)} />
-          <CopyButton label="Copy URL" onClick={() => copy(url)} />
+          <CopyButton label="Copy SVG" onClick={() => copy(svg, "SVG")} disabled={!svg} highlight={copied} />
+          <CopyButton label="Copy slug" onClick={() => copy(icon.slug, "slug")} />
+          <CopyButton label="Copy URL" onClick={() => copy(url, "URL")} />
         </div>
       </motion.div>
     </motion.div>
