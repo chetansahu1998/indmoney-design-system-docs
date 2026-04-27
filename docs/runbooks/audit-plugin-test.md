@@ -1,6 +1,17 @@
 # Plugin end-to-end test runbook
 
-Smoke test for the audit pipeline + plugin from a clean slate. ~5 minutes.
+Smoke test for the publish + audit pipeline from a clean slate. ~5 minutes.
+
+The plugin has three flows in this order of importance:
+
+1. **Publish** — multi-select in Figma → plugin auto-recognises sets, components,
+   variants, instances → POSTs to `localhost:7474/v1/publish` → server appends to
+   `lib/contributions/<file>.json`. The DS catalogue catches new components from
+   real designs without anyone hand-editing manifests.
+2. **Audit** — selection / page / file → `localhost:7474/v1/audit/run` → fix cards
+   with click-to-apply via Figma variable APIs.
+3. **Inject** — pull existing DS icons / components into a fresh page (tertiary;
+   for scaffolding new designs from the system).
 
 ## Prerequisites
 
@@ -41,12 +52,33 @@ The plugin POSTs to `localhost:7474/v1/audit/run` — the server runs the Go aud
 3. Pick `<repo>/figma-plugin/manifest.json`.
 4. The plugin appears under **Plugins → Development → INDmoney DS Sync**.
 
-## Step 4 — Run the audit on one file
+## Step 4 — Open the plugin
 
-1. Open any of your 13 product files in Figma (e.g. INDstocks V4).
-2. **Plugins → Development → INDmoney DS Sync** → opens the panel.
-3. Verify connection: click **Settings → Ping audit server** → should log `Audit server up at http://localhost:7474`.
-4. Click **Audit → File**.
+1. Open any of your 13 product files in Figma.
+2. **Plugins → Development → INDmoney DS Sync** → panel opens.
+3. Top status bar shows a green dot + `Connected · schema 1.0` when the audit server is up. If the dot is red, the audit server isn't running — check Step 2.
+
+## Step 5 — Publish a multi-select
+
+1. In Figma, select one or more **Component Sets**, **Standalone Components**, or **Variants**. Mix-and-match is fine — the plugin classifies live.
+2. The plugin's **Publish** tab shows a live summary:
+   - `Component sets: N · M variants` (the parent + everything underneath)
+   - `Standalone components: N`
+   - `Variants (picked individually): N`
+   - `Instances (skipped)`, `Frames / groups (skipped)` — surfaced for transparency, not published.
+3. Click **Publish to DS**.
+4. Toast: `N added, M updated · committed at lib/contributions/`.
+5. In your repo:
+   ```bash
+   git status
+   #   modified:   lib/contributions/<slug>.json   (new file or appended)
+   git diff lib/contributions/                  # review the captured metadata
+   ```
+
+## Step 6 — Run the audit
+
+1. Switch to the **Audit** tab.
+2. Click **Selection / Page / File**. Spinner shows on the active button while the request is in flight.
 
 What you should see:
 

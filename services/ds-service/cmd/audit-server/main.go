@@ -35,9 +35,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("POST /v1/audit/run", audit.HandleAudit(cfg))
+	mux.Handle("POST /v1/publish", audit.HandlePublish(cfg))
 	mux.HandleFunc("GET /__health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"ok":true,"repo":%q,"schema_version":%q}`, root, audit.SchemaVersion)
+		fmt.Fprintf(w, `{"ok":true,"repo":%q,"schema_version":%q,"endpoints":["/v1/audit/run","/v1/publish"]}`, root, audit.SchemaVersion)
 	})
 
 	srv := &http.Server{
