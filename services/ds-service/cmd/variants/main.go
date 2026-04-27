@@ -42,26 +42,80 @@ import (
 var legacyComponentCategories = map[string]bool{"ui": true}
 
 type Variant struct {
+	// — legacy fields (kept verbatim for backwards compat with manifest.ts) —
 	Name       string              `json:"name"`
 	Properties []map[string]string `json:"properties"`
 	VariantID  string              `json:"variant_id"`
 	File       string              `json:"file"`
 	Width      int                 `json:"width"`
 	Height     int                 `json:"height"`
+
+	// — rich fields — populated when the deep-fetch path runs.
+	// Key is the durable Variable.key analogue for components — stable
+	// across publishes, the only safe identifier for cross-file refs.
+	Key string `json:"key,omitempty"`
+	// AxisValues is the parsed VARIANT axis tuple, e.g.
+	// {"State":"Default","Size":"Large"}. Strict subset of Properties
+	// but typed as a map for direct lookup.
+	AxisValues map[string]string `json:"axis_values,omitempty"`
+	// IsDefault marks the variant Figma considers the default — the
+	// spatially top-left one (REST doesn't expose Plugin's
+	// `defaultVariant`, so we reconstruct).
+	IsDefault bool `json:"is_default,omitempty"`
+	// Layout, Fills, Strokes, Effects, Corner, Opacity, BoundVariables,
+	// Children describe the variant's root frame — what makes it look
+	// the way it does. All optional; populated by the deep-fetch path.
+	Layout         *LayoutInfo       `json:"layout,omitempty"`
+	Fills          []FillInfo        `json:"fills,omitempty"`
+	Strokes        []FillInfo        `json:"strokes,omitempty"`
+	StrokeWeight   float64           `json:"stroke_weight,omitempty"`
+	Effects        []EffectInfo      `json:"effects,omitempty"`
+	Corner         *CornerInfo       `json:"corner,omitempty"`
+	Opacity        float64           `json:"opacity,omitempty"`
+	BoundVariables map[string]string `json:"bound_variables,omitempty"`
+	Children       []ChildSummary    `json:"children,omitempty"`
 }
 
 type IconEntry struct {
-	Slug       string    `json:"slug"`
-	Name       string    `json:"name"`
-	Kind       string    `json:"kind,omitempty"`
-	Category   string    `json:"category"`
-	Source     string    `json:"source,omitempty"`
-	SetID      string    `json:"set_id"`
-	VariantID  string    `json:"variant_id"`
-	File       string    `json:"file"`
-	Width      int       `json:"width"`
-	Height     int       `json:"height"`
-	Variants   []Variant `json:"variants,omitempty"`
+	// — legacy fields —
+	Slug      string    `json:"slug"`
+	Name      string    `json:"name"`
+	Kind      string    `json:"kind,omitempty"`
+	Category  string    `json:"category"`
+	Source    string    `json:"source,omitempty"`
+	SetID     string    `json:"set_id"`
+	VariantID string    `json:"variant_id"`
+	File      string    `json:"file"`
+	Width     int       `json:"width"`
+	Height    int       `json:"height"`
+	Variants  []Variant `json:"variants,omitempty"`
+
+	// — rich fields, populated by the deep-fetch path —
+	// Key is the COMPONENT_SET's durable identifier from
+	// /v1/files/:key/components — stays stable across publishes.
+	Key string `json:"key,omitempty"`
+	// Description is the markdown documentation entered in Figma's
+	// "Description" field on the component set. Often empty for
+	// internal components.
+	Description string `json:"description,omitempty"`
+	// DocLinks are the Figma `documentationLinks` URLs (e.g. Storybook,
+	// internal wiki). Order preserved from Figma.
+	DocLinks []string `json:"doc_links,omitempty"`
+	// PropDefs is the full componentPropertyDefinitions map flattened
+	// to a sorted slice (sorted by Name for stable JSON output). Carries
+	// all 4 property types — VARIANT/BOOLEAN/TEXT/INSTANCE_SWAP — with
+	// the `#suffix` preserved on non-VARIANT names.
+	PropDefs []ComponentProperty `json:"prop_defs,omitempty"`
+	// VariantAxes is the matrix view of the VARIANT properties: per-axis
+	// values + default. For consumers that want "show me the axes" UI
+	// without parsing the verbose PropDefs.
+	VariantAxes []VariantAxis `json:"variant_axes,omitempty"`
+	// SingleVariantSet flags COMPONENT_SETs with exactly one child
+	// COMPONENT — they look like standalone components in the UI but
+	// the API treats them differently (the property defs live on the
+	// parent set). Useful for the docs site to render them as
+	// "single-variant" rather than "Variant 1 of 1".
+	SingleVariantSet bool `json:"single_variant_set,omitempty"`
 }
 
 type Manifest struct {
@@ -176,15 +230,46 @@ func main() {
 			if doc == nil {
 				continue
 			}
+
+			// — Set-level rich data —
+			// componentPropertyDefinitions lives on the COMPONENT_SET (or
+			// on a standalone COMPONENT). All four property types
+			// (VARIANT, BOOLEAN, TEXT, INSTANCE_SWAP) are extracted with
+			// their `#suffix` preserved so plugin-runtime setProperties
+			// keeps working across changes.
+			if defs, ok := doc["componentPropertyDefinitions"].(map[string]any); ok {
+				m.Icons[idx].PropDefs = parseComponentPropertyDefinitions(defs)
+			}
+			if desc, ok := doc["description"].(string); ok && desc != "" {
+				m.Icons[idx].Description = desc
+			}
+			if links, ok := doc["documentationLinks"].([]any); ok {
+				for _, l := range links {
+					lm, _ := l.(map[string]any)
+					if uri, _ := lm["uri"].(string); uri != "" {
+						m.Icons[idx].DocLinks = append(m.Icons[idx].DocLinks, uri)
+					}
+				}
+			}
+
+			// — Variant enumeration with rich root-frame extraction —
 			children, _ := doc["children"].([]any)
+			variantNodes := []map[string]any{}
 			for _, ch := range children {
 				cm, _ := ch.(map[string]any)
 				if cm == nil {
 					continue
 				}
-				if t, _ := cm["type"].(string); t != "COMPONENT" {
-					continue
+				if t, _ := cm["type"].(string); t == "COMPONENT" {
+					variantNodes = append(variantNodes, cm)
 				}
+			}
+			if len(variantNodes) == 1 {
+				m.Icons[idx].SingleVariantSet = true
+			}
+			defaultVariantID := computeDefaultVariantID(variantNodes)
+
+			for _, cm := range variantNodes {
 				vid, _ := cm["id"].(string)
 				vname, _ := cm["name"].(string)
 				if vid == "" || vname == "" {
@@ -195,7 +280,9 @@ func main() {
 				v := Variant{
 					Name:       vname,
 					Properties: parseProps(vname),
+					AxisValues: parseAxisValues(vname),
 					VariantID:  vid,
+					IsDefault:  vid == defaultVariantID,
 					File: filepath.Join(
 						"variants",
 						fmt.Sprintf("%s__%s.svg", m.Icons[idx].Slug, slugifyVariant(vname)),
@@ -203,8 +290,28 @@ func main() {
 					Width:  w,
 					Height: h,
 				}
+				// Per-variant rich extraction — the variant COMPONENT node
+				// itself IS the root frame (Figma collapses them); pull
+				// layout, fills, strokes, effects, corner, opacity, bound
+				// vars + child summary directly off it.
+				v.Layout = extractLayout(cm)
+				v.Fills = extractPaints(cm["fills"])
+				v.Strokes = extractPaints(cm["strokes"])
+				if sw, ok := cm["strokeWeight"].(float64); ok {
+					v.StrokeWeight = sw
+				}
+				v.Effects = extractEffects(cm["effects"])
+				v.Corner = extractCorner(cm)
+				if op, ok := cm["opacity"].(float64); ok && op < 1 {
+					v.Opacity = op
+				}
+				v.BoundVariables = extractBoundVarIDs(cm["boundVariables"])
+				v.Children = extractChildren(cm["children"])
 				pending = append(pending, variantKey{idx, v})
 			}
+
+			// Build the matrix view from PropDefs + observed values
+			m.Icons[idx].VariantAxes = buildVariantAxes(m.Icons[idx].PropDefs, variantNodes, defaultVariantID)
 		}
 		log.Info("variants enumerated", "progress", fmt.Sprintf("%d/%d sets", end, len(targets)), "total_variants", len(pending))
 	}
@@ -341,8 +448,13 @@ func slugifyVariant(name string) string {
 }
 
 func getNodesWithRetry(ctx context.Context, c *client.Client, fileKey string, ids []string, log *slog.Logger) (map[string]any, error) {
+	// depth=3 captures: SET → variant COMPONENT → root frame → first-level
+	// children. This is the sweet spot for the rich-extractor: deep enough
+	// to see what makes a variant look the way it does (autolayout +
+	// children + bound vars), shallow enough that fetch time stays under
+	// a few minutes for ~89 sets.
 	for attempt := 1; attempt <= 4; attempt++ {
-		resp, err := c.GetFileNodes(ctx, fileKey, ids, 1)
+		resp, err := c.GetFileNodes(ctx, fileKey, ids, 3)
 		if err == nil {
 			return resp, nil
 		}
