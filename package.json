@@ -11,7 +11,7 @@
     "sync:tokens": "tsx scripts/sync-tokens.ts",
     "extract:figma": "cd services/ds-service && go run ./cmd/extractor",
     "audit": "cd services/ds-service && go run ./cmd/audit",
-    "audit:serve": "cd services/ds-service && go run ./cmd/server",
+    "audit:serve": "cd services/ds-service && go run ./cmd/audit-server",
     "tokens:build": "tz build",
     "prebuild": "tz build",
     "test:parity": "playwright test --project=indmoney-light"
