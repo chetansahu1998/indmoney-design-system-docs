@@ -18,7 +18,21 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" data-pre-hydrate="true">
+      <head>
+        {/* Runs before any styled paint: removes the pre-hydrate sentinel
+            as soon as the parser reaches this script. Pairs with the
+            globals.css rule that pins data-anim-fade items to opacity 0
+            until the sentinel clears, so the user never sees raw markup
+            mid-hydrate. The reduced-motion escape hatch in CSS still
+            wins — this is a flash-prevention mechanism, not an
+            accessibility override. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: "document.documentElement.removeAttribute('data-pre-hydrate')",
+          }}
+        />
+      </head>
       <body>{children}</body>
     </html>
   );

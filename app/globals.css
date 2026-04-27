@@ -71,6 +71,33 @@
 
 html { scroll-behavior: smooth; }
 
+/* ── Pre-hydrate FOUC guard ──────────────────────────────────────────────
+   Sections marked with data-anim-fade render at opacity 0 until the inline
+   <head> script (in app/layout.tsx) removes [data-pre-hydrate] from <html>.
+   Once removed, framer-motion's hidden→visible variants take over without
+   the brief flash where the user would otherwise see un-styled content.
+   The transform mirrors fadeUp.hidden so the position match is seamless.
+
+   Reduced-motion escape hatch: anyone who has set their OS to reduce
+   motion gets content painted in place immediately, no fade. */
+html[data-pre-hydrate] [data-anim-fade] {
+  opacity: 0;
+  transform: translateY(24px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-pre-hydrate] [data-anim-fade] {
+    opacity: 1;
+    transform: none;
+  }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 body {
   font-family: var(--font-sans);
   font-size: 14px;
