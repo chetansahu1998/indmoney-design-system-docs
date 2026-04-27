@@ -60,7 +60,7 @@ export default function TokenExportDialog() {
             position: "fixed",
             inset: 0,
             zIndex: 200,
-            background: "rgba(0,0,0,0.55)",
+            background: "var(--scrim)",
             display: "flex",
             alignItems: "flex-start",
             justifyContent: "center",
@@ -82,7 +82,7 @@ export default function TokenExportDialog() {
               borderRadius: 14,
               overflow: "hidden",
               boxShadow:
-                "0 32px 80px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.04)",
+                "var(--elev-shadow-3), 0 0 0 1px var(--border)",
               display: "flex",
               flexDirection: "column",
               maxHeight: "82vh",

@@ -150,7 +150,7 @@ export default function SearchModal({ onClose }: { onClose: () => void }) {
           position: "fixed",
           inset: 0,
           zIndex: 200,
-          background: "rgba(0,0,0,0.55)",
+          background: "var(--scrim)",
           display: "flex",
           alignItems: "flex-start",
           justifyContent: "center",
@@ -173,7 +173,7 @@ export default function SearchModal({ onClose }: { onClose: () => void }) {
               border: "1px solid var(--border-strong)",
               borderRadius: 12,
               overflow: "hidden",
-              boxShadow: "0 32px 80px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.04)",
+              boxShadow: "var(--elev-shadow-3), 0 0 0 1px var(--border)",
             }}
             shouldFilter={false}
           >

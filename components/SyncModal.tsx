@@ -75,7 +75,7 @@ export default function SyncModal({ open, onClose }: Props) {
             position: "fixed",
             inset: 0,
             zIndex: 200,
-            background: "rgba(0,0,0,0.55)",
+            background: "var(--scrim)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -96,7 +96,7 @@ export default function SyncModal({ open, onClose }: Props) {
               borderRadius: 14,
               overflow: "hidden",
               boxShadow:
-                "0 32px 80px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.04)",
+                "var(--elev-shadow-3), 0 0 0 1px var(--border)",
             }}
           >
             {/* Header */}

@@ -148,7 +148,7 @@ function IconDetail({ icon, onClose }: { icon: IconEntry; onClose: () => void })
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0,0,0,0.45)",
+        background: "var(--scrim)",
         zIndex: 100,
         display: "flex",
         alignItems: "center",

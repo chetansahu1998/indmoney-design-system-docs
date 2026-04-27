@@ -51,6 +51,13 @@
     --warning:       #ffb13b;
     --danger:        #ff6b6b;
     --info:          var(--accent);
+    /* Modal scrim — used by every overlay (search, sync, export, icon
+       detail). On dark theme, near-black with mid alpha. Defined as a
+       semantic token so light theme can pick a softer value below. */
+    --scrim:         rgba(0, 0, 0, 0.55);
+    --elev-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.18), 0 1px 3px rgba(0, 0, 0, 0.20);
+    --elev-shadow-2: 0 8px 24px rgba(0, 0, 0, 0.18);
+    --elev-shadow-3: 0 32px 80px rgba(0, 0, 0, 0.45);
 
     /* ── Layout ── */
     --sidebar-w:  296px;
@@ -78,6 +85,13 @@
     --warning:       #d97600;
     --danger:        #e0354c;
     --info:          var(--accent);
+    /* Light-theme overlay tokens — softer scrim so the modal feels like
+       paper sliding over paper rather than a hard black wash; shadows
+       reduced because white backgrounds magnify dark shadows. */
+    --scrim:         rgba(20, 28, 48, 0.32);
+    --elev-shadow-1: 0 1px 2px rgba(20, 28, 48, 0.06), 0 1px 3px rgba(20, 28, 48, 0.08);
+    --elev-shadow-2: 0 8px 24px rgba(20, 28, 48, 0.10);
+    --elev-shadow-3: 0 32px 80px rgba(20, 28, 48, 0.16);
   }
 }
 
