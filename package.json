@@ -7,7 +7,7 @@
     "dev": "tz build && next dev --port 3001",
     "build": "tz build && next build",
     "start": "next start --port 3001",
-    "lint": "next lint",
+    "lint": "tsc --noEmit",
     "sync:tokens": "tsx scripts/sync-tokens.ts",
     "extract:figma": "cd services/ds-service && go run ./cmd/extractor",
     "tokens:build": "tz build",
