@@ -1,5 +1,7 @@
 "use client";
-import { motion } from "framer-motion";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { motion, LayoutGroup } from "framer-motion";
 import { brandLabel, currentBrand, BRANDS } from "@/lib/brand";
 import { useUIStore, type Density } from "@/lib/ui-store";
 import { getExtractionMeta } from "@/lib/tokens/loader";
@@ -336,13 +338,18 @@ export default function Header({
   );
 }
 
-/** Top-level page navigation — Foundations, Components, Illustrations, Logos. */
+/**
+ * Top-level page navigation — Foundations, Components, Illustrations, Logos.
+ *
+ * Reads the active route via Next's usePathname() so the SSR HTML renders
+ * the correct active state (no hydration flash). Each entry is a Next Link
+ * for SPA transitions + automatic prefetch.
+ *
+ * The active state is rendered as a layoutId="topnav-active" pill so the
+ * highlight animates between routes instead of hard-cutting.
+ */
 function PageNav() {
-  if (typeof window === "undefined") return <PageNavLinks pathname="/" />;
-  return <PageNavLinks pathname={window.location.pathname} />;
-}
-
-function PageNavLinks({ pathname }: { pathname: string }) {
+  const pathname = usePathname() ?? "/";
   const items = [
     { href: "/",              label: "Foundations" },
     { href: "/icons",         label: "Icons" },
@@ -352,33 +359,52 @@ function PageNavLinks({ pathname }: { pathname: string }) {
     { href: "/files",         label: "Files" },
   ];
   return (
-    <nav
-      className="page-nav"
-      aria-label="Site sections"
-      style={{ display: "inline-flex", gap: 4, marginLeft: 6 }}
-    >
-      {items.map((item) => {
-        const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-        return (
-          <a
-            key={item.href}
-            href={item.href}
-            style={{
-              padding: "4px 10px",
-              borderRadius: 6,
-              fontSize: 12,
-              fontWeight: active ? 600 : 500,
-              color: active ? "var(--text-1)" : "var(--text-3)",
-              background: active ? "var(--bg-surface-2)" : "transparent",
-              textDecoration: "none",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {item.label}
-          </a>
-        );
-      })}
-    </nav>
+    <LayoutGroup id="topnav">
+      <nav
+        className="page-nav"
+        aria-label="Site sections"
+        style={{ display: "inline-flex", gap: 4, marginLeft: 6 }}
+      >
+        {items.map((item) => {
+          const active =
+            item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              prefetch
+              aria-current={active ? "page" : undefined}
+              style={{
+                position: "relative",
+                padding: "4px 10px",
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: active ? 600 : 500,
+                color: active ? "var(--text-1)" : "var(--text-3)",
+                textDecoration: "none",
+                whiteSpace: "nowrap",
+                transition: "color 0.15s",
+              }}
+            >
+              {active && (
+                <motion.span
+                  layoutId="topnav-active"
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    background: "var(--bg-surface-2)",
+                    borderRadius: 6,
+                    zIndex: -1,
+                  }}
+                  transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                />
+              )}
+              <span style={{ position: "relative" }}>{item.label}</span>
+            </Link>
+          );
+        })}
+      </nav>
+    </LayoutGroup>
   );
 }
 
