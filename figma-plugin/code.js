@@ -54,6 +54,10 @@ figma.ui.onmessage = async (msg) => {
                 return runAudit(msg.payload.scope);
             case "apply-fix":
                 return applyFix(msg.payload);
+            case "apply-group":
+                return applyGroup(msg.payload);
+            case "apply-many":
+                return applyMany(msg.payload);
             case "inject":
                 return runInject(msg.payload.kind);
             case "open-docs":
@@ -97,6 +101,7 @@ function startHealthPolling() {
     healthTimer = setInterval(() => void pollHealth(), 5000);
 }
 async function pollHealth() {
+    var _a;
     try {
         const r = await fetch(`${auditServerURL}/__health`, { method: "GET" });
         if (r.ok) {
@@ -108,14 +113,35 @@ async function pollHealth() {
                     server_url: auditServerURL,
                     schema_version: body.schema_version,
                     repo: body.repo,
+                    file_key: figma.fileKey || null,
+                    file_name: figma.root.name,
                 },
             });
             return;
         }
-        send({ type: "health", payload: { connected: false, server_url: auditServerURL, error: `HTTP ${r.status}` } });
+        send({
+            type: "health",
+            payload: {
+                connected: false,
+                server_url: auditServerURL,
+                error: `HTTP ${r.status}`,
+                diagnosis: `Server reached at ${auditServerURL} but returned ${r.status}. Restart the audit-server.`,
+            },
+        });
     }
     catch (e) {
-        send({ type: "health", payload: { connected: false, server_url: auditServerURL, error: e.message } });
+        const msg = (_a = e.message) !== null && _a !== void 0 ? _a : "unknown";
+        let diagnosis = `Cannot reach ${auditServerURL}. Run \`npm run audit:serve\` in the docs repo.`;
+        if (msg.toLowerCase().includes("cors") || msg.toLowerCase().includes("blocked")) {
+            diagnosis = `CORS blocked the request. The audit-server allows any origin by default — double-check it's the version from this repo.`;
+        }
+        else if (msg.toLowerCase().includes("failed to fetch") || msg.toLowerCase().includes("network")) {
+            diagnosis = `Network error. Is \`npm run audit:serve\` actually running? Try opening ${auditServerURL}/__health in a browser tab to confirm.`;
+        }
+        send({
+            type: "health",
+            payload: { connected: false, server_url: auditServerURL, error: msg, diagnosis },
+        });
     }
 }
 function classifyNode(node) {
@@ -452,6 +478,7 @@ async function applyFix(p) {
         return;
     }
     try {
+        // Fill — bind a SolidPaint to a color variable.
         if (p.property === "fill" && "fills" in node) {
             const fills = node.fills;
             if (fills && fills.length > 0 && fills[0].type === "SOLID") {
@@ -462,15 +489,148 @@ async function applyFix(p) {
                 });
                 node.fills = updated;
                 send({ type: "audit-applied", payload: { node_id: p.node_id, token_path: p.token_path } });
-                toast(`Applied ${p.token_path}`, "success");
+                toast(`Bound ${p.token_path}`, "success");
                 return;
             }
         }
-        toast(`Apply for "${p.property}" not yet supported in v1.`, "error");
+        // Stroke — same pattern as fill.
+        if (p.property === "stroke" && "strokes" in node) {
+            const strokes = node.strokes;
+            if (strokes && strokes.length > 0 && strokes[0].type === "SOLID") {
+                const updated = strokes.map((paint, i) => {
+                    if (i !== 0)
+                        return paint;
+                    return figma.variables.setBoundVariableForPaint(paint, "color", variable);
+                });
+                node.strokes = updated;
+                send({ type: "audit-applied", payload: { node_id: p.node_id, token_path: p.token_path } });
+                toast(`Bound ${p.token_path}`, "success");
+                return;
+            }
+        }
+        // Spacing / padding / radius — bind via setBoundVariableForLayoutSizingAndSpacing
+        // when the property exists on the node, otherwise fall through.
+        if (p.property === "radius" && "cornerRadius" in node) {
+            try {
+                node.setBoundVariable("topLeftRadius", variable);
+                node.setBoundVariable("topRightRadius", variable);
+                node.setBoundVariable("bottomLeftRadius", variable);
+                node.setBoundVariable("bottomRightRadius", variable);
+                send({ type: "audit-applied", payload: { node_id: p.node_id, token_path: p.token_path } });
+                toast(`Bound ${p.token_path}`, "success");
+                return;
+            }
+            catch (_c) { }
+        }
+        if (p.property === "spacing" && "itemSpacing" in node) {
+            try {
+                node.setBoundVariable("itemSpacing", variable);
+                send({ type: "audit-applied", payload: { node_id: p.node_id, token_path: p.token_path } });
+                toast(`Bound ${p.token_path}`, "success");
+                return;
+            }
+            catch (_d) { }
+        }
+        toast(`Apply for "${p.property}" not yet supported.`, "error");
     }
     catch (e) {
         toast(`Apply failed: ${(_b = e === null || e === void 0 ? void 0 : e.message) !== null && _b !== void 0 ? _b : "unknown"}. Plan tier?`, "error");
     }
+}
+async function applyGroup(p) {
+    const variable = await resolveVariable(p);
+    if (!variable) {
+        toast(`Token "${p.token_path}" isn't a local variable on this Figma plan.`, "error");
+        return;
+    }
+    let applied = 0;
+    for (const id of p.node_ids) {
+        const node = await figma.getNodeByIdAsync(id);
+        if (!node || node.removed)
+            continue;
+        if (await applyVariableToNode(node, p.property, variable))
+            applied++;
+    }
+    send({
+        type: "group-applied",
+        payload: {
+            key: `${p.property}|${p.observed}|${p.token_path}`,
+            applied,
+            total: p.node_ids.length,
+        },
+    });
+    toast(`Applied ${p.token_path} to ${applied}/${p.node_ids.length} node${p.node_ids.length === 1 ? "" : "s"}`, applied > 0 ? "success" : "error");
+}
+async function applyMany(p) {
+    let totalApplied = 0;
+    let totalTouched = 0;
+    for (const g of p.groups) {
+        const variable = await resolveVariable(g);
+        if (!variable)
+            continue;
+        for (const id of g.node_ids) {
+            totalTouched++;
+            const node = await figma.getNodeByIdAsync(id);
+            if (!node || node.removed)
+                continue;
+            if (await applyVariableToNode(node, g.property, variable))
+                totalApplied++;
+        }
+    }
+    send({ type: "many-applied", payload: { applied: totalApplied, touched: totalTouched } });
+    toast(`Applied ${totalApplied}/${totalTouched} bindings`, totalApplied > 0 ? "success" : "error");
+}
+async function resolveVariable(g) {
+    var _a;
+    if (g.variable_id && knownVariables[g.variable_id])
+        return knownVariables[g.variable_id];
+    await prefetchVariables();
+    if (g.variable_id && knownVariables[g.variable_id])
+        return knownVariables[g.variable_id];
+    const all = Object.values(knownVariables);
+    return (_a = all.find((v) => v.name.toLowerCase() === g.token_path.toLowerCase())) !== null && _a !== void 0 ? _a : null;
+}
+async function applyVariableToNode(node, property, variable) {
+    try {
+        if (property === "fill" && "fills" in node) {
+            const fills = node.fills;
+            if (!fills || fills.length === 0 || fills[0].type !== "SOLID")
+                return false;
+            node.fills = fills.map((paint, i) => i === 0 ? figma.variables.setBoundVariableForPaint(paint, "color", variable) : paint);
+            return true;
+        }
+        if (property === "stroke" && "strokes" in node) {
+            const strokes = node.strokes;
+            if (!strokes || strokes.length === 0 || strokes[0].type !== "SOLID")
+                return false;
+            node.strokes = strokes.map((paint, i) => i === 0 ? figma.variables.setBoundVariableForPaint(paint, "color", variable) : paint);
+            return true;
+        }
+        if (property === "radius" && "cornerRadius" in node) {
+            const n = node;
+            try {
+                n.setBoundVariable("topLeftRadius", variable);
+                n.setBoundVariable("topRightRadius", variable);
+                n.setBoundVariable("bottomLeftRadius", variable);
+                n.setBoundVariable("bottomRightRadius", variable);
+                return true;
+            }
+            catch (_a) {
+                return false;
+            }
+        }
+        if (property === "spacing" && "itemSpacing" in node) {
+            try {
+                node.setBoundVariable("itemSpacing", variable);
+                return true;
+            }
+            catch (_b) {
+                return false;
+            }
+        }
+    }
+    catch (_c) { }
+    return false;
 }
 async function runInject(kind) {
     toast(`Fetching manifest…`, "info");

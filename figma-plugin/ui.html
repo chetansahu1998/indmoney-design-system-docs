@@ -4,39 +4,38 @@
 <meta charset="utf-8" />
 <title>INDmoney DS Sync</title>
 <style>
-  /* Token system mirrors the docs site so the plugin feels like the
-     same product, not a separate tool. */
+  /* ── Tokens (mirror docs site) ────────────────────────────── */
   :root {
     --bg-page: #0e1117;
-    --bg-1:    #161a22;
-    --bg-2:    #1f242e;
-    --bg-3:    #242a36;
-    --border:  #2a3140;
+    --bg-1: #161a22;
+    --bg-2: #1f242e;
+    --bg-3: #242a36;
+    --border: #2a3140;
     --border-strong: #3b4254;
-    --text-1:  #f7f8fb;
-    --text-2:  #b6bdcc;
-    --text-3:  #8c93a4;
-    --accent:  #4d93fc;
+    --text-1: #f7f8fb;
+    --text-2: #b6bdcc;
+    --text-3: #8c93a4;
+    --accent: #4d93fc;
     --accent-soft: rgba(77, 147, 252, 0.16);
-    --good:    #38d39f;
-    --warn:    #f6a738;
-    --danger:  #ff6060;
-    --shadow-1: 0 4px 16px rgba(0,0,0,0.18);
+    --good: #38d39f;
+    --good-soft: rgba(56, 211, 159, 0.14);
+    --warn: #f6a738;
+    --warn-soft: rgba(246, 167, 56, 0.12);
+    --danger: #ff6060;
+    --danger-soft: rgba(255, 96, 96, 0.12);
+    --shadow-1: 0 4px 16px rgba(0, 0, 0, 0.18);
     --r-sm: 4px; --r-md: 6px; --r-lg: 8px; --r-xl: 12px;
   }
   @media (prefers-color-scheme: light) {
     :root {
-      --bg-page: #ffffff;
-      --bg-1:    #f7f8fb;
-      --bg-2:    #eef0f5;
-      --bg-3:    #e4e7ee;
-      --border:  #d8dbe3;
-      --border-strong: #c1c5cf;
-      --text-1:  #0e1117;
-      --text-2:  #404858;
-      --text-3:  #6f7686;
+      --bg-page: #ffffff; --bg-1: #f7f8fb; --bg-2: #eef0f5; --bg-3: #e4e7ee;
+      --border: #d8dbe3; --border-strong: #c1c5cf;
+      --text-1: #0e1117; --text-2: #404858; --text-3: #6f7686;
       --accent-soft: rgba(77, 147, 252, 0.10);
-      --shadow-1: 0 4px 12px rgba(0,0,0,0.06);
+      --good-soft: rgba(56, 211, 159, 0.10);
+      --warn-soft: rgba(246, 167, 56, 0.10);
+      --danger-soft: rgba(255, 96, 96, 0.08);
+      --shadow-1: 0 4px 12px rgba(0, 0, 0, 0.06);
     }
   }
   *, *::before, *::after { box-sizing: border-box; }
@@ -48,151 +47,181 @@
     * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   }
 
-  /* ── Status bar (top) ───────────────────────────────────────────── */
-  .statusbar {
-    display: flex; align-items: center; gap: 10px;
-    padding: 6px 12px;
-    background: var(--bg-1);
-    border-bottom: 1px solid var(--border);
-    font-size: 11px; color: var(--text-3);
-    flex-shrink: 0;
+  /* ── Status (sticky, slim) ────────────────────────────────── */
+  .status {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px; min-height: 28px;
+    background: var(--bg-1); border-bottom: 1px solid var(--border);
+    font-size: 11px; color: var(--text-3); flex-shrink: 0;
   }
   .dot {
     width: 7px; height: 7px; border-radius: 50%;
-    background: var(--text-3);
+    background: var(--text-3); flex-shrink: 0;
     transition: background 200ms ease, box-shadow 200ms ease;
-    flex-shrink: 0;
   }
-  .dot.connected { background: var(--good); box-shadow: 0 0 0 3px rgba(56, 211, 159, 0.18); }
-  .dot.error     { background: var(--danger); }
-  .statusbar .url { font-family: ui-monospace, "SF Mono", monospace; color: var(--text-2); }
-  .statusbar .spacer { flex: 1; }
-  .statusbar a { color: var(--text-3); text-decoration: none; cursor: pointer; }
-  .statusbar a:hover { color: var(--text-1); }
+  .dot.ok    { background: var(--good); box-shadow: 0 0 0 3px var(--good-soft); }
+  .dot.bad   { background: var(--danger); }
+  .dot.idle  { background: var(--warn); }
+  .status .ctx { font-family: ui-monospace, "SF Mono", monospace; color: var(--text-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+  .status .open-docs { color: var(--text-3); cursor: pointer; flex-shrink: 0; }
+  .status .open-docs:hover { color: var(--text-1); }
 
-  /* ── Tabs ─────────────────────────────────────────────────────── */
-  .tabs {
-    display: flex; gap: 0; padding: 8px 8px 0; background: var(--bg-1);
-    border-bottom: 1px solid var(--border); flex-shrink: 0;
+  /* ── Disconnect banner (between status + content) ─────────── */
+  .banner {
+    flex-shrink: 0; padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--danger-soft); color: var(--text-1);
+    display: flex; gap: 10px; align-items: flex-start;
+    border-left: 3px solid var(--danger);
   }
-  .tab {
-    flex: 1; min-width: 0;
-    background: transparent; border: none; cursor: pointer;
-    padding: 9px 0 11px;
-    font-size: 12px; font-weight: 500;
-    color: var(--text-3);
-    border-bottom: 2px solid transparent;
-    transition: color 140ms ease, border-color 140ms ease;
-    position: relative;
-  }
-  .tab:hover { color: var(--text-2); }
-  .tab.active { color: var(--text-1); border-bottom-color: var(--accent); font-weight: 600; }
-  .tab .badge {
-    display: inline-block; min-width: 18px;
-    margin-left: 6px;
-    padding: 1px 5px; border-radius: 999px;
-    font-size: 10px; font-weight: 700;
-    background: var(--accent-soft); color: var(--accent);
-    font-family: ui-monospace, monospace;
-  }
+  .banner.warn  { background: var(--warn-soft); border-left-color: var(--warn); }
+  .banner.info  { background: var(--accent-soft); border-left-color: var(--accent); }
+  .banner .ico { font-weight: 700; flex-shrink: 0; }
+  .banner.warn .ico  { color: var(--warn); }
+  .banner.bad .ico   { color: var(--danger); }
+  .banner.info .ico  { color: var(--accent); }
+  .banner .body { flex: 1; min-width: 0; font-size: 12px; line-height: 1.45; }
+  .banner .body strong { color: var(--text-1); display: block; margin-bottom: 2px; font-weight: 600; }
+  .banner .actions { display: flex; gap: 6px; margin-top: 6px; }
+  .banner.hidden { display: none; }
 
-  /* ── Pane (scrollable per-tab content) ─────────────────────────── */
-  .pane { flex: 1; overflow-y: auto; padding: 14px; min-height: 0; }
-  .pane.hidden { display: none; }
+  /* ── Scroll area ─────────────────────────────────────────── */
+  .pane { flex: 1; overflow-y: auto; padding: 12px; min-height: 0; }
+  .pane > * + * { margin-top: 10px; }
 
-  /* ── Sections inside a pane ────────────────────────────────────── */
-  .h-section { font-size: 10px; font-weight: 600; letter-spacing: 0.07em;
-    text-transform: uppercase; color: var(--text-3); margin: 4px 0 6px; }
+  /* ── Card ─────────────────────────────────────────────── */
   .card {
     background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-lg);
-    padding: 12px; display: flex; flex-direction: column; gap: 10px;
+    padding: 12px;
   }
-  .card + .card { margin-top: 10px; }
+  .card .hdr { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .card .ttl { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+  .card .meta { font-size: 10px; color: var(--text-3); font-family: ui-monospace, monospace; }
 
-  /* ── Selection summary card ────────────────────────────────────── */
+  /* ── Selection summary card ─────────────────────────────── */
   .sel-summary { display: flex; flex-direction: column; gap: 8px; }
-  .sel-empty { font-size: 12px; color: var(--text-3); text-align: center;
-    padding: 16px 8px; border: 1px dashed var(--border); border-radius: var(--r-md); }
-  .kind-row {
-    display: grid; grid-template-columns: 16px 1fr auto;
-    align-items: center; gap: 10px;
-    padding: 6px 8px;
-    border-radius: var(--r-sm);
-    transition: background 140ms ease;
-  }
-  .kind-row:hover { background: var(--bg-2); }
-  .kind-row .swatch { width: 8px; height: 8px; border-radius: 2px; background: var(--text-3); }
-  .kind-row.set      .swatch { background: var(--accent); }
-  .kind-row.standalone .swatch { background: var(--good); }
-  .kind-row.variant  .swatch { background: var(--accent-soft); border: 1px solid var(--accent); }
-  .kind-row.instance .swatch { background: var(--warn); }
-  .kind-row.frame    .swatch { background: var(--text-3); }
-  .kind-row .label { font-size: 12px; color: var(--text-2); }
-  .kind-row .count { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; color: var(--text-1); }
+  .sel-empty { font-size: 12px; color: var(--text-3); padding: 12px 8px;
+    border: 1px dashed var(--border); border-radius: var(--r-md); text-align: center; line-height: 1.55; }
+  .sel-empty strong { display: block; color: var(--text-2); margin-bottom: 2px; font-size: 13px; font-weight: 600; }
 
-  /* ── Buttons ────────────────────────────────────────────────────── */
+  .kind-list { display: flex; flex-direction: column; gap: 2px; }
+  .kind-row {
+    display: grid; grid-template-columns: 14px 1fr auto; gap: 10px;
+    padding: 5px 6px; border-radius: var(--r-sm);
+    align-items: center;
+  }
+  .kind-row .sw { width: 6px; height: 6px; border-radius: 2px; background: var(--text-3); }
+  .kind-row.set        .sw { background: var(--accent); }
+  .kind-row.standalone .sw { background: var(--good); }
+  .kind-row.variant    .sw { background: var(--accent); opacity: 0.45; }
+  .kind-row.instance   .sw { background: var(--warn); }
+  .kind-row.frame      .sw { background: var(--text-3); opacity: 0.6; }
+  .kind-row .label { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kind-row .count { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; color: var(--text-1); }
+  .kind-row.skipped { opacity: 0.55; }
+
+  /* ── Primary action row ───────────────────────────────── */
+  .actions-row { display: flex; gap: 6px; margin-top: 10px; }
+  .actions-row > button { flex: 1; }
+  .actions-row > button.flex-2 { flex: 2; }
+
+  /* ── Buttons ──────────────────────────────────────────── */
   button {
-    font-family: inherit; font-size: 13px; font-weight: 500;
+    font: inherit; font-size: 13px; font-weight: 500;
     padding: 8px 12px; border-radius: var(--r-md);
-    border: 1px solid var(--border);
-    background: var(--bg-1); color: var(--text-1);
+    border: 1px solid var(--border); background: var(--bg-1); color: var(--text-1);
     cursor: pointer; transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+    white-space: nowrap;
   }
   button:hover:not(:disabled) { background: var(--bg-2); border-color: var(--border-strong); }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
-  button.primary {
-    background: var(--accent); color: #fff; border-color: var(--accent);
-    font-weight: 600;
-  }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
   button.primary:hover:not(:disabled) { background: #2f7df0; border-color: #2f7df0; }
+  button.danger { color: var(--danger); border-color: var(--danger); }
   button.subtle { background: transparent; border-color: transparent; padding: 6px 10px; font-size: 11px; color: var(--text-3); }
-  button.subtle:hover:not(:disabled) { color: var(--text-2); background: var(--bg-2); }
-  button.danger  { background: var(--bg-1); color: var(--danger); border-color: var(--danger); }
-  .btn-row { display: flex; gap: 6px; }
-  .btn-row > button { flex: 1; }
-  .btn-row > button.flex-2 { flex: 2; }
+  button.subtle:hover:not(:disabled) { background: var(--bg-2); color: var(--text-2); }
+  button.tiny { padding: 3px 8px; font-size: 11px; }
 
-  /* Spinner */
-  .spinner {
-    display: inline-block; width: 12px; height: 12px;
-    border: 2px solid rgba(77, 147, 252, 0.25);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 800ms linear infinite;
+  /* ── Spinner ──────────────────────────────────────────── */
+  .spin { display: inline-block; width: 12px; height: 12px;
+    border: 2px solid var(--accent-soft); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 800ms linear infinite;
     margin-right: 6px; vertical-align: -2px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ── Audit lens cards ──────────────────────────────────────────── */
-  .audit-summary { display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+  /* ── Audit result ─────────────────────────────────────── */
+  .audit-stats { display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline; }
   .stat { display: flex; flex-direction: column; gap: 1px; min-width: 70px; }
-  .stat-num { font-size: 20px; font-weight: 700; color: var(--text-1); letter-spacing: -0.4px; line-height: 1; }
+  .stat-num { font-size: 22px; font-weight: 700; color: var(--text-1); letter-spacing: -0.4px; line-height: 1; }
   .stat-num.accent { color: var(--accent); }
   .stat-num.danger { color: var(--danger); }
   .stat-label { font-size: 9px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
-  .priority-pills { display: inline-flex; gap: 4px; }
+  .pills { display: inline-flex; gap: 4px; }
   .pill { font-size: 10px; padding: 1px 6px; border-radius: 999px; font-family: ui-monospace, monospace; font-weight: 700; }
   .pill.p1 { background: var(--danger); color: #fff; }
   .pill.p2 { background: var(--warn); color: #1a1a1a; }
   .pill.p3 { background: var(--bg-3); color: var(--text-3); }
 
-  .fixes { display: flex; flex-direction: column; gap: 6px; }
-  .fix-card {
-    background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-md);
-    padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;
-    transition: border-color 140ms ease;
+  /* ── Apply-all-P1 row ───────────────────────────────── */
+  .apply-all {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px; margin-top: 10px;
+    background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: var(--r-md);
+    font-size: 12px;
   }
-  .fix-card.applied { border-color: var(--good); background: rgba(56, 211, 159, 0.04); }
-  .fix-row { display: flex; gap: 8px; align-items: center; }
-  .fix-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-  .fix-detail { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text-3); line-height: 1.45; }
-  .fix-detail .observed, .fix-detail .token { color: var(--text-2); }
-  .fix-detail .arrow { color: var(--text-3); }
-  .fix-detail .token { color: var(--accent); }
-  .fix-actions { display: flex; gap: 4px; }
-  .fix-actions button { padding: 4px 8px; font-size: 11px; flex: 0 0 auto; }
+  .apply-all .text { flex: 1; min-width: 0; color: var(--text-2); }
+  .apply-all strong { color: var(--danger); }
 
-  /* ── Toast queue ───────────────────────────────────────────────── */
+  /* ── Fix groups ──────────────────────────────────────── */
+  .fixes { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .fix-grp {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-md);
+    padding: 8px 10px; display: flex; flex-direction: column; gap: 4px;
+    transition: border-color 200ms ease, background 200ms ease;
+  }
+  .fix-grp.applied { border-color: var(--good); background: var(--good-soft); }
+  .fix-grp .ttl { display: flex; gap: 6px; align-items: center; font-size: 12px; line-height: 1.5; min-width: 0; }
+  .fix-grp .ttl .pill { flex-shrink: 0; }
+  .fix-grp .obs, .fix-grp .tok { font-family: ui-monospace, monospace; }
+  .fix-grp .obs { color: var(--text-2); }
+  .fix-grp .arrow { color: var(--text-3); }
+  .fix-grp .tok { color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fix-grp .meta { font-size: 10px; color: var(--text-3); font-family: ui-monospace, monospace; }
+  .fix-grp .actions { display: flex; gap: 4px; margin-top: 4px; }
+  .fix-grp.applied .actions button.primary { display: none; }
+
+  /* ── Disclosure ───────────────────────────────────── */
+  details { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-md); padding: 8px 12px; }
+  details summary {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--text-2); cursor: pointer; user-select: none; font-weight: 500;
+    list-style: none; outline: none;
+  }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before {
+    content: "▸"; font-size: 10px; color: var(--text-3); width: 10px;
+    transition: transform 140ms ease;
+  }
+  details[open] summary::before { transform: rotate(90deg); }
+  details summary:hover { color: var(--text-1); }
+  details[open] { padding-bottom: 12px; }
+  details > .body { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+
+  /* ── Inputs ───────────────────────────────────────── */
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+  .field input {
+    width: 100%; padding: 7px 9px; font-size: 12px;
+    font-family: ui-monospace, "SF Mono", monospace;
+    background: var(--bg-page); color: var(--text-1);
+    border: 1px solid var(--border); border-radius: var(--r-md);
+  }
+  .field input:focus { outline: 2px solid var(--accent-soft); outline-offset: 0; border-color: var(--accent); }
+  .field .help { font-size: 10px; color: var(--text-3); line-height: 1.5; }
+
+  /* ── Toaster ──────────────────────────────────────── */
   .toaster {
     position: fixed; bottom: 12px; left: 12px; right: 12px;
     display: flex; flex-direction: column-reverse; gap: 6px;
@@ -202,8 +231,7 @@
     pointer-events: auto;
     background: var(--bg-2); color: var(--text-1);
     border: 1px solid var(--border-strong); border-radius: var(--r-md);
-    padding: 8px 10px;
-    font-size: 12px; line-height: 1.4;
+    padding: 8px 10px; font-size: 12px; line-height: 1.4;
     box-shadow: var(--shadow-1);
     display: flex; gap: 8px; align-items: flex-start;
     animation: toast-in 200ms ease-out;
@@ -213,131 +241,113 @@
   .toast.info    { border-left: 3px solid var(--accent); }
   .toast .ico { flex-shrink: 0; font-weight: 700; }
   .toast.success .ico { color: var(--good); }
-  .toast.error .ico   { color: var(--danger); }
-  .toast.info .ico    { color: var(--accent); }
+  .toast.error   .ico { color: var(--danger); }
+  .toast.info    .ico { color: var(--accent); }
   @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-
-  /* ── Settings ──────────────────────────────────────────────────── */
-  .field { display: flex; flex-direction: column; gap: 4px; }
-  .field label { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
-  .field input {
-    width: 100%; padding: 7px 9px; font-size: 12px; font-family: ui-monospace, monospace;
-    background: var(--bg-1); color: var(--text-1);
-    border: 1px solid var(--border); border-radius: var(--r-md);
-  }
-  .field input:focus { outline: 2px solid var(--accent-soft); outline-offset: 0; border-color: var(--accent); }
-
-  /* Empty + loading states */
-  .empty {
-    border: 1px dashed var(--border); border-radius: var(--r-lg);
-    padding: 24px 16px; text-align: center; color: var(--text-3); font-size: 12px;
-    line-height: 1.55;
-  }
-  .empty .empty-title { color: var(--text-2); font-weight: 600; margin-bottom: 4px; font-size: 13px; }
-  .empty .empty-cta { margin-top: 10px; }
-
-  details { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-md); padding: 8px 12px; }
-  details summary { font-size: 11px; color: var(--text-2); cursor: pointer; user-select: none; font-weight: 500; }
-  details summary:hover { color: var(--text-1); }
-  details[open] { padding-bottom: 12px; }
-
-  hr { border: none; border-top: 1px solid var(--border); margin: 6px 0; }
-
-  /* Inline meta */
-  .meta { color: var(--text-3); font-family: ui-monospace, monospace; font-size: 10px; }
 </style>
 </head>
 <body>
 
-<div class="statusbar">
+<!-- ── Sticky status ──────────────────────────────────────── -->
+<div class="status">
   <span class="dot" id="dot"></span>
-  <span id="status-text">Connecting…</span>
-  <span class="spacer"></span>
-  <span class="url" id="url-text"></span>
-  <a id="open-docs" title="Open docs site">↗</a>
+  <span class="ctx" id="ctx">Initialising…</span>
+  <span class="open-docs" id="open-docs" title="Open docs site">↗ docs</span>
 </div>
 
-<div class="tabs">
-  <button class="tab active" data-tab="publish">
-    Publish
-    <span class="badge" id="badge-publish" style="display:none">0</span>
-  </button>
-  <button class="tab" data-tab="audit">Audit</button>
-  <button class="tab" data-tab="inject">Inject</button>
-  <button class="tab" data-tab="settings">Settings</button>
+<!-- ── Disconnect / staleness banner (hidden by default) ── -->
+<div class="banner hidden" id="banner">
+  <span class="ico" id="banner-ico">!</span>
+  <div class="body" id="banner-body"></div>
 </div>
 
-<!-- ── PUBLISH TAB ──────────────────────────────────────────────── -->
-<div class="pane" id="pane-publish">
-  <div class="card sel-summary" id="selection-card">
-    <div class="h-section">Live selection</div>
+<div class="pane">
+
+  <!-- ── Selection (live) ──────────────────────────────── -->
+  <div class="card sel-summary">
+    <div class="hdr">
+      <span class="ttl">Selection</span>
+      <span class="meta" id="sel-meta"></span>
+    </div>
     <div id="sel-body"></div>
-    <div class="btn-row">
-      <button class="primary flex-2" id="btn-publish" disabled>Publish to DS</button>
-      <button class="" id="btn-publish-audit" disabled>Audit</button>
-    </div>
-    <div class="meta" id="publish-hint" style="text-align:center"></div>
-  </div>
-
-  <div class="card" style="margin-top:10px">
-    <div class="h-section">What gets published</div>
-    <div style="font-size:12px;color:var(--text-2);line-height:1.55">
-      Sets (parents) and the variants under them. Standalone components.
-      Variants picked individually. Instances and frames are skipped — the
-      DS catalogues sources, not uses.
-    </div>
-    <div class="meta">Lands as <code style="font-family:ui-monospace,monospace;color:var(--text-2)">lib/contributions/&lt;file&gt;.json</code>; commit + push to deploy.</div>
-  </div>
-</div>
-
-<!-- ── AUDIT TAB ──────────────────────────────────────────────── -->
-<div class="pane hidden" id="pane-audit">
-  <div class="card">
-    <div class="h-section">Run audit</div>
-    <div class="btn-row">
-      <button class="primary" id="audit-sel">Selection</button>
-      <button class="primary" id="audit-page">Page</button>
-      <button class="primary" id="audit-file">File</button>
+    <div class="actions-row" id="sel-actions" style="display:none">
+      <button class="primary flex-2" id="btn-publish">Publish to DS</button>
+      <button id="btn-audit-sel">Audit selection</button>
     </div>
   </div>
-  <div id="audit-result" style="margin-top:10px"></div>
-</div>
 
-<!-- ── INJECT TAB (kept, tertiary) ─────────────────────────────── -->
-<div class="pane hidden" id="pane-inject">
-  <div class="empty">
-    <div class="empty-title">Pull from DS</div>
-    Drop the published icons or component primitives onto a fresh page.
-    Mostly for scaffolding new designs from the system.
-    <div class="empty-cta">
-      <div class="btn-row">
-        <button id="inject-icons">Inject icons</button>
-        <button id="inject-components">Inject components</button>
+  <!-- ── Audit result (only visible when present) ──────── -->
+  <div class="card" id="audit-card" style="display:none">
+    <div class="hdr">
+      <span class="ttl">Audit result</span>
+      <span class="meta" id="audit-meta"></span>
+    </div>
+
+    <div class="audit-stats">
+      <div class="stat"><span class="stat-num accent" id="s-cov">—</span><span class="stat-label">Coverage</span></div>
+      <div class="stat"><span class="stat-num" id="s-comps">—</span><span class="stat-label">DS / Amb / Cust</span></div>
+      <div class="stat">
+        <span class="pills"><span class="pill p1" id="s-p1">P1 0</span><span class="pill p2" id="s-p2">P2 0</span><span class="pill p3" id="s-p3">P3 0</span></span>
+        <span class="stat-label">Fixes</span>
       </div>
     </div>
-    <div class="meta" style="margin-top:10px" id="inject-progress"></div>
-  </div>
-</div>
 
-<!-- ── SETTINGS TAB ──────────────────────────────────────────── -->
-<div class="pane hidden" id="pane-settings">
-  <div class="card">
-    <div class="h-section">Audit server</div>
-    <div class="field">
-      <label>Local URL</label>
-      <input id="server-url" value="http://localhost:7474" />
+    <div class="apply-all" id="apply-all-row" style="display:none">
+      <span class="text">Fix every <strong id="apply-all-count">P1</strong> in one transaction.</span>
+      <button class="primary tiny" id="apply-all-btn">Apply all P1</button>
     </div>
-    <div class="meta">
-      Run <code>npm run audit:serve</code> in the docs repo. The plugin polls
-      every 5s; the dot at the top reflects live state.
+
+    <div class="fixes" id="fixes"></div>
+  </div>
+
+  <!-- ── Empty audit state ──────────────────────────────── -->
+  <div class="card" id="audit-empty">
+    <div class="hdr"><span class="ttl">Audit</span></div>
+    <div style="font-size:12px;color:var(--text-2);line-height:1.55">
+      Hit <strong>Audit selection</strong> above (or change a layer to refresh) to see token coverage,
+      component matches, and drift you can fix in one click.
+    </div>
+    <div class="actions-row">
+      <button id="btn-audit-page">Audit page</button>
+      <button id="btn-audit-file">Audit file</button>
     </div>
   </div>
-  <div class="card" style="margin-top:10px">
-    <div class="h-section">Diagnostics</div>
-    <details><summary>Last toasts</summary>
-      <div id="last-toasts" style="margin-top:8px;font-family:ui-monospace,monospace;font-size:10px;color:var(--text-3);max-height:160px;overflow-y:auto;line-height:1.7"></div>
-    </details>
-  </div>
+
+  <!-- ── More (collapsed) ──────────────────────────────── -->
+  <details>
+    <summary>Pull from DS (icons / components)</summary>
+    <div class="body">
+      <div style="font-size:12px;color:var(--text-2);line-height:1.55">
+        Drop the published icons or component primitives onto a fresh page. Mostly for
+        scaffolding new designs from the system.
+      </div>
+      <div class="actions-row">
+        <button id="inject-icons">Icons</button>
+        <button id="inject-components">Components</button>
+      </div>
+      <div class="meta" id="inject-progress" style="text-align:center"></div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Settings</summary>
+    <div class="body">
+      <div class="field">
+        <label>Audit server URL</label>
+        <input id="server-url" value="http://localhost:7474" />
+        <div class="help">Run <code>npm run audit:serve</code> in the docs repo. Plugin polls /__health every 5s.</div>
+      </div>
+      <div class="field">
+        <label>This file</label>
+        <div class="help" id="diag-file">—</div>
+      </div>
+      <details>
+        <summary style="font-size:11px">Recent activity</summary>
+        <div id="last-toasts" style="margin-top:8px;font-family:ui-monospace,monospace;font-size:10px;color:var(--text-3);max-height:140px;overflow-y:auto;line-height:1.7"></div>
+      </details>
+    </div>
+  </details>
+
 </div>
 
 <div class="toaster" id="toaster"></div>
@@ -345,148 +355,169 @@
 <script>
 "use strict";
 const $  = (id) => document.getElementById(id);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
-const post = (type, payload) => parent.postMessage({ pluginMessage: { type, payload } }, '*');
+const post = (type, payload) => parent.postMessage({ pluginMessage: { type, payload } }, "*");
 
-let lastFixes = [];
+let lastSummary = null;
+let lastFixGroups = [];
 let toastsLog = [];
 
-/* ── Tabs ──────────────────────────────────────── */
-$$(".tab").forEach((t) => {
-  t.addEventListener("click", () => {
-    const target = t.dataset.tab;
-    $$(".tab").forEach((x) => x.classList.toggle("active", x === t));
-    $$(".pane").forEach((p) => p.classList.toggle("hidden", p.id !== `pane-${target}`));
-  });
-});
-
-/* ── Status ──────────────────────────────────────── */
-function setStatus(connected, info) {
+/* ── Status ────────────────────────────────────────────────── */
+function applyHealth(h) {
   const dot = $("dot");
-  dot.classList.toggle("connected", !!connected);
-  dot.classList.toggle("error", connected === false);
-  $("status-text").textContent = connected
-    ? `Connected · schema ${info?.schema_version ?? "?"}`
-    : `Disconnected · ${info?.error ?? "?"}`;
-  $("url-text").textContent = info?.server_url ?? "";
-}
-
-/* ── Selection summary ────────────────────────────── */
-function renderSelection(s) {
-  const body = $("sel-body");
-  body.innerHTML = "";
-  if (!s || s.total === 0) {
-    body.innerHTML = '<div class="sel-empty">Select something in Figma to see what will be published.</div>';
-    $("btn-publish").disabled = true;
-    $("btn-publish-audit").disabled = true;
-    $("publish-hint").textContent = "";
-    $("badge-publish").style.display = "none";
-    return;
-  }
-
-  const rows = [
-    { kind: "set", label: "Component sets", count: s.byKind.component_set, suffix: s.variantTotal > 0 ? ` · ${s.variantTotal} variants` : "" },
-    { kind: "standalone", label: "Standalone components", count: s.byKind.component_standalone },
-    { kind: "variant", label: "Variants (picked individually)", count: s.byKind.component_variant },
-    { kind: "instance", label: "Instances (skipped)", count: s.byKind.instance },
-    { kind: "frame", label: "Frames / groups (skipped)", count: s.byKind.frame + s.byKind.other },
-  ].filter((r) => r.count > 0);
-
-  for (const r of rows) {
-    const row = document.createElement("div");
-    row.className = `kind-row ${r.kind}`;
-    row.innerHTML = `<span class="swatch"></span><span class="label">${r.label}${r.suffix ?? ""}</span><span class="count">${r.count}</span>`;
-    body.appendChild(row);
-  }
-
-  $("btn-publish").disabled = s.publishable === 0;
-  $("btn-publish-audit").disabled = false;
-  $("publish-hint").textContent = s.publishable > 0
-    ? `${s.publishable} item${s.publishable === 1 ? "" : "s"} ready to publish · ${s.variantTotal} variant${s.variantTotal === 1 ? "" : "s"}`
-    : "Pick a Component Set, Component, or Variant to enable publish";
-  $("badge-publish").textContent = String(s.publishable);
-  $("badge-publish").style.display = s.publishable > 0 ? "inline-block" : "none";
-}
-
-/* ── Audit results ────────────────────────────────── */
-function renderAuditSummary(t) {
-  const root = $("audit-result");
-  root.innerHTML = `
-    <div class="card">
-      <div class="audit-summary">
-        <div class="stat"><span class="stat-num accent">${t.coverage}%</span><span class="stat-label">Coverage</span></div>
-        <div class="stat"><span class="stat-num">${t.fromDS}/${t.amb}/${t.cust}</span><span class="stat-label">DS / Amb / Cust</span></div>
-        <div class="stat">
-          <span class="priority-pills"><span class="pill p1">P1 ${t.p1}</span><span class="pill p2">P2 ${t.p2}</span><span class="pill p3">P3 ${t.p3}</span></span>
-          <span class="stat-label">Fixes</span>
-        </div>
-      </div>
-      <div class="fixes" id="fixes-list"></div>
-    </div>
-  `;
-}
-
-function renderAuditFixes(fixes) {
-  lastFixes = fixes;
-  const root = $("fixes-list");
-  if (!root) return;
-  root.innerHTML = "";
-  if (fixes.length === 0) {
-    root.innerHTML = '<div class="meta" style="text-align:center;padding:14px 0">✓ Clean — no drift detected.</div>';
-    return;
-  }
-  for (const f of fixes) {
-    root.appendChild(renderFix(f));
-  }
-}
-
-function renderFix(f) {
-  const card = document.createElement("div");
-  card.className = "fix-card";
-  card.dataset.nodeId = f.node_id;
-
-  const top = document.createElement("div");
-  top.className = "fix-row";
-  const nm = document.createElement("span");
-  nm.className = "nm";
-  nm.title = f.node_name;
-  nm.textContent = f.node_name || "(unnamed)";
-  const pill = document.createElement("span");
-  pill.className = `pill ${f.priority.toLowerCase()}`;
-  pill.textContent = f.priority;
-  top.append(nm, pill);
-  card.appendChild(top);
-
-  const detail = document.createElement("div");
-  detail.className = "fix-detail";
-  if (f.token_path) {
-    detail.innerHTML = `<strong style="color:var(--text-2)">${f.property}</strong> <span class="observed">${f.observed}</span> <span class="arrow">→</span> <span class="token">${f.token_path}</span>`;
-    if (f.distance > 0) detail.innerHTML += `  <span style="color:var(--text-3)">(d=${f.distance.toFixed(3)})</span>`;
-    if (f.usage_count > 1) detail.innerHTML += `  ×${f.usage_count}`;
+  dot.classList.toggle("ok",  !!h.connected);
+  dot.classList.toggle("bad", h.connected === false);
+  if (h.connected) {
+    showBanner(false);
+    $("ctx").textContent = `${h.repo?.split("/").pop() ?? "ok"} · schema ${h.schema_version ?? "?"} · ${h.file_name ?? ""}`;
+    $("diag-file").textContent = `${h.file_name ?? "?"} · file_key=${h.file_key ?? "(unavailable)"}`;
   } else {
-    detail.innerHTML = `<strong style="color:var(--text-2)">${f.property}</strong> <span class="observed">${f.observed}</span> <span class="meta">${f.reason}</span>`;
+    $("ctx").textContent = `Disconnected · ${h.server_url}`;
+    showBanner(true, "bad", "Audit server unreachable", h.diagnosis ?? h.error ?? "Unknown error", "retry");
   }
-  card.appendChild(detail);
+}
 
-  if (f.token_path) {
+function showBanner(visible, level, title, body, ctaLabel) {
+  const b = $("banner");
+  if (!visible) {
+    b.classList.add("hidden");
+    return;
+  }
+  b.classList.remove("hidden", "warn", "bad", "info");
+  b.classList.add(level || "info");
+  $("banner-ico").textContent = level === "bad" ? "!" : level === "warn" ? "!" : "i";
+  $("banner-body").innerHTML = `<strong>${escapeHtml(title)}</strong>${escapeHtml(body)}` +
+    (ctaLabel ? `<div class="actions"><button class="tiny" id="banner-cta">${escapeHtml(ctaLabel)}</button></div>` : "");
+  if (ctaLabel) {
+    $("banner-cta").addEventListener("click", () => {
+      pushToast("Re-checking connection…", "info");
+      post("set-server-url", $("server-url").value);
+    });
+  }
+}
+
+/* ── Selection ─────────────────────────────────────────────── */
+function renderSelection(s) {
+  lastSummary = s;
+  const body = $("sel-body");
+  const meta = $("sel-meta");
+  const actions = $("sel-actions");
+  const setsCount = s ? s.byKind.component_set : 0;
+  const standCount = s ? s.byKind.component_standalone : 0;
+  const varCount = s ? s.byKind.component_variant : 0;
+  const instCount = s ? s.byKind.instance : 0;
+  const frameCount = s ? (s.byKind.frame + s.byKind.other) : 0;
+  meta.textContent = s && s.total > 0 ? `${s.total} layer${s.total === 1 ? "" : "s"}` : "";
+
+  if (!s || s.total === 0) {
+    body.innerHTML = `<div class="sel-empty"><strong>Nothing selected</strong>Pick component sets, components, or variants in the layer panel — the plugin classifies live.</div>`;
+    actions.style.display = "none";
+    return;
+  }
+
+  const rows = [];
+  if (setsCount)   rows.push({ k: "set", l: `Component sets${s.variantTotal > 0 ? ` · ${s.variantTotal} variants` : ""}`, c: setsCount });
+  if (standCount)  rows.push({ k: "standalone", l: "Standalone components", c: standCount });
+  if (varCount)    rows.push({ k: "variant", l: "Variants (picked individually)", c: varCount });
+  if (instCount)   rows.push({ k: "instance", l: "Instances (skipped on publish)", c: instCount, skipped: true });
+  if (frameCount)  rows.push({ k: "frame", l: "Frames / groups (skipped)", c: frameCount, skipped: true });
+
+  body.innerHTML = `<div class="kind-list">${rows.map(r =>
+    `<div class="kind-row ${r.k} ${r.skipped ? "skipped" : ""}">
+      <span class="sw"></span>
+      <span class="label">${escapeHtml(r.l)}</span>
+      <span class="count">${r.c}</span>
+    </div>`
+  ).join("")}</div>`;
+
+  actions.style.display = "flex";
+  $("btn-publish").disabled = s.publishable === 0;
+  $("btn-publish").textContent = s.publishable === 0 ? "Pick a Set / Component / Variant" : `Publish ${s.publishable} to DS`;
+}
+
+/* ── Audit ─────────────────────────────────────────────────── */
+function renderAudit(t) {
+  $("audit-empty").style.display = "none";
+  $("audit-card").style.display = "block";
+  $("s-cov").textContent = `${t.coverage}%`;
+  $("s-comps").textContent = `${t.fromDS}/${t.amb}/${t.cust}`;
+  $("s-p1").textContent = `P1 ${t.p1}`;
+  $("s-p2").textContent = `P2 ${t.p2}`;
+  $("s-p3").textContent = `P3 ${t.p3}`;
+  $("audit-meta").textContent = `${t.screens} screen${t.screens === 1 ? "" : "s"}`;
+
+  const hasP1 = t.p1 > 0;
+  $("apply-all-row").style.display = hasP1 ? "flex" : "none";
+  $("apply-all-count").textContent = `${t.p1} P1 fix${t.p1 === 1 ? "" : "es"}`;
+}
+
+function renderFixes(fixes) {
+  // Group by (property, observed, token_path) — bulk-apply unit.
+  const groups = new Map();
+  for (const f of fixes) {
+    const key = `${f.property}|${f.observed}|${f.token_path || ""}`;
+    if (!groups.has(key)) {
+      groups.set(key, { property: f.property, observed: f.observed, token_path: f.token_path,
+        priority: f.priority, reason: f.reason, distance: f.distance, variable_id: f.variable_id,
+        nodes: [], applied: 0 });
+    }
+    const g = groups.get(key);
+    g.nodes.push({ id: f.node_id, name: f.node_name });
+    if (f.priority === "P1") g.priority = "P1";
+    else if (f.priority === "P2" && g.priority !== "P1") g.priority = "P2";
+  }
+  lastFixGroups = Array.from(groups.values()).sort((a, b) => {
+    const r = (p) => p === "P1" ? 0 : p === "P2" ? 1 : 2;
+    if (r(a.priority) !== r(b.priority)) return r(a.priority) - r(b.priority);
+    return b.nodes.length - a.nodes.length;
+  });
+
+  const root = $("fixes");
+  root.innerHTML = "";
+  if (lastFixGroups.length === 0) {
+    root.innerHTML = `<div class="meta" style="text-align:center;padding:14px 0">✓ Clean — no drift detected.</div>`;
+    return;
+  }
+  for (const g of lastFixGroups) {
+    root.appendChild(renderFixGroup(g));
+  }
+}
+
+function renderFixGroup(g) {
+  const card = document.createElement("div");
+  card.className = "fix-grp";
+  card.dataset.key = `${g.property}|${g.observed}|${g.token_path || ""}`;
+
+  const ttl = document.createElement("div");
+  ttl.className = "ttl";
+  ttl.innerHTML =
+    `<span class="pill ${g.priority.toLowerCase()}">${g.priority}</span>` +
+    `<span style="color:var(--text-3)">${escapeHtml(g.property)}</span>` +
+    ` <span class="obs">${escapeHtml(g.observed)}</span>` +
+    (g.token_path ? `<span class="arrow">→</span><span class="tok">${escapeHtml(g.token_path)}</span>` : "");
+  card.appendChild(ttl);
+
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.textContent = `${g.nodes.length} node${g.nodes.length === 1 ? "" : "s"}` +
+    (g.distance > 0 ? ` · d=${g.distance.toFixed(3)}` : "") +
+    ` · ${g.reason}`;
+  card.appendChild(meta);
+
+  if (g.token_path) {
     const actions = document.createElement("div");
-    actions.className = "fix-actions";
-    if (f.property === "fill") {
+    actions.className = "actions";
+    if (g.property === "fill" || g.property === "stroke" || g.property === "spacing" || g.property === "radius") {
       const apply = document.createElement("button");
-      apply.className = "primary";
-      apply.textContent = "Apply";
-      apply.addEventListener("click", () => {
-        apply.disabled = true;
-        apply.innerHTML = '<span class="spinner"></span>Applying';
-        post("apply-fix", { node_id: f.node_id, property: f.property, variable_id: f.variable_id, token_path: f.token_path });
-      });
+      apply.className = "primary tiny";
+      apply.textContent = `Apply to all ${g.nodes.length}`;
+      apply.addEventListener("click", () => applyGroup(card, g));
       actions.appendChild(apply);
     }
     const copy = document.createElement("button");
-    copy.className = "subtle";
+    copy.className = "subtle tiny";
     copy.textContent = "Copy path";
     copy.addEventListener("click", () => {
-      navigator.clipboard?.writeText(f.token_path).catch(() => {});
+      navigator.clipboard?.writeText(g.token_path).catch(() => {});
       copy.textContent = "Copied";
       setTimeout(() => (copy.textContent = "Copy path"), 1100);
     });
@@ -496,7 +527,74 @@ function renderFix(f) {
   return card;
 }
 
-/* ── Toasts ───────────────────────────────────────── */
+function applyGroup(card, g) {
+  const btn = card.querySelector(".actions button.primary");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spin"></span>Applying ${g.nodes.length}…`;
+  }
+  post("apply-group", {
+    property: g.property,
+    token_path: g.token_path,
+    observed: g.observed,
+    variable_id: g.variable_id,
+    node_ids: g.nodes.map((n) => n.id),
+  });
+}
+
+/* ── Apply all P1 ────────────────────────────────────────── */
+$("apply-all-btn").addEventListener("click", () => {
+  const p1Groups = lastFixGroups.filter((g) => g.priority === "P1" && g.token_path);
+  if (p1Groups.length === 0) return;
+  $("apply-all-btn").disabled = true;
+  $("apply-all-btn").innerHTML = `<span class="spin"></span>Applying`;
+  post("apply-many", {
+    groups: p1Groups.map((g) => ({
+      property: g.property,
+      token_path: g.token_path,
+      observed: g.observed,
+      variable_id: g.variable_id,
+      node_ids: g.nodes.map((n) => n.id),
+    })),
+  });
+});
+
+/* ── Buttons ──────────────────────────────────────────────── */
+$("btn-publish").addEventListener("click", () => {
+  $("btn-publish").disabled = true;
+  $("btn-publish").innerHTML = `<span class="spin"></span>Publishing`;
+  post("publish");
+});
+$("btn-audit-sel").addEventListener("click", () => spinAudit("btn-audit-sel", "selection"));
+$("btn-audit-page").addEventListener("click", () => spinAudit("btn-audit-page", "page"));
+$("btn-audit-file").addEventListener("click", () => spinAudit("btn-audit-file", "file"));
+$("inject-icons").addEventListener("click", () => post("inject", { kind: "icon" }));
+$("inject-components").addEventListener("click", () => post("inject", { kind: "component" }));
+$("open-docs").addEventListener("click", () => post("open-docs"));
+$("server-url").addEventListener("change", (e) => post("set-server-url", e.target.value));
+
+let auditElapsedTimer = null;
+function spinAudit(btnId, scope) {
+  const btn = $(btnId);
+  const original = btn.textContent;
+  btn.disabled = true;
+  let s = 0;
+  btn.innerHTML = `<span class="spin"></span>${original} (0s)`;
+  if (auditElapsedTimer) clearInterval(auditElapsedTimer);
+  auditElapsedTimer = setInterval(() => {
+    s++;
+    btn.innerHTML = `<span class="spin"></span>${original} (${s}s)`;
+  }, 1000);
+  post("audit", { scope });
+  document.addEventListener("audit-done", function once() {
+    if (auditElapsedTimer) { clearInterval(auditElapsedTimer); auditElapsedTimer = null; }
+    btn.disabled = false;
+    btn.textContent = original;
+    document.removeEventListener("audit-done", once);
+  });
+}
+
+/* ── Toasts ──────────────────────────────────────────────── */
 function pushToast(msg, level) {
   const t = document.createElement("div");
   t.className = `toast ${level}`;
@@ -508,84 +606,64 @@ function pushToast(msg, level) {
   t.append(ico, text);
   $("toaster").appendChild(t);
   toastsLog.unshift(`[${new Date().toLocaleTimeString()}] [${level}] ${msg}`);
-  if (toastsLog.length > 40) toastsLog.length = 40;
-  $("last-toasts").innerHTML = toastsLog.map((l) => `<div>${l}</div>`).join("");
+  if (toastsLog.length > 60) toastsLog.length = 60;
+  $("last-toasts").innerHTML = toastsLog.map((l) => `<div>${escapeHtml(l)}</div>`).join("");
   setTimeout(() => {
     t.style.transition = "opacity 200ms ease";
     t.style.opacity = "0";
     setTimeout(() => t.remove(), 240);
-  }, level === "error" ? 5000 : 3000);
+  }, level === "error" ? 5000 : 2800);
 }
 
-/* ── Buttons ──────────────────────────────────────── */
-$("btn-publish").addEventListener("click", () => {
-  $("btn-publish").disabled = true;
-  $("btn-publish").innerHTML = '<span class="spinner"></span>Publishing';
-  post("publish");
-});
-$("btn-publish-audit").addEventListener("click", () => post("audit", { scope: "selection" }));
-$("audit-sel").addEventListener("click", () => spinAudit("audit-sel", "selection"));
-$("audit-page").addEventListener("click", () => spinAudit("audit-page", "page"));
-$("audit-file").addEventListener("click", () => spinAudit("audit-file", "file"));
-
-function spinAudit(btnId, scope) {
-  const btn = $(btnId);
-  const original = btn.textContent;
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>' + original;
-  post("audit", { scope });
-  // Reset on next summary or after 30s.
-  let resetTimer = setTimeout(() => {
-    btn.disabled = false;
-    btn.textContent = original;
-  }, 30000);
-  document.addEventListener("audit-done", function once() {
-    clearTimeout(resetTimer);
-    btn.disabled = false;
-    btn.textContent = original;
-    document.removeEventListener("audit-done", once);
-  });
+/* ── Helpers ─────────────────────────────────────────────── */
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-$("inject-icons").addEventListener("click", () => post("inject", { kind: "icon" }));
-$("inject-components").addEventListener("click", () => post("inject", { kind: "component" }));
-$("open-docs").addEventListener("click", () => post("open-docs"));
-
-$("server-url").addEventListener("change", (e) => post("set-server-url", e.target.value));
-
-/* ── Inbound messages ────────────────────────────── */
+/* ── Inbound ──────────────────────────────────────────────── */
 window.onmessage = (event) => {
   const msg = event.data?.pluginMessage;
   if (!msg) return;
   switch (msg.type) {
     case "selection-summary": renderSelection(msg.payload); break;
-    case "health":
-      setStatus(msg.payload.connected, msg.payload);
-      break;
+    case "health":            applyHealth(msg.payload); break;
     case "publish-result":
       $("btn-publish").disabled = false;
       $("btn-publish").textContent = "Publish to DS";
       break;
-    case "audit-summary":
-      renderAuditSummary(msg.payload);
-      document.dispatchEvent(new Event("audit-done"));
-      break;
-    case "audit-fixes": renderAuditFixes(msg.payload); break;
+    case "audit-summary":     renderAudit(msg.payload); document.dispatchEvent(new Event("audit-done")); break;
+    case "audit-fixes":       renderFixes(msg.payload); break;
     case "audit-applied": {
+      // node-level apply (legacy single-node path)
       const card = document.querySelector(`[data-node-id="${msg.payload.node_id}"]`);
+      if (card) card.classList.add("applied");
+      break;
+    }
+    case "group-applied": {
+      const card = document.querySelector(`[data-key="${cssEscape(msg.payload.key)}"]`);
       if (card) {
         card.classList.add("applied");
-        const btn = card.querySelector(".fix-actions button.primary");
-        if (btn) { btn.textContent = "Applied · ⌘Z"; btn.disabled = true; }
+        const btn = card.querySelector(".actions button.primary");
+        if (btn) { btn.textContent = `Applied ${msg.payload.applied}/${msg.payload.total}`; btn.disabled = true; }
       }
       break;
     }
+    case "many-applied":
+      $("apply-all-btn").disabled = false;
+      $("apply-all-btn").textContent = "Applied";
+      break;
     case "inject-progress":
       $("inject-progress").textContent = `${msg.payload.done}/${msg.payload.total}`;
       break;
-    case "toast": pushToast(msg.payload.message, msg.payload.level); break;
+    case "toast":
+      pushToast(msg.payload.message, msg.payload.level);
+      break;
   }
 };
+
+function cssEscape(s) { return s.replace(/(["\\])/g, "\\$1"); }
 
 post("ready");
 post("set-server-url", $("server-url").value);
