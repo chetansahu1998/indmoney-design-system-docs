@@ -125,18 +125,22 @@ export default function Header({
         </svg>
       </motion.button>
 
-      {/* Brand identity + sync chip */}
+      {/* Brand identity + sync chip — natural width, no flex grow.
+       *  Was previously flex:1 which caused PageNav (rendered inside this
+       *  wrapper) to overflow into the BrandSwitcher rendered as a sibling
+       *  to the right, producing a visible overlap at 1440px. PageNav is
+       *  now a sibling instead, with its own flex-shrink rules. */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.1, duration: 0.4 }}
         className="header-brand"
         style={{
-          flex: 1,
           display: "flex",
           alignItems: "center",
           gap: 14,
           minWidth: 0,
+          flexShrink: 0,
         }}
       >
         <span
@@ -151,11 +155,23 @@ export default function Header({
           {brandLabel(brand)} <span style={{ color: "var(--text-3)", fontWeight: 500 }}>DS</span>
         </span>
         <SyncChip tokens={tokenCount} baseColors={baseColors} />
-        <PageNav />
       </motion.div>
 
-      {/* Brand switcher (only renders when ≥2 brands available) */}
-      {BRANDS.length > 1 && <BrandSwitcher brand={brand} />}
+      {/* Page-level navigation — separate flex item so its own width
+       *  doesn't collide with the brand cluster. flex:1 absorbs the
+       *  remaining horizontal space; PageNav itself wraps via the
+       *  CSS class so narrow viewports hide individual links. */}
+      <div
+        className="header-pagenav-slot"
+        style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", overflow: "hidden" }}
+      >
+        <PageNav />
+      </div>
+
+      {/* BrandSwitcher hidden until v1.1 — Tickertape's deploy isn't wired
+       *  yet, so the inline switcher links to a domain that 404s. The
+       *  component code below stays for re-enable later. */}
+      {/* {BRANDS.length > 1 && <BrandSwitcher brand={brand} />} */}
 
       {/* Search trigger */}
       <motion.button
@@ -440,7 +456,9 @@ function SyncChip({ tokens, baseColors }: { tokens: number; baseColors: number }
     <div
       className="sync-chip"
       style={{
-        display: "inline-flex",
+        // display intentionally left to CSS so the responsive @media rule
+        // in globals.css can hide the chip on narrow viewports without
+        // having to fight inline-style precedence.
         alignItems: "center",
         gap: 8,
         padding: "4px 10px",

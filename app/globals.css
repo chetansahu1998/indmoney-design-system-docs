@@ -206,6 +206,48 @@ body {
   font-size: 20px;
 }
 
+/* ── Page-nav layout: keep all top-nav links visible at wide desktop;
+   shrink-to-fit at smaller widths; hide entirely on mobile (the same
+   links live inside the hamburger drawer). ── */
+.page-nav {
+  flex-shrink: 1;
+  overflow: hidden;
+}
+
+/* Brand switcher — tertiary chrome. Hidden by default and only revealed
+   on very wide displays (≥1600px). Below that, the page-nav has higher
+   priority for the available horizontal space. The Tickertape link inside
+   the switcher isn't wired yet anyway — re-enable when v1.1 lands. */
+.brand-switcher {
+  display: none;
+}
+
+@media (min-width: 1600px) {
+  .brand-switcher {
+    display: inline-flex;
+  }
+}
+
+/* Sync chip — informational; hide below 1100px so the page-nav has
+   room to breathe. The same data is repeated in the footer receipt. */
+.sync-chip {
+  display: inline-flex;
+}
+
+@media (max-width: 1099px) {
+  .sync-chip {
+    display: none;
+  }
+}
+
+/* Tablet: drop the Sync/Download text labels, keep the icons. */
+@media (max-width: 1023px) {
+  .sync-text-label,
+  .download-text-label {
+    display: none;
+  }
+}
+
 @media (max-width: 767px) {
   :root {
     --header-h: 56px;
@@ -221,6 +263,19 @@ body {
 
   .header-hamburger {
     display: flex;
+  }
+
+  /* Mobile: page-nav links live in the drawer; the inline row is too
+     cramped to be readable. Sync + Download buttons also drop — they're
+     reachable via the drawer footer once that's wired, and via the
+     dialogs they open which are deep-linkable. Search loses placeholder
+     + kbd hint to save horizontal space. !important is required because
+     several of these elements set inline `display:` for desktop layout. */
+  .page-nav,
+  .header-pagenav-slot,
+  .sync-btn,
+  .download-btn {
+    display: none !important;
   }
 
   .search-text-label,

@@ -17,30 +17,29 @@ import { useUIStore, applyDensityFromStore } from "@/lib/ui-store";
 import { useActiveSection } from "@/lib/use-active-section";
 import { brandLabel, currentBrand } from "@/lib/brand";
 
-// Scroll-spy candidates. Color and Type sub-buckets are dynamic (driven by
-// Glyph data), so we keep their parent IDs here and add the known sub-buckets
-// that exist today. Sub-IDs that don't render are simply ignored by the
-// IntersectionObserver — no error, just no scroll-spy until they're added.
+// Scroll-spy candidates — LEAF anchors only. The parent IDs ("color",
+// "typography", "spacing", "motion") used to be in this list but they
+// caused the seed in useActiveSection to pick a non-existent sidebar
+// entry (sidebar only has sub-anchors like #color-surface, never #color).
+// IntersectionObserver locks onto whichever entry is topmost-visible;
+// limiting to leaves means the active pill always corresponds to a real
+// sidebar item.
 const SECTIONS = [
-  "color",
   "color-surface",
   "color-text-n-icon",
   "color-tertiary",
   "color-surface-market-ticker",
   "color-special",
   "color-base",
-  "typography",
   "type-heading",
   "type-subtitle",
   "type-body",
   "type-caption",
   "type-overline",
   "type-small",
-  "spacing",
   "spacing-scale",
   "spacing-padding",
   "spacing-radius",
-  "motion",
   "motion-spring",
   "motion-opacity",
   "motion-scale",

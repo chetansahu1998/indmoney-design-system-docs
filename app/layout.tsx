@@ -20,7 +20,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-pre-hydrate="true">
+    // suppressHydrationWarning is required because the inline <head>
+    // script removes data-pre-hydrate before React hydrates — by design.
+    // Without this, React flags every page load as a hydration mismatch.
+    <html lang="en" data-pre-hydrate="true" suppressHydrationWarning>
       <head>
         {/* Runs before any styled paint: removes the pre-hydrate sentinel
             as soon as the parser reaches this script. Pairs with the

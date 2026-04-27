@@ -223,6 +223,10 @@ function timeAgo(isoStr: string): string {
 function EmptyState() {
   return (
     <>
+      {/* id="all-files" stamped here too so the sidebar's "All files" anchor
+       *  resolves in the empty state. Without this, useActiveSection warns
+       *  about a missing DOM target. */}
+      <div id="all-files" />
       <Hero count={0} />
       <EmptyAuditState
         scope="site"

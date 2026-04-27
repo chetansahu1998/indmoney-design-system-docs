@@ -1,11 +1,26 @@
 "use client";
 import { useEffect, useRef } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/lib/use-mobile";
 import { useUIStore } from "@/lib/ui-store";
 import { brandLabel, currentBrand } from "@/lib/brand";
+
+/** Top-level routes — same list as Header.PageNav. Mirrored into the mobile
+ *  drawer because globals.css hides .page-nav on mobile (the inline strip
+ *  is too cramped). Keeping these in sync manually for now; could become a
+ *  shared const later. */
+const TOP_ROUTES = [
+  { href: "/",              label: "Foundations" },
+  { href: "/icons",         label: "Icons" },
+  { href: "/components",    label: "Components" },
+  { href: "/illustrations", label: "Illustrations" },
+  { href: "/logos",         label: "Logos" },
+  { href: "/files",         label: "Files" },
+];
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
 
@@ -267,6 +282,7 @@ export function MobileDrawer({
   activeSection: string;
 }) {
   const brand = currentBrand();
+  const pathname = usePathname() ?? "/";
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
       <SheetContent
@@ -282,7 +298,50 @@ export function MobileDrawer({
             {brandLabel(brand)} DS
           </SheetTitle>
         </SheetHeader>
-        <ScrollArea style={{ height: "calc(100% - 64px)" }}>
+
+        {/* Top-route list — mirrors Header.PageNav since the inline desktop
+         *  strip is hidden on mobile. Designers expect to switch between
+         *  Foundations / Icons / Components / etc from the drawer. */}
+        <div style={{ padding: "4px 8px 8px", borderBottom: "1px solid var(--border)" }}>
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--text-3)",
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              padding: "8px 12px 6px",
+            }}
+          >
+            Sections
+          </div>
+          {TOP_ROUTES.map((r) => {
+            const active = r.href === "/" ? pathname === "/" : pathname.startsWith(r.href);
+            return (
+              <Link
+                key={r.href}
+                href={r.href}
+                onClick={onClose}
+                aria-current={active ? "page" : undefined}
+                style={{
+                  display: "block",
+                  padding: "10px 12px",
+                  margin: "1px 0",
+                  fontSize: 14,
+                  fontWeight: active ? 600 : 500,
+                  color: active ? "var(--text-1)" : "var(--text-2)",
+                  background: active ? "var(--bg-surface-2)" : "transparent",
+                  borderRadius: 8,
+                  textDecoration: "none",
+                }}
+              >
+                {r.label}
+              </Link>
+            );
+          })}
+        </div>
+
+        <ScrollArea style={{ height: "calc(100% - 64px - 320px)" }}>
           <NavTree
             nav={nav}
             title={title}
