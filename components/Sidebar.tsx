@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/lib/use-mobile";
@@ -91,7 +91,7 @@ function NavTree({ nav, title, activeSection, onNavigate }: NavTreeProps) {
   });
 
   return (
-    <>
+    <LayoutGroup id="sidebar-nav">
       <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)", padding: "10px 16px 6px" }}>
         {title}
       </div>
@@ -178,7 +178,7 @@ function NavTree({ nav, title, activeSection, onNavigate }: NavTreeProps) {
           </AnimatePresence>
         </div>
       ))}
-    </>
+    </LayoutGroup>
   );
 }
 
