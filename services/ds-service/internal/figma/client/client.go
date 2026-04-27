@@ -135,6 +135,29 @@ func (c *Client) GetStyles(ctx context.Context, fileKey string) (map[string]any,
 	return out, nil
 }
 
+// GetLocalVariables fetches `/v1/files/<key>/variables/local`.
+// Returns variables + collections defined in the file. Requires the PAT to
+// include `file_variables:read` AND the file owner to be on a Pro/Org plan.
+// Returns a 403 with helpful message on Free plans — caller can degrade gracefully.
+func (c *Client) GetLocalVariables(ctx context.Context, fileKey string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.get(ctx, "/v1/files/"+fileKey+"/variables/local", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetPublishedVariables fetches `/v1/files/<key>/variables/published` — the
+// subset of variables the file has explicitly published as a library. Requires
+// `file_variables:read`. Useful when consuming a downstream design-system file.
+func (c *Client) GetPublishedVariables(ctx context.Context, fileKey string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.get(ctx, "/v1/files/"+fileKey+"/variables/published", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Identity returns `/v1/me` — used for preflight smoke tests.
 func (c *Client) Identity(ctx context.Context) (map[string]any, error) {
 	var out map[string]any
