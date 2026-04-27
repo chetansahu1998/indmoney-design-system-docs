@@ -19,7 +19,11 @@ export default function FilesIndex() {
 
   return (
     <>
-      <Hero count={files.length} />
+      {/* Sidebar references this id; scroll-spy seeds the active pill on
+       *  "All files" until the user scrolls past the hero. */}
+      <div id="all-files">
+        <Hero count={files.length} />
+      </div>
       <motion.div
         variants={stagger}
         initial="hidden"
@@ -85,7 +89,7 @@ function FileCard({
     coverage >= 90 ? "good" : coverage >= 70 ? "neutral" : "warning";
 
   return (
-    <motion.div variants={itemFadeUp}>
+    <motion.div variants={itemFadeUp} id={`file-${f.file_slug}`} style={{ scrollMarginTop: 88 }}>
       <Link
         href={`/files/${f.file_slug}`}
         style={{
