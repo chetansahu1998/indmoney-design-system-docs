@@ -52,6 +52,7 @@ function PageNav() {
     { href: "/components",    label: "Components" },
     { href: "/illustrations", label: "Illustrations" },
     { href: "/logos",         label: "Logos" },
+    { href: "/files",         label: "Files" },
   ];
   return (
     <nav aria-label="Site sections" style={{ display: "inline-flex", gap: 4 }}>

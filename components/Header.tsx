@@ -348,6 +348,7 @@ function PageNavLinks({ pathname }: { pathname: string }) {
     { href: "/components",    label: "Components" },
     { href: "/illustrations", label: "Illustrations" },
     { href: "/logos",         label: "Logos" },
+    { href: "/files",         label: "Files" },
   ];
   return (
     <nav
