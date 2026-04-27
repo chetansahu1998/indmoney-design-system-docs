@@ -1,0 +1,15 @@
+<svg width="343" height="139" viewBox="0 0 343 139" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="343" height="75" rx="20" fill="black" fill-opacity="0.2"/>
+<text fill="#C0C2C6" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="13" letter-spacing="0px"><tspan x="16" y="30.1465">Wallet Balance</tspan></text>
+<text fill="#D7DAE0" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="16" y="53.1953">&#x20b9;62,000</tspan></text>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M114.874 23.0727L117.623 25.5031L114.874 27.9336C114.597 28.1779 114.597 28.5725 114.874 28.8168C115.15 29.0611 115.597 29.0611 115.873 28.8168L119.126 25.9416C119.402 25.6973 119.402 25.3027 119.126 25.0584L115.873 22.1832C115.597 21.9389 115.15 21.9389 114.874 22.1832C114.604 22.4275 114.597 22.8284 114.874 23.0727Z" fill="#C0C2C6"/>
+<line x1="141" y1="59" x2="141" y2="16" stroke="white" stroke-opacity="0.4" stroke-width="2"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M249.874 23.0727L252.623 25.5031L249.874 27.9336C249.597 28.1779 249.597 28.5725 249.874 28.8168C250.15 29.0611 250.597 29.0611 250.873 28.8168L254.126 25.9416C254.402 25.6973 254.402 25.3027 254.126 25.0584L250.873 22.1832C250.597 21.9389 250.15 21.9389 249.874 22.1832C249.604 22.4275 249.597 22.8284 249.874 23.0727Z" fill="#C0C2C6"/>
+<text fill="#C0C2C6" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="13" letter-spacing="0px"><tspan x="160" y="30.1465">Intraday limit</tspan></text>
+<text fill="#D7DAE0" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="160" y="53.1953">&#x20b9;3,10,000</tspan></text>
+<line x1="276" y1="59" x2="276" y2="16" stroke="white" stroke-opacity="0.4" stroke-width="2"/>
+<path d="M310 24V32M306 28H314M320 28C320 33.5228 315.523 38 310 38C304.477 38 300 33.5228 300 28C300 22.4772 304.477 18 310 18C315.523 18 320 22.4772 320 28Z" stroke="#1FD8AD" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text opacity="0.9" fill="#D7DAE0" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="298.984" y="55.7891">Add</tspan></text>
+<line y1="94.5" x2="343" y2="94.5" stroke="white" stroke-opacity="0.1"/>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="0" y="120.504">Disclaimer text or terms and condition is written </tspan><tspan x="0" y="137.504">here</tspan></text>
+</svg>

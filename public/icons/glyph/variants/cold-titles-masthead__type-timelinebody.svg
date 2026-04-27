@@ -1,0 +1,46 @@
+<svg width="222" height="152" viewBox="0 0 222 152" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_2740_34122)">
+<g clip-path="url(#clip1_2740_34122)">
+<circle cx="8.00016" cy="8" r="7.66667" fill="#1FD8AD"/>
+<path d="M11.5554 5.33333L6.66656 10.2222L4.44434 8" stroke="#223464" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+<path d="M8 16L8 47" stroke="#1FD8AD"/>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="28" y="14.8394">F&#38;O Activated</tspan></text>
+<g clip-path="url(#clip2_2740_34122)">
+<g clip-path="url(#clip3_2740_34122)">
+<circle cx="8.00016" cy="55" r="7.66667" fill="#1FD8AD"/>
+<path d="M11.5554 52.3333L6.66656 57.2222L4.44434 55" stroke="#223464" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+<path d="M8 63L8 94" stroke="#1FD8AD" stroke-dasharray="2 2"/>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="28" y="61.8394">Enough balance to trade</tspan></text>
+<g clip-path="url(#clip4_2740_34122)">
+<g clip-path="url(#clip5_2740_34122)">
+<circle cx="8.00016" cy="102" r="7.66667" fill="#1FD8AD"/>
+<path d="M11.5554 99.3333L6.66656 104.222L4.44434 102" stroke="#223464" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+<text fill="#1FD8AD" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="28" y="109.695">Place 1st Trade</tspan></text>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="28" y="131.504">Superfast trades on </tspan><tspan x="28" y="148.504">INDstocks</tspan></text>
+<defs>
+<clipPath id="clip0_2740_34122">
+<rect width="16" height="16" fill="white"/>
+</clipPath>
+<clipPath id="clip1_2740_34122">
+<rect width="16" height="16" fill="white"/>
+</clipPath>
+<clipPath id="clip2_2740_34122">
+<rect width="16" height="16" fill="white" transform="translate(0 47)"/>
+</clipPath>
+<clipPath id="clip3_2740_34122">
+<rect width="16" height="16" fill="white" transform="translate(0 47)"/>
+</clipPath>
+<clipPath id="clip4_2740_34122">
+<rect width="16" height="16" fill="white" transform="translate(0 94)"/>
+</clipPath>
+<clipPath id="clip5_2740_34122">
+<rect width="16" height="16" fill="white" transform="translate(0 94)"/>
+</clipPath>
+</defs>
+</svg>
