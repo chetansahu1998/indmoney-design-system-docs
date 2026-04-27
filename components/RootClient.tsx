@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useScrollMemory } from "@/lib/use-scroll-memory";
+import { useKeyboardShortcuts } from "@/lib/use-keyboard-shortcuts";
 import { applyDensityFromStore } from "@/lib/ui-store";
 import BackToTop from "@/components/ui/BackToTop";
 
@@ -16,6 +17,7 @@ import BackToTop from "@/components/ui/BackToTop";
  */
 export default function RootClient() {
   useScrollMemory();
+  useKeyboardShortcuts();
   useEffect(() => {
     applyDensityFromStore();
   }, []);

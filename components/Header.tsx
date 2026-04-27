@@ -14,9 +14,9 @@ const DENSITY_LABEL: Record<Density, string> = {
   comfortable: "L",
 };
 const DENSITY_TOOLTIP: Record<Density, string> = {
-  compact: "Compact density",
-  default: "Default density",
-  comfortable: "Comfortable density",
+  compact: "Compact density (D)",
+  default: "Default density (D)",
+  comfortable: "Comfortable density (D)",
 };
 
 export default function Header({
@@ -311,7 +311,7 @@ export default function Header({
 
       {/* Theme toggle */}
       <motion.button
-        title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        title={`${theme === "dark" ? "Switch to light mode" : "Switch to dark mode"} (T)`}
         aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
         onClick={onThemeToggle}
         whileHover={{ scale: 1.08 }}
