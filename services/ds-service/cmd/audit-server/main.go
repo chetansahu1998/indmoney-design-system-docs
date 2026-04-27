@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -25,6 +26,30 @@ import (
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/audit"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/repo"
 )
+
+// startedAt is captured at process boot — the plugin renders it as the
+// server's "since" timestamp so a designer can tell at a glance whether
+// the binary running is the one they just rebuilt.
+var startedAt = time.Now().UTC()
+
+// buildID captures the most recent commit revision baked into the binary.
+// `go run` and unbuilt sources fall back to "(dev)". Real installs running
+// `go build && ./audit-server` get a real hash.
+func buildID() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "(dev)"
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" && s.Value != "" {
+			if len(s.Value) > 9 {
+				return s.Value[:9]
+			}
+			return s.Value
+		}
+	}
+	return "(dev)"
+}
 
 func main() {
 	port := getenv("AUDIT_SERVER_PORT", "7474")
@@ -36,9 +61,13 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("POST /v1/audit/run", audit.HandleAudit(cfg))
 	mux.Handle("POST /v1/publish", audit.HandlePublish(cfg))
+	build := buildID()
 	mux.HandleFunc("GET /__health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"ok":true,"repo":%q,"schema_version":%q,"endpoints":["/v1/audit/run","/v1/publish"]}`, root, audit.SchemaVersion)
+		fmt.Fprintf(w,
+			`{"ok":true,"repo":%q,"schema_version":%q,"build":%q,"started_at":%q,"endpoints":["/v1/audit/run","/v1/publish"]}`,
+			root, audit.SchemaVersion, build, startedAt.Format(time.RFC3339),
+		)
 	})
 
 	srv := &http.Server{

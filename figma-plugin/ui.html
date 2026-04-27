@@ -1179,8 +1179,15 @@ function applyHealth(h) {
     dot.classList.add("ok");
     showBanner(false);
     const repo = (h.repo || "").split("/").pop() || "ok";
-    $("ctx").innerHTML = `${escapeHtml(h.file_name || repo)}<span class="dim"> · schema ${escapeHtml(h.schema_version || "?")}</span>`;
-    $("diag-file").textContent = `${h.file_name || "?"}\nfile_key=${h.file_key || "(unavailable)"}`;
+    // Build identifier (commit hash or "(dev)") helps designers verify
+    // they're talking to a freshly-rebuilt server, not a stale one.
+    const buildLabel = h.build && h.build !== "(dev)" ? `· build ${h.build}` : "";
+    const startedSuffix = h.started_at ? `· up ${formatUptime(h.started_at)}` : "";
+    $("ctx").innerHTML =
+      `${escapeHtml(h.file_name || repo)}` +
+      `<span class="dim"> · schema ${escapeHtml(h.schema_version || "?")} ${escapeHtml(buildLabel)} ${escapeHtml(startedSuffix)}</span>`;
+    $("diag-file").textContent =
+      `${h.file_name || "?"}\nfile_key=${h.file_key || "(unavailable)"}\nserver build=${h.build || "(unknown)"}\nserver started_at=${h.started_at || "(unknown)"}`;
   } else {
     dot.classList.add("bad");
     $("ctx").innerHTML = `Disconnected <span class="dim">· ${escapeHtml(h.server_url || "")}</span>`;
@@ -1306,12 +1313,65 @@ function renderAudit(t) {
   }
 }
 
+/**
+ * Client-side scrub of fixes coming from the audit-server.
+ *
+ * The Go engine has both layers of filtering (FindClosestColor skips
+ * empty-FigmaName tokens, and auditFills now reclassifies as unbound
+ * if the closest candidate has no FigmaName). But if the user's
+ * audit-server is running a stale binary, base.* paths leak through.
+ * This client-side guard re-applies the filter so the plugin UI is
+ * correct even with old server data.
+ *
+ * Two transforms applied:
+ *   1. If token_path starts with "base." AND figma_name is empty,
+ *      reclassify as unbound (drop the suggestion). Base primitives
+ *      have no published Figma Variable identity — the plugin can't
+ *      bind to them, so suggesting one is misleading.
+ *
+ *   2. If figma_name is empty but token_path is a "colour.*" semantic
+ *      path, derive a friendly name from the leaf segment.
+ *      "colour.surface.surface-white" → "Surface / surface-white".
+ *      Better than showing the raw DTCG slug; lookup still uses the
+ *      original path as a fallback.
+ */
+function scrubFix(f) {
+  const out = Object.assign({}, f);
+  const tp = out.token_path || "";
+  const isBase = tp.startsWith("base.") || tp.startsWith("base/");
+  if (isBase && !out.figma_name) {
+    // Drop the suggestion entirely — render as unbound.
+    out.token_path = "";
+    out.figma_name = "";
+    out.figma_collection = "";
+    out.reason = "unbound";
+    return out;
+  }
+  if (!out.figma_name && tp.startsWith("colour.")) {
+    // colour.<group>.<leaf> → group + leaf
+    const parts = tp.split(".").slice(1); // strip "colour"
+    if (parts.length >= 2) {
+      out.figma_collection = out.figma_collection || titleCase(parts[0]);
+      out.figma_name = parts.slice(1).join(" / ");
+    } else if (parts.length === 1) {
+      out.figma_name = parts[0];
+    }
+  }
+  return out;
+}
+function titleCase(s) {
+  return String(s)
+    .split(/[-_]+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 function renderFixes(fixes) {
-  state.fixes = fixes;
+  state.fixes = fixes.map(scrubFix);
   // Group by (property, observed, token_path) so a single drift pattern
   // becomes one bulk-applyable row.
   const groups = new Map();
-  for (const f of fixes) {
+  for (const f of state.fixes) {
     const key = `${f.property}|${f.observed}|${f.token_path || ""}`;
     if (!groups.has(key)) {
       groups.set(key, {
@@ -1350,6 +1410,34 @@ function renderFixes(fixes) {
   }
   for (const g of state.fixGroups) {
     root.appendChild(renderFixGroup(g));
+  }
+
+  // Recompute the stat row from scrubbed fixes — the server's audit-summary
+  // payload counted everything before client-side scrubbing, so without this
+  // recount the stat pills show "P1 5" while only 3 actually render.
+  if (state.audit) {
+    let p1 = 0, p2 = 0, p3 = 0;
+    for (const f of state.fixes) {
+      if (f.priority === "P1") p1++;
+      else if (f.priority === "P2") p2++;
+      else p3++;
+    }
+    $("s-p1").textContent = `P1 ${p1}`;
+    $("s-p2").textContent = `P2 ${p2}`;
+    $("s-p3").textContent = `P3 ${p3}`;
+
+    const hasP1 = p1 > 0;
+    $("apply-all-row").style.display = hasP1 ? "flex" : "none";
+    $("apply-all-count").textContent = `${p1} P1 fix${p1 === 1 ? "" : "es"}`;
+
+    const totalFixes = p1 + p2 + p3;
+    const badge = $("mode-audit-badge");
+    if (totalFixes > 0) {
+      badge.textContent = String(totalFixes);
+      badge.hidden = false;
+    } else {
+      badge.hidden = true;
+    }
   }
 }
 
@@ -1595,6 +1683,26 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 function cssEscape(s) { return String(s).replace(/(["\\])/g, "\\$1"); }
+
+/** Format an ISO timestamp as a coarse "X ago" string. Used in the status
+ *  bar so the designer can see when the audit-server last started — fresh
+ *  rebuilds show "up 4s", stale ones show "up 47m". */
+function formatUptime(isoStr) {
+  try {
+    const t = new Date(isoStr).getTime();
+    const ms = Date.now() - t;
+    if (ms < 0 || !isFinite(ms)) return "";
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h`;
+    return `${Math.floor(h / 24)}d`;
+  } catch {
+    return "";
+  }
+}
 
 /* ════════════════════════════════════════════════════════════════════
    Inbound message handler (protocol unchanged from previous build)
