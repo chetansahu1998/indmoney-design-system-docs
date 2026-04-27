@@ -3,11 +3,12 @@
 import { useEffect } from "react";
 import { useScrollMemory } from "@/lib/use-scroll-memory";
 import { applyDensityFromStore } from "@/lib/ui-store";
+import BackToTop from "@/components/ui/BackToTop";
 
 /**
  * Client-only init shell. Mounted once in app/layout.tsx body so density
- * + scroll memory + any future global side effects run regardless of which
- * route is rendered.
+ * + scroll memory + back-to-top + any future global side effects run
+ * regardless of which route is rendered.
  *
  * Keeping this in a dedicated component (rather than DocsShell or
  * FilesShell) means the behavior is uniform across every route — there's
@@ -18,5 +19,5 @@ export default function RootClient() {
   useEffect(() => {
     applyDensityFromStore();
   }, []);
-  return null;
+  return <BackToTop />;
 }
