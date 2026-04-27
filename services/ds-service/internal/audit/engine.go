@@ -327,18 +327,43 @@ func auditDimension(n map[string]any, cov *TokenCoverage, fixes *[]FixCandidate,
 	// Corner radius — top-level cornerRadius only (per-corner overrides v1.1+).
 	if cr, ok := n["cornerRadius"].(float64); ok && cr > 0 {
 		cov.Radius.Total++
-		tok, dist := FindClosestPx(cr, tokens, "radius", opts.PxDriftThreshold)
-		if tok != nil && dist == 0 {
+		height := readHeight(n)
+		cls := ClassifyRadius(cr, height)
+		switch cls.Kind {
+		case RadiusOnGrid, RadiusPill:
 			cov.Radius.Bound++
-		} else if tok != nil {
+		case RadiusOffGrid:
+			tokenPath := "radius." + radiusKey(cls.Snapped)
+			rationale := cls.Suggestion
 			*fixes = append(*fixes, FixCandidate{
 				NodeID: nodeID, NodeName: nodeName,
-				Property: "radius", Observed: fmt.Sprintf("%gpx", cr),
-				TokenPath: tok.Path, Distance: dist, Reason: "drift",
-				Priority: PriorityForFix("drift", dist, 1, heat),
+				Property:  "radius",
+				Observed:  fmt.Sprintf("%gpx", cr),
+				TokenPath: tokenPath,
+				Distance:  cls.Distance,
+				Reason:    "drift",
+				Rationale: rationale,
+				Priority:  PriorityForFix("drift", cls.Distance, 1, heat),
 			})
 		}
 	}
+}
+
+// readHeight pulls the node's height in px from absoluteBoundingBox or size.
+// Returns 0 when neither is available — the radius classifier disables pill
+// detection in that case so we don't false-positive.
+func readHeight(n map[string]any) float64 {
+	if bb, ok := n["absoluteBoundingBox"].(map[string]any); ok {
+		if h, ok := bb["height"].(float64); ok {
+			return h
+		}
+	}
+	if sz, ok := n["size"].(map[string]any); ok {
+		if h, ok := sz["y"].(float64); ok {
+			return h
+		}
+	}
+	return 0
 }
 
 // emitSpacingFix evaluates one observed spacing/padding value against both

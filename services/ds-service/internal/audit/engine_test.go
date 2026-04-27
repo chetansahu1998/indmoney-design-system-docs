@@ -207,6 +207,60 @@ func TestAudit_OffGridSpacingProducesDriftFix(t *testing.T) {
 	}
 }
 
+func TestAudit_RadiusPillCountsAsBound(t *testing.T) {
+	tree := map[string]any{
+		"type": "DOCUMENT",
+		"children": []any{
+			map[string]any{
+				"type": "CANVAS", "name": "Page 1",
+				"children": []any{
+					map[string]any{
+						"id": "1:1", "type": "FRAME", "name": "Trade Screen",
+						"children": []any{
+							map[string]any{
+								"id": "1:2", "type": "FRAME", "name": "Pill Button",
+								"absoluteBoundingBox": map[string]any{"height": 40.0},
+								"cornerRadius":        20.0,
+							},
+							map[string]any{
+								"id": "1:3", "type": "FRAME", "name": "Off-grid card",
+								"absoluteBoundingBox": map[string]any{"height": 100.0},
+								"cornerRadius":        7.0, // off-grid → snap to 8
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	res := Audit(tree, nil, nil, Options{FileSlug: "demo", Brand: "indmoney"})
+	if len(res.Screens) != 1 {
+		t.Fatalf("got %d screens", len(res.Screens))
+	}
+	s := res.Screens[0]
+	if s.Coverage.Radius.Total < 2 {
+		t.Errorf("radius Total = %d; want >=2 (one pill + one off-grid)", s.Coverage.Radius.Total)
+	}
+	if s.Coverage.Radius.Bound < 1 {
+		t.Errorf("radius Bound = %d; want >=1 (pill counts as bound)", s.Coverage.Radius.Bound)
+	}
+	saw7 := false
+	for _, f := range s.Fixes {
+		if f.Property == "radius" && f.Observed == "7px" {
+			saw7 = true
+			if f.TokenPath != "radius.8" {
+				t.Errorf("7→8 fix TokenPath = %q; want radius.8", f.TokenPath)
+			}
+			if f.Rationale == "" {
+				t.Errorf("7→8 fix missing rationale: %+v", f)
+			}
+		}
+	}
+	if !saw7 {
+		t.Errorf("expected drift fix for 7px radius (snap → 8)")
+	}
+}
+
 func TestSlugify(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"Trade Screen", "trade-screen"},
