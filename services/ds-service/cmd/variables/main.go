@@ -36,10 +36,12 @@ import (
 
 func main() {
 	var (
-		brand   = flag.String("brand", "indmoney", "Brand slug")
-		outDir  = flag.String("out", "", "Output dir (default: lib/tokens/<brand>)")
-		dryRun  = flag.Bool("dry-run", false, "Print planned writes without touching files")
-		verbose = flag.Bool("v", false, "Verbose logs")
+		brand    = flag.String("brand", "indmoney", "Brand slug")
+		outDir   = flag.String("out", "", "Output dir (default: lib/tokens/<brand>)")
+		dryRun   = flag.Bool("dry-run", false, "Print planned writes without touching files")
+		verbose  = flag.Bool("v", false, "Verbose logs")
+		source   = flag.String("source", "glyph", "Where to scan: 'glyph' (Glyph + Atoms pages, single-file) or 'manifest' (every file in lib/audit-files.json)")
+		manifest = flag.String("manifest", "", "Path to audit-files.json (manifest source only; default: <repo>/lib/audit-files.json)")
 	)
 	flag.Parse()
 
@@ -58,18 +60,33 @@ func main() {
 
 	bUp := strings.ToUpper(*brand)
 	fileKey := firstEnv("FIGMA_FILE_KEY_"+bUp+"_GLYPH", "FIGMA_FILE_KEY_"+bUp)
-	if fileKey == "" {
-		log.Error("no Figma file key — set FIGMA_FILE_KEY_" + bUp + "_GLYPH")
-		os.Exit(1)
-	}
 
 	if *outDir == "" {
 		*outDir = filepath.Join(repo.Root(), "lib/tokens", *brand)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// Manifest mode runs longer than the single-file glyph scan because each
+	// file is a separate REST round-trip; bump the timeout proportionally.
+	ctxTimeout := 5 * time.Minute
+	if *source == "manifest" {
+		ctxTimeout = 30 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), ctxTimeout)
 	defer cancel()
 	c := client.New(pat)
+
+	// Source: manifest — walk every file in lib/audit-files.json, aggregate
+	// histograms across files. The Variables API path is single-file by
+	// design, so manifest mode skips it and goes straight to the layout scan.
+	if *source == "manifest" {
+		runManifestMode(ctx, c, *brand, *manifest, *outDir, *dryRun, log)
+		return
+	}
+
+	if fileKey == "" {
+		log.Error("no Figma file key — set FIGMA_FILE_KEY_" + bUp + "_GLYPH")
+		os.Exit(1)
+	}
 
 	res, err := extractor.RunVariables(ctx, c, fileKey, log)
 	useScan := false
@@ -299,6 +316,260 @@ func buildDTCG(brand string, res *extractor.VariablesResult) map[string]any {
 		}
 	}
 	return root
+}
+
+// auditManifestEntry mirrors the schema in lib/audit-files.json (a subset —
+// only the fields the multi-file walker needs).
+type auditManifestEntry struct {
+	FileKey    string   `json:"file_key"`
+	Name       string   `json:"name"`
+	Brand      string   `json:"brand"`
+	FinalPages []string `json:"final_pages,omitempty"`
+}
+
+type auditManifest struct {
+	Files []auditManifestEntry `json:"files"`
+}
+
+// runManifestMode walks every file in lib/audit-files.json, aggregates
+// histograms, and emits spacing.tokens.json with per-file usage breakdown
+// in $extensions. A drift sidecar at lib/audit/spacing-observed.json
+// preserves the raw observed values (including off-grid noise) so U18 can
+// later turn them into drift fixes without re-walking Figma.
+func runManifestMode(ctx context.Context, c *client.Client, brand, manifestPath, outDir string, dryRun bool, log *slog.Logger) {
+	if manifestPath == "" {
+		manifestPath = filepath.Join(repo.Root(), "lib/audit-files.json")
+	}
+	bs, err := os.ReadFile(manifestPath)
+	if err != nil {
+		log.Error("read audit-files manifest", "path", manifestPath, "err", err)
+		os.Exit(1)
+	}
+	var m auditManifest
+	if err := json.Unmarshal(bs, &m); err != nil {
+		log.Error("parse audit-files manifest", "err", err)
+		os.Exit(1)
+	}
+	if len(m.Files) == 0 {
+		log.Warn("manifest has zero files — populate lib/audit-files.json (designer runs the Figma plugin once per product file, or hand-edit) and rerun")
+		return
+	}
+
+	inputs := make([]extractor.FileWalkInput, 0, len(m.Files))
+	for _, e := range m.Files {
+		if e.FileKey == "" || strings.HasPrefix(e.FileKey, "REPLACE_WITH") {
+			log.Warn("skipping placeholder manifest entry", "name", e.Name)
+			continue
+		}
+		if e.Brand != "" && e.Brand != brand {
+			continue
+		}
+		inputs = append(inputs, extractor.FileWalkInput{
+			FileKey:  e.FileKey,
+			FileSlug: slugifyFileName(e.Name),
+			Name:     e.Name,
+			Pages:    e.FinalPages,
+		})
+	}
+	if len(inputs) == 0 {
+		log.Warn("no usable manifest entries for brand", "brand", brand)
+		return
+	}
+
+	multi, err := extractor.RunLayoutPatternsMultiFile(ctx, c, inputs, log)
+	if err != nil {
+		log.Error("multi-file walk failed", "err", err)
+		os.Exit(2)
+	}
+
+	doc := buildDTCGFromMultiFile(brand, multi)
+	bytes, _ := json.MarshalIndent(doc, "", "  ")
+	out := filepath.Join(outDir, "spacing.tokens.json")
+	sidecar := filepath.Join(repo.Root(), "lib/audit/spacing-observed.json")
+
+	if dryRun {
+		fmt.Println(string(bytes))
+		return
+	}
+	agg := multi.Aggregate
+	if len(agg.Spacing) == 0 && len(agg.Padding) == 0 && len(agg.Radius) == 0 {
+		log.Info("no values discovered across manifest — leaving existing tokens untouched", "out", out)
+		return
+	}
+	if err := os.WriteFile(out, append(bytes, '\n'), 0o644); err != nil {
+		log.Error("write tokens", "err", err)
+		os.Exit(2)
+	}
+	// Sidecar: every observed value (no min-px, no min-count filter) keyed
+	// by spacing/padding/radius with per-file rollup. U18 reads this to
+	// decide which observations are off-grid drift.
+	side := buildSpacingObservedSidecar(brand, multi)
+	sbytes, _ := json.MarshalIndent(side, "", "  ")
+	if err := os.MkdirAll(filepath.Dir(sidecar), 0o755); err != nil {
+		log.Warn("mkdir sidecar dir failed", "err", err)
+	}
+	if err := os.WriteFile(sidecar, append(sbytes, '\n'), 0o644); err != nil {
+		log.Warn("write sidecar failed", "err", err)
+	}
+
+	log.Info("manifest mode DONE",
+		"out", out,
+		"sidecar", sidecar,
+		"files_attempted", len(inputs),
+		"files_succeeded", len(multi.PerFile),
+		"frames_seen", agg.FramesSeen,
+		"spacing_values", len(agg.Spacing),
+		"padding_values", len(agg.Padding),
+		"radius_values", len(agg.Radius),
+	)
+}
+
+// buildDTCGFromMultiFile mirrors buildDTCGFromScan but adds per-file
+// $extensions provenance. U18 will re-emit this with grid-snap filtering;
+// for now it surfaces the raw aggregate so we can verify multi-file walk
+// works before changing the schema.
+func buildDTCGFromMultiFile(brand string, m *extractor.MultiFileLayoutPatterns) map[string]any {
+	files := make([]map[string]any, 0, len(m.Files))
+	for _, f := range m.Files {
+		row := map[string]any{
+			"file_key":    f.FileKey,
+			"file_slug":   f.FileSlug,
+			"name":        f.Name,
+			"frames_seen": f.FramesSeen,
+			"failed":      f.Failed,
+		}
+		if f.Failed {
+			row["error"] = f.FailErr
+		}
+		files = append(files, row)
+	}
+	root := map[string]any{
+		"$description": "Spacing + radius tokens aggregated across every product file in lib/audit-files.json. Counts indicate aggregate node usage; per-file rollup lives in lib/audit/spacing-observed.json.",
+		"$extensions": map[string]any{
+			"com.indmoney.provenance":  "figma-layout-scan-multi-file",
+			"com.indmoney.brand":       brand,
+			"com.indmoney.extractedAt": time.Now().UTC().Format(time.RFC3339),
+			"com.indmoney.files":       files,
+			"com.indmoney.frames-seen": m.Aggregate.FramesSeen,
+		},
+	}
+	root["space"] = histogramToBucketMulti(m, "spacing", "space", 1, 3)
+	root["padding"] = histogramToBucketMulti(m, "padding", "padding", 1, 3)
+	root["radius"] = histogramToBucketMulti(m, "radius", "radius", 2, 4)
+	return root
+}
+
+// histogramToBucketMulti emits one DTCG entry per distinct value (filtered)
+// with a per-file usage breakdown attached so designers can see how the
+// total decomposes across product files.
+func histogramToBucketMulti(m *extractor.MultiFileLayoutPatterns, dim, prefix string, minPx float64, minCount int) map[string]any {
+	bucket := map[string]any{}
+	hist := pickHist(m.Aggregate, dim)
+	for _, vc := range hist.Sorted() {
+		if vc.Value < minPx || vc.Count < minCount {
+			continue
+		}
+		frac := vc.Value - float64(int64(vc.Value))
+		if frac != 0 && frac != 0.5 {
+			continue
+		}
+		key := numKey(vc.Value)
+		perFile := map[string]int{}
+		for slug, p := range m.PerFile {
+			h := pickHist(p, dim)
+			if c := h[vc.Value]; c > 0 {
+				perFile[slug] = c
+			}
+		}
+		bucket[key] = map[string]any{
+			"$type":  "dimension",
+			"$value": map[string]any{"value": vc.Value, "unit": "px"},
+			"$extensions": map[string]any{
+				"com.indmoney.usage-count":    vc.Count,
+				"com.indmoney.usage-by-file":  perFile,
+				"com.indmoney.token-path":     prefix + "." + key,
+			},
+		}
+	}
+	return bucket
+}
+
+// buildSpacingObservedSidecar dumps every observed value (no filters) so U18
+// can compute drift without re-walking Figma. Schema is intentionally flat:
+// {"spacing": [{value, count, by_file: {slug: count}}], ...}
+func buildSpacingObservedSidecar(brand string, m *extractor.MultiFileLayoutPatterns) map[string]any {
+	emit := func(dim string) []map[string]any {
+		hist := pickHist(m.Aggregate, dim)
+		out := make([]map[string]any, 0, len(hist))
+		for _, vc := range hist.Sorted() {
+			perFile := map[string]int{}
+			for slug, p := range m.PerFile {
+				h := pickHist(p, dim)
+				if c := h[vc.Value]; c > 0 {
+					perFile[slug] = c
+				}
+			}
+			out = append(out, map[string]any{
+				"value":   vc.Value,
+				"count":   vc.Count,
+				"by_file": perFile,
+			})
+		}
+		return out
+	}
+	files := make([]map[string]any, 0, len(m.Files))
+	for _, f := range m.Files {
+		files = append(files, map[string]any{
+			"file_key":    f.FileKey,
+			"file_slug":   f.FileSlug,
+			"name":        f.Name,
+			"frames_seen": f.FramesSeen,
+			"failed":      f.Failed,
+		})
+	}
+	return map[string]any{
+		"$description": "Raw observed dimension values across every product file. U18 (grid-snap) reads this to compute drift suggestions.",
+		"$extensions": map[string]any{
+			"com.indmoney.brand":       brand,
+			"com.indmoney.extractedAt": time.Now().UTC().Format(time.RFC3339),
+			"com.indmoney.files":       files,
+		},
+		"spacing": emit("spacing"),
+		"padding": emit("padding"),
+		"radius":  emit("radius"),
+	}
+}
+
+func pickHist(p *extractor.LayoutPatterns, dim string) extractor.LayoutHistogram {
+	switch dim {
+	case "spacing":
+		return p.Spacing
+	case "padding":
+		return p.Padding
+	case "radius":
+		return p.Radius
+	}
+	return nil
+}
+
+// slugifyFileName mirrors cmd/audit/slugifyFileName so file slugs stay
+// consistent across the CLIs.
+func slugifyFileName(name string) string {
+	var b strings.Builder
+	prevDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteRune('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func slugify(name string) string {
