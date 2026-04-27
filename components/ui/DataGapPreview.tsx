@@ -1,6 +1,6 @@
 "use client";
 import { motion } from "framer-motion";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 /**
  * DataGapPreview — used when a section has no real data yet. Shows a clear
@@ -116,24 +116,64 @@ export default function DataGapPreview({
         <div style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.55, marginBottom: command ? 10 : 0 }}>
           {unlock}
         </div>
-        {command && (
-          <pre
-            style={{
-              margin: 0,
-              padding: 10,
-              background: "var(--bg-surface-2)",
-              borderRadius: 6,
-              fontFamily: "var(--font-mono)",
-              fontSize: 12,
-              color: "var(--text-1)",
-              overflowX: "auto",
-              border: "1px solid var(--border)",
-            }}
-          >
-            {command}
-          </pre>
-        )}
+        {command && <CommandBlock command={command} />}
       </div>
     </motion.div>
+  );
+}
+
+/** One-click copy of the unlock command — designers shouldn't have to
+ *  hand-select monospace text. Visual feedback confirms it landed. */
+function CommandBlock({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    navigator.clipboard.writeText(command).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    });
+  };
+  return (
+    <div style={{ position: "relative" }}>
+      <pre
+        style={{
+          margin: 0,
+          padding: "10px 60px 10px 10px",
+          background: "var(--bg-surface-2)",
+          borderRadius: 6,
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+          color: "var(--text-1)",
+          overflowX: "auto",
+          border: "1px solid var(--border)",
+        }}
+      >
+        {command}
+      </pre>
+      <motion.button
+        type="button"
+        onClick={copy}
+        whileTap={{ scale: 0.94 }}
+        transition={{ type: "spring", stiffness: 400, damping: 26 }}
+        aria-label={copied ? "Copied" : "Copy command"}
+        style={{
+          position: "absolute",
+          top: 6,
+          right: 6,
+          padding: "4px 9px",
+          fontSize: 11,
+          fontWeight: 600,
+          fontFamily: "var(--font-mono)",
+          color: copied ? "#fff" : "var(--text-2)",
+          background: copied ? "var(--success)" : "var(--bg-surface)",
+          border: "1px solid var(--border)",
+          borderRadius: 4,
+          cursor: "pointer",
+          transition: "background 0.15s, color 0.15s",
+        }}
+      >
+        {copied ? "Copied" : "Copy"}
+      </motion.button>
+    </div>
   );
 }
