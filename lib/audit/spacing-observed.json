@@ -1,0 +1,1434 @@
+{
+  "$description": "Raw observed dimension values from Glyph + Atoms layout scan. U18 (grid-snap) reads this to compute drift suggestions.",
+  "$extensions": {
+    "com.indmoney.brand": "indmoney",
+    "com.indmoney.extractedAt": "2026-04-27T23:02:31Z",
+    "com.indmoney.files": [
+      {
+        "file_slug": "glyph-atoms-scan",
+        "frames_seen": 29289,
+        "name": "Glyph + Atoms (single-file scan)"
+      }
+    ]
+  },
+  "padding": [
+    {
+      "by_file": {
+        "glyph-atoms-scan": 60
+      },
+      "count": 60,
+      "on_grid": false,
+      "snap_distance": 1,
+      "snap_to": 2,
+      "value": 1
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 12
+      },
+      "count": 12,
+      "on_grid": false,
+      "snap_distance": 0.19999999999999996,
+      "snap_to": 2,
+      "value": 1.8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "on_grid": false,
+      "snap_distance": 0.10000000000000009,
+      "snap_to": 2,
+      "value": 1.9
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 28
+      },
+      "count": 28,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 2,
+      "value": 2
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 22
+      },
+      "count": 22,
+      "on_grid": false,
+      "snap_distance": 0.5,
+      "snap_to": 2,
+      "value": 2.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "on_grid": false,
+      "snap_distance": 0.7999999999999998,
+      "snap_to": 2,
+      "value": 2.8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 20
+      },
+      "count": 20,
+      "on_grid": false,
+      "snap_candidates": [
+        2,
+        4
+      ],
+      "snap_distance": 1,
+      "snap_to": 4,
+      "value": 3
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 87
+      },
+      "count": 87,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 4,
+      "value": 4
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 8
+      },
+      "count": 8,
+      "on_grid": false,
+      "snap_distance": 0.5,
+      "snap_to": 4,
+      "value": 4.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 6
+      },
+      "count": 6,
+      "on_grid": false,
+      "snap_candidates": [
+        4,
+        6
+      ],
+      "snap_distance": 1,
+      "snap_to": 6,
+      "value": 5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 18
+      },
+      "count": 18,
+      "on_grid": false,
+      "snap_candidates": [
+        6,
+        8
+      ],
+      "snap_distance": 1,
+      "snap_to": 8,
+      "value": 7
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 60
+      },
+      "count": 60,
+      "on_grid": false,
+      "snap_distance": 0.5,
+      "snap_to": 8,
+      "value": 7.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 289
+      },
+      "count": 289,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 8,
+      "value": 8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 194
+      },
+      "count": 194,
+      "on_grid": false,
+      "snap_distance": 1,
+      "snap_to": 8,
+      "value": 9
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 328
+      },
+      "count": 328,
+      "on_grid": false,
+      "snap_candidates": [
+        8,
+        12
+      ],
+      "snap_distance": 2,
+      "snap_to": 12,
+      "value": 10
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "on_grid": false,
+      "snap_distance": 1.5,
+      "snap_to": 12,
+      "value": 10.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 88
+      },
+      "count": 88,
+      "on_grid": false,
+      "snap_distance": 1,
+      "snap_to": 12,
+      "value": 11
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 122
+      },
+      "count": 122,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 12,
+      "value": 12
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 2
+      },
+      "count": 2,
+      "on_grid": false,
+      "snap_distance": 1,
+      "snap_to": 12,
+      "value": 13
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 8
+      },
+      "count": 8,
+      "on_grid": false,
+      "snap_candidates": [
+        12,
+        16
+      ],
+      "snap_distance": 2,
+      "snap_to": 16,
+      "value": 14
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 78
+      },
+      "count": 78,
+      "on_grid": false,
+      "snap_distance": 1,
+      "snap_to": 16,
+      "value": 15
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1315
+      },
+      "count": 1315,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 16,
+      "value": 16
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 64
+      },
+      "count": 64,
+      "on_grid": false,
+      "snap_candidates": [
+        16,
+        20
+      ],
+      "snap_distance": 2,
+      "snap_to": 20,
+      "value": 18
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1446
+      },
+      "count": 1446,
+      "on_grid": false,
+      "snap_distance": 1,
+      "snap_to": 20,
+      "value": 19
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 86
+      },
+      "count": 86,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 20,
+      "value": 20
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "on_grid": false,
+      "snap_distance": 1,
+      "snap_to": 24,
+      "value": 23
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 18
+      },
+      "count": 18,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 24,
+      "value": 24
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 8
+      },
+      "count": 8,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 28,
+      "value": 28
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "on_grid": false,
+      "snap_candidates": [
+        28,
+        32
+      ],
+      "snap_distance": 2,
+      "snap_to": 32,
+      "value": 30
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 20
+      },
+      "count": 20,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 32,
+      "value": 32
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 57
+      },
+      "count": 57,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 48,
+      "value": 48
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "on_grid": false,
+      "snap_distance": 2,
+      "snap_to": 72,
+      "value": 70
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 80,
+      "value": 80
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 2
+      },
+      "count": 2,
+      "on_grid": false,
+      "snap_distance": 20,
+      "snap_to": 120,
+      "value": 140
+    }
+  ],
+  "radius": [
+    {
+      "by_file": {
+        "glyph-atoms-scan": 49
+      },
+      "count": 49,
+      "value": 0
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 83
+      },
+      "count": 83,
+      "value": 0.1
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 138
+      },
+      "count": 138,
+      "value": 0.2
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 42
+      },
+      "count": 42,
+      "value": 0.3
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 42
+      },
+      "count": 42,
+      "value": 0.4
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1171
+      },
+      "count": 1171,
+      "value": 0.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 16
+      },
+      "count": 16,
+      "value": 0.6
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 35
+      },
+      "count": 35,
+      "value": 0.8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 342
+      },
+      "count": 342,
+      "value": 0.9
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 114
+      },
+      "count": 114,
+      "value": 1
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 1.8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 130
+      },
+      "count": 130,
+      "value": 2
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 115
+      },
+      "count": 115,
+      "value": 2.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 2
+      },
+      "count": 2,
+      "value": 3
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 3.1
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 22
+      },
+      "count": 22,
+      "value": 3.3
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 12
+      },
+      "count": 12,
+      "value": 3.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 55
+      },
+      "count": 55,
+      "value": 4
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 4.2
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 4.3
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 4.9
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 211
+      },
+      "count": 211,
+      "value": 5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 5.8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 17
+      },
+      "count": 17,
+      "value": 5.9
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 8
+      },
+      "count": 8,
+      "value": 6
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 12
+      },
+      "count": 12,
+      "value": 6.3
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 6.7
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 48
+      },
+      "count": 48,
+      "value": 7
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 8
+      },
+      "count": 8,
+      "value": 7.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 7.8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 97
+      },
+      "count": 97,
+      "value": 8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 8.3
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 2
+      },
+      "count": 2,
+      "value": 9.4
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 9.7
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 12
+      },
+      "count": 12,
+      "value": 9.8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 53
+      },
+      "count": 53,
+      "value": 10
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 11.6
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 36
+      },
+      "count": 36,
+      "value": 12
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 47
+      },
+      "count": 47,
+      "value": 12.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 9
+      },
+      "count": 9,
+      "value": 13.3
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 12
+      },
+      "count": 12,
+      "value": 14.1
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 2
+      },
+      "count": 2,
+      "value": 15
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 15.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 6
+      },
+      "count": 6,
+      "value": 16
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 17.1
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 19
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 19.4
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 47
+      },
+      "count": 47,
+      "value": 19.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 260
+      },
+      "count": 260,
+      "value": 20
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 8
+      },
+      "count": 8,
+      "value": 20.8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 23.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 74
+      },
+      "count": 74,
+      "value": 25
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 8
+      },
+      "count": 8,
+      "value": 26
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 54
+      },
+      "count": 54,
+      "value": 28
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 46
+      },
+      "count": 46,
+      "value": 28.1
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 124
+      },
+      "count": 124,
+      "value": 30
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 31
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "value": 35.2
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 13
+      },
+      "count": 13,
+      "value": 37.7
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 12
+      },
+      "count": 12,
+      "value": 39.1
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 965
+      },
+      "count": 965,
+      "value": 40
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 44.4
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 3
+      },
+      "count": 3,
+      "value": 45.7
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 48
+      },
+      "count": 48,
+      "value": 50
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 13
+      },
+      "count": 13,
+      "value": 50.3
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 8
+      },
+      "count": 8,
+      "value": 53.3
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "value": 62.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 13
+      },
+      "count": 13,
+      "value": 62.9
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 69.4
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 2
+      },
+      "count": 2,
+      "value": 75
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 13
+      },
+      "count": 13,
+      "value": 75.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 46
+      },
+      "count": 46,
+      "value": 78.1
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 8
+      },
+      "count": 8,
+      "value": 83.2
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 3
+      },
+      "count": 3,
+      "value": 91.7
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "value": 93.8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "value": 97.7
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 32
+      },
+      "count": 32,
+      "value": 99
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 33
+      },
+      "count": 33,
+      "value": 100
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 13
+      },
+      "count": 13,
+      "value": 100.6
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 5
+      },
+      "count": 5,
+      "value": 104
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 13
+      },
+      "count": 13,
+      "value": 125.8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 2
+      },
+      "count": 2,
+      "value": 136.4
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "value": 140.6
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 177.8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 46
+      },
+      "count": 46,
+      "value": 200
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 13
+      },
+      "count": 13,
+      "value": 201.3
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 8
+      },
+      "count": 8,
+      "value": 213.1
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "value": 250
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 277.8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "value": 390.6
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "value": 711.1
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 46
+      },
+      "count": 46,
+      "value": 1000
+    }
+  ],
+  "spacing": [
+    {
+      "by_file": {
+        "glyph-atoms-scan": 2
+      },
+      "count": 2,
+      "on_grid": false,
+      "snap_distance": 1,
+      "snap_to": 2,
+      "value": 1
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 359
+      },
+      "count": 359,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 2,
+      "value": 2
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 18832
+      },
+      "count": 18832,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 4,
+      "value": 4
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 16
+      },
+      "count": 16,
+      "on_grid": false,
+      "snap_candidates": [
+        4,
+        6
+      ],
+      "snap_distance": 1,
+      "snap_to": 6,
+      "value": 5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 101
+      },
+      "count": 101,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 6,
+      "value": 6
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 64
+      },
+      "count": 64,
+      "on_grid": false,
+      "snap_candidates": [
+        6,
+        8
+      ],
+      "snap_distance": 1,
+      "snap_to": 8,
+      "value": 7
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 2
+      },
+      "count": 2,
+      "on_grid": false,
+      "snap_distance": 0.5,
+      "snap_to": 8,
+      "value": 7.5
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 812
+      },
+      "count": 812,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 8,
+      "value": 8
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "on_grid": false,
+      "snap_distance": 0.6999999999999993,
+      "snap_to": 8,
+      "value": 8.7
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 3
+      },
+      "count": 3,
+      "on_grid": false,
+      "snap_distance": 1,
+      "snap_to": 8,
+      "value": 9
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 3
+      },
+      "count": 3,
+      "on_grid": false,
+      "snap_distance": 1.1999999999999993,
+      "snap_to": 8,
+      "value": 9.2
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "on_grid": false,
+      "snap_distance": 1.4000000000000004,
+      "snap_to": 8,
+      "value": 9.4
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1072
+      },
+      "count": 1072,
+      "on_grid": false,
+      "snap_candidates": [
+        8,
+        12
+      ],
+      "snap_distance": 2,
+      "snap_to": 12,
+      "value": 10
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "on_grid": false,
+      "snap_distance": 0.09999999999999964,
+      "snap_to": 12,
+      "value": 11.9
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 426
+      },
+      "count": 426,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 12,
+      "value": 12
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "on_grid": false,
+      "snap_candidates": [
+        12,
+        16
+      ],
+      "snap_distance": 2,
+      "snap_to": 16,
+      "value": 14
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 590
+      },
+      "count": 590,
+      "on_grid": false,
+      "snap_distance": 1,
+      "snap_to": 16,
+      "value": 15
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 127
+      },
+      "count": 127,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 16,
+      "value": 16
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "on_grid": false,
+      "snap_distance": 0.6999999999999993,
+      "snap_to": 16,
+      "value": 16.7
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 51
+      },
+      "count": 51,
+      "on_grid": false,
+      "snap_candidates": [
+        16,
+        20
+      ],
+      "snap_distance": 2,
+      "snap_to": 20,
+      "value": 18
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 261
+      },
+      "count": 261,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 20,
+      "value": 20
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 51
+      },
+      "count": 51,
+      "on_grid": false,
+      "snap_distance": 1,
+      "snap_to": 20,
+      "value": 21
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 3
+      },
+      "count": 3,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 24,
+      "value": 24
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1224
+      },
+      "count": 1224,
+      "on_grid": false,
+      "snap_distance": 1,
+      "snap_to": 24,
+      "value": 25
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 20
+      },
+      "count": 20,
+      "on_grid": false,
+      "snap_candidates": [
+        24,
+        28
+      ],
+      "snap_distance": 2,
+      "snap_to": 28,
+      "value": 26
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 17
+      },
+      "count": 17,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 28,
+      "value": 28
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 2
+      },
+      "count": 2,
+      "on_grid": false,
+      "snap_candidates": [
+        28,
+        32
+      ],
+      "snap_distance": 2,
+      "snap_to": 32,
+      "value": 30
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 2
+      },
+      "count": 2,
+      "on_grid": false,
+      "snap_distance": 0.6999999999999993,
+      "snap_to": 32,
+      "value": 31.3
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 25
+      },
+      "count": 25,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 32,
+      "value": 32
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 97
+      },
+      "count": 97,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 40,
+      "value": 40
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "on_grid": false,
+      "snap_distance": 3,
+      "snap_to": 48,
+      "value": 51
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 8
+      },
+      "count": 8,
+      "on_grid": false,
+      "snap_distance": 2,
+      "snap_to": 72,
+      "value": 74
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "on_grid": false,
+      "snap_candidates": [
+        72,
+        80
+      ],
+      "snap_distance": 4,
+      "snap_to": 80,
+      "value": 76
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 1
+      },
+      "count": 1,
+      "on_grid": true,
+      "snap_distance": 0,
+      "snap_to": 80,
+      "value": 80
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 27
+      },
+      "count": 27,
+      "on_grid": false,
+      "snap_distance": 33,
+      "snap_to": 120,
+      "value": 153
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 3
+      },
+      "count": 3,
+      "on_grid": false,
+      "snap_distance": 55,
+      "snap_to": 120,
+      "value": 175
+    },
+    {
+      "by_file": {
+        "glyph-atoms-scan": 4
+      },
+      "count": 4,
+      "on_grid": false,
+      "snap_distance": 115,
+      "snap_to": 120,
+      "value": 235
+    }
+  ]
+}

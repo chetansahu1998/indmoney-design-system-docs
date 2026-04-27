@@ -167,6 +167,24 @@ func main() {
 		log.Error("write failed", "err", err)
 		os.Exit(2)
 	}
+
+	// Single-file scan also writes the observed-values sidecar so the
+	// audit + docs site can surface drift candidates ("18px used 47×
+	// → snap to 20") without having to re-walk Figma. Manifest mode
+	// already does this; mirroring here keeps the two paths consistent.
+	if scan != nil {
+		side := buildSpacingObservedFromScan(*brand, scan)
+		sbytes, _ := json.MarshalIndent(side, "", "  ")
+		sidecar := filepath.Join(repo.Root(), "lib/audit/spacing-observed.json")
+		if err := os.MkdirAll(filepath.Dir(sidecar), 0o755); err == nil {
+			if err := os.WriteFile(sidecar, append(sbytes, '\n'), 0o644); err != nil {
+				log.Warn("write sidecar failed", "err", err)
+			} else {
+				log.Info("wrote spacing-observed sidecar", "path", sidecar)
+			}
+		}
+	}
+
 	if scan != nil {
 		log.Info("DONE",
 			"out", out,
@@ -194,32 +212,75 @@ func buildDTCGFromScan(brand string, s *extractor.LayoutPatterns) map[string]any
 			"com.indmoney.frames-seen": s.FramesSeen,
 		},
 	}
-	// Noise filters:
-	//   spacing/padding: ≥1px is real (auto-layout never uses sub-pixel), ≥3
-	//     uses keeps the long tail honest.
-	//   radius:          ≥2px filters out icon-vector micro-rounding (0.1–0.9
-	//     showed up 100+ times, all from vector shapes), ≥4 uses requires a
-	//     real component to actually use it.
-	root["space"] = histogramToBucket(s.Spacing, "space", 1, 3)
-	root["padding"] = histogramToBucket(s.Padding, "padding", 1, 3)
-	root["radius"] = histogramToBucket(s.Radius, "radius", 2, 4)
+	// Noise filters: minPx culls sub-pixel icon-vector rounding; minCount
+	// filters one-offs. spacing/padding then go through the U18 4-pt
+	// grid-snap filter (only on-grid values become tokens; off-grid
+	// observations land in the spacing-observed sidecar for drift fixes).
+	// Radius keeps the legacy half-px filter — U19 radius classification
+	// runs at audit-time, not extraction-time.
+	root["space"] = histogramToBucket(s.Spacing, "space", 1, 3, true)
+	root["padding"] = histogramToBucket(s.Padding, "padding", 1, 3, true)
+	root["radius"] = histogramRadiusBucket(s.Radius, 4)
 	return root
+}
+
+// histogramRadiusBucket emits one DTCG entry per observed radius that
+// matches the U19 allowed set {0, 2, 4, 6, 8, 12, 16}. Off-allowed
+// observations (and the icon-vector micro-rounding noise like 0.5, 1000,
+// 19.5) are dropped from the token file. The full radius histogram still
+// ships in the spacing-observed sidecar so audit fixes can flag cases
+// like "23px radius on a 40-tall button → use Pill rule (height/2)".
+func histogramRadiusBucket(h extractor.LayoutHistogram, minCount int) map[string]any {
+	bucket := map[string]any{}
+	allowed := map[float64]bool{}
+	for _, v := range audit.AllowedRadiusValues {
+		allowed[v] = true
+	}
+	for _, vc := range h.Sorted() {
+		if vc.Count < minCount {
+			continue
+		}
+		if !allowed[vc.Value] {
+			continue
+		}
+		key := numKey(vc.Value)
+		bucket[key] = map[string]any{
+			"$type":  "dimension",
+			"$value": map[string]any{"value": vc.Value, "unit": "px"},
+			"$extensions": map[string]any{
+				"com.indmoney.usage-count": vc.Count,
+				"com.indmoney.token-path":  "radius." + key,
+				"com.indmoney.on-grid":     true,
+			},
+		}
+	}
+	return bucket
 }
 
 // histogramToBucket emits one DTCG entry per distinct value, after filtering
 // noise: minPx culls sub-pixel icon-vector rounding, minCount filters one-offs.
-// Sub-pixel non-half values are also dropped — real spacing tokens land on
-// whole or half pixels.
-func histogramToBucket(h extractor.LayoutHistogram, prefix string, minPx float64, minCount int) map[string]any {
+// When applyGridSnap is true (spacing + padding), only values on the
+// canonical 4-pt grid (audit.AllowedGridSpacing) are kept. Off-grid
+// observations are intentionally dropped from the token set — designers
+// should bind to the snapped value, not the literal "11px" they happened
+// to type. The full observed histogram still ships in
+// lib/audit/spacing-observed.json so the audit can flag the drift.
+func histogramToBucket(h extractor.LayoutHistogram, prefix string, minPx float64, minCount int, applyGridSnap bool) map[string]any {
 	bucket := map[string]any{}
 	for _, vc := range h.Sorted() {
 		if vc.Value < minPx || vc.Count < minCount {
 			continue
 		}
-		// Skip sub-pixel: keep N or N.5 only.
-		frac := vc.Value - float64(int64(vc.Value))
-		if frac != 0 && frac != 0.5 {
-			continue
+		if applyGridSnap {
+			if !audit.IsOnSpacingGrid(vc.Value) {
+				continue
+			}
+		} else {
+			// Radius path: keep whole + half-pixel values only.
+			frac := vc.Value - float64(int64(vc.Value))
+			if frac != 0 && frac != 0.5 {
+				continue
+			}
 		}
 		key := numKey(vc.Value)
 		bucket[key] = map[string]any{
@@ -317,6 +378,51 @@ func buildDTCG(brand string, res *extractor.VariablesResult) map[string]any {
 		}
 	}
 	return root
+}
+
+// buildSpacingObservedFromScan emits the same sidecar shape as the multi-
+// file walker, with one synthetic "file" entry representing the Glyph +
+// Atoms scan. Lets downstream consumers treat single-file and multi-file
+// outputs uniformly.
+func buildSpacingObservedFromScan(brand string, s *extractor.LayoutPatterns) map[string]any {
+	emit := func(h extractor.LayoutHistogram, dim string) []map[string]any {
+		out := make([]map[string]any, 0, len(h))
+		for _, vc := range h.Sorted() {
+			row := map[string]any{
+				"value":   vc.Value,
+				"count":   vc.Count,
+				"by_file": map[string]int{"glyph-atoms-scan": vc.Count},
+			}
+			if dim == "spacing" || dim == "padding" {
+				snap := audit.SnapSpacing(vc.Value)
+				row["on_grid"] = snap.OnGrid
+				row["snap_to"] = snap.Snapped
+				row["snap_distance"] = snap.Distance
+				if len(snap.Candidates) > 1 {
+					row["snap_candidates"] = snap.Candidates
+				}
+			}
+			out = append(out, row)
+		}
+		return out
+	}
+	return map[string]any{
+		"$description": "Raw observed dimension values from Glyph + Atoms layout scan. U18 (grid-snap) reads this to compute drift suggestions.",
+		"$extensions": map[string]any{
+			"com.indmoney.brand":       brand,
+			"com.indmoney.extractedAt": time.Now().UTC().Format(time.RFC3339),
+			"com.indmoney.files": []map[string]any{
+				{
+					"file_slug":   "glyph-atoms-scan",
+					"name":        "Glyph + Atoms (single-file scan)",
+					"frames_seen": s.FramesSeen,
+				},
+			},
+		},
+		"spacing": emit(s.Spacing, "spacing"),
+		"padding": emit(s.Padding, "padding"),
+		"radius":  emit(s.Radius, "radius"),
+	}
 }
 
 // auditManifestEntry mirrors the schema in lib/audit-files.json (a subset —
