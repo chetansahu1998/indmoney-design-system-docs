@@ -281,12 +281,13 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 		}
 		wg.Add(1)
 		sema <- struct{}{}
-		go func(i int, url string) {
+		preserve := preserveColorsForAsset(sets[i].category, sets[i].display)
+		go func(i int, url string, preserve bool) {
 			defer wg.Done()
 			defer func() { <-sema }()
-			err := downloadAndWrite(ctx, url, filepath.Join(outDir, sets[i].slug+".svg"))
+			err := downloadAndWrite(ctx, url, filepath.Join(outDir, sets[i].slug+".svg"), preserve)
 			resultCh <- result{idx: i, err: err}
-		}(i, url)
+		}(i, url, preserve)
 	}
 	wg.Wait()
 	close(resultCh)
@@ -461,9 +462,11 @@ func getImageURLs(ctx context.Context, c *client.Client, fileKey string, ids []s
 	return parsed.Images, nil
 }
 
-// downloadAndWrite fetches the SVG from the S3 URL, post-processes for
-// currentColor, and writes to dst.
-func downloadAndWrite(ctx context.Context, url, dst string) error {
+// downloadAndWrite fetches the SVG and writes it to dst. When preserveColors
+// is true, the original fills are kept (illustrations, logos, multi-color
+// components). When false, fixed fill+stroke colors are flattened to
+// currentColor so the asset themes via CSS color.
+func downloadAndWrite(ctx context.Context, url, dst string, preserveColors bool) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
@@ -480,10 +483,31 @@ func downloadAndWrite(ctx context.Context, url, dst string) error {
 	if err != nil {
 		return err
 	}
-	// Post-process: every fill="#XXXXXX" or stroke="#XXXXXX" → currentColor
-	// EXCEPT fill="none" / stroke="none" which we preserve.
-	processed := postProcessForCurrentColor(svg)
-	return os.WriteFile(dst, processed, 0o644)
+	if !preserveColors {
+		svg = postProcessForCurrentColor(svg)
+	}
+	return os.WriteFile(dst, svg, 0o644)
+}
+
+// preserveColorsForAsset returns true when the SVG should keep its original
+// Figma fills (illustrations, logos, multi-color components, and the "3D ·"
+// named entries that live inside the Icon category but are full color art).
+// Returns false for true monochrome system icons that benefit from
+// currentColor recoloring via CSS.
+func preserveColorsForAsset(category, displayName string) bool {
+	switch category {
+	case "Logo", "Logos", "bank", "nvidia", "merchant",
+		"2D", "3D", "Profilecard", "Wallet", "Cold",
+		"ui":
+		return true
+	}
+	// Glyph stuffs "3D · Car - Family", "3D · Cash - New", etc. into the Icon
+	// category. They're 24×24 but the source has real fills — preserve them.
+	lower := strings.ToLower(displayName)
+	if strings.HasPrefix(lower, "3d ") || strings.HasPrefix(lower, "3d·") || strings.HasPrefix(lower, "3d ·") {
+		return true
+	}
+	return false
 }
 
 var (
