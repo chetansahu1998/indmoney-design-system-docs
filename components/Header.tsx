@@ -31,7 +31,14 @@ export default function Header({
   const setSyncOpen = useUIStore((s) => s.setSyncOpen);
   const density = useUIStore((s) => s.density);
   const setDensity = useUIStore((s) => s.setDensity);
-  const meta = getExtractionMeta();
+  const meta = getExtractionMeta() as {
+    roles?: number;
+    base_colors?: number;
+    observations?: number;
+    glyph_colors?: number;
+  };
+  const tokenCount = meta.glyph_colors ?? meta.roles ?? 0;
+  const baseColors = meta.base_colors ?? 0;
 
   const cycleDensity = () => {
     const order: Density[] = ["compact", "default", "comfortable"];
@@ -114,11 +121,7 @@ export default function Header({
         >
           {brandLabel(brand)} <span style={{ color: "var(--text-3)", fontWeight: 500 }}>DS</span>
         </span>
-        <SyncChip
-          observations={meta.observations}
-          roles={meta.roles}
-          baseColors={meta.base_colors}
-        />
+        <SyncChip tokens={tokenCount} baseColors={baseColors} />
       </motion.div>
 
       {/* Brand switcher (only renders when ≥2 brands available) */}
@@ -332,15 +335,7 @@ export default function Header({
   );
 }
 
-function SyncChip({
-  observations,
-  roles,
-  baseColors,
-}: {
-  observations: number;
-  roles: number;
-  baseColors: number;
-}) {
+function SyncChip({ tokens, baseColors }: { tokens: number; baseColors: number }) {
   return (
     <div
       className="sync-chip"
@@ -367,7 +362,7 @@ function SyncChip({
           boxShadow: "0 0 0 3px rgba(77, 147, 252, 0.18)",
         }}
       />
-      {roles} roles · {baseColors} primitives · {observations} obs
+      {tokens} tokens · {baseColors} primitives
     </div>
   );
 }

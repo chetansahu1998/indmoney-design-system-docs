@@ -17,28 +17,30 @@ const semanticPairs = buildSemanticPairs();
 const basePalette = buildBasePalette();
 const meta = getExtractionMeta();
 
+// Order reflects buckets present in Glyph's published Color styles.
+// Unknown buckets are appended after these in alphabetical order.
 const BUCKET_ORDER = [
   "surface",
-  "surface-elevated",
   "text-n-icon",
-  "border",
-  "success",
-  "danger",
-  "warning",
-  "info",
-  "other",
+  "tertiary",
+  "surface-market-ticker",
+  "special",
 ];
 
 const BUCKET_LABELS: Record<string, string> = {
   "surface": "Surface",
-  "surface-elevated": "Surface · elevated",
   "text-n-icon": "Text & icon",
-  "border": "Border",
-  "success": "Success",
-  "danger": "Danger",
-  "warning": "Warning",
-  "info": "Info",
-  "other": "Other",
+  "tertiary": "Tertiary",
+  "surface-market-ticker": "Market ticker",
+  "special": "Special",
+};
+
+const BUCKET_DESCRIPTIONS: Record<string, string> = {
+  "surface": "Page, card, and divider surfaces. Pair light & dark by intent.",
+  "text-n-icon": "Text and icon foreground colors across both modes.",
+  "tertiary": "Accent fills used for chips, badges, and secondary highlights.",
+  "surface-market-ticker": "Stock-ticker fills (gain/loss/neutral) used in market cards.",
+  "special": "Spotlight colors reserved for promos, illustrations and editorial.",
 };
 
 const BASE_BUCKET_ORDER = [
@@ -310,10 +312,11 @@ function PairsBucket({
       style={{ marginBottom: 40, scrollMarginTop: "calc(var(--header-h) + 32px)" }}
     >
       <h3 style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.3px", color: "var(--text-1)", marginBottom: 6 }}>
-        {BUCKET_LABELS[bucket] ?? bucket}
+        {BUCKET_LABELS[bucket] ?? bucket.replace(/-/g, " ")}
       </h3>
       <p style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 20, maxWidth: 640 }}>
-        {pairs.length} token{pairs.length === 1 ? "" : "s"} · light & dark mode pairs extracted from production usage.
+        {pairs.length} token{pairs.length === 1 ? "" : "s"}
+        {BUCKET_DESCRIPTIONS[bucket] ? ` · ${BUCKET_DESCRIPTIONS[bucket]}` : " · light & dark pairs from Glyph"}
       </p>
       <motion.div
         variants={stagger}
@@ -375,10 +378,10 @@ export default function ColorSection() {
           marginBottom: 16,
         }}
       >
-        Tokens extracted from {meta.frames} mobile screen frames in the production app —
-        {meta.pairs} light/dark pairs walked in lockstep, {meta.observations} fill observations
-        clustered into <strong style={{ color: "var(--text-1)" }}>{meta.roles} semantic roles</strong>.
-        Every swatch shows both modes; click to copy.
+        <strong style={{ color: "var(--text-1)" }}>{semanticPairs.length} semantic color tokens</strong>{" "}
+        published by Glyph, paired across light & dark, plus{" "}
+        <strong style={{ color: "var(--text-1)" }}>{basePalette.length} base primitives</strong>{" "}
+        observed across production sources. Every swatch shows both modes — click to copy.
       </motion.p>
 
       <motion.p
@@ -395,7 +398,7 @@ export default function ColorSection() {
           fontFamily: "var(--font-mono)",
         }}
       >
-        sources: {meta.sources?.map((s: { kind: string; file_name?: string; file_key: string }) => `${s.kind}:${s.file_name || s.file_key.slice(0, 8)}`).join(" · ")}
+        source: {meta.sources?.map((s: { kind: string; file_name?: string; file_key: string }) => `${s.kind}:${s.file_name || s.file_key.slice(0, 8)}`).join(" · ")}
       </motion.p>
 
       {/* ── Semantic tokens (light/dark pairs, the load-bearing ones) ── */}

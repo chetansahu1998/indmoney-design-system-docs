@@ -1,0 +1,64 @@
+{
+  "$description": "Motion presets — three spring tiers, an opacity ease-out, and a press-scale. Hand-curated; Figma doesn't expose motion natively.",
+  "$extensions": {
+    "com.indmoney.provenance": "hand-curated",
+    "com.indmoney.future-source": "code-tokens"
+  },
+  "motion": {
+    "spring": {
+      "fast": {
+        "$type": "transition",
+        "$description": "Snappy, slightly bouncy. Quick affordances.",
+        "$value": { "stiffness": 300, "damping": 24, "mass": 1, "duration": "~0.50s", "feel": "Snappy, slightly bouncy" },
+        "$extensions": {
+          "com.indmoney.code": {
+            "rn":      "withSpring(value, { stiffness: 300, damping: 24, mass: 1 })",
+            "android": "spring(stiffness = 300f, dampingRatio = 0.80f)"
+          }
+        }
+      },
+      "standard": {
+        "$type": "transition",
+        "$description": "Balanced, smooth. Default feel.",
+        "$value": { "stiffness": 300, "damping": 26, "mass": 1, "duration": "~0.53s", "feel": "Balanced, smooth" },
+        "$extensions": {
+          "com.indmoney.code": {
+            "rn":      "withSpring(value, { stiffness: 300, damping: 26, mass: 1 })",
+            "android": "spring(stiffness = 300f, dampingRatio = 0.85f)"
+          }
+        }
+      },
+      "heavy": {
+        "$type": "transition",
+        "$description": "Heavier, more controlled. Larger surfaces.",
+        "$value": { "stiffness": 300, "damping": 28, "mass": 1, "duration": "~0.55s", "feel": "Heavier, more controlled" },
+        "$extensions": {
+          "com.indmoney.code": {
+            "rn":      "withSpring(value, { stiffness: 300, damping: 28, mass: 1 })",
+            "android": "spring(stiffness = 300f, dampingRatio = 0.90f)"
+          }
+        }
+      }
+    },
+    "opacity": {
+      "standard": {
+        "$type": "transition",
+        "$description": "Default fade for sheets, modals, and toasts.",
+        "$value": { "duration": 200, "easing": "cubic-bezier(0.33, 1, 0.68, 1)", "easingLabel": "Ease Out – Cubic" },
+        "$extensions": {
+          "com.indmoney.code": {
+            "rnReanimated": "withTiming(1, { duration: 200, easing: Easing.bezier(0.33, 1, 0.68, 1) })",
+            "rnAnimated":   "Animated.timing(opacity, { toValue: 1, duration: 200, easing: Easing.bezier(0.33, 1, 0.68, 1), useNativeDriver: true }).start()"
+          }
+        }
+      }
+    },
+    "scale": {
+      "press": {
+        "$type": "transition",
+        "$description": "Touch-down compress; release returns to 100%.",
+        "$value": { "scaleTo": 0.96, "duration": 200, "easing": "cubic-bezier(0.65, 0, 0.35, 1)", "easingLabel": "Ease In Out – Cubic", "startDelay": 0, "note": "On touch up, animate back to 100%" }
+      }
+    }
+  }
+}

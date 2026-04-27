@@ -12,34 +12,40 @@ import ColorSection from "@/components/sections/ColorSection";
 import SpacingSection from "@/components/sections/SpacingSection";
 import MotionSection from "@/components/sections/MotionSection";
 import IconographySection from "@/components/sections/IconographySection";
+import EffectsSection from "@/components/sections/EffectsSection";
 import { useIsMobile } from "@/lib/use-mobile";
 import { useUIStore, applyDensityFromStore } from "@/lib/ui-store";
 import { brandLabel, currentBrand } from "@/lib/brand";
 
+// Scroll-spy candidates. Color and Type sub-buckets are dynamic (driven by
+// Glyph data), so we keep their parent IDs here and add the known sub-buckets
+// that exist today. Sub-IDs that don't render are simply ignored by the
+// IntersectionObserver — no error, just no scroll-spy until they're added.
 const SECTIONS = [
   "color",
   "color-surface",
-  "color-surface-elevated",
   "color-text-n-icon",
-  "color-border",
-  "color-success",
-  "color-danger",
-  "color-warning",
-  "color-info",
-  "color-constant-light",
-  "color-other",
+  "color-tertiary",
+  "color-surface-market-ticker",
+  "color-special",
   "color-base",
-  "type-ramp",
-  "type-hierarchy",
-  "type-styles",
+  "typography",
+  "type-heading",
+  "type-subtitle",
+  "type-body",
+  "type-caption",
+  "type-overline",
+  "type-small",
   "spacing",
   "spacing-scale",
+  "spacing-padding",
   "spacing-radius",
   "motion",
   "motion-spring",
   "motion-opacity",
   "motion-scale",
   "iconography",
+  "effects",
 ];
 
 export default function DocsShell() {
@@ -210,6 +216,7 @@ export default function DocsShell() {
           <SpacingSection />
           <MotionSection />
           <IconographySection />
+          <EffectsSection />
 
           {/* Bottom nav */}
           <nav

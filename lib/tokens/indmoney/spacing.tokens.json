@@ -1,0 +1,910 @@
+{
+  "$description": "Spacing + radius tokens discovered by walking Figma autolayout / cornerRadius properties on Glyph component pages. Counts indicate how many nodes use each value.",
+  "$extensions": {
+    "com.indmoney.brand": "indmoney",
+    "com.indmoney.extractedAt": "2026-04-27T13:36:09Z",
+    "com.indmoney.frames-seen": 29289,
+    "com.indmoney.pages": [
+      "1583:36915",
+      "1631:49817"
+    ],
+    "com.indmoney.provenance": "figma-layout-scan"
+  },
+  "padding": {
+    "1": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.1",
+        "com.indmoney.usage-count": 60
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 1
+      }
+    },
+    "10": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.10",
+        "com.indmoney.usage-count": 328
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 10
+      }
+    },
+    "10.5": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.10.5",
+        "com.indmoney.usage-count": 4
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 10.5
+      }
+    },
+    "11": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.11",
+        "com.indmoney.usage-count": 88
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 11
+      }
+    },
+    "12": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.12",
+        "com.indmoney.usage-count": 122
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 12
+      }
+    },
+    "14": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.14",
+        "com.indmoney.usage-count": 8
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 14
+      }
+    },
+    "15": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.15",
+        "com.indmoney.usage-count": 78
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 15
+      }
+    },
+    "16": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.16",
+        "com.indmoney.usage-count": 1315
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 16
+      }
+    },
+    "18": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.18",
+        "com.indmoney.usage-count": 64
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 18
+      }
+    },
+    "19": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.19",
+        "com.indmoney.usage-count": 1446
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 19
+      }
+    },
+    "2": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.2",
+        "com.indmoney.usage-count": 28
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 2
+      }
+    },
+    "2.5": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.2.5",
+        "com.indmoney.usage-count": 22
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 2.5
+      }
+    },
+    "20": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.20",
+        "com.indmoney.usage-count": 86
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 20
+      }
+    },
+    "23": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.23",
+        "com.indmoney.usage-count": 4
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 23
+      }
+    },
+    "24": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.24",
+        "com.indmoney.usage-count": 18
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 24
+      }
+    },
+    "28": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.28",
+        "com.indmoney.usage-count": 8
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 28
+      }
+    },
+    "3": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.3",
+        "com.indmoney.usage-count": 20
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 3
+      }
+    },
+    "30": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.30",
+        "com.indmoney.usage-count": 4
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 30
+      }
+    },
+    "32": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.32",
+        "com.indmoney.usage-count": 20
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 32
+      }
+    },
+    "4": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.4",
+        "com.indmoney.usage-count": 87
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 4
+      }
+    },
+    "4.5": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.4.5",
+        "com.indmoney.usage-count": 8
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 4.5
+      }
+    },
+    "48": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.48",
+        "com.indmoney.usage-count": 57
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 48
+      }
+    },
+    "5": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.5",
+        "com.indmoney.usage-count": 6
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 5
+      }
+    },
+    "7": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.7",
+        "com.indmoney.usage-count": 18
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 7
+      }
+    },
+    "7.5": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.7.5",
+        "com.indmoney.usage-count": 60
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 7.5
+      }
+    },
+    "70": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.70",
+        "com.indmoney.usage-count": 4
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 70
+      }
+    },
+    "8": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.8",
+        "com.indmoney.usage-count": 289
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 8
+      }
+    },
+    "9": {
+      "$extensions": {
+        "com.indmoney.token-path": "padding.9",
+        "com.indmoney.usage-count": 194
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 9
+      }
+    }
+  },
+  "radius": {
+    "10": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.10",
+        "com.indmoney.usage-count": 53
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 10
+      }
+    },
+    "100": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.100",
+        "com.indmoney.usage-count": 33
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 100
+      }
+    },
+    "1000": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.1000",
+        "com.indmoney.usage-count": 46
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 1000
+      }
+    },
+    "104": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.104",
+        "com.indmoney.usage-count": 5
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 104
+      }
+    },
+    "12": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.12",
+        "com.indmoney.usage-count": 36
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 12
+      }
+    },
+    "12.5": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.12.5",
+        "com.indmoney.usage-count": 47
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 12.5
+      }
+    },
+    "16": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.16",
+        "com.indmoney.usage-count": 6
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 16
+      }
+    },
+    "19.5": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.19.5",
+        "com.indmoney.usage-count": 47
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 19.5
+      }
+    },
+    "2": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.2",
+        "com.indmoney.usage-count": 130
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 2
+      }
+    },
+    "2.5": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.2.5",
+        "com.indmoney.usage-count": 115
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 2.5
+      }
+    },
+    "20": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.20",
+        "com.indmoney.usage-count": 260
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 20
+      }
+    },
+    "200": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.200",
+        "com.indmoney.usage-count": 46
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 200
+      }
+    },
+    "25": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.25",
+        "com.indmoney.usage-count": 74
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 25
+      }
+    },
+    "250": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.250",
+        "com.indmoney.usage-count": 4
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 250
+      }
+    },
+    "26": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.26",
+        "com.indmoney.usage-count": 8
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 26
+      }
+    },
+    "28": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.28",
+        "com.indmoney.usage-count": 54
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 28
+      }
+    },
+    "3.5": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.3.5",
+        "com.indmoney.usage-count": 12
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 3.5
+      }
+    },
+    "30": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.30",
+        "com.indmoney.usage-count": 124
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 30
+      }
+    },
+    "4": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.4",
+        "com.indmoney.usage-count": 55
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 4
+      }
+    },
+    "40": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.40",
+        "com.indmoney.usage-count": 965
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 40
+      }
+    },
+    "5": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.5",
+        "com.indmoney.usage-count": 211
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 5
+      }
+    },
+    "50": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.50",
+        "com.indmoney.usage-count": 48
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 50
+      }
+    },
+    "6": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.6",
+        "com.indmoney.usage-count": 8
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 6
+      }
+    },
+    "62.5": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.62.5",
+        "com.indmoney.usage-count": 4
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 62.5
+      }
+    },
+    "7": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.7",
+        "com.indmoney.usage-count": 48
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 7
+      }
+    },
+    "7.5": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.7.5",
+        "com.indmoney.usage-count": 8
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 7.5
+      }
+    },
+    "75.5": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.75.5",
+        "com.indmoney.usage-count": 13
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 75.5
+      }
+    },
+    "8": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.8",
+        "com.indmoney.usage-count": 97
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 8
+      }
+    },
+    "99": {
+      "$extensions": {
+        "com.indmoney.token-path": "radius.99",
+        "com.indmoney.usage-count": 32
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 99
+      }
+    }
+  },
+  "space": {
+    "10": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.10",
+        "com.indmoney.usage-count": 1072
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 10
+      }
+    },
+    "12": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.12",
+        "com.indmoney.usage-count": 426
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 12
+      }
+    },
+    "15": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.15",
+        "com.indmoney.usage-count": 590
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 15
+      }
+    },
+    "153": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.153",
+        "com.indmoney.usage-count": 27
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 153
+      }
+    },
+    "16": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.16",
+        "com.indmoney.usage-count": 127
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 16
+      }
+    },
+    "175": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.175",
+        "com.indmoney.usage-count": 3
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 175
+      }
+    },
+    "18": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.18",
+        "com.indmoney.usage-count": 51
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 18
+      }
+    },
+    "2": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.2",
+        "com.indmoney.usage-count": 359
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 2
+      }
+    },
+    "20": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.20",
+        "com.indmoney.usage-count": 261
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 20
+      }
+    },
+    "21": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.21",
+        "com.indmoney.usage-count": 51
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 21
+      }
+    },
+    "235": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.235",
+        "com.indmoney.usage-count": 4
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 235
+      }
+    },
+    "24": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.24",
+        "com.indmoney.usage-count": 3
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 24
+      }
+    },
+    "25": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.25",
+        "com.indmoney.usage-count": 1224
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 25
+      }
+    },
+    "26": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.26",
+        "com.indmoney.usage-count": 20
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 26
+      }
+    },
+    "28": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.28",
+        "com.indmoney.usage-count": 17
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 28
+      }
+    },
+    "32": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.32",
+        "com.indmoney.usage-count": 25
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 32
+      }
+    },
+    "4": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.4",
+        "com.indmoney.usage-count": 18832
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 4
+      }
+    },
+    "40": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.40",
+        "com.indmoney.usage-count": 97
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 40
+      }
+    },
+    "5": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.5",
+        "com.indmoney.usage-count": 16
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 5
+      }
+    },
+    "6": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.6",
+        "com.indmoney.usage-count": 101
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 6
+      }
+    },
+    "7": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.7",
+        "com.indmoney.usage-count": 64
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 7
+      }
+    },
+    "74": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.74",
+        "com.indmoney.usage-count": 8
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 74
+      }
+    },
+    "8": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.8",
+        "com.indmoney.usage-count": 812
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 8
+      }
+    },
+    "9": {
+      "$extensions": {
+        "com.indmoney.token-path": "space.9",
+        "com.indmoney.usage-count": 3
+      },
+      "$type": "dimension",
+      "$value": {
+        "unit": "px",
+        "value": 9
+      }
+    }
+  }
+}

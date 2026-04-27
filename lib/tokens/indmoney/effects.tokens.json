@@ -1,0 +1,9 @@
+{
+  "$description": "Figma EFFECT styles dereferenced to W3C-DTCG shadow tokens.",
+  "$extensions": {
+    "com.indmoney.brand": "indmoney",
+    "com.indmoney.extractedAt": "2026-04-27T13:36:10Z",
+    "com.indmoney.provenance": "figma-effect-styles"
+  },
+  "shadow": {}
+}

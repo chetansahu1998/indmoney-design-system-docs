@@ -1,22 +1,27 @@
 "use client";
 import { motion } from "framer-motion";
-import { spacing } from "@/lib/tokens";
+import { spacingScale, paddingScale, radiusScale, spacingProvenance } from "@/lib/tokens/spacing";
 import SectionHeading from "@/components/ui/SectionHeading";
 import DSTable from "@/components/ui/DSTable";
 import { fadeUp, stagger, itemFadeUp } from "@/lib/motion-variants";
 import { useIsMobile } from "@/lib/use-mobile";
 
-const MAX_BAR = 72;
-
 export default function SpacingSection() {
   const isMobile = useIsMobile();
+  const scale = spacingScale();
+  const padding = paddingScale();
+  const radius = radiusScale();
+  const provenance = spacingProvenance();
+  // Bar scale auto-adapts so the largest token still fits in a sensible width.
+  const MAX_BAR = Math.max(72, ...scale.map((s) => s.px));
+  const isFigmaScan = provenance === "figma-layout-scan";
   return (
     <section id="spacing" style={{ marginBottom: 80, scrollMarginTop: "calc(var(--header-h) + 32px)" }}>
       <SectionHeading id="spacing" title="Spacing" />
 
       <motion.p
         variants={fadeUp} initial="hidden" whileInView="visible" viewport={{ once: true }}
-        style={{ fontSize: 16, color: "var(--text-2)", lineHeight: 1.65, maxWidth: 640, marginBottom: 48 }}
+        style={{ fontSize: 16, color: "var(--text-2)", lineHeight: 1.65, maxWidth: 640, marginBottom: 12 }}
       >
         Spacing tokens use literal pixel values rather than a multiplier grid. Token names match the value directly —{" "}
         <code style={{ fontFamily: "var(--font-mono)", fontSize: 12, background: "var(--bg-surface)", padding: "1px 5px", borderRadius: 3, color: "var(--accent)" }}>
@@ -24,6 +29,40 @@ export default function SpacingSection() {
         </code>{" "}
         equals 16px. Always use tokens — never raw pixel values in components.
       </motion.p>
+
+      <p style={{ fontSize: 12, color: "var(--text-3)", fontFamily: "var(--font-mono)", marginBottom: 16 }}>
+        {scale.length} space · {padding.length} padding · {radius.length} radius · source: {provenance}
+      </p>
+
+      {isFigmaScan && (
+        <div style={{
+          padding: "10px 14px", marginBottom: 28,
+          background: "var(--bg-surface)",
+          border: "1px solid var(--border)", borderLeft: "3px solid var(--accent)",
+          borderRadius: 6, fontSize: 12, color: "var(--text-2)", lineHeight: 1.6,
+        }}>
+          <strong style={{ color: "var(--text-1)" }}>Discovered via layout-pattern scan.</strong>{" "}
+          Each value below is a real number used by Glyph + Atoms component frames.
+          The <code style={{ fontFamily: "var(--font-mono)" }}>×N</code> count shows how many
+          frames use it — high counts are de-facto tokens, low counts are candidates for
+          consolidation.
+        </div>
+      )}
+      {provenance === "hand-curated" && (
+        <div style={{
+          padding: "10px 14px", marginBottom: 28,
+          background: "var(--bg-surface)",
+          border: "1px solid var(--border)", borderLeft: "3px solid var(--accent)",
+          borderRadius: 6, fontSize: 12, color: "var(--text-2)", lineHeight: 1.6,
+        }}>
+          <strong style={{ color: "var(--text-1)" }}>Live preview, hand-curated values.</strong>{" "}
+          Run{" "}
+          <code style={{ fontFamily: "var(--font-mono)", color: "var(--accent)" }}>
+            go run ./services/ds-service/cmd/variables --brand indmoney
+          </code>{" "}
+          to replace these with values discovered from Glyph + Atoms components.
+        </div>
+      )}
 
       {/* ── Spacing scale ── */}
       <motion.div
@@ -39,7 +78,7 @@ export default function SpacingSection() {
         </motion.h3>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {spacing.scale.map((s, i) => (
+          {scale.map((s, i) => (
             <motion.div
               key={s.token}
               initial={{ opacity: 0, x: -8 }}
@@ -48,7 +87,10 @@ export default function SpacingSection() {
               transition={{ delay: i * 0.025, duration: 0.3, ease: [0.33, 1, 0.68, 1] }}
               whileHover={{ backgroundColor: "var(--bg-surface-2)" }}
               style={{
-                display: "grid", gridTemplateColumns: isMobile ? "80px 1fr 48px" : "110px 1fr 60px",
+                display: "grid",
+                gridTemplateColumns: isMobile
+                  ? "80px 1fr 48px"
+                  : (isFigmaScan ? "110px 1fr 60px 70px" : "110px 1fr 60px"),
                 alignItems: "center", gap: isMobile ? 10 : 16,
                 padding: "10px 16px",
                 background: "var(--bg-surface)",
@@ -75,10 +117,92 @@ export default function SpacingSection() {
               <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 600, color: "var(--text-2)", textAlign: "right" }}>
                 {s.px}px
               </span>
+              {!isMobile && isFigmaScan && (
+                <span
+                  title={`Used by ${s.usageCount ?? 0} frames`}
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 11,
+                    color: "var(--text-3)",
+                    textAlign: "right",
+                  }}
+                >
+                  ×{s.usageCount ?? 0}
+                </span>
+              )}
             </motion.div>
           ))}
         </div>
       </motion.div>
+
+      {/* ── Padding (auto-layout) ── */}
+      {padding.length > 0 && (
+        <motion.div
+          id="spacing-padding"
+          variants={fadeUp} initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-40px" }}
+          style={{ marginBottom: 48, scrollMarginTop: "calc(var(--header-h) + 32px)" }}
+        >
+          <h3 style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.3px", color: "var(--text-1)", marginBottom: 8 }}>
+            Padding scale
+          </h3>
+          <p style={{ fontSize: 14, color: "var(--text-2)", marginBottom: 16 }}>
+            {isFigmaScan
+              ? "Auto-layout padding values discovered across Glyph + Atoms component frames. Sorted by usage."
+              : "Padding values used in interactive containers."}
+          </p>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: `repeat(auto-fill, minmax(${isMobile ? 110 : 130}px, 1fr))`,
+              gap: 8,
+            }}
+          >
+            {padding.map((p) => (
+              <div
+                key={p.token}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "10px 12px",
+                  background: "var(--bg-surface)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                }}
+              >
+                <span
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: 3,
+                    border: "1.5px dashed var(--accent)",
+                    flexShrink: 0,
+                    position: "relative",
+                  }}
+                >
+                  <span
+                    style={{
+                      position: "absolute",
+                      inset: Math.min(p.px / 4, 8),
+                      background: "var(--accent)",
+                      opacity: 0.55,
+                      borderRadius: 2,
+                    }}
+                  />
+                </span>
+                <div style={{ display: "flex", flexDirection: "column", minWidth: 0, lineHeight: 1.2 }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 600, color: "var(--text-1)" }}>
+                    {p.px}px
+                  </span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-3)" }}>
+                    {isFigmaScan ? `×${p.usageCount ?? 0}` : p.token}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
 
       {/* ── Border radius ── */}
       <motion.div
@@ -88,27 +212,39 @@ export default function SpacingSection() {
       >
         <h3 style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.3px", color: "var(--text-1)", marginBottom: 8 }}>Border radius</h3>
         <p style={{ fontSize: 14, color: "var(--text-2)", marginBottom: 24 }}>
-          Corner radius tokens applied consistently across all interactive and container components.
+          {isFigmaScan
+            ? "Corner-radius values discovered on Glyph + Atoms components. Sorted by px."
+            : "Corner radius tokens applied consistently across all interactive and container components."}
         </p>
         <div className="ds-table-scroll">
         <DSTable
-          headers={["Token", "Value", "Preview"]}
-          rows={spacing.radius.map((r) => [
-            <span key="tok" style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{r.token}</span>,
-            <span key="val" style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-2)" }}>
-              {r.px === 9999 ? "9999px" : `${r.px}px`}
-            </span>,
-            <motion.div
-              key="prev"
-              whileHover={{ scale: 1.1 }}
-              transition={{ type: "spring", stiffness: 300, damping: 22 }}
-              style={{
-                width: 56, height: 24,
-                background: "var(--accent)", opacity: 0.55,
-                borderRadius: Math.min(r.px, 12),
-              }}
-            />,
-          ])}
+          headers={isFigmaScan ? ["Token", "Value", "Preview", "Usage"] : ["Token", "Value", "Preview"]}
+          rows={radius.map((r) => {
+            const cells = [
+              <span key="tok" style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{r.token}</span>,
+              <span key="val" style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-2)" }}>
+                {r.px >= 999 ? "pill" : `${r.px}px`}
+              </span>,
+              <motion.div
+                key="prev"
+                whileHover={{ scale: 1.1 }}
+                transition={{ type: "spring", stiffness: 300, damping: 22 }}
+                style={{
+                  width: 56, height: 24,
+                  background: "var(--accent)", opacity: 0.55,
+                  borderRadius: Math.min(r.px, 28),
+                }}
+              />,
+            ];
+            if (isFigmaScan) {
+              cells.push(
+                <span key="usage" style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-3)" }}>
+                  ×{r.usageCount ?? 0}
+                </span>,
+              );
+            }
+            return cells;
+          })}
         />
         </div>
       </motion.div>

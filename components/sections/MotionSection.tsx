@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { motion as motionTokens } from "@/lib/tokens";
+import { springPresets, opacityPreset, scalePreset, motionProvenance } from "@/lib/tokens/motion";
 import SectionHeading from "@/components/ui/SectionHeading";
 import DSTable from "@/components/ui/DSTable";
 import { fadeUp, stagger, itemFadeUp } from "@/lib/motion-variants";
@@ -138,16 +138,37 @@ const principles = [
 
 export default function MotionSection() {
   const isMobile = useIsMobile();
+  const springs = springPresets();
+  const opacity = opacityPreset();
+  const scale = scalePreset();
+  const provenance = motionProvenance();
   return (
     <section id="motion" style={{ marginBottom: 80, scrollMarginTop: "calc(var(--header-h) + 32px)" }}>
       <SectionHeading id="motion" title="Motion" />
 
       <motion.p
         variants={fadeUp} initial="hidden" whileInView="visible" viewport={{ once: true }}
-        style={{ fontSize: 16, color: "var(--text-2)", lineHeight: 1.65, maxWidth: 640, marginBottom: 48 }}
+        style={{ fontSize: 16, color: "var(--text-2)", lineHeight: 1.65, maxWidth: 640, marginBottom: 12 }}
       >
-        The Field DS motion system defines animation behaviour across all platforms. Every interaction uses one of three spring presets, a single opacity curve, or a scale press spec — ensuring a consistent feel across product surfaces.
+        The INDmoney motion system defines animation behaviour across all platforms. Every interaction uses one of three spring presets, a single opacity curve, or a press-scale spec — ensuring a consistent feel across product surfaces.
       </motion.p>
+      <p style={{ fontSize: 12, color: "var(--text-3)", fontFamily: "var(--font-mono)", marginBottom: 16 }}>
+        {springs.length} spring presets · 1 opacity · 1 scale · source: {provenance}
+      </p>
+
+      {provenance === "hand-curated" && (
+        <div style={{
+          padding: "10px 14px", marginBottom: 28,
+          background: "var(--bg-surface)",
+          border: "1px solid var(--border)", borderLeft: "3px solid var(--accent)",
+          borderRadius: 6, fontSize: 12, color: "var(--text-2)", lineHeight: 1.6,
+        }}>
+          <strong style={{ color: "var(--text-1)" }}>Hand-curated.</strong> Figma doesn&apos;t expose
+          motion natively — these presets live in{" "}
+          <code style={{ fontFamily: "var(--font-mono)" }}>lib/tokens/indmoney/motion.tokens.json</code>.
+          Edit there to update; CSS variables and platform code samples will follow.
+        </div>
+      )}
 
       {/* ── Principles ── */}
       <motion.div
@@ -188,7 +209,7 @@ export default function MotionSection() {
           variants={stagger} initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-40px" }}
           style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 16, marginBottom: 32 }}
         >
-          {motionTokens.spring.map((s) => (
+          {springs.map((s) => (
             <motion.div
               key={s.token}
               variants={itemFadeUp}
@@ -223,7 +244,7 @@ export default function MotionSection() {
           <div className="ds-table-scroll">
           <DSTable
             headers={isMobile ? ["Token", "K", "D", "Dur"] : ["Token", "Preset", "Stiffness", "Damping", "Duration", "Feel"]}
-            rows={motionTokens.spring.map((s) => {
+            rows={springs.map((s) => {
               const base = [
                 <span key="tok" style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-3)" }}>{s.token}</span>,
                 <span key="k" style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>{s.stiffness}</span>,
@@ -249,7 +270,7 @@ export default function MotionSection() {
             React Native (Reanimated)
           </motion.div>
           <motion.div variants={stagger} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 12 }}>
-            {motionTokens.spring.map((s) => (
+            {springs.map((s) => (
               <motion.div key={s.token} variants={itemFadeUp}>
                 <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 6 }}>{s.name}</div>
                 <Code>{s.rn}</Code>
@@ -266,7 +287,7 @@ export default function MotionSection() {
             Android (Compose)
           </motion.div>
           <motion.div variants={stagger} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 12 }}>
-            {motionTokens.spring.map((s) => (
+            {springs.map((s) => (
               <motion.div key={s.token} variants={itemFadeUp}>
                 <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 6 }}>{s.name}</div>
                 <Code>{s.android}</Code>
@@ -294,11 +315,11 @@ export default function MotionSection() {
             style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 20 }}
           >
             <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 14 }}>
-              {motionTokens.opacity.token}
+              {opacity.token}
             </div>
             <EasingCurve type="ease-out" />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
-              {[["Duration", `${motionTokens.opacity.duration}ms`], ["Easing", motionTokens.opacity.label]].map(([l, v]) => (
+              {[["Duration", `${opacity.duration}ms`], ["Easing", opacity.easingLabel]].map(([l, v]) => (
                 <div key={l}>
                   <div style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 2 }}>{l}</div>
                   <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", fontWeight: 600, color: "var(--text-2)" }}>{v}</div>
@@ -310,15 +331,15 @@ export default function MotionSection() {
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>Cubic bezier</div>
-              <Code>{motionTokens.opacity.easing}</Code>
+              <Code>{opacity.easing}</Code>
             </div>
             <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>React Native (Reanimated)</div>
-              <Code>{motionTokens.opacity.rnReanimated}</Code>
+              <Code>{opacity.rnReanimated}</Code>
             </div>
             <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>React Native (Animated)</div>
-              <Code>{motionTokens.opacity.rnAnimated}</Code>
+              <Code>{opacity.rnAnimated}</Code>
             </div>
           </div>
         </div>
@@ -342,15 +363,15 @@ export default function MotionSection() {
             style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 20 }}
           >
             <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 14 }}>
-              {motionTokens.scale.token}
+              {scale.token}
             </div>
             <EasingCurve type="ease-in-out" />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
               {[
-                ["Scale to", `${motionTokens.scale.scaleTo * 100}%`],
-                ["Duration", `${motionTokens.scale.duration}ms`],
-                ["Easing", motionTokens.scale.easingLabel],
-                ["Delay", `${motionTokens.scale.startDelay}ms`],
+                ["Scale to", `${scale.scaleTo * 100}%`],
+                ["Duration", `${scale.duration}ms`],
+                ["Easing", scale.easingLabel],
+                ["Delay", `${scale.startDelay}ms`],
               ].map(([l, v]) => (
                 <div key={l}>
                   <div style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 2 }}>{l}</div>

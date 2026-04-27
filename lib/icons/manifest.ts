@@ -14,11 +14,25 @@ export interface IconEntry {
   slug: string;
   name: string;
   category: IconCategory;
+  source?: string; // "atoms" | "icons-fresh" | etc — Figma page of origin
   set_id: string;
   variant_id: string;
   file: string; // e.g. "download-cloud.svg"
   width: number;
   height: number;
+}
+
+export function iconsByCategory(): Map<IconCategory, IconEntry[]> {
+  const map = new Map<IconCategory, IconEntry[]>();
+  for (const icon of MANIFEST.icons) {
+    const cat = icon.category || "uncategorized";
+    if (!map.has(cat)) map.set(cat, []);
+    map.get(cat)!.push(icon);
+  }
+  for (const list of map.values()) {
+    list.sort((a, b) => a.name.localeCompare(b.name));
+  }
+  return map;
 }
 
 export interface IconManifest {

@@ -4,46 +4,62 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/lib/use-mobile";
+import { brandLabel, currentBrand } from "@/lib/brand";
 
+// Sidebar nav — anchors must match actual section IDs rendered by sections/*.
+// Color buckets are derived from semantic.tokens.json keys; keep this list in
+// sync when the Glyph extraction surfaces new buckets.
 const nav = [
-  { label: "Logo",         sub: [] },
-  {
-    label: "Typography",
-    sub: [
-      { label: "Type ramp",      href: "#type-ramp" },
-      { label: "Type hierarchy", href: "#type-hierarchy" },
-      { label: "Type styles",    href: "#type-styles" },
-    ],
-  },
   {
     label: "Color",
     sub: [
-      { label: "Base palette",   href: "#color" },
-      { label: "Text & icon",    href: "#color-text" },
-      { label: "Surface",        href: "#color-surface" },
-      { label: "Border",         href: "#color-border" },
+      { label: "Surface",         href: "#color-surface" },
+      { label: "Text & icon",     href: "#color-text-n-icon" },
+      { label: "Tertiary",        href: "#color-tertiary" },
+      { label: "Market ticker",   href: "#color-surface-market-ticker" },
+      { label: "Special",         href: "#color-special" },
+      { label: "Base palette",    href: "#color-base" },
+    ],
+  },
+  {
+    label: "Typography",
+    sub: [
+      { label: "Headings",   href: "#type-heading" },
+      { label: "Subtitles",  href: "#type-subtitle" },
+      { label: "Body",       href: "#type-body" },
+      { label: "Caption",    href: "#type-caption" },
+      { label: "Overline",   href: "#type-overline" },
+      { label: "Small",      href: "#type-small" },
+    ],
+  },
+  {
+    label: "Iconography",
+    sub: [
+      { label: "All icons",  href: "#iconography" },
     ],
   },
   {
     label: "Spacing",
     sub: [
-      { label: "Scale",  href: "#spacing-scale" },
-      { label: "Radius", href: "#spacing-radius" },
-    ],
-  },
-  { label: "Iconography",  sub: [
-      { label: "System icons", href: "#iconography" },
+      { label: "Scale",      href: "#spacing-scale" },
+      { label: "Padding",    href: "#spacing-padding" },
+      { label: "Radius",     href: "#spacing-radius" },
     ],
   },
   {
     label: "Motion",
     sub: [
-      { label: "Spring presets", href: "#motion-spring" },
-      { label: "Opacity",        href: "#motion-opacity" },
-      { label: "Scale / Press",  href: "#motion-scale" },
+      { label: "Spring",     href: "#motion-spring" },
+      { label: "Opacity",    href: "#motion-opacity" },
+      { label: "Scale",      href: "#motion-scale" },
     ],
   },
-  { label: "Accessibility", sub: [] },
+  {
+    label: "Effects",
+    sub: [
+      { label: "Shadows",    href: "#effects" },
+    ],
+  },
 ];
 
 function NavTree({
@@ -54,7 +70,7 @@ function NavTree({
   onNavigate?: () => void;
 }) {
   const [open, setOpen] = useState<Record<string, boolean>>({
-    Typography: true, Color: true, Spacing: true, Motion: true, Iconography: true,
+    Color: true, Typography: true, Iconography: true, Spacing: false, Motion: false,
   });
 
   return (
@@ -147,7 +163,6 @@ function NavTree({
   );
 }
 
-/* ── Desktop sidebar ── */
 export function DesktopSidebar({ activeSection }: { activeSection: string }) {
   return (
     <nav
@@ -164,7 +179,6 @@ export function DesktopSidebar({ activeSection }: { activeSection: string }) {
   );
 }
 
-/* ── Mobile drawer ── */
 export function MobileDrawer({
   open,
   onClose,
@@ -174,6 +188,7 @@ export function MobileDrawer({
   onClose: () => void;
   activeSection: string;
 }) {
+  const brand = currentBrand();
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
       <SheetContent
@@ -186,7 +201,7 @@ export function MobileDrawer({
       >
         <SheetHeader style={{ padding: "20px 16px 8px" }}>
           <SheetTitle style={{ fontSize: 16, fontWeight: 700, color: "var(--text-1)", textAlign: "left" }}>
-            Field DS
+            {brandLabel(brand)} DS
           </SheetTitle>
         </SheetHeader>
         <ScrollArea style={{ height: "calc(100% - 64px)" }}>
@@ -197,7 +212,6 @@ export function MobileDrawer({
   );
 }
 
-/* ── Default export: auto-switches ── */
 export default function Sidebar({
   activeSection,
   mobileOpen,

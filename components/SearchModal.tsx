@@ -35,11 +35,11 @@ const SECTION_COLORS: Record<string, string> = {
 
 /** Top-level navigation entries (always shown when query is empty AND no recents). */
 const TOP_LEVEL: Item[] = [
-  { id: "color",       title: "Color",       desc: "Light/dark token pairs by usage cluster", section: "Section", href: "#color" },
-  { id: "typography",  title: "Typography",  desc: "Type ramp from Glyph",                    section: "Section", href: "#typography" },
-  { id: "spacing",     title: "Spacing",     desc: "Space scale + radius (Field defaults)",   section: "Section", href: "#spacing" },
-  { id: "motion",      title: "Motion",      desc: "Spring presets",                          section: "Section", href: "#motion" },
-  { id: "iconography", title: "Iconography", desc: "Icon library (Field defaults)",            section: "Section", href: "#iconography" },
+  { id: "color",       title: "Color",       desc: "Glyph semantic tokens, paired light & dark",      section: "Section", href: "#color" },
+  { id: "typography",  title: "Typography",  desc: "18 Glyph TEXT styles with full font metadata",    section: "Section", href: "#typography" },
+  { id: "spacing",     title: "Spacing",     desc: "Pixel-literal scale + radius",                    section: "Section", href: "#spacing" },
+  { id: "motion",      title: "Motion",      desc: "Spring, opacity, and press-scale presets",        section: "Section", href: "#motion" },
+  { id: "iconography", title: "Iconography", desc: "Glyph icon library — currentColor SVGs",          section: "Section", href: "#iconography" },
 ];
 
 /** Compute the live token index from the extracted JSON — runs at module load. */
@@ -48,9 +48,9 @@ function computeIndex(): Item[] {
   for (const p of buildSemanticPairs()) {
     const sectionLabel =
       p.bucket === "text-n-icon" ? "Text"
-      : p.bucket === "surface-elevated" ? "Surface"
-      : p.bucket === "constant-light" ? "Constant"
-      : p.bucket === "constant-dark" ? "Constant"
+      : p.bucket === "surface-market-ticker" ? "Ticker"
+      : p.bucket === "tertiary" ? "Tertiary"
+      : p.bucket === "special" ? "Special"
       : capitalize(p.bucket);
     out.push({
       id: `s-${p.path}`,
