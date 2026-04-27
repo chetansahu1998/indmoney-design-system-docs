@@ -276,16 +276,18 @@ func auditFills(n map[string]any, cov *TokenCoverage, fixes *[]FixCandidate, hex
 			reason = "deprecated"
 		}
 		*fixes = append(*fixes, FixCandidate{
-			NodeID:     nodeID,
-			NodeName:   nodeName,
-			Property:   "fill",
-			Observed:   hex,
-			TokenPath:  closest.Path,
-			VariableID: closest.VariableID,
-			Distance:   dist,
-			Reason:     reason,
-			Priority:   PriorityP3, // resolved later with usage_count
-			ReplacedBy: closest.ReplacedBy,
+			NodeID:          nodeID,
+			NodeName:        nodeName,
+			Property:        "fill",
+			Observed:        hex,
+			TokenPath:       closest.Path,
+			VariableID:      closest.VariableID,
+			FigmaName:       closest.FigmaName,
+			FigmaCollection: closest.FigmaCollection,
+			Distance:        dist,
+			Reason:          reason,
+			Priority:        PriorityP3, // resolved later with usage_count
+			ReplacedBy:      closest.ReplacedBy,
 		})
 	}
 }

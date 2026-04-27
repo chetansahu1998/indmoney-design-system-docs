@@ -244,12 +244,25 @@ func flattenColorTokens(raw []byte) []audit.DSToken {
 		ind, _ := ext["com.indmoney"].(map[string]any)
 		dep, _ := ind["deprecated"].(bool)
 		repl, _ := ind["replacedBy"].(string)
+		// New per-token Glyph metadata — emitted by the extractor so the
+		// audit + plugin can resolve the actual Figma Variable.
+		figmaName, _ := ext["com.indmoney.figma-name"].(string)
+		figmaCol, _ := ext["com.indmoney.figma-collection"].(string)
+		// Fallback to legacy nested shape if present.
+		if figmaName == "" {
+			figmaName, _ = ind["figma-name"].(string)
+		}
+		if figmaCol == "" {
+			figmaCol, _ = ind["figma-collection"].(string)
+		}
 		out = append(out, audit.DSToken{
-			Path:       path,
-			Hex:        hexStr,
-			Kind:       "color",
-			Deprecated: dep,
-			ReplacedBy: repl,
+			Path:            path,
+			Hex:             hexStr,
+			Kind:            "color",
+			Deprecated:      dep,
+			ReplacedBy:      repl,
+			FigmaName:       figmaName,
+			FigmaCollection: figmaCol,
 		})
 	})
 	return out

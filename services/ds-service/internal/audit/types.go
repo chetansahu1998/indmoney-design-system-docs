@@ -46,6 +46,11 @@ type FixCandidate struct {
 	TokenPath    string   `json:"token_path"`             // "surface.surface-grey-separator-dark"
 	TokenAlias   string   `json:"token_alias,omitempty"`  // e.g. CSS-var name "--surface-surface-grey-separator-dark"
 	VariableID   string   `json:"variable_id,omitempty"`  // Figma variable id, when known
+	// FigmaName is the original Glyph swatch label (e.g. "Spl/ Brown",
+	// "Surface Grey BG"). Plugin uses it for team-library lookup; falls
+	// back to TokenPath when absent on legacy audit JSON.
+	FigmaName       string   `json:"figma_name,omitempty"`
+	FigmaCollection string   `json:"figma_collection,omitempty"`
 	Distance     float64  `json:"distance"`               // OKLCH for color, |a-b| for px
 	UsageCount   int      `json:"usage_count"`            // how many times the observed value appears in this screen
 	Priority     Priority `json:"priority"`

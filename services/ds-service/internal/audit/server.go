@@ -235,12 +235,22 @@ func flattenColorTokens(raw []byte) []DSToken {
 		ind, _ := ext["com.indmoney"].(map[string]any)
 		dep, _ := ind["deprecated"].(bool)
 		repl, _ := ind["replacedBy"].(string)
+		figmaName, _ := ext["com.indmoney.figma-name"].(string)
+		figmaCol, _ := ext["com.indmoney.figma-collection"].(string)
+		if figmaName == "" {
+			figmaName, _ = ind["figma-name"].(string)
+		}
+		if figmaCol == "" {
+			figmaCol, _ = ind["figma-collection"].(string)
+		}
 		out = append(out, DSToken{
-			Path:       path,
-			Hex:        hexStr,
-			Kind:       "color",
-			Deprecated: dep,
-			ReplacedBy: repl,
+			Path:            path,
+			Hex:             hexStr,
+			Kind:            "color",
+			Deprecated:      dep,
+			ReplacedBy:      repl,
+			FigmaName:       figmaName,
+			FigmaCollection: figmaCol,
 		})
 	})
 	return out

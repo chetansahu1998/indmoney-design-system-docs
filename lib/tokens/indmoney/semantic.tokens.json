@@ -3,6 +3,10 @@
     "special": {
       "spl-brown": {
         "$description": "Glyph: special · Spl/ Brown",
+        "$extensions": {
+          "com.indmoney.figma-collection": "special",
+          "com.indmoney.figma-name": "Spl/ Brown"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -15,6 +19,10 @@
       },
       "spl-dark-blue": {
         "$description": "Glyph: special · Spl/ Dark Blue",
+        "$extensions": {
+          "com.indmoney.figma-collection": "special",
+          "com.indmoney.figma-name": "Spl/ Dark Blue"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -27,6 +35,10 @@
       },
       "spl-dark-purple": {
         "$description": "Glyph: special · Spl/ Dark Purple",
+        "$extensions": {
+          "com.indmoney.figma-collection": "special",
+          "com.indmoney.figma-name": "Spl/ Dark Purple"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -39,6 +51,10 @@
       },
       "spl-green": {
         "$description": "Glyph: special · Spl/ Green",
+        "$extensions": {
+          "com.indmoney.figma-collection": "special",
+          "com.indmoney.figma-name": "Spl/ Green"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -51,6 +67,10 @@
       },
       "spl-light-blue": {
         "$description": "Glyph: special · Spl/ Light Blue",
+        "$extensions": {
+          "com.indmoney.figma-collection": "special",
+          "com.indmoney.figma-name": "Spl/ Light Blue"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -63,6 +83,10 @@
       },
       "spl-light-purple": {
         "$description": "Glyph: special · Spl/ Light Purple",
+        "$extensions": {
+          "com.indmoney.figma-collection": "special",
+          "com.indmoney.figma-name": "Spl/ Light Purple"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -75,6 +99,10 @@
       },
       "spl-maroon": {
         "$description": "Glyph: special · Spl/ Maroon",
+        "$extensions": {
+          "com.indmoney.figma-collection": "special",
+          "com.indmoney.figma-name": "Spl/ Maroon"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -87,6 +115,10 @@
       },
       "spl-mustard-yellow": {
         "$description": "Glyph: special · Spl Mustard Yellow",
+        "$extensions": {
+          "com.indmoney.figma-collection": "special",
+          "com.indmoney.figma-name": "Spl Mustard Yellow"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -99,6 +131,10 @@
       },
       "spl-pink": {
         "$description": "Glyph: special · Spl/ Pink",
+        "$extensions": {
+          "com.indmoney.figma-collection": "special",
+          "com.indmoney.figma-name": "Spl/ Pink"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -113,6 +149,10 @@
     "surface": {
       "surface-grey-bg": {
         "$description": "Glyph: surface · Surface Grey BG",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface",
+          "com.indmoney.figma-name": "Surface Grey BG"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -125,6 +165,10 @@
       },
       "surface-grey-bg-dark": {
         "$description": "Glyph: surface · Surface Grey BG Dark",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface",
+          "com.indmoney.figma-name": "Surface Grey BG Dark"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -137,6 +181,10 @@
       },
       "surface-grey-light": {
         "$description": "Glyph: surface · Surface Grey Light",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface",
+          "com.indmoney.figma-name": "Surface Grey Light"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -149,6 +197,10 @@
       },
       "surface-grey-separator": {
         "$description": "Glyph: surface · Surface Grey Separator",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface",
+          "com.indmoney.figma-name": "Surface Grey Separator"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -161,6 +213,10 @@
       },
       "surface-grey-separator-dark": {
         "$description": "Glyph: surface · Surface Grey Separator Dark",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface",
+          "com.indmoney.figma-name": "Surface Grey Separator Dark"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -173,6 +229,10 @@
       },
       "surface-white": {
         "$description": "Glyph: surface · Surface White",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface",
+          "com.indmoney.figma-name": "Surface White"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -187,6 +247,10 @@
     "surface-market-ticker": {
       "surface-base-blue": {
         "$description": "Glyph: surface-market-ticker · Surface Base Blue",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface-market-ticker",
+          "com.indmoney.figma-name": "Surface Base Blue"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -199,6 +263,10 @@
       },
       "surface-blue": {
         "$description": "Glyph: surface-market-ticker · Surface Blue",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface-market-ticker",
+          "com.indmoney.figma-name": "Surface Blue"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -211,6 +279,10 @@
       },
       "surface-green": {
         "$description": "Glyph: surface-market-ticker · Surface Green",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface-market-ticker",
+          "com.indmoney.figma-name": "Surface Green"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -223,6 +295,10 @@
       },
       "surface-orange": {
         "$description": "Glyph: surface-market-ticker · Surface Orange",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface-market-ticker",
+          "com.indmoney.figma-name": "Surface Orange"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -235,6 +311,10 @@
       },
       "surface-red": {
         "$description": "Glyph: surface-market-ticker · Surface Red",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface-market-ticker",
+          "com.indmoney.figma-name": "Surface Red"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -247,6 +327,10 @@
       },
       "surface-strip-blue": {
         "$description": "Glyph: surface-market-ticker · Surface Strip Blue",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface-market-ticker",
+          "com.indmoney.figma-name": "Surface Strip Blue"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -259,6 +343,10 @@
       },
       "surface-tab": {
         "$description": "Glyph: surface-market-ticker · Surface Tab",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface-market-ticker",
+          "com.indmoney.figma-name": "Surface Tab"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -271,6 +359,10 @@
       },
       "surface-ticker-green": {
         "$description": "Glyph: surface-market-ticker · Surface Ticker Green",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface-market-ticker",
+          "com.indmoney.figma-name": "Surface Ticker Green"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -283,6 +375,10 @@
       },
       "surface-ticker-red": {
         "$description": "Glyph: surface-market-ticker · Surface Ticker Red",
+        "$extensions": {
+          "com.indmoney.figma-collection": "surface-market-ticker",
+          "com.indmoney.figma-name": "Surface Ticker Red"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -297,6 +393,10 @@
     "tertiary": {
       "tertiary-aqua": {
         "$description": "Glyph: tertiary · Tertiary/ Aqua",
+        "$extensions": {
+          "com.indmoney.figma-collection": "tertiary",
+          "com.indmoney.figma-name": "Tertiary/ Aqua"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -309,6 +409,10 @@
       },
       "tertiary-blue": {
         "$description": "Glyph: tertiary · Tertiary/ Blue",
+        "$extensions": {
+          "com.indmoney.figma-collection": "tertiary",
+          "com.indmoney.figma-name": "Tertiary/ Blue"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -321,6 +425,10 @@
       },
       "tertiary-green": {
         "$description": "Glyph: tertiary · Tertiary/ Green",
+        "$extensions": {
+          "com.indmoney.figma-collection": "tertiary",
+          "com.indmoney.figma-name": "Tertiary/ Green"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -333,6 +441,10 @@
       },
       "tertiary-grey": {
         "$description": "Glyph: tertiary · Tertiary/ Grey",
+        "$extensions": {
+          "com.indmoney.figma-collection": "tertiary",
+          "com.indmoney.figma-name": "Tertiary/ Grey"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -345,6 +457,10 @@
       },
       "tertiary-grey-2": {
         "$description": "Glyph: tertiary · Tertiary/ Grey (2)",
+        "$extensions": {
+          "com.indmoney.figma-collection": "tertiary",
+          "com.indmoney.figma-name": "Tertiary/ Grey (2)"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -357,6 +473,10 @@
       },
       "tertiary-orange": {
         "$description": "Glyph: tertiary · Tertiary/ Orange",
+        "$extensions": {
+          "com.indmoney.figma-collection": "tertiary",
+          "com.indmoney.figma-name": "Tertiary/ Orange"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -369,6 +489,10 @@
       },
       "tertiary-pink": {
         "$description": "Glyph: tertiary · Tertiary/ Pink",
+        "$extensions": {
+          "com.indmoney.figma-collection": "tertiary",
+          "com.indmoney.figma-name": "Tertiary/ Pink"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -381,6 +505,10 @@
       },
       "tertiary-purple": {
         "$description": "Glyph: tertiary · Tertiary/ Purple",
+        "$extensions": {
+          "com.indmoney.figma-collection": "tertiary",
+          "com.indmoney.figma-name": "Tertiary/ Purple"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -393,6 +521,10 @@
       },
       "tertiary-red": {
         "$description": "Glyph: tertiary · Tertiary/ Red",
+        "$extensions": {
+          "com.indmoney.figma-collection": "tertiary",
+          "com.indmoney.figma-name": "Tertiary/ Red"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -405,6 +537,10 @@
       },
       "tertiary-yellow": {
         "$description": "Glyph: tertiary · Tertiary/ Yellow",
+        "$extensions": {
+          "com.indmoney.figma-collection": "tertiary",
+          "com.indmoney.figma-name": "Tertiary/ Yellow"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -419,6 +555,10 @@
     "text-n-icon": {
       "black": {
         "$description": "Glyph: text-n-icon · Black",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "Black"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -431,6 +571,10 @@
       },
       "blue": {
         "$description": "Glyph: text-n-icon · Blue",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "Blue"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -443,6 +587,10 @@
       },
       "dark-blue": {
         "$description": "Glyph: text-n-icon · Dark Blue",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "Dark Blue"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -455,6 +603,10 @@
       },
       "green": {
         "$description": "Glyph: text-n-icon · Green",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "Green"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -467,6 +619,10 @@
       },
       "grey": {
         "$description": "Glyph: text-n-icon · Grey",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "Grey"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -479,6 +635,10 @@
       },
       "grey-dark": {
         "$description": "Glyph: text-n-icon · Grey Dark",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "Grey Dark"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -491,6 +651,10 @@
       },
       "grey-medium": {
         "$description": "Glyph: text-n-icon · Grey Medium",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "Grey Medium"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -503,6 +667,10 @@
       },
       "orange": {
         "$description": "Glyph: text-n-icon · Orange",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "Orange"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -515,6 +683,10 @@
       },
       "red": {
         "$description": "Glyph: text-n-icon · Red",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "Red"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -527,6 +699,10 @@
       },
       "tab-text": {
         "$description": "Glyph: text-n-icon · Tab Text",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "Tab Text"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -539,6 +715,10 @@
       },
       "ticker-green": {
         "$description": "Glyph: text-n-icon · Ticker Green",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "Ticker Green"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -551,6 +731,10 @@
       },
       "ticker-red": {
         "$description": "Glyph: text-n-icon · Ticker Red",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "Ticker Red"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -563,6 +747,10 @@
       },
       "white-00": {
         "$description": "Glyph: text-n-icon · White 00",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "White 00"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -575,6 +763,10 @@
       },
       "white-10": {
         "$description": "Glyph: text-n-icon · White 10",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "White 10"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",
@@ -587,6 +779,10 @@
       },
       "white-20": {
         "$description": "Glyph: text-n-icon · White 20",
+        "$extensions": {
+          "com.indmoney.figma-collection": "text-n-icon",
+          "com.indmoney.figma-name": "White 20"
+        },
         "$type": "color",
         "$value": {
           "colorSpace": "srgb",

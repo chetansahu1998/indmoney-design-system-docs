@@ -457,24 +457,32 @@ async function prefetchVariables() {
     knownVariables = {};
     for (const v of vars)
         knownVariables[v.id] = v;
+    // We don't preload library variables — they require N+1 API calls and
+    // designers may have many libraries. resolveVariable does an on-demand
+    // library walk only when the local-by-name match fails.
+}
+/* libraryByName caches the most recent successful library lookups so
+ * "Apply to all 47" doesn't re-walk every collection per node. Keyed by
+ * the normalized name returned from `normalizeTokenName`. */
+const libraryByName = {};
+/** Strip everything but alphanumerics + lowercase. So "colour.surface.
+ *  surface-white", "Surface/Surface White", and "surface-white" all
+ *  collapse to the same key, surviving DTCG path → Figma variable name
+ *  formatting differences. */
+function normalizeTokenName(name) {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
 async function applyFix(p) {
-    var _a, _b;
+    var _a;
     const node = await figma.getNodeByIdAsync(p.node_id);
     if (!node || node.removed) {
         toast(`Node ${p.node_id} not found (deleted?)`, "error");
         return;
     }
-    let variable = null;
-    if (p.variable_id && knownVariables[p.variable_id]) {
-        variable = knownVariables[p.variable_id];
-    }
-    else {
-        const all = await figma.variables.getLocalVariablesAsync();
-        variable = (_a = all.find((v) => v.name.toLowerCase() === p.token_path.toLowerCase())) !== null && _a !== void 0 ? _a : null;
-    }
+    const variable = await resolveVariable(p);
     if (!variable) {
-        toast(`Token "${p.token_path}" isn't a local variable. Copy path manually.`, "error");
+        const tried = p.figma_name || p.token_path;
+        toast(`"${tried}" not found locally or in any team library. Make sure the Glyph DS library is enabled in this file (Assets → Libraries).`, "error");
         return;
     }
     try {
@@ -520,7 +528,7 @@ async function applyFix(p) {
                 toast(`Bound ${p.token_path}`, "success");
                 return;
             }
-            catch (_c) { }
+            catch (_b) { }
         }
         if (p.property === "spacing" && "itemSpacing" in node) {
             try {
@@ -529,18 +537,19 @@ async function applyFix(p) {
                 toast(`Bound ${p.token_path}`, "success");
                 return;
             }
-            catch (_d) { }
+            catch (_c) { }
         }
         toast(`Apply for "${p.property}" not yet supported.`, "error");
     }
     catch (e) {
-        toast(`Apply failed: ${(_b = e === null || e === void 0 ? void 0 : e.message) !== null && _b !== void 0 ? _b : "unknown"}. Plan tier?`, "error");
+        toast(`Apply failed: ${(_a = e === null || e === void 0 ? void 0 : e.message) !== null && _a !== void 0 ? _a : "unknown"}. Plan tier?`, "error");
     }
 }
 async function applyGroup(p) {
     const variable = await resolveVariable(p);
     if (!variable) {
-        toast(`Token "${p.token_path}" isn't a local variable on this Figma plan.`, "error");
+        const tried = p.figma_name || p.token_path;
+        toast(`"${tried}" not found locally or in any team library. Make sure the Glyph DS library is enabled in this file (Assets → Libraries).`, "error");
         return;
     }
     let applied = 0;
@@ -580,15 +589,86 @@ async function applyMany(p) {
     send({ type: "many-applied", payload: { applied: totalApplied, touched: totalTouched } });
     toast(`Applied ${totalApplied}/${totalTouched} bindings`, totalApplied > 0 ? "success" : "error");
 }
+/**
+ * resolveVariable finds a Figma `Variable` for a fix.
+ *
+ * Order of attempts (each cheap fallback before the expensive one):
+ *   1. variable_id direct hit in `knownVariables` (local file).
+ *   2. Local variable name match using normalizeTokenName on either
+ *      figma_name or token_path.
+ *   3. Team library walk — Glyph publishes its color tokens via the
+ *      DS library; consumer files don't have them as locals until
+ *      first use. Walks every available collection, normalizes each
+ *      library variable's name, and imports via importVariableByKeyAsync
+ *      on a match. Cached in libraryByName to avoid re-walking on
+ *      Apply-to-all-N.
+ *
+ * Returns null if no match in any source. Caller surfaces an actionable
+ * error toast that names what we tried.
+ */
 async function resolveVariable(g) {
     var _a;
-    if (g.variable_id && knownVariables[g.variable_id])
+    // 1. variable_id exact match (rare — only when audit ran against this file
+    // and Figma returned the local id).
+    if (g.variable_id && knownVariables[g.variable_id]) {
         return knownVariables[g.variable_id];
-    await prefetchVariables();
-    if (g.variable_id && knownVariables[g.variable_id])
-        return knownVariables[g.variable_id];
-    const all = Object.values(knownVariables);
-    return (_a = all.find((v) => v.name.toLowerCase() === g.token_path.toLowerCase())) !== null && _a !== void 0 ? _a : null;
+    }
+    if (g.variable_id) {
+        try {
+            const v = await figma.variables.getVariableByIdAsync(g.variable_id);
+            if (v) {
+                knownVariables[v.id] = v;
+                return v;
+            }
+        }
+        catch (_b) { }
+    }
+    // The lookup target is whatever name the Figma variable actually has —
+    // `figma_name` when the extractor captured it, `token_path` as a fallback
+    // for older audit JSON.
+    const targets = [g.figma_name, g.token_path].filter(Boolean);
+    if (targets.length === 0)
+        return null;
+    const normTargets = targets.map(normalizeTokenName);
+    // Cache hit?
+    for (const t of normTargets) {
+        if (libraryByName[t])
+            return libraryByName[t];
+    }
+    // 2. Local variables by normalized name.
+    if (Object.keys(knownVariables).length === 0)
+        await prefetchVariables();
+    for (const v of Object.values(knownVariables)) {
+        if (normTargets.includes(normalizeTokenName(v.name))) {
+            return v;
+        }
+    }
+    // 3. Team-library walk. teamLibrary may not be available depending on
+    // plugin permissions / plan — wrap in try.
+    try {
+        const collections = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
+        for (const coll of collections) {
+            // Optional bias: when figma_collection matches, walk that coll first
+            // for speed, but we still walk all collections so a misnamed
+            // category doesn't block resolution.
+            const libVars = await figma.teamLibrary.getVariablesInLibraryCollectionAsync(coll.key);
+            for (const lv of libVars) {
+                const norm = normalizeTokenName(lv.name);
+                if (normTargets.includes(norm)) {
+                    const imported = await figma.variables.importVariableByKeyAsync(lv.key);
+                    knownVariables[imported.id] = imported;
+                    for (const t of normTargets)
+                        libraryByName[t] = imported;
+                    return imported;
+                }
+            }
+        }
+    }
+    catch (e) {
+        // Surfaced as a more descriptive toast in the caller.
+        figma.notify(`Library lookup failed: ${(_a = e.message) !== null && _a !== void 0 ? _a : "unknown"}`, { error: true });
+    }
+    return null;
 }
 async function applyVariableToNode(node, property, variable) {
     try {

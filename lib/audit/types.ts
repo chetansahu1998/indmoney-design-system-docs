@@ -22,6 +22,11 @@ export interface FixCandidate {
   token_path: string;
   token_alias?: string;
   variable_id?: string;
+  /** Original Glyph swatch label, e.g. "Spl/ Brown". Plugin uses this for
+   *  team-library variable resolution. Falls back to token_path when
+   *  reading legacy audit JSON that didn't capture it. */
+  figma_name?: string;
+  figma_collection?: string;
   distance: number;
   usage_count: number;
   priority: Priority;

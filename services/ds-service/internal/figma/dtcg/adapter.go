@@ -242,12 +242,24 @@ func buildGlyphSemantic(colors []extractor.GlyphColor) (Tree, Tree) {
 				"$type":        "color",
 				"$value":       colorValue(parseHexLocal(c.Light)),
 				"$description": fmt.Sprintf("Glyph: %s · %s", c.Category, c.Name),
+				// figma-name is the raw Glyph swatch label (e.g. "Spl/ Brown",
+				// "Surface Grey BG"). Plugin uses it to look up the published
+				// Figma Variable via team-library APIs — the slugified token
+				// path above is for documentation, not for binding.
+				"$extensions": Tree{
+					"com.indmoney.figma-name":       c.Name,
+					"com.indmoney.figma-collection": c.Category,
+				},
 			})
 		}
 		if c.Dark != "" {
 			setNested(dark, path, Tree{
 				"$type":  "color",
 				"$value": colorValue(parseHexLocal(c.Dark)),
+				"$extensions": Tree{
+					"com.indmoney.figma-name":       c.Name,
+					"com.indmoney.figma-collection": c.Category,
+				},
 			})
 		}
 	}

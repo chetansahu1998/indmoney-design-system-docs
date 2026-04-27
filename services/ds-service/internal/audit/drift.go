@@ -11,6 +11,11 @@ type DSToken struct {
 	Hex        string  // "#6F7686" (color tokens) — empty for dimension tokens
 	Px         float64 // 16, 24 — color tokens leave 0
 	VariableID string  // Figma variable id, when present in the token JSON
+	// FigmaName is the original Glyph label (e.g. "Spl/ Brown", "Surface
+	// Grey BG"). Plugin uses it for team-library lookup to bind the right
+	// Figma Variable — the slugified Path is for docs, not for binding.
+	FigmaName       string
+	FigmaCollection string
 	Deprecated bool
 	ReplacedBy string // token path of replacement, when deprecation chain is set
 	Kind       string // "color" | "spacing" | "radius" | "padding"

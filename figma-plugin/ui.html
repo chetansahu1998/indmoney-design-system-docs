@@ -456,9 +456,13 @@ function renderFixes(fixes) {
   for (const f of fixes) {
     const key = `${f.property}|${f.observed}|${f.token_path || ""}`;
     if (!groups.has(key)) {
-      groups.set(key, { property: f.property, observed: f.observed, token_path: f.token_path,
-        priority: f.priority, reason: f.reason, distance: f.distance, variable_id: f.variable_id,
-        nodes: [], applied: 0 });
+      groups.set(key, {
+        property: f.property, observed: f.observed, token_path: f.token_path,
+        priority: f.priority, reason: f.reason, distance: f.distance,
+        variable_id: f.variable_id,
+        figma_name: f.figma_name, figma_collection: f.figma_collection,
+        nodes: [], applied: 0,
+      });
     }
     const g = groups.get(key);
     g.nodes.push({ id: f.node_id, name: f.node_name });
@@ -538,6 +542,8 @@ function applyGroup(card, g) {
     token_path: g.token_path,
     observed: g.observed,
     variable_id: g.variable_id,
+    figma_name: g.figma_name,
+    figma_collection: g.figma_collection,
     node_ids: g.nodes.map((n) => n.id),
   });
 }
@@ -554,6 +560,8 @@ $("apply-all-btn").addEventListener("click", () => {
       token_path: g.token_path,
       observed: g.observed,
       variable_id: g.variable_id,
+      figma_name: g.figma_name,
+      figma_collection: g.figma_collection,
       node_ids: g.nodes.map((n) => n.id),
     })),
   });
