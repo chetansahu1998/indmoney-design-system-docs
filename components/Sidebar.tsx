@@ -79,9 +79,13 @@ interface NavTreeProps {
   title: string;
   activeSection: string;
   onNavigate?: () => void;
+  /** Unique LayoutGroup id so the desktop pill and mobile-drawer pill don't
+   *  share a layoutId — when both mount, framer would otherwise animate one
+   *  pill across the screen between the two NavTree instances. */
+  layoutScope: string;
 }
 
-function NavTree({ nav, title, activeSection, onNavigate }: NavTreeProps) {
+function NavTree({ nav, title, activeSection, onNavigate, layoutScope }: NavTreeProps) {
   const [open, setOpen] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
     for (const g of nav) {
@@ -91,7 +95,7 @@ function NavTree({ nav, title, activeSection, onNavigate }: NavTreeProps) {
   });
 
   return (
-    <LayoutGroup id="sidebar-nav">
+    <LayoutGroup id={layoutScope}>
       <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)", padding: "10px 16px 6px" }}>
         {title}
       </div>
@@ -144,7 +148,7 @@ function NavTree({ nav, title, activeSection, onNavigate }: NavTreeProps) {
                     <div key={s.href} style={{ position: "relative", margin: "1px 6px" }}>
                       {isActive && (
                         <motion.div
-                          layoutId="sidebar-active"
+                          layoutId={`${layoutScope}-active`}
                           style={{
                             position: "absolute", inset: 0,
                             background: "var(--bg-surface)", borderRadius: 8,
@@ -202,7 +206,12 @@ export function DesktopSidebar({
       }}
     >
       <ScrollArea style={{ height: "100%", padding: "24px 0 48px" }}>
-        <NavTree nav={nav} title={title} activeSection={activeSection} />
+        <NavTree
+          nav={nav}
+          title={title}
+          activeSection={activeSection}
+          layoutScope="sidebar-desktop"
+        />
       </ScrollArea>
     </nav>
   );
@@ -238,7 +247,13 @@ export function MobileDrawer({
           </SheetTitle>
         </SheetHeader>
         <ScrollArea style={{ height: "calc(100% - 64px)" }}>
-          <NavTree nav={nav} title={title} activeSection={activeSection} onNavigate={onClose} />
+          <NavTree
+            nav={nav}
+            title={title}
+            activeSection={activeSection}
+            onNavigate={onClose}
+            layoutScope="sidebar-mobile"
+          />
         </ScrollArea>
       </SheetContent>
     </Sheet>
