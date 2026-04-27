@@ -261,6 +261,63 @@ func TestAudit_RadiusPillCountsAsBound(t *testing.T) {
 	}
 }
 
+func TestAudit_BaseTokensNeverAppearAsFixCandidates(t *testing.T) {
+	// Regression test for designer-reported bug: base tokens (no Figma
+	// Variable identity, empty FigmaName) were appearing as fix
+	// suggestions like "base.colour.grey.4a4f52" — the plugin can't bind
+	// to those because they're not published variables, so applying
+	// errored. Both FindClosestColor and the engine itself filter empty
+	// FigmaName tokens out; this test asserts a base-only token set
+	// produces only "unbound" fixes (token_path empty), never base
+	// suggestions.
+	tree := map[string]any{
+		"type": "DOCUMENT",
+		"children": []any{
+			map[string]any{
+				"type": "CANVAS", "name": "Page 1",
+				"children": []any{
+					map[string]any{
+						"id": "1:1", "type": "FRAME", "name": "Trade Screen",
+						"children": []any{
+							map[string]any{
+								"id": "1:2", "type": "RECTANGLE", "name": "card",
+								"fills": []any{map[string]any{
+									"type":  "SOLID",
+									"color": map[string]any{"r": 0.29, "g": 0.31, "b": 0.32}, // ~#4a4f52
+								}},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	// Token set contains only base primitives — no FigmaName, no
+	// published Variable identity.
+	baseOnlyTokens := []DSToken{
+		{Path: "base.colour.grey.4a4f52", Hex: "#4A4F52", Kind: "color"},
+		{Path: "base.colour.neutral-dark.1a1d20", Hex: "#1A1D20", Kind: "color"},
+	}
+	res := Audit(tree, baseOnlyTokens, nil, Options{FileSlug: "demo"})
+	if len(res.Screens) != 1 {
+		t.Fatalf("got %d screens", len(res.Screens))
+	}
+	for _, f := range res.Screens[0].Fixes {
+		if f.Property != "fill" {
+			continue
+		}
+		if f.TokenPath != "" {
+			t.Errorf(
+				"base-only token set produced fix with TokenPath=%q (Reason=%q) — base tokens must never be suggested",
+				f.TokenPath, f.Reason,
+			)
+		}
+		if f.Reason != "unbound" {
+			t.Errorf("expected Reason=unbound, got %q", f.Reason)
+		}
+	}
+}
+
 func TestSlugify(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"Trade Screen", "trade-screen"},

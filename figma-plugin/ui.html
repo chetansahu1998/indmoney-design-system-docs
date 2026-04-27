@@ -1358,24 +1358,46 @@ function renderFixGroup(g) {
   card.className = "fix-grp";
   card.dataset.key = `${g.property}|${g.observed}|${g.token_path || ""}`;
 
+  // The PROMINENT target identifier is the Figma Variable name — that's
+  // what designers see in Figma's variable picker (e.g. "Surface White",
+  // "surface/Surface White", or "Surface/White" depending on how the DS
+  // team published). The DTCG slug ("colour.surface.surface-white") is a
+  // build-side identifier that's not addressable in Figma; it lives in
+  // the meta row as a copy-able reference for engineers + auditing.
+  //
+  // The plugin's resolveVariable() already tries figma_name first and
+  // falls back to token_path; this renderer just makes the visible
+  // identifier match the lookup priority.
+  const targetLabel = g.figma_name
+    ? (g.figma_collection ? `${g.figma_collection} / ${g.figma_name}` : g.figma_name)
+    : (g.token_path || "");
+
   const title = document.createElement("div");
   title.className = "fix-title";
   title.innerHTML =
     `<span class="pill ${g.priority.toLowerCase()}">${g.priority}</span>` +
     `<span class="pill kind">${escapeHtml(g.property)}</span>` +
     ` <span class="obs">${escapeHtml(g.observed)}</span>` +
-    (g.token_path ? `<span class="arrow">→</span><span class="tok">${escapeHtml(g.token_path)}</span>` : "");
+    (targetLabel ? `<span class="arrow">→</span><span class="tok">${escapeHtml(targetLabel)}</span>` : "");
   card.appendChild(title);
 
+  // Meta line carries: node count · distance · reason · DTCG path
+  // (only show DTCG path when it adds info — i.e. when figma_name was
+  // available, since the DTCG slug is otherwise just the same string).
   const meta = document.createElement("div");
   meta.className = "fix-meta";
-  meta.textContent =
-    `${g.nodes.length} node${g.nodes.length === 1 ? "" : "s"}` +
-    (g.distance > 0 ? ` · d=${g.distance.toFixed(3)}` : "") +
-    ` · ${g.reason}`;
+  const parts = [
+    `${g.nodes.length} node${g.nodes.length === 1 ? "" : "s"}`,
+  ];
+  if (g.distance > 0) parts.push(`d=${g.distance.toFixed(3)}`);
+  parts.push(g.reason);
+  if (g.figma_name && g.token_path) {
+    parts.push(`dtcg: ${g.token_path}`);
+  }
+  meta.textContent = parts.join(" · ");
   card.appendChild(meta);
 
-  if (g.token_path) {
+  if (g.token_path || g.figma_name) {
     const actions = document.createElement("div");
     actions.className = "fix-actions";
     if (["fill", "stroke", "spacing", "padding", "radius"].includes(g.property)) {
@@ -1385,12 +1407,20 @@ function renderFixGroup(g) {
       apply.addEventListener("click", () => applyGroup(card, g));
       actions.appendChild(apply);
     }
+    // Copy the FIGMA NAME (what designers paste into Figma's picker) by
+    // default — fall back to DTCG path if no figma_name. Two-line toast
+    // names what was copied so designers don't second-guess.
+    const copyTarget = g.figma_name || g.token_path;
     const copy = document.createElement("button");
     copy.className = "subtle tiny";
-    copy.textContent = "Copy path";
+    copy.textContent = "Copy name";
     copy.addEventListener("click", () => {
-      navigator.clipboard?.writeText(g.token_path).catch(() => {});
-      pushToast({ message: "Token path copied", sub: g.token_path, level: "info" });
+      navigator.clipboard?.writeText(copyTarget).catch(() => {});
+      pushToast({
+        message: "Variable name copied",
+        sub: copyTarget,
+        level: "info",
+      });
     });
     actions.appendChild(copy);
     card.appendChild(actions);

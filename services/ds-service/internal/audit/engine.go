@@ -259,6 +259,15 @@ func auditFills(n map[string]any, cov *TokenCoverage, fixes *[]FixCandidate, hex
 		}
 		hexFreq[hex]++
 		closest, dist := FindClosestColor(hex, tokens, opts.ColorDriftThreshold)
+		// Defensive filter: if a candidate slipped through without a real
+		// Figma Variable identity (FigmaName == ""), treat the fill as
+		// unbound. The plugin can't bind to a DTCG slug — only to a
+		// published variable — so suggesting "base.colour.grey.4a4f52"
+		// would just produce an apply-time error toast. Better to surface
+		// it as unbound so the designer hand-picks a semantic token.
+		if closest != nil && closest.FigmaName == "" {
+			closest = nil
+		}
 		if closest == nil {
 			*fixes = append(*fixes, FixCandidate{
 				NodeID:   nodeID,
