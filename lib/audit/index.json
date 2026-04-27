@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "1970-01-01T00:00:00Z",
+  "design_system_rev": "",
+  "files": [],
+  "token_usage": [],
+  "component_usage": [],
+  "cross_file_patterns": [],
+  "$extensions": {
+    "com.indmoney.provenance": "placeholder",
+    "com.indmoney.note": "Run `npm run audit` to populate. Until then, /files renders the empty state and usage chips render as 'not audited'."
+  }
+}
