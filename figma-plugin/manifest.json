@@ -17,9 +17,13 @@
   },
   "permissions": ["currentuser"],
   "menu": [
+    { "name": "Audit selection",         "command": "auditSelection" },
+    { "name": "Audit file",              "command": "auditFile" },
+    { "separator": true },
     { "name": "Sync selection to docs",  "command": "syncSelection" },
     { "name": "Inject latest icons",     "command": "injectIcons" },
     { "name": "Inject latest components","command": "injectComponents" },
+    { "separator": true },
     { "name": "Open docs site",          "command": "openDocsSite" }
   ]
 }

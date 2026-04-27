@@ -13,8 +13,10 @@
     --text-2: #b6bdcc;
     --text-3: #8c93a4;
     --accent: #4d93fc;
+    --accent-soft: rgba(77, 147, 252, 0.18);
     --danger: #ff6060;
     --good: #38d39f;
+    --warn: #f6a738;
   }
   @media (prefers-color-scheme: light) {
     :root {
@@ -25,160 +27,315 @@
       --text-1: #0e1117;
       --text-2: #404858;
       --text-3: #6f7686;
+      --accent-soft: rgba(77, 147, 252, 0.12);
     }
   }
-  html, body {
-    margin: 0;
-    padding: 0;
-    background: var(--bg-page);
-    color: var(--text-1);
-    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
-  }
-  .panel {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    padding: 16px;
-  }
-  h1 {
-    font-size: 14px;
-    font-weight: 600;
-    margin: 0;
-    letter-spacing: -0.2px;
-  }
-  .row {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
+  html, body { margin: 0; padding: 0; background: var(--bg-page); color: var(--text-1);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; }
+  .panel { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
+  h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: -0.2px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .row > button { flex: 1; min-width: 0; }
   button {
-    flex: 1;
-    min-width: 100px;
-    padding: 9px 12px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text-1);
-    font: inherit;
-    cursor: pointer;
+    padding: 8px 10px; background: var(--bg-surface); border: 1px solid var(--border);
+    border-radius: 6px; color: var(--text-1); font: inherit; cursor: pointer;
     transition: background 120ms ease, border-color 120ms ease;
   }
   button:hover { background: var(--bg-surface-2); border-color: var(--accent); }
-  button.primary {
-    background: var(--accent);
-    color: #fff;
-    border-color: var(--accent);
-  }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   button.primary:hover { background: #2f7df0; }
+  button.subtle { background: transparent; padding: 4px 8px; font-size: 11px; }
   input {
-    width: 100%;
-    padding: 8px 10px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text-1);
-    font: inherit;
-    box-sizing: border-box;
+    width: 100%; padding: 7px 9px; background: var(--bg-surface);
+    border: 1px solid var(--border); border-radius: 6px; color: var(--text-1);
+    font: inherit; box-sizing: border-box;
   }
-  .label {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    color: var(--text-3);
-    font-weight: 600;
-    margin-bottom: 4px;
+  .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--text-3); font-weight: 600; margin-bottom: 4px; }
+  .meta { color: var(--text-3); font-family: ui-monospace, monospace; font-size: 10px; }
+  .banner {
+    display: flex; gap: 8px; align-items: flex-start;
+    padding: 8px 10px; border-radius: 6px;
+    border: 1px solid var(--warn); background: rgba(246, 167, 56, 0.10);
+    font-size: 12px; color: var(--text-2);
   }
-  pre.log {
-    margin: 0;
-    padding: 10px 12px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-family: ui-monospace, "JetBrains Mono", monospace;
-    font-size: 11px;
-    color: var(--text-2);
-    height: 180px;
-    overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
+  .banner button { background: var(--warn); color: #1a1a1a; border-color: var(--warn);
+    flex-shrink: 0; padding: 4px 10px; font-weight: 600; font-size: 11px; }
+  .summary {
+    background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline;
   }
-  .err  { color: var(--danger); }
+  .summary .stat { display: flex; flex-direction: column; gap: 1px; }
+  .summary .stat-num { font-size: 16px; font-weight: 700; color: var(--text-1); }
+  .summary .stat-label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; }
+  .summary .priority-pills { display: inline-flex; gap: 4px; }
+  .summary .pill {
+    font-size: 10px; padding: 1px 6px; border-radius: 999px; font-family: ui-monospace, monospace;
+  }
+  .pill.p1 { background: var(--danger); color: #fff; }
+  .pill.p2 { background: var(--warn); color: #1a1a1a; }
+  .pill.p3 { background: var(--bg-surface-2); color: var(--text-3); }
+  .fixes { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; padding-right: 4px; }
+  .fix-card {
+    background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;
+  }
+  .fix-card.applied { border-color: var(--good); background: rgba(56, 211, 159, 0.05); }
+  .fix-row { display: flex; gap: 8px; align-items: center; }
+  .fix-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .fix-row .pill { font-size: 9px; flex-shrink: 0; }
+  .fix-detail { font-family: ui-monospace, monospace; font-size: 10px; color: var(--text-3); }
+  .fix-detail strong { color: var(--text-2); }
+  .fix-actions { display: flex; gap: 4px; }
+  .fix-actions button { padding: 4px 8px; font-size: 11px; flex: 0 0 auto; }
+  pre.log { margin: 0; padding: 8px 10px; background: var(--bg-surface);
+    border: 1px solid var(--border); border-radius: 6px; font-family: ui-monospace, monospace;
+    font-size: 10px; color: var(--text-2); height: 80px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  .err { color: var(--danger); }
   .good { color: var(--good); }
-  .meta { color: var(--text-3); font-family: ui-monospace, "JetBrains Mono", monospace; font-size: 10px; }
+  details summary { cursor: pointer; font-size: 11px; color: var(--text-3); user-select: none; }
+  details summary:hover { color: var(--text-2); }
+  hr { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
 </style>
 </head>
 <body>
 <div class="panel">
   <h1>INDmoney DS Sync</h1>
 
+  <!-- Staleness banner (appears only when triggered by main thread) -->
+  <div id="banner" class="banner" style="display:none">
+    <span>i</span>
+    <span id="banner-message">…</span>
+    <button id="banner-cta">Audit now</button>
+  </div>
+
+  <!-- Audit -->
   <div>
-    <div class="label">Docs base URL</div>
-    <input id="baseURL" value="https://indmoney-design-system-docs.vercel.app" />
+    <div class="label">Audit</div>
+    <div class="row">
+      <button class="primary" id="auditSel">Selection</button>
+      <button class="primary" id="auditPage">Page</button>
+      <button class="primary" id="auditFile">File</button>
+    </div>
   </div>
 
-  <div class="row">
-    <button id="ping">Ping</button>
-    <button id="select">Selection</button>
+  <!-- Summary card (filled after audit) -->
+  <div id="summary" class="summary" style="display:none">
+    <div class="stat">
+      <span class="stat-num" id="sum-cov">—</span>
+      <span class="stat-label">Coverage</span>
+    </div>
+    <div class="stat">
+      <span class="stat-num" id="sum-comps">—</span>
+      <span class="stat-label">DS / Amb / Cust</span>
+    </div>
+    <div class="stat">
+      <span class="priority-pills">
+        <span class="pill p1" id="sum-p1">P1 0</span>
+        <span class="pill p2" id="sum-p2">P2 0</span>
+        <span class="pill p3" id="sum-p3">P3 0</span>
+      </span>
+      <span class="stat-label">Fixes</span>
+    </div>
   </div>
 
-  <div class="row">
-    <button class="primary" id="injectIcons">Inject icons</button>
-    <button class="primary" id="injectComponents">Inject components</button>
-  </div>
+  <!-- Fix list -->
+  <div id="fixes" class="fixes"></div>
 
-  <div>
-    <div class="label">Log</div>
+  <hr />
+
+  <!-- Existing inject + sync controls collapsed by default -->
+  <details>
+    <summary>Inject from manifest</summary>
+    <div class="row" style="margin-top:8px">
+      <button id="injectIcons">Inject icons</button>
+      <button id="injectComponents">Inject components</button>
+    </div>
+  </details>
+
+  <details>
+    <summary>Settings</summary>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+      <div>
+        <div class="label">Docs base URL</div>
+        <input id="baseURL" value="https://indmoney-design-system-docs.vercel.app" />
+      </div>
+      <div>
+        <div class="label">Audit server URL</div>
+        <input id="auditURL" value="http://localhost:7474" />
+      </div>
+      <div class="row">
+        <button id="ping">Ping docs</button>
+        <button id="pingAudit">Ping audit server</button>
+        <button id="select">Selection digest</button>
+      </div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Log</summary>
     <pre id="log" class="log">Ready.</pre>
-  </div>
+  </details>
 
   <p class="meta">
-    Plugin reads <code>/icons/glyph/manifest.json</code> from the docs site and injects each
-    SVG into a frame on the current page. Future: round-trip selection analysis through ds-service.
+    Audit posts the selected scope to the local audit server and renders fix cards. Click Apply
+    to bind the suggested token via Figma's variable APIs (Pro plan required for plugin writes).
   </p>
 </div>
 
 <script>
-const $log = document.getElementById('log');
+const $ = (id) => document.getElementById(id);
 const post = (type, payload) => parent.postMessage({ pluginMessage: { type, payload } }, '*');
-const log = (msg, cls) => {
-  const span = document.createElement('span');
-  if (cls) span.className = cls;
-  span.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n`;
-  $log.appendChild(span);
-  $log.scrollTop = $log.scrollHeight;
+const log = (m, cls) => {
+  const s = document.createElement('span');
+  if (cls) s.className = cls;
+  s.textContent = `[${new Date().toLocaleTimeString()}] ${m}\n`;
+  $('log').appendChild(s);
+  $('log').scrollTop = $('log').scrollHeight;
 };
 
-document.getElementById('baseURL').addEventListener('change', (e) => {
-  post('set-base-url', e.target.value);
-});
-document.getElementById('ping').addEventListener('click', () => post('ping-docs'));
-document.getElementById('select').addEventListener('click', () => post('request-selection'));
-document.getElementById('injectIcons').addEventListener('click', () => post('inject-icons'));
-document.getElementById('injectComponents').addEventListener('click', () => post('inject-components'));
+let lastFixes = [];
+
+$('baseURL').addEventListener('change', (e) => post('set-base-url', e.target.value));
+$('auditURL').addEventListener('change', (e) => post('set-audit-server-url', e.target.value));
+$('ping').addEventListener('click', () => post('ping-docs'));
+$('pingAudit').addEventListener('click', () => post('ping-audit-server'));
+$('select').addEventListener('click', () => post('request-selection'));
+$('injectIcons').addEventListener('click', () => post('inject-icons'));
+$('injectComponents').addEventListener('click', () => post('inject-components'));
+$('auditSel').addEventListener('click', () => { resetPanels(); post('audit-selection'); });
+$('auditPage').addEventListener('click', () => { resetPanels(); post('audit-page'); });
+$('auditFile').addEventListener('click', () => { resetPanels(); post('audit-file'); });
+$('banner-cta').addEventListener('click', () => { resetPanels(); post('audit-file'); });
+
+function resetPanels() {
+  $('summary').style.display = 'none';
+  $('fixes').innerHTML = '';
+  $('banner').style.display = 'none';
+}
+
+function renderSummary(t) {
+  $('summary').style.display = 'flex';
+  $('sum-cov').textContent = `${t.coverage}%`;
+  $('sum-comps').textContent = `${t.fromDS}/${t.ambig}/${t.custom}`;
+  $('sum-p1').textContent = `P1 ${t.p1}`;
+  $('sum-p2').textContent = `P2 ${t.p2}`;
+  $('sum-p3').textContent = `P3 ${t.p3}`;
+}
+
+function renderFixes(fixes) {
+  lastFixes = fixes;
+  const root = $('fixes');
+  root.innerHTML = '';
+  if (!fixes.length) {
+    const empty = document.createElement('div');
+    empty.className = 'meta';
+    empty.style.padding = '8px 0';
+    empty.style.textAlign = 'center';
+    empty.textContent = 'No drift detected — everything is on token.';
+    root.appendChild(empty);
+    return;
+  }
+  for (const f of fixes) {
+    root.appendChild(renderFixCard(f));
+  }
+}
+
+function renderFixCard(f) {
+  const card = document.createElement('div');
+  card.className = 'fix-card';
+  card.dataset.nodeId = f.node_id;
+
+  const top = document.createElement('div');
+  top.className = 'fix-row';
+  const nm = document.createElement('span');
+  nm.className = 'nm';
+  nm.textContent = f.node_name || '(unnamed)';
+  const pill = document.createElement('span');
+  pill.className = `pill ${f.priority.toLowerCase()}`;
+  pill.textContent = f.priority;
+  top.appendChild(nm);
+  top.appendChild(pill);
+  card.appendChild(top);
+
+  const detail = document.createElement('div');
+  detail.className = 'fix-detail';
+  if (f.token_path) {
+    detail.innerHTML = `<strong>${f.property}</strong> ${f.observed} → ${f.token_path}` +
+      (f.distance > 0 ? ` <span style="color:var(--text-3)">(d=${f.distance.toFixed(3)})</span>` : '');
+  } else {
+    detail.innerHTML = `<strong>${f.property}</strong> ${f.observed} (${f.reason})`;
+  }
+  card.appendChild(detail);
+
+  const actions = document.createElement('div');
+  actions.className = 'fix-actions';
+  if (f.token_path && f.property === 'fill') {
+    const apply = document.createElement('button');
+    apply.className = 'primary';
+    apply.textContent = 'Apply';
+    apply.addEventListener('click', () => {
+      apply.disabled = true;
+      apply.textContent = 'Applying…';
+      post('apply-fix', {
+        node_id: f.node_id,
+        property: f.property,
+        variable_id: f.variable_id,
+        token_path: f.token_path,
+        observed: f.observed,
+      });
+    });
+    actions.appendChild(apply);
+  }
+  if (f.token_path) {
+    const copy = document.createElement('button');
+    copy.className = 'subtle';
+    copy.textContent = 'Copy path';
+    copy.addEventListener('click', () => {
+      navigator.clipboard?.writeText(f.token_path).catch(() => {});
+      copy.textContent = 'Copied';
+      setTimeout(() => (copy.textContent = 'Copy path'), 1100);
+    });
+    actions.appendChild(copy);
+  }
+  card.appendChild(actions);
+  return card;
+}
 
 window.onmessage = (event) => {
   const msg = event.data.pluginMessage;
   if (!msg) return;
   switch (msg.type) {
-    case 'info':
-      log(String(msg.payload));
-      break;
-    case 'error':
-      log(String(msg.payload), 'err');
-      break;
+    case 'info': log(String(msg.payload)); break;
+    case 'error': log(String(msg.payload), 'err'); break;
     case 'selection':
-      log(`Selection (${msg.payload.length}):\n${JSON.stringify(msg.payload, null, 2)}`);
+      log(`Selection: ${msg.payload.length} layers`);
       break;
-    case 'injection-progress':
-      log(`Injecting… ${msg.payload.done}/${msg.payload.total}`);
+    case 'injection-progress': log(`Injecting… ${msg.payload.done}/${msg.payload.total}`); break;
+    case 'injection-done': log(`Done — ${msg.payload.done}/${msg.payload.total}`, 'good'); break;
+    case 'audit-summary': renderSummary(msg.payload); break;
+    case 'audit-fixes': renderFixes(msg.payload); break;
+    case 'audit-applied': {
+      const card = document.querySelector(`[data-node-id="${msg.payload.node_id}"]`);
+      if (card) {
+        card.classList.add('applied');
+        const btn = card.querySelector('.fix-actions button.primary');
+        if (btn) { btn.textContent = 'Applied · ⌘Z to undo'; btn.disabled = true; }
+      }
+      log(`Applied ${msg.payload.token_path} → ${msg.payload.node_id}`, 'good');
       break;
-    case 'injection-done':
-      log(`Done — ${msg.payload.done}/${msg.payload.total} injected.`, 'good');
+    }
+    case 'staleness-banner': {
+      $('banner').style.display = 'flex';
+      $('banner-message').textContent = msg.payload.message;
       break;
+    }
   }
 };
-// Initial sync of the base URL value to the plugin
-post('set-base-url', document.getElementById('baseURL').value);
+
+post('set-base-url', $('baseURL').value);
+post('set-audit-server-url', $('auditURL').value);
+post('ready');
 </script>
 </body>
 </html>
