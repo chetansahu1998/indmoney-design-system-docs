@@ -1,9 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef } from "react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useIsMobile } from "@/lib/use-mobile";
+import { useUIStore } from "@/lib/ui-store";
 import { brandLabel, currentBrand } from "@/lib/brand";
 
 /* ── Types ─────────────────────────────────────────────────────────────── */
@@ -86,26 +87,59 @@ interface NavTreeProps {
 }
 
 function NavTree({ nav, title, activeSection, onNavigate, layoutScope }: NavTreeProps) {
-  const [open, setOpen] = useState<Record<string, boolean>>(() => {
-    const init: Record<string, boolean> = {};
-    for (const g of nav) {
-      init[g.label] = g.defaultOpen !== false;
+  // Group expand/collapse state lives in the UI store so it survives route
+  // changes (the previous local-useState reset every time you switched
+  // shells, e.g. / → /icons → / re-expanded a manually-collapsed group).
+  // groupKey = `${layoutScope}:${label}` so the desktop and mobile drawer
+  // can hold independent state — collapsing on mobile shouldn't collapse
+  // on desktop and vice versa.
+  const collapsedGroups = useUIStore((s) => s.collapsedGroups);
+  const toggleGroup = useUIStore((s) => s.toggleGroup);
+  const groupKey = (label: string) => `${layoutScope}:${label}`;
+  const isOpen = (g: NavGroup) => {
+    const key = groupKey(g.label);
+    if (collapsedGroups.has(key)) return false;
+    if (collapsedGroups.has(`${key}:explicit-open`)) return true;
+    return g.defaultOpen !== false;
+  };
+  const toggleOpen = (g: NavGroup) => {
+    const key = groupKey(g.label);
+    const explicit = `${key}:explicit-open`;
+    // Default-closed groups need a positive flag to stay open across mounts;
+    // default-open groups only need a negative flag to stay closed.
+    if (g.defaultOpen === false) {
+      // Toggle the explicit-open flag.
+      toggleGroup(explicit);
+    } else {
+      toggleGroup(key);
     }
-    return init;
-  });
+  };
+
+  // Auto-scroll the sidebar so the active item stays in view. Without this,
+  // long sidebars (e.g. /files with 13 product files + sub-anchors) leave
+  // the active pill hidden inside the ScrollArea — designer scrolls main
+  // content but the sidebar pill scrolls offscreen.
+  const treeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!activeSection) return;
+    const root = treeRef.current;
+    if (!root) return;
+    const target = root.querySelector(`[data-anchor-id="${activeSection}"]`);
+    if (target && "scrollIntoView" in target) {
+      (target as HTMLElement).scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [activeSection]);
 
   return (
     <LayoutGroup id={layoutScope}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)", padding: "10px 16px 6px" }}>
+      <div ref={treeRef} style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)", padding: "10px 16px 6px" }}>
         {title}
       </div>
 
       {nav.map((item) => (
         <div key={item.label}>
           <motion.button
-            onClick={() =>
-              item.sub.length && setOpen((o) => ({ ...o, [item.label]: !o[item.label] }))
-            }
+            onClick={() => item.sub.length && toggleOpen(item)}
             whileHover={item.sub.length ? { x: 1 } : {}}
             transition={{ type: "spring", stiffness: 300, damping: 26 }}
             style={{
@@ -113,7 +147,7 @@ function NavTree({ nav, title, activeSection, onNavigate, layoutScope }: NavTree
               width: "calc(100% - 12px)",
               padding: "10px 16px", margin: "1px 6px",
               fontSize: 14, fontWeight: item.sub.length ? 500 : 400,
-              color: open[item.label] ? "var(--text-1)" : "var(--text-2)",
+              color: isOpen(item) ? "var(--text-1)" : "var(--text-2)",
               background: "none", border: "none",
               cursor: item.sub.length ? "pointer" : "default",
               borderRadius: 8, textAlign: "left",
@@ -124,7 +158,7 @@ function NavTree({ nav, title, activeSection, onNavigate, layoutScope }: NavTree
             {item.sub.length > 0 && (
               <motion.svg
                 width="14" height="14" viewBox="0 0 14 14" fill="none"
-                animate={{ rotate: open[item.label] ? 180 : 0 }}
+                animate={{ rotate: isOpen(item) ? 180 : 0 }}
                 transition={{ type: "spring", stiffness: 300, damping: 26 }}
                 style={{ color: "var(--text-3)" }}
               >
@@ -134,7 +168,7 @@ function NavTree({ nav, title, activeSection, onNavigate, layoutScope }: NavTree
           </motion.button>
 
           <AnimatePresence initial={false}>
-            {open[item.label] && item.sub.length > 0 && (
+            {isOpen(item) && item.sub.length > 0 && (
               <motion.div
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: "auto", opacity: 1 }}
@@ -143,9 +177,10 @@ function NavTree({ nav, title, activeSection, onNavigate, layoutScope }: NavTree
                 style={{ overflow: "hidden" }}
               >
                 {item.sub.map((s) => {
-                  const isActive = activeSection === s.href.slice(1);
+                  const anchorId = s.href.startsWith("#") ? s.href.slice(1) : s.href;
+                  const isActive = activeSection === anchorId;
                   return (
-                    <div key={s.href} style={{ position: "relative", margin: "1px 6px" }}>
+                    <div key={s.href} data-anchor-id={anchorId} style={{ position: "relative", margin: "1px 6px" }}>
                       {isActive && (
                         <motion.div
                           layoutId={`${layoutScope}-active`}
