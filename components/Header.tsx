@@ -1,9 +1,11 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { motion, LayoutGroup } from "framer-motion";
 import { brandLabel, currentBrand, BRANDS } from "@/lib/brand";
 import { useUIStore, type Density } from "@/lib/ui-store";
+import { useIsMobile } from "@/lib/use-mobile";
 import { getExtractionMeta } from "@/lib/tokens/loader";
 
 const DENSITY_LABEL: Record<Density, string> = {
@@ -48,11 +50,36 @@ export default function Header({
     setDensity(order[(i + 1) % order.length]);
   };
 
+  // Mobile auto-hide: hide on scroll-down, show on scroll-up. Desktop
+  // keeps a sticky header — sidebar is fixed there too, no real estate
+  // pressure. On mobile the header is 72px of precious vertical space so
+  // it earns its keep by getting out of the way when reading.
+  const isMobile = useIsMobile();
+  const [hidden, setHidden] = useState(false);
+  useEffect(() => {
+    if (!isMobile || typeof window === "undefined") return;
+    let lastY = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      // Don't auto-hide near the top — feels twitchy.
+      if (y < 80) {
+        setHidden(false);
+      } else if (y > lastY + 4) {
+        setHidden(true);
+      } else if (y < lastY - 4) {
+        setHidden(false);
+      }
+      lastY = y;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [isMobile]);
+
   return (
     <motion.header
       initial={{ opacity: 0, y: -8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: [0.33, 1, 0.68, 1] }}
+      animate={{ opacity: 1, y: hidden ? "calc(-1 * var(--header-h))" : 0 }}
+      transition={{ duration: 0.25, ease: [0.33, 1, 0.68, 1] }}
       className="site-header"
       style={{
         position: "fixed",
