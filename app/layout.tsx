@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import ToastHost from "@/components/ui/Toast";
+import RootClient from "@/components/RootClient";
 
 const BRAND = process.env.NEXT_PUBLIC_BRAND ?? "indmoney";
 const BRAND_LABELS: Record<string, string> = {
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
+        <RootClient />
         {children}
         <ToastHost />
       </body>
