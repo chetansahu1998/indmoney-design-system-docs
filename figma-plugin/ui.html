@@ -2,444 +2,1290 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>INDmoney DS Sync</title>
+<title>INDmoney DS</title>
 <style>
-  /* ── Tokens (mirror docs site) ────────────────────────────── */
+  /* ════════════════════════════════════════════════════════════════════
+     INDmoney Design System Plugin — UI tokens
+     ────────────────────────────────────────────────────────────────────
+     Designed dark-first because Figma's editor is dark by default.
+     Light-mode is auto-derived from prefers-color-scheme. Indigo accent
+     instead of bright corporate blue — feels more designer-native.
+     ════════════════════════════════════════════════════════════════════ */
   :root {
-    --bg-page: #0e1117;
-    --bg-1: #161a22;
-    --bg-2: #1f242e;
-    --bg-3: #242a36;
-    --border: #2a3140;
-    --border-strong: #3b4254;
-    --text-1: #f7f8fb;
-    --text-2: #b6bdcc;
-    --text-3: #8c93a4;
-    --accent: #4d93fc;
-    --accent-soft: rgba(77, 147, 252, 0.16);
-    --good: #38d39f;
-    --good-soft: rgba(56, 211, 159, 0.14);
-    --warn: #f6a738;
-    --warn-soft: rgba(246, 167, 56, 0.12);
-    --danger: #ff6060;
-    --danger-soft: rgba(255, 96, 96, 0.12);
-    --shadow-1: 0 4px 16px rgba(0, 0, 0, 0.18);
-    --r-sm: 4px; --r-md: 6px; --r-lg: 8px; --r-xl: 12px;
+    /* Surfaces — five-step elevation scale */
+    --bg-canvas:      #0e1117;
+    --bg-surface-1:   #15191f;
+    --bg-surface-2:   #1d222c;
+    --bg-surface-3:   #262d39;
+
+    /* Borders use rgba over surfaces so they layer correctly */
+    --border-subtle:  rgba(255, 255, 255, 0.06);
+    --border-default: rgba(255, 255, 255, 0.10);
+    --border-strong:  rgba(255, 255, 255, 0.16);
+
+    /* Text — three-tier hierarchy with intentional opacities */
+    --text-1: #f5f6f8;
+    --text-2: #a3aab8;
+    --text-3: #6f7686;
+    --text-on-accent: #ffffff;
+
+    /* Accent — indigo-violet, more distinctive than the old corporate blue */
+    --accent:        #8a7fff;
+    --accent-hover:  #9b91ff;
+    --accent-soft:   rgba(138, 127, 255, 0.14);
+    --accent-strong: rgba(138, 127, 255, 0.32);
+
+    /* Status colors — paired with -soft variants for backgrounds */
+    --success:      #37d399;
+    --success-soft: rgba(55, 211, 153, 0.13);
+    --warning:      #f6c34a;
+    --warning-soft: rgba(246, 195, 74, 0.13);
+    --danger:       #ff7066;
+    --danger-soft:  rgba(255, 112, 102, 0.13);
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30);
+    --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.22);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.36);
+
+    /* Radii — five-tier scale */
+    --r-xs: 3px;
+    --r-sm: 5px;
+    --r-md: 7px;
+    --r-lg: 10px;
+    --r-xl: 14px;
+
+    /* Motion — token-based so every animation feels related */
+    --ease:      cubic-bezier(0.4, 0, 0.2, 1);
+    --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
+    --spring:    cubic-bezier(0.34, 1.56, 0.64, 1);
+    --d-snap:    120ms;
+    --d-quick:   180ms;
+    --d-base:    240ms;
+    --d-slow:    360ms;
   }
+
+  /* Light mode — desaturated paper feel, not inverted */
   @media (prefers-color-scheme: light) {
     :root {
-      --bg-page: #ffffff; --bg-1: #f7f8fb; --bg-2: #eef0f5; --bg-3: #e4e7ee;
-      --border: #d8dbe3; --border-strong: #c1c5cf;
-      --text-1: #0e1117; --text-2: #404858; --text-3: #6f7686;
-      --accent-soft: rgba(77, 147, 252, 0.10);
-      --good-soft: rgba(56, 211, 159, 0.10);
-      --warn-soft: rgba(246, 167, 56, 0.10);
-      --danger-soft: rgba(255, 96, 96, 0.08);
-      --shadow-1: 0 4px 12px rgba(0, 0, 0, 0.06);
+      --bg-canvas:    #ffffff;
+      --bg-surface-1: #fafbfc;
+      --bg-surface-2: #f3f4f7;
+      --bg-surface-3: #e8eaef;
+
+      --border-subtle:  rgba(15, 23, 42, 0.06);
+      --border-default: rgba(15, 23, 42, 0.10);
+      --border-strong:  rgba(15, 23, 42, 0.16);
+
+      --text-1: #0f172a;
+      --text-2: #475067;
+      --text-3: #6f7686;
+
+      --accent:        #6b5cff;
+      --accent-hover:  #5848f0;
+      --accent-soft:   rgba(107, 92, 255, 0.10);
+      --accent-strong: rgba(107, 92, 255, 0.20);
+
+      --success-soft: rgba(55, 211, 153, 0.10);
+      --warning-soft: rgba(246, 195, 74, 0.12);
+      --danger-soft:  rgba(255, 112, 102, 0.10);
+
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+      --shadow-md: 0 4px 14px rgba(15, 23, 42, 0.08);
+      --shadow-lg: 0 16px 40px rgba(15, 23, 42, 0.12);
     }
   }
-  *, *::before, *::after { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; background: var(--bg-page); color: var(--text-1);
-    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", sans-serif;
-    height: 100%; overflow: hidden; }
-  body { display: flex; flex-direction: column; }
+
+  /* ════════════════════════════════════════════════════════════════════
+     Reset + base
+     ════════════════════════════════════════════════════════════════════ */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg-canvas);
+    color: var(--text-1);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text",
+          system-ui, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Tabular numerals everywhere a value renders — prevents wobble on update */
+  .num, .num *, .meta, .stat-num, kbd, .mono { font-variant-numeric: tabular-nums; }
+  .mono, kbd { font-family: "SF Mono", ui-monospace, "Roboto Mono", monospace; }
+
+  /* Reduced motion — kills all transitions for users who asked */
   @media (prefers-reduced-motion: reduce) {
-    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 
-  /* ── Status (sticky, slim) ────────────────────────────────── */
+  /* Focus ring — visible only on keyboard, never on mouse */
+  :focus { outline: none; }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--r-sm);
+  }
+
+  /* Scrollbar — thin, subtle, only on hover */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  *:hover > ::-webkit-scrollbar-thumb,
+  *:hover::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    background-clip: padding-box;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     Layout shell — status bar / mode picker / pane / footer
+     ════════════════════════════════════════════════════════════════════ */
   .status {
-    display: flex; align-items: center; gap: 8px;
-    padding: 6px 12px; min-height: 28px;
-    background: var(--bg-1); border-bottom: 1px solid var(--border);
-    font-size: 11px; color: var(--text-3); flex-shrink: 0;
-  }
-  .dot {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: var(--text-3); flex-shrink: 0;
-    transition: background 200ms ease, box-shadow 200ms ease;
-  }
-  .dot.ok    { background: var(--good); box-shadow: 0 0 0 3px var(--good-soft); }
-  .dot.bad   { background: var(--danger); }
-  .dot.idle  { background: var(--warn); }
-  .status .ctx { font-family: ui-monospace, "SF Mono", monospace; color: var(--text-2);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
-  .status .open-docs { color: var(--text-3); cursor: pointer; flex-shrink: 0; }
-  .status .open-docs:hover { color: var(--text-1); }
-
-  /* ── Disconnect banner (between status + content) ─────────── */
-  .banner {
-    flex-shrink: 0; padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-    background: var(--danger-soft); color: var(--text-1);
-    display: flex; gap: 10px; align-items: flex-start;
-    border-left: 3px solid var(--danger);
-  }
-  .banner.warn  { background: var(--warn-soft); border-left-color: var(--warn); }
-  .banner.info  { background: var(--accent-soft); border-left-color: var(--accent); }
-  .banner .ico { font-weight: 700; flex-shrink: 0; }
-  .banner.warn .ico  { color: var(--warn); }
-  .banner.bad .ico   { color: var(--danger); }
-  .banner.info .ico  { color: var(--accent); }
-  .banner .body { flex: 1; min-width: 0; font-size: 12px; line-height: 1.45; }
-  .banner .body strong { color: var(--text-1); display: block; margin-bottom: 2px; font-weight: 600; }
-  .banner .actions { display: flex; gap: 6px; margin-top: 6px; }
-  .banner.hidden { display: none; }
-
-  /* ── Scroll area ─────────────────────────────────────────── */
-  .pane { flex: 1; overflow-y: auto; padding: 12px; min-height: 0; }
-  .pane > * + * { margin-top: 10px; }
-
-  /* ── Card ─────────────────────────────────────────────── */
-  .card {
-    background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-lg);
-    padding: 12px;
-  }
-  .card .hdr { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
-  .card .ttl { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
-  .card .meta { font-size: 10px; color: var(--text-3); font-family: ui-monospace, monospace; }
-
-  /* ── Selection summary card ─────────────────────────────── */
-  .sel-summary { display: flex; flex-direction: column; gap: 8px; }
-  .sel-empty { font-size: 12px; color: var(--text-3); padding: 12px 8px;
-    border: 1px dashed var(--border); border-radius: var(--r-md); text-align: center; line-height: 1.55; }
-  .sel-empty strong { display: block; color: var(--text-2); margin-bottom: 2px; font-size: 13px; font-weight: 600; }
-
-  .kind-list { display: flex; flex-direction: column; gap: 2px; }
-  .kind-row {
-    display: grid; grid-template-columns: 14px 1fr auto; gap: 10px;
-    padding: 5px 6px; border-radius: var(--r-sm);
+    flex-shrink: 0;
+    display: flex;
     align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    height: 36px;
+    background: var(--bg-surface-1);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 11px;
+    color: var(--text-3);
   }
-  .kind-row .sw { width: 6px; height: 6px; border-radius: 2px; background: var(--text-3); }
-  .kind-row.set        .sw { background: var(--accent); }
-  .kind-row.standalone .sw { background: var(--good); }
-  .kind-row.variant    .sw { background: var(--accent); opacity: 0.45; }
-  .kind-row.instance   .sw { background: var(--warn); }
-  .kind-row.frame      .sw { background: var(--text-3); opacity: 0.6; }
-  .kind-row .label { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .kind-row .count { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; color: var(--text-1); }
-  .kind-row.skipped { opacity: 0.55; }
+  .status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--text-3);
+    flex-shrink: 0;
+    transition: background var(--d-base) var(--ease), box-shadow var(--d-base) var(--ease);
+  }
+  .status-dot.ok {
+    background: var(--success);
+    box-shadow: 0 0 0 3px var(--success-soft);
+    animation: breathe 2400ms ease-in-out infinite;
+  }
+  .status-dot.bad {
+    background: var(--danger);
+    box-shadow: 0 0 0 3px var(--danger-soft);
+  }
+  .status-dot.idle {
+    background: var(--warning);
+    box-shadow: 0 0 0 3px var(--warning-soft);
+  }
+  @keyframes breathe {
+    0%, 100% { box-shadow: 0 0 0 3px var(--success-soft); }
+    50%      { box-shadow: 0 0 0 5px var(--success-soft); }
+  }
 
-  /* ── Primary action row ───────────────────────────────── */
-  .actions-row { display: flex; gap: 6px; margin-top: 10px; }
-  .actions-row > button { flex: 1; }
-  .actions-row > button.flex-2 { flex: 2; }
-
-  /* ── Buttons ──────────────────────────────────────────── */
-  button {
-    font: inherit; font-size: 13px; font-weight: 500;
-    padding: 8px 12px; border-radius: var(--r-md);
-    border: 1px solid var(--border); background: var(--bg-1); color: var(--text-1);
-    cursor: pointer; transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  .status-ctx {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-2);
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
-  button:hover:not(:disabled) { background: var(--bg-2); border-color: var(--border-strong); }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
-  button.primary:hover:not(:disabled) { background: #2f7df0; border-color: #2f7df0; }
-  button.danger { color: var(--danger); border-color: var(--danger); }
-  button.subtle { background: transparent; border-color: transparent; padding: 6px 10px; font-size: 11px; color: var(--text-3); }
-  button.subtle:hover:not(:disabled) { background: var(--bg-2); color: var(--text-2); }
-  button.tiny { padding: 3px 8px; font-size: 11px; }
+  .status-ctx .dim { color: var(--text-3); }
 
-  /* ── Spinner ──────────────────────────────────────────── */
-  .spin { display: inline-block; width: 12px; height: 12px;
-    border: 2px solid var(--accent-soft); border-top-color: var(--accent);
-    border-radius: 50%; animation: spin 800ms linear infinite;
-    margin-right: 6px; vertical-align: -2px;
+  .icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px; height: 26px;
+    background: transparent;
+    border: none;
+    border-radius: var(--r-sm);
+    color: var(--text-3);
+    cursor: pointer;
+    transition: background var(--d-snap) var(--ease), color var(--d-snap) var(--ease);
+    flex-shrink: 0;
+  }
+  .icon-btn:hover { background: var(--bg-surface-2); color: var(--text-1); }
+  .icon-btn:active { background: var(--bg-surface-3); }
+
+  /* ── Mode picker (segmented control, replaces tabs) ─────────────── */
+  .modes {
+    flex-shrink: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+    padding: 8px 14px 0;
+    background: var(--bg-canvas);
+    border-bottom: 1px solid var(--border-subtle);
+    position: relative;
+  }
+  .mode {
+    background: transparent;
+    border: none;
+    padding: 8px 4px 12px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-3);
+    cursor: pointer;
+    text-align: center;
+    transition: color var(--d-quick) var(--ease);
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .mode:hover { color: var(--text-2); }
+  .mode[aria-selected="true"] { color: var(--text-1); font-weight: 600; }
+  .mode .badge {
+    font-size: 10px; font-weight: 600;
+    background: var(--bg-surface-3); color: var(--text-2);
+    padding: 1px 6px; border-radius: 999px;
+    font-family: "SF Mono", monospace;
+    line-height: 1.4;
+  }
+  .mode[aria-selected="true"] .badge {
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .mode-underline {
+    position: absolute;
+    left: 14px;
+    bottom: 0;
+    height: 2px;
+    width: calc((100% - 28px) / 3);
+    background: var(--accent);
+    border-radius: 2px 2px 0 0;
+    transition: transform var(--d-base) var(--ease-out);
+    pointer-events: none;
+  }
+
+  /* ── Disconnect / staleness banner ──────────────────────────────── */
+  .banner {
+    flex-shrink: 0;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 12px 14px;
+    margin: 12px 14px 0;
+    background: var(--danger-soft);
+    border: 1px solid var(--danger);
+    border-radius: var(--r-md);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .banner.warn { background: var(--warning-soft); border-color: var(--warning); }
+  .banner.info { background: var(--accent-soft); border-color: var(--accent); }
+  .banner-ico {
+    flex-shrink: 0;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--text-on-accent);
+    font-size: 10px; font-weight: 700;
+    background: var(--danger);
+  }
+  .banner.warn .banner-ico { background: var(--warning); color: #1a1a1a; }
+  .banner.info .banner-ico { background: var(--accent); }
+  .banner-body { flex: 1; min-width: 0; }
+  .banner-body strong { display: block; color: var(--text-1); font-weight: 600; margin-bottom: 2px; font-size: 12.5px; }
+  .banner-body .body { color: var(--text-2); }
+  .banner-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .banner.hidden { display: none; }
+
+  /* ── Pane (scroll container) ────────────────────────────────────── */
+  .pane {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .view {
+    display: none;
+    animation: fade-in var(--d-base) var(--ease-out);
+  }
+  .view.active {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     Card primitive — every section's container
+     ════════════════════════════════════════════════════════════════════ */
+  .card {
+    background: var(--bg-surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    transition: border-color var(--d-quick) var(--ease);
+  }
+  .card.elevated { box-shadow: var(--shadow-sm); }
+  .card-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px 8px;
+  }
+  .card-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-3);
+  }
+  .card-meta {
+    font-size: 10.5px;
+    color: var(--text-3);
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .card-body {
+    padding: 0 14px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .card-divider { height: 1px; background: var(--border-subtle); margin: 4px 0; }
+
+  /* ── Empty state inside a card ─────────────────────────────────── */
+  .empty {
+    margin: 4px;
+    padding: 22px 16px;
+    border: 1px dashed var(--border-default);
+    border-radius: var(--r-md);
+    text-align: center;
+    color: var(--text-3);
+    font-size: 12px;
+    line-height: 1.55;
+    background:
+      repeating-linear-gradient(
+        135deg,
+        transparent 0 6px,
+        rgba(255, 255, 255, 0.012) 6px 8px
+      );
+  }
+  .empty-ico {
+    width: 32px; height: 32px;
+    margin: 0 auto 10px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: var(--bg-surface-2);
+    color: var(--text-2);
+  }
+  .empty-title {
+    color: var(--text-1);
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .empty .kbd-hint {
+    margin-top: 8px;
+    font-size: 10px;
+    color: var(--text-3);
+    font-family: "SF Mono", monospace;
+  }
+  kbd {
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border-default);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 10px;
+    color: var(--text-2);
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     Buttons — three tiers: primary, secondary, subtle
+     ════════════════════════════════════════════════════════════════════ */
+  button {
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.2;
+    padding: 8px 12px;
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface-1);
+    color: var(--text-1);
+    border-radius: var(--r-md);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    white-space: nowrap;
+    transition:
+      background var(--d-snap) var(--ease),
+      border-color var(--d-snap) var(--ease),
+      color var(--d-snap) var(--ease),
+      transform var(--d-snap) var(--ease);
+  }
+  button:hover:not(:disabled) {
+    background: var(--bg-surface-2);
+    border-color: var(--border-strong);
+  }
+  button:active:not(:disabled) {
+    transform: scale(0.98);
+    background: var(--bg-surface-3);
+  }
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  button.primary {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    border-color: var(--accent);
+    font-weight: 600;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.10) inset, var(--shadow-sm);
+  }
+  button.primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+  button.subtle {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-2);
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+  button.subtle:hover:not(:disabled) {
+    background: var(--bg-surface-2);
+    color: var(--text-1);
+  }
+  button.tiny { padding: 4px 8px; font-size: 11px; }
+  button.success {
+    background: var(--success);
+    color: #0a1f15;
+    border-color: var(--success);
+    font-weight: 600;
+  }
+  button.danger { color: var(--danger); border-color: var(--danger-soft); }
+  button.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+  .actions { display: flex; gap: 6px; }
+  .actions > button { flex: 1; min-width: 0; }
+  .actions > button.flex-2 { flex: 2; }
+
+  /* Spinner — used inside loading buttons */
+  .spin {
+    display: inline-block;
+    width: 11px; height: 11px;
+    border: 1.6px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 800ms linear infinite;
+    opacity: 0.85;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ── Audit result ─────────────────────────────────────── */
-  .audit-stats { display: flex; gap: 14px; flex-wrap: wrap; align-items: baseline; }
-  .stat { display: flex; flex-direction: column; gap: 1px; min-width: 70px; }
-  .stat-num { font-size: 22px; font-weight: 700; color: var(--text-1); letter-spacing: -0.4px; line-height: 1; }
-  .stat-num.accent { color: var(--accent); }
-  .stat-num.danger { color: var(--danger); }
-  .stat-label { font-size: 9px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 4px; }
-  .pills { display: inline-flex; gap: 4px; }
-  .pill { font-size: 10px; padding: 1px 6px; border-radius: 999px; font-family: ui-monospace, monospace; font-weight: 700; }
-  .pill.p1 { background: var(--danger); color: #fff; }
-  .pill.p2 { background: var(--warn); color: #1a1a1a; }
-  .pill.p3 { background: var(--bg-3); color: var(--text-3); }
+  /* ════════════════════════════════════════════════════════════════════
+     Selection card — Publish view
+     ════════════════════════════════════════════════════════════════════ */
+  .kind-list {
+    display: flex; flex-direction: column;
+    gap: 1px;
+    background: var(--bg-canvas);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    padding: 4px;
+  }
+  .kind-row {
+    display: grid;
+    grid-template-columns: 12px 1fr auto;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 8px;
+    border-radius: var(--r-sm);
+    transition: background var(--d-snap) var(--ease);
+  }
+  .kind-row:hover { background: var(--bg-surface-1); }
+  .kind-sw {
+    width: 6px; height: 6px;
+    border-radius: 2px;
+    background: var(--text-3);
+  }
+  .kind-row.set        .kind-sw { background: var(--accent); }
+  .kind-row.standalone .kind-sw { background: var(--success); }
+  .kind-row.variant    .kind-sw { background: var(--accent); opacity: 0.55; }
+  .kind-row.instance   .kind-sw { background: var(--warning); }
+  .kind-row.frame      .kind-sw { background: var(--text-3); opacity: 0.6; }
+  .kind-label { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kind-count {
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 12px; font-weight: 600;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+  .kind-row.skipped .kind-label,
+  .kind-row.skipped .kind-count { opacity: 0.55; }
+  .kind-row.skipped .kind-label::after {
+    content: "skipped";
+    font-size: 9px;
+    background: var(--bg-surface-2);
+    color: var(--text-3);
+    padding: 1px 5px;
+    border-radius: 999px;
+    margin-left: 6px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
 
-  /* ── Apply-all-P1 row ───────────────────────────────── */
+  /* ════════════════════════════════════════════════════════════════════
+     Audit — stats row
+     ════════════════════════════════════════════════════════════════════ */
+  .audit-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    padding: 4px;
+  }
+  .stat {
+    background: var(--bg-canvas);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .stat-num {
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.5px;
+    color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-num.accent { color: var(--accent); }
+  .stat-num.success { color: var(--success); }
+  .stat-num.danger { color: var(--danger); }
+  .stat-label {
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 2px;
+  }
+  .stat-detail {
+    font-size: 10px;
+    color: var(--text-3);
+    font-family: "SF Mono", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Pills — P1/P2/P3 priority chips */
+  .pills { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+  .pill {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-family: "SF Mono", monospace;
+    line-height: 1.5;
+    letter-spacing: 0.02em;
+  }
+  .pill.p1 { background: var(--danger);  color: #fff; }
+  .pill.p2 { background: var(--warning); color: #1a1a1a; }
+  .pill.p3 { background: var(--bg-surface-3); color: var(--text-2); }
+  .pill.kind {
+    background: var(--bg-surface-2);
+    color: var(--text-3);
+    font-weight: 600;
+  }
+
+  /* ── Apply-all banner above the fixes list ─────────────────────── */
   .apply-all {
-    display: flex; align-items: center; gap: 10px;
-    padding: 8px 10px; margin-top: 10px;
-    background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: var(--r-md);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    margin-top: 4px;
+    background: linear-gradient(
+      135deg,
+      var(--danger-soft) 0%,
+      var(--accent-soft) 100%
+    );
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .apply-all .copy { flex: 1; min-width: 0; color: var(--text-2); }
+  .apply-all strong { color: var(--text-1); font-weight: 600; }
+
+  /* ── Fix groups ────────────────────────────────────────────────── */
+  .fixes { display: flex; flex-direction: column; gap: 6px; }
+  .fix-grp {
+    background: var(--bg-surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: border-color var(--d-base) var(--ease), background var(--d-base) var(--ease);
+  }
+  .fix-grp:hover { border-color: var(--border-default); }
+  .fix-grp.applied {
+    background: var(--success-soft);
+    border-color: var(--success);
+  }
+  .fix-grp.applied .fix-actions { display: none; }
+
+  .fix-title {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 12px;
+    flex-wrap: wrap;
+    line-height: 1.4;
+  }
+  .fix-title .obs {
+    font-family: "SF Mono", monospace;
+    color: var(--text-2);
+    font-size: 11.5px;
+  }
+  .fix-title .arrow { color: var(--text-3); margin: 0 2px; }
+  .fix-title .tok {
+    font-family: "SF Mono", monospace;
+    color: var(--accent);
+    font-size: 11.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .fix-meta {
+    font-size: 10.5px;
+    color: var(--text-3);
+    font-family: "SF Mono", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .fix-actions { display: flex; gap: 4px; margin-top: 2px; }
+
+  /* ── Clean-state success ───────────────────────────────────────── */
+  .clean {
+    text-align: center;
+    padding: 22px 14px;
+    color: var(--success);
     font-size: 12px;
   }
-  .apply-all .text { flex: 1; min-width: 0; color: var(--text-2); }
-  .apply-all strong { color: var(--danger); }
-
-  /* ── Fix groups ──────────────────────────────────────── */
-  .fixes { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-  .fix-grp {
-    background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-md);
-    padding: 8px 10px; display: flex; flex-direction: column; gap: 4px;
-    transition: border-color 200ms ease, background 200ms ease;
+  .clean .clean-ico {
+    width: 36px; height: 36px;
+    margin: 0 auto 8px;
+    background: var(--success-soft);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--success);
   }
-  .fix-grp.applied { border-color: var(--good); background: var(--good-soft); }
-  .fix-grp .ttl { display: flex; gap: 6px; align-items: center; font-size: 12px; line-height: 1.5; min-width: 0; }
-  .fix-grp .ttl .pill { flex-shrink: 0; }
-  .fix-grp .obs, .fix-grp .tok { font-family: ui-monospace, monospace; }
-  .fix-grp .obs { color: var(--text-2); }
-  .fix-grp .arrow { color: var(--text-3); }
-  .fix-grp .tok { color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .fix-grp .meta { font-size: 10px; color: var(--text-3); font-family: ui-monospace, monospace; }
-  .fix-grp .actions { display: flex; gap: 4px; margin-top: 4px; }
-  .fix-grp.applied .actions button.primary { display: none; }
+  .clean strong { display: block; color: var(--text-1); font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .clean .sub { color: var(--text-3); font-size: 11px; }
 
-  /* ── Disclosure ───────────────────────────────────── */
-  details { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-md); padding: 8px 12px; }
-  details summary {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 12px; color: var(--text-2); cursor: pointer; user-select: none; font-weight: 500;
-    list-style: none; outline: none;
+  /* ════════════════════════════════════════════════════════════════════
+     Inputs
+     ════════════════════════════════════════════════════════════════════ */
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
-  details summary::-webkit-details-marker { display: none; }
-  details summary::before {
-    content: "▸"; font-size: 10px; color: var(--text-3); width: 10px;
-    transition: transform 140ms ease;
+  .field label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
   }
-  details[open] summary::before { transform: rotate(90deg); }
-  details summary:hover { color: var(--text-1); }
-  details[open] { padding-bottom: 12px; }
-  details > .body { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
-
-  /* ── Inputs ───────────────────────────────────────── */
-  .field { display: flex; flex-direction: column; gap: 4px; }
-  .field label { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
   .field input {
-    width: 100%; padding: 7px 9px; font-size: 12px;
-    font-family: ui-monospace, "SF Mono", monospace;
-    background: var(--bg-page); color: var(--text-1);
-    border: 1px solid var(--border); border-radius: var(--r-md);
+    width: 100%;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-family: "SF Mono", ui-monospace, monospace;
+    background: var(--bg-canvas);
+    color: var(--text-1);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    transition: border-color var(--d-snap) var(--ease), background var(--d-snap) var(--ease);
   }
-  .field input:focus { outline: 2px solid var(--accent-soft); outline-offset: 0; border-color: var(--accent); }
-  .field .help { font-size: 10px; color: var(--text-3); line-height: 1.5; }
+  .field input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--bg-surface-1);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .field .help {
+    font-size: 10.5px;
+    color: var(--text-3);
+    line-height: 1.55;
+  }
+  .field .help code {
+    background: var(--bg-surface-2);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: "SF Mono", monospace;
+    font-size: 10.5px;
+    color: var(--text-2);
+  }
 
-  /* ── Toaster ──────────────────────────────────────── */
+  /* ════════════════════════════════════════════════════════════════════
+     Toaster
+     ════════════════════════════════════════════════════════════════════ */
   .toaster {
-    position: fixed; bottom: 12px; left: 12px; right: 12px;
-    display: flex; flex-direction: column-reverse; gap: 6px;
-    pointer-events: none; z-index: 100;
+    position: fixed;
+    bottom: 12px;
+    right: 12px;
+    left: 12px;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 6px;
+    pointer-events: none;
+    z-index: 100;
   }
   .toast {
     pointer-events: auto;
-    background: var(--bg-2); color: var(--text-1);
-    border: 1px solid var(--border-strong); border-radius: var(--r-md);
-    padding: 8px 10px; font-size: 12px; line-height: 1.4;
-    box-shadow: var(--shadow-1);
-    display: flex; gap: 8px; align-items: flex-start;
-    animation: toast-in 200ms ease-out;
+    background: var(--bg-surface-2);
+    color: var(--text-1);
+    border: 1px solid var(--border-default);
+    border-radius: var(--r-md);
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.4;
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    gap: 9px;
+    align-items: flex-start;
+    animation: toast-in var(--d-base) var(--ease-out);
+    overflow: hidden;
+    max-width: 100%;
   }
-  .toast.success { border-left: 3px solid var(--good); }
-  .toast.error   { border-left: 3px solid var(--danger); }
-  .toast.info    { border-left: 3px solid var(--accent); }
-  .toast .ico { flex-shrink: 0; font-weight: 700; }
-  .toast.success .ico { color: var(--good); }
-  .toast.error   .ico { color: var(--danger); }
-  .toast.info    .ico { color: var(--accent); }
-  @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .toast.success { border-left: 3px solid var(--success); }
+  .toast.error   { border-left: 3px solid var(--danger);  }
+  .toast.info    { border-left: 3px solid var(--accent);  }
+  .toast .ico {
+    flex-shrink: 0;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700;
+    color: #fff;
+  }
+  .toast.success .ico { background: var(--success); color: #0a1f15; }
+  .toast.error   .ico { background: var(--danger);  }
+  .toast.info    .ico { background: var(--accent);  }
+  .toast .body { flex: 1; min-width: 0; }
+  .toast .body strong { display: block; font-weight: 600; }
+  .toast .body .sub { color: var(--text-3); font-size: 10.5px; margin-top: 2px; font-family: "SF Mono", monospace; }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     Settings panel — overlay, slides in from right
+     ════════════════════════════════════════════════════════════════════ */
+  .settings-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.42);
+    backdrop-filter: blur(2px);
+    z-index: 90;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--d-base) var(--ease);
+  }
+  .settings-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .settings-panel {
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    width: min(320px, 94%);
+    background: var(--bg-canvas);
+    border-left: 1px solid var(--border-default);
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform var(--d-slow) var(--ease-out);
+  }
+  .settings-overlay.open .settings-panel { transform: translateX(0); }
+  .settings-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .settings-header h2 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-1);
+    letter-spacing: -0.1px;
+  }
+  .settings-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .setting-section h3 {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+  }
+
+  /* ── Activity log inside settings ──────────────────────────────── */
+  .activity {
+    max-height: 180px;
+    overflow-y: auto;
+    background: var(--bg-surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    padding: 8px 10px;
+    font-family: "SF Mono", monospace;
+    font-size: 10.5px;
+    color: var(--text-3);
+    line-height: 1.7;
+  }
+  .activity div { padding: 1px 0; }
+  .activity .empty-log { color: var(--text-3); font-style: italic; }
 </style>
 </head>
 <body>
 
-<!-- ── Sticky status ──────────────────────────────────────── -->
-<div class="status">
-  <span class="dot" id="dot"></span>
-  <span class="ctx" id="ctx">Initialising…</span>
-  <span class="open-docs" id="open-docs" title="Open docs site">↗ docs</span>
+<!-- ────────────────────────────────────────────────────────────────
+     Status bar — connection + file context + settings entry
+     ──────────────────────────────────────────────────────────────── -->
+<div class="status" role="status" aria-live="polite">
+  <span class="status-dot" id="dot"></span>
+  <span class="status-ctx" id="ctx">Connecting…</span>
+  <button class="icon-btn" id="open-docs" aria-label="Open docs site" title="Open docs site (↗)">
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M11 3h2v2"/>
+      <path d="M13 3l-7 7"/>
+      <path d="M7 3H4a1 1 0 00-1 1v8a1 1 0 001 1h8a1 1 0 001-1V9"/>
+    </svg>
+  </button>
+  <button class="icon-btn" id="open-settings" aria-label="Settings" title="Settings">
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="8" cy="8" r="2.5"/>
+      <path d="M8 1v2M8 13v2M3 8H1M15 8h-2M3.5 3.5l1.5 1.5M11 11l1.5 1.5M3.5 12.5L5 11M11 5l1.5-1.5"/>
+    </svg>
+  </button>
 </div>
 
-<!-- ── Disconnect / staleness banner (hidden by default) ── -->
-<div class="banner hidden" id="banner">
-  <span class="ico" id="banner-ico">!</span>
-  <div class="body" id="banner-body"></div>
+<!-- ────────────────────────────────────────────────────────────────
+     Mode picker — Publish · Audit · Library
+     ──────────────────────────────────────────────────────────────── -->
+<div class="modes" role="tablist" aria-label="Plugin mode">
+  <button class="mode" id="mode-publish" role="tab" aria-selected="true" aria-controls="view-publish">
+    <span>Publish</span>
+    <span class="badge" id="mode-publish-badge" hidden>0</span>
+  </button>
+  <button class="mode" id="mode-audit" role="tab" aria-selected="false" aria-controls="view-audit">
+    <span>Audit</span>
+    <span class="badge" id="mode-audit-badge" hidden>0</span>
+  </button>
+  <button class="mode" id="mode-library" role="tab" aria-selected="false" aria-controls="view-library">
+    <span>Library</span>
+  </button>
+  <span class="mode-underline" id="mode-underline" style="transform: translateX(0)"></span>
 </div>
 
+<!-- ────────────────────────────────────────────────────────────────
+     Disconnect / staleness banner
+     ──────────────────────────────────────────────────────────────── -->
+<div class="banner hidden" id="banner" role="alert">
+  <span class="banner-ico" id="banner-ico">!</span>
+  <div class="banner-body" id="banner-body"></div>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────────
+     Pane — three views, only one visible at a time
+     ──────────────────────────────────────────────────────────────── -->
 <div class="pane">
 
-  <!-- ── Selection (live) ──────────────────────────────── -->
-  <div class="card sel-summary">
-    <div class="hdr">
-      <span class="ttl">Selection</span>
-      <span class="meta" id="sel-meta"></span>
+  <!-- ═══════════════════════════════════════════════════════════════
+       VIEW: Publish
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="view active" id="view-publish" role="tabpanel" aria-labelledby="mode-publish">
+
+    <!-- Selection summary card -->
+    <div class="card elevated">
+      <div class="card-header">
+        <span class="card-title">Selection</span>
+        <span class="card-meta" id="sel-meta"></span>
+      </div>
+      <div class="card-body" id="sel-body">
+        <!-- Empty / populated state injected here -->
+      </div>
     </div>
-    <div id="sel-body"></div>
-    <div class="actions-row" id="sel-actions" style="display:none">
+
+    <!-- Action row (only when selection has publishable items) -->
+    <div class="actions" id="sel-actions" style="display:none">
       <button class="primary flex-2" id="btn-publish">Publish to DS</button>
       <button id="btn-audit-sel">Audit selection</button>
     </div>
-  </div>
 
-  <!-- ── Audit result (only visible when present) ──────── -->
-  <div class="card" id="audit-card" style="display:none">
-    <div class="hdr">
-      <span class="ttl">Audit result</span>
-      <span class="meta" id="audit-meta"></span>
-    </div>
-
-    <div class="audit-stats">
-      <div class="stat"><span class="stat-num accent" id="s-cov">—</span><span class="stat-label">Coverage</span></div>
-      <div class="stat"><span class="stat-num" id="s-comps">—</span><span class="stat-label">DS / Amb / Cust</span></div>
-      <div class="stat">
-        <span class="pills"><span class="pill p1" id="s-p1">P1 0</span><span class="pill p2" id="s-p2">P2 0</span><span class="pill p3" id="s-p3">P3 0</span></span>
-        <span class="stat-label">Fixes</span>
-      </div>
-    </div>
-
-    <div class="apply-all" id="apply-all-row" style="display:none">
-      <span class="text">Fix every <strong id="apply-all-count">P1</strong> in one transaction.</span>
-      <button class="primary tiny" id="apply-all-btn">Apply all P1</button>
-    </div>
-
-    <div class="fixes" id="fixes"></div>
-  </div>
-
-  <!-- ── Empty audit state ──────────────────────────────── -->
-  <div class="card" id="audit-empty">
-    <div class="hdr"><span class="ttl">Audit</span></div>
-    <div style="font-size:12px;color:var(--text-2);line-height:1.55">
-      Hit <strong>Audit selection</strong> above (or change a layer to refresh) to see token coverage,
-      component matches, and drift you can fix in one click.
-    </div>
-    <div class="actions-row">
-      <button id="btn-audit-page">Audit page</button>
-      <button id="btn-audit-file">Audit file</button>
+    <!-- Educational meta below actions -->
+    <div class="card-meta" id="publish-rule" style="display:none; padding: 0 4px; line-height: 1.55;">
+      Component sets and standalone components publish as definitions.
+      Variants publish individually (each one becomes its own
+      property combo). Instances are skipped — they're already linked.
     </div>
   </div>
 
-  <!-- ── More (collapsed) ──────────────────────────────── -->
-  <details>
-    <summary>Pull from DS (icons / components)</summary>
-    <div class="body">
-      <div style="font-size:12px;color:var(--text-2);line-height:1.55">
-        Drop the published icons or component primitives onto a fresh page. Mostly for
-        scaffolding new designs from the system.
-      </div>
-      <div class="actions-row">
-        <button id="inject-icons">Icons</button>
-        <button id="inject-components">Components</button>
-      </div>
-      <div class="meta" id="inject-progress" style="text-align:center"></div>
-    </div>
-  </details>
+  <!-- ═══════════════════════════════════════════════════════════════
+       VIEW: Audit
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="view" id="view-audit" role="tabpanel" aria-labelledby="mode-audit">
 
-  <details>
-    <summary>Settings</summary>
-    <div class="body">
-      <div class="field">
-        <label>Audit server URL</label>
-        <input id="server-url" value="http://localhost:7474" />
-        <div class="help">Run <code>npm run audit:serve</code> in the docs repo. Plugin polls /__health every 5s.</div>
+    <!-- Audit scope picker — three buttons, contextual based on selection -->
+    <div class="card elevated">
+      <div class="card-header">
+        <span class="card-title">Run audit</span>
+        <span class="card-meta" id="audit-elapsed"></span>
       </div>
-      <div class="field">
-        <label>This file</label>
-        <div class="help" id="diag-file">—</div>
+      <div class="card-body">
+        <div class="actions">
+          <button id="btn-audit-sel-2">Selection</button>
+          <button id="btn-audit-page">Page</button>
+          <button id="btn-audit-file">Whole file</button>
+        </div>
+        <div class="card-meta" style="line-height: 1.55; padding: 4px 2px 0;">
+          Audits compute coverage, drift, and component matches against
+          the published INDmoney DS. Selection is fastest; whole file
+          surfaces cross-screen patterns.
+        </div>
       </div>
-      <details>
-        <summary style="font-size:11px">Recent activity</summary>
-        <div id="last-toasts" style="margin-top:8px;font-family:ui-monospace,monospace;font-size:10px;color:var(--text-3);max-height:140px;overflow-y:auto;line-height:1.7"></div>
-      </details>
     </div>
-  </details>
+
+    <!-- Empty state — no audit run yet -->
+    <div class="card" id="audit-empty">
+      <div class="card-body">
+        <div class="empty">
+          <div class="empty-ico">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="7" cy="7" r="4.5"/>
+              <path d="M10.5 10.5L13.5 13.5"/>
+            </svg>
+          </div>
+          <div class="empty-title">No audit yet</div>
+          <div>Run an audit to see token coverage, component matches, and drift you can fix in one click.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audit results card (hidden until an audit runs) -->
+    <div class="card elevated" id="audit-card" style="display:none">
+      <div class="card-header">
+        <span class="card-title">Result</span>
+        <span class="card-meta" id="audit-meta"></span>
+      </div>
+      <div class="card-body">
+        <div class="audit-stats">
+          <div class="stat">
+            <span class="stat-num accent" id="s-cov">—</span>
+            <span class="stat-label">Coverage</span>
+          </div>
+          <div class="stat">
+            <span class="stat-num" id="s-comps">—</span>
+            <span class="stat-label">DS · Amb · Cust</span>
+          </div>
+          <div class="stat">
+            <span class="pills">
+              <span class="pill p1" id="s-p1">P1 0</span>
+              <span class="pill p2" id="s-p2">P2 0</span>
+              <span class="pill p3" id="s-p3">P3 0</span>
+            </span>
+            <span class="stat-label">Fixes</span>
+          </div>
+        </div>
+
+        <!-- Apply-all-P1 row, only when P1 fixes exist -->
+        <div class="apply-all" id="apply-all-row" style="display:none">
+          <span class="copy">Resolve <strong id="apply-all-count">P1</strong> in one transaction.</span>
+          <button class="primary tiny" id="apply-all-btn">Apply all</button>
+        </div>
+
+        <!-- Fix groups -->
+        <div class="fixes" id="fixes"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       VIEW: Library
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="view" id="view-library" role="tabpanel" aria-labelledby="mode-library">
+
+    <div class="card elevated">
+      <div class="card-header">
+        <span class="card-title">Pull from DS</span>
+      </div>
+      <div class="card-body">
+        <div class="card-meta" style="line-height: 1.55;">
+          Drop the published icon set or component primitives onto a
+          fresh page. Mostly for scaffolding new screens from the system.
+        </div>
+        <div class="actions">
+          <button id="inject-icons">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="2" width="5" height="5" rx="1"/>
+              <rect x="9" y="2" width="5" height="5" rx="1"/>
+              <rect x="2" y="9" width="5" height="5" rx="1"/>
+              <circle cx="11.5" cy="11.5" r="2.5"/>
+            </svg>
+            Icons
+          </button>
+          <button id="inject-components">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="2" width="12" height="5" rx="1"/>
+              <rect x="2" y="9" width="6" height="5" rx="1"/>
+              <rect x="10" y="9" width="4" height="5" rx="1"/>
+            </svg>
+            Components
+          </button>
+        </div>
+        <div class="card-meta" id="inject-progress" style="text-align:center; min-height: 14px;"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-body">
+        <div class="empty">
+          <div class="empty-title">Coming soon</div>
+          <div>Bulk token export, palette swatch sheets, and motion-token preview frames. Tell us which one to build next.</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
 </div>
 
-<div class="toaster" id="toaster"></div>
+<!-- ────────────────────────────────────────────────────────────────
+     Settings panel — slides in from right
+     ──────────────────────────────────────────────────────────────── -->
+<div class="settings-overlay" id="settings-overlay">
+  <div class="settings-panel" role="dialog" aria-label="Settings">
+    <div class="settings-header">
+      <h2>Settings</h2>
+      <button class="icon-btn" id="close-settings" aria-label="Close settings" title="Close (Esc)">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+          <path d="M4 4l8 8M12 4l-8 8"/>
+        </svg>
+      </button>
+    </div>
+    <div class="settings-body">
+      <div class="setting-section">
+        <h3>Audit server</h3>
+        <div class="field">
+          <label>URL</label>
+          <input id="server-url" value="http://localhost:7474" autocomplete="off" spellcheck="false" />
+          <div class="help">
+            Run <code>npm run audit:serve</code> in the docs repo. The plugin polls
+            <code>/__health</code> every 5s and re-binds variables via the
+            team library.
+          </div>
+        </div>
+      </div>
+
+      <div class="setting-section">
+        <h3>This file</h3>
+        <div class="card-meta mono" id="diag-file" style="word-break: break-all; line-height: 1.55;">—</div>
+      </div>
+
+      <div class="setting-section">
+        <h3>Activity</h3>
+        <div class="activity" id="activity-log">
+          <div class="empty-log">No activity yet.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────────
+     Toast region (bottom-right corner)
+     ──────────────────────────────────────────────────────────────── -->
+<div class="toaster" id="toaster" aria-live="polite" aria-atomic="false"></div>
 
 <script>
 "use strict";
+
 const $  = (id) => document.getElementById(id);
 const post = (type, payload) => parent.postMessage({ pluginMessage: { type, payload } }, "*");
 
-let lastSummary = null;
-let lastFixGroups = [];
-let toastsLog = [];
+const state = {
+  selection: null,
+  fixes: [],
+  fixGroups: [],
+  audit: null,
+  health: null,
+  mode: "publish",
+  activity: [],
+};
 
-/* ── Status ────────────────────────────────────────────────── */
+/* ════════════════════════════════════════════════════════════════════
+   Mode switching — tabs + animated underline
+   ════════════════════════════════════════════════════════════════════ */
+function setMode(next) {
+  state.mode = next;
+  for (const m of ["publish", "audit", "library"]) {
+    const btn = $(`mode-${m}`);
+    const view = $(`view-${m}`);
+    btn.setAttribute("aria-selected", m === next ? "true" : "false");
+    view.classList.toggle("active", m === next);
+  }
+  // Animate underline to selected mode index
+  const idx = ["publish", "audit", "library"].indexOf(next);
+  $("mode-underline").style.transform = `translateX(calc(${idx} * 100%))`;
+}
+$("mode-publish").addEventListener("click", () => setMode("publish"));
+$("mode-audit").addEventListener("click", () => setMode("audit"));
+$("mode-library").addEventListener("click", () => setMode("library"));
+
+/* ════════════════════════════════════════════════════════════════════
+   Status bar / connection
+   ════════════════════════════════════════════════════════════════════ */
 function applyHealth(h) {
+  state.health = h;
   const dot = $("dot");
-  dot.classList.toggle("ok",  !!h.connected);
-  dot.classList.toggle("bad", h.connected === false);
+  dot.classList.remove("ok", "bad", "idle");
   if (h.connected) {
+    dot.classList.add("ok");
     showBanner(false);
-    $("ctx").textContent = `${h.repo?.split("/").pop() ?? "ok"} · schema ${h.schema_version ?? "?"} · ${h.file_name ?? ""}`;
-    $("diag-file").textContent = `${h.file_name ?? "?"} · file_key=${h.file_key ?? "(unavailable)"}`;
+    const repo = (h.repo || "").split("/").pop() || "ok";
+    $("ctx").innerHTML = `${escapeHtml(h.file_name || repo)}<span class="dim"> · schema ${escapeHtml(h.schema_version || "?")}</span>`;
+    $("diag-file").textContent = `${h.file_name || "?"}\nfile_key=${h.file_key || "(unavailable)"}`;
   } else {
-    $("ctx").textContent = `Disconnected · ${h.server_url}`;
-    showBanner(true, "bad", "Audit server unreachable", h.diagnosis ?? h.error ?? "Unknown error", "retry");
+    dot.classList.add("bad");
+    $("ctx").innerHTML = `Disconnected <span class="dim">· ${escapeHtml(h.server_url || "")}</span>`;
+    showBanner(true, "bad", "Audit server unreachable", h.diagnosis || h.error || "Unknown error", "Retry");
   }
 }
 
 function showBanner(visible, level, title, body, ctaLabel) {
   const b = $("banner");
-  if (!visible) {
-    b.classList.add("hidden");
-    return;
-  }
+  if (!visible) { b.classList.add("hidden"); return; }
   b.classList.remove("hidden", "warn", "bad", "info");
   b.classList.add(level || "info");
-  $("banner-ico").textContent = level === "bad" ? "!" : level === "warn" ? "!" : "i";
-  $("banner-body").innerHTML = `<strong>${escapeHtml(title)}</strong>${escapeHtml(body)}` +
-    (ctaLabel ? `<div class="actions"><button class="tiny" id="banner-cta">${escapeHtml(ctaLabel)}</button></div>` : "");
+
+  const ico = $("banner-ico");
+  ico.textContent = level === "bad" ? "!" : level === "warn" ? "!" : "i";
+
+  let html = `<strong>${escapeHtml(title)}</strong><div class="body">${escapeHtml(body)}</div>`;
+  if (ctaLabel) html += `<div class="banner-actions"><button class="tiny" id="banner-cta">${escapeHtml(ctaLabel)}</button></div>`;
+  $("banner-body").innerHTML = html;
+
   if (ctaLabel) {
     $("banner-cta").addEventListener("click", () => {
-      pushToast("Re-checking connection…", "info");
+      pushToast({ message: "Re-checking connection…", level: "info" });
       post("set-server-url", $("server-url").value);
     });
   }
 }
 
-/* ── Selection ─────────────────────────────────────────────── */
+/* ════════════════════════════════════════════════════════════════════
+   Selection rendering
+   ════════════════════════════════════════════════════════════════════ */
 function renderSelection(s) {
-  lastSummary = s;
+  state.selection = s;
   const body = $("sel-body");
   const meta = $("sel-meta");
   const actions = $("sel-actions");
-  const setsCount = s ? s.byKind.component_set : 0;
-  const standCount = s ? s.byKind.component_standalone : 0;
-  const varCount = s ? s.byKind.component_variant : 0;
-  const instCount = s ? s.byKind.instance : 0;
-  const frameCount = s ? (s.byKind.frame + s.byKind.other) : 0;
+  const rule = $("publish-rule");
+  const badge = $("mode-publish-badge");
+
   meta.textContent = s && s.total > 0 ? `${s.total} layer${s.total === 1 ? "" : "s"}` : "";
 
   if (!s || s.total === 0) {
-    body.innerHTML = `<div class="sel-empty"><strong>Nothing selected</strong>Pick component sets, components, or variants in the layer panel — the plugin classifies live.</div>`;
+    body.innerHTML = `
+      <div class="empty">
+        <div class="empty-ico">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3h4M9 3h4v4M13 9v4h-4M7 13H3V9"/>
+          </svg>
+        </div>
+        <div class="empty-title">Nothing selected</div>
+        <div>Pick a Component Set, Component, or Variant in the layer panel — the plugin classifies live as you change selection.</div>
+      </div>`;
     actions.style.display = "none";
+    rule.style.display = "none";
+    badge.hidden = true;
     return;
   }
+
+  const setsCount   = s.byKind.component_set;
+  const standCount  = s.byKind.component_standalone;
+  const varCount    = s.byKind.component_variant;
+  const instCount   = s.byKind.instance;
+  const frameCount  = s.byKind.frame + s.byKind.other;
 
   const rows = [];
   if (setsCount)   rows.push({ k: "set", l: `Component sets${s.variantTotal > 0 ? ` · ${s.variantTotal} variants` : ""}`, c: setsCount });
   if (standCount)  rows.push({ k: "standalone", l: "Standalone components", c: standCount });
   if (varCount)    rows.push({ k: "variant", l: "Variants (picked individually)", c: varCount });
-  if (instCount)   rows.push({ k: "instance", l: "Instances (skipped on publish)", c: instCount, skipped: true });
-  if (frameCount)  rows.push({ k: "frame", l: "Frames / groups (skipped)", c: frameCount, skipped: true });
+  if (instCount)   rows.push({ k: "instance", l: "Instances", c: instCount, skipped: true });
+  if (frameCount)  rows.push({ k: "frame", l: "Frames / groups", c: frameCount, skipped: true });
 
-  body.innerHTML = `<div class="kind-list">${rows.map(r =>
-    `<div class="kind-row ${r.k} ${r.skipped ? "skipped" : ""}">
-      <span class="sw"></span>
-      <span class="label">${escapeHtml(r.l)}</span>
-      <span class="count">${r.c}</span>
-    </div>`
+  body.innerHTML = `<div class="kind-list" role="list">${rows.map(r =>
+    `<div class="kind-row ${r.k} ${r.skipped ? "skipped" : ""}" role="listitem">
+       <span class="kind-sw" aria-hidden="true"></span>
+       <span class="kind-label">${escapeHtml(r.l)}</span>
+       <span class="kind-count">${r.c}</span>
+     </div>`
   ).join("")}</div>`;
 
   actions.style.display = "flex";
-  $("btn-publish").disabled = s.publishable === 0;
-  $("btn-publish").textContent = s.publishable === 0 ? "Pick a Set / Component / Variant" : `Publish ${s.publishable} to DS`;
+  rule.style.display = (instCount > 0 || frameCount > 0) ? "block" : "none";
+
+  const btnPub = $("btn-publish");
+  if (s.publishable === 0) {
+    btnPub.disabled = true;
+    btnPub.textContent = "Pick a Set / Component / Variant";
+    badge.hidden = true;
+  } else {
+    btnPub.disabled = false;
+    btnPub.textContent = `Publish ${s.publishable} to DS`;
+    badge.textContent = String(s.publishable);
+    badge.hidden = false;
+  }
 }
 
-/* ── Audit ─────────────────────────────────────────────────── */
+/* ════════════════════════════════════════════════════════════════════
+   Audit rendering
+   ════════════════════════════════════════════════════════════════════ */
 function renderAudit(t) {
+  state.audit = t;
   $("audit-empty").style.display = "none";
   $("audit-card").style.display = "block";
+
   $("s-cov").textContent = `${t.coverage}%`;
-  $("s-comps").textContent = `${t.fromDS}/${t.amb}/${t.cust}`;
+  $("s-comps").textContent = `${t.fromDS}·${t.amb}·${t.cust}`;
   $("s-p1").textContent = `P1 ${t.p1}`;
   $("s-p2").textContent = `P2 ${t.p2}`;
   $("s-p3").textContent = `P3 ${t.p3}`;
@@ -448,10 +1294,22 @@ function renderAudit(t) {
   const hasP1 = t.p1 > 0;
   $("apply-all-row").style.display = hasP1 ? "flex" : "none";
   $("apply-all-count").textContent = `${t.p1} P1 fix${t.p1 === 1 ? "" : "es"}`;
+
+  // Audit badge in mode picker — total fixes count
+  const totalFixes = t.p1 + t.p2 + t.p3;
+  const badge = $("mode-audit-badge");
+  if (totalFixes > 0) {
+    badge.textContent = String(totalFixes);
+    badge.hidden = false;
+  } else {
+    badge.hidden = true;
+  }
 }
 
 function renderFixes(fixes) {
-  // Group by (property, observed, token_path) — bulk-apply unit.
+  state.fixes = fixes;
+  // Group by (property, observed, token_path) so a single drift pattern
+  // becomes one bulk-applyable row.
   const groups = new Map();
   for (const f of fixes) {
     const key = `${f.property}|${f.observed}|${f.token_path || ""}`;
@@ -469,7 +1327,7 @@ function renderFixes(fixes) {
     if (f.priority === "P1") g.priority = "P1";
     else if (f.priority === "P2" && g.priority !== "P1") g.priority = "P2";
   }
-  lastFixGroups = Array.from(groups.values()).sort((a, b) => {
+  state.fixGroups = Array.from(groups.values()).sort((a, b) => {
     const r = (p) => p === "P1" ? 0 : p === "P2" ? 1 : 2;
     if (r(a.priority) !== r(b.priority)) return r(a.priority) - r(b.priority);
     return b.nodes.length - a.nodes.length;
@@ -477,11 +1335,20 @@ function renderFixes(fixes) {
 
   const root = $("fixes");
   root.innerHTML = "";
-  if (lastFixGroups.length === 0) {
-    root.innerHTML = `<div class="meta" style="text-align:center;padding:14px 0">✓ Clean — no drift detected.</div>`;
+  if (state.fixGroups.length === 0) {
+    root.innerHTML = `
+      <div class="clean">
+        <div class="clean-ico">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 8l3 3 7-7"/>
+          </svg>
+        </div>
+        <strong>No drift detected</strong>
+        <div class="sub">Every fill, stroke, and dimension binds to a token.</div>
+      </div>`;
     return;
   }
-  for (const g of lastFixGroups) {
+  for (const g of state.fixGroups) {
     root.appendChild(renderFixGroup(g));
   }
 }
@@ -491,29 +1358,30 @@ function renderFixGroup(g) {
   card.className = "fix-grp";
   card.dataset.key = `${g.property}|${g.observed}|${g.token_path || ""}`;
 
-  const ttl = document.createElement("div");
-  ttl.className = "ttl";
-  ttl.innerHTML =
+  const title = document.createElement("div");
+  title.className = "fix-title";
+  title.innerHTML =
     `<span class="pill ${g.priority.toLowerCase()}">${g.priority}</span>` +
-    `<span style="color:var(--text-3)">${escapeHtml(g.property)}</span>` +
+    `<span class="pill kind">${escapeHtml(g.property)}</span>` +
     ` <span class="obs">${escapeHtml(g.observed)}</span>` +
     (g.token_path ? `<span class="arrow">→</span><span class="tok">${escapeHtml(g.token_path)}</span>` : "");
-  card.appendChild(ttl);
+  card.appendChild(title);
 
   const meta = document.createElement("div");
-  meta.className = "meta";
-  meta.textContent = `${g.nodes.length} node${g.nodes.length === 1 ? "" : "s"}` +
+  meta.className = "fix-meta";
+  meta.textContent =
+    `${g.nodes.length} node${g.nodes.length === 1 ? "" : "s"}` +
     (g.distance > 0 ? ` · d=${g.distance.toFixed(3)}` : "") +
     ` · ${g.reason}`;
   card.appendChild(meta);
 
   if (g.token_path) {
     const actions = document.createElement("div");
-    actions.className = "actions";
-    if (g.property === "fill" || g.property === "stroke" || g.property === "spacing" || g.property === "radius") {
+    actions.className = "fix-actions";
+    if (["fill", "stroke", "spacing", "padding", "radius"].includes(g.property)) {
       const apply = document.createElement("button");
       apply.className = "primary tiny";
-      apply.textContent = `Apply to all ${g.nodes.length}`;
+      apply.textContent = `Apply to ${g.nodes.length}`;
       apply.addEventListener("click", () => applyGroup(card, g));
       actions.appendChild(apply);
     }
@@ -522,8 +1390,7 @@ function renderFixGroup(g) {
     copy.textContent = "Copy path";
     copy.addEventListener("click", () => {
       navigator.clipboard?.writeText(g.token_path).catch(() => {});
-      copy.textContent = "Copied";
-      setTimeout(() => (copy.textContent = "Copy path"), 1100);
+      pushToast({ message: "Token path copied", sub: g.token_path, level: "info" });
     });
     actions.appendChild(copy);
     card.appendChild(actions);
@@ -532,7 +1399,7 @@ function renderFixGroup(g) {
 }
 
 function applyGroup(card, g) {
-  const btn = card.querySelector(".actions button.primary");
+  const btn = card.querySelector(".fix-actions button.primary");
   if (btn) {
     btn.disabled = true;
     btn.innerHTML = `<span class="spin"></span>Applying ${g.nodes.length}…`;
@@ -548,12 +1415,13 @@ function applyGroup(card, g) {
   });
 }
 
-/* ── Apply all P1 ────────────────────────────────────────── */
+/* Apply all P1 — single transaction */
 $("apply-all-btn").addEventListener("click", () => {
-  const p1Groups = lastFixGroups.filter((g) => g.priority === "P1" && g.token_path);
+  const p1Groups = state.fixGroups.filter((g) => g.priority === "P1" && g.token_path);
   if (p1Groups.length === 0) return;
-  $("apply-all-btn").disabled = true;
-  $("apply-all-btn").innerHTML = `<span class="spin"></span>Applying`;
+  const btn = $("apply-all-btn");
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spin"></span>Applying`;
   post("apply-many", {
     groups: p1Groups.map((g) => ({
       property: g.property,
@@ -567,85 +1435,168 @@ $("apply-all-btn").addEventListener("click", () => {
   });
 });
 
-/* ── Buttons ──────────────────────────────────────────────── */
+/* ════════════════════════════════════════════════════════════════════
+   Audit run buttons — selection / page / file
+   ════════════════════════════════════════════════════════════════════ */
+let auditElapsedTimer = null;
+function spinAudit(btnIds, scope) {
+  const btns = btnIds.map($).filter(Boolean);
+  const originalLabels = btns.map((b) => b.textContent);
+  btns.forEach((b) => { b.disabled = true; });
+  let s = 0;
+  const tick = () => {
+    btns.forEach((b, i) => {
+      b.innerHTML = `<span class="spin"></span>${originalLabels[i]} · ${s}s`;
+    });
+  };
+  tick();
+  if (auditElapsedTimer) clearInterval(auditElapsedTimer);
+  auditElapsedTimer = setInterval(() => { s++; tick(); }, 1000);
+
+  // Switch to audit view so the user sees results land
+  setMode("audit");
+
+  post("audit", { scope });
+
+  document.addEventListener("audit-done", function once() {
+    if (auditElapsedTimer) { clearInterval(auditElapsedTimer); auditElapsedTimer = null; }
+    btns.forEach((b, i) => { b.disabled = false; b.textContent = originalLabels[i]; });
+    document.removeEventListener("audit-done", once);
+  });
+}
+$("btn-audit-sel").addEventListener("click",
+  () => spinAudit(["btn-audit-sel", "btn-audit-sel-2"], "selection"));
+$("btn-audit-sel-2").addEventListener("click",
+  () => spinAudit(["btn-audit-sel-2", "btn-audit-sel"], "selection"));
+$("btn-audit-page").addEventListener("click",
+  () => spinAudit(["btn-audit-page"], "page"));
+$("btn-audit-file").addEventListener("click",
+  () => spinAudit(["btn-audit-file"], "file"));
+
+/* ════════════════════════════════════════════════════════════════════
+   Publish + library actions
+   ════════════════════════════════════════════════════════════════════ */
 $("btn-publish").addEventListener("click", () => {
-  $("btn-publish").disabled = true;
-  $("btn-publish").innerHTML = `<span class="spin"></span>Publishing`;
+  const btn = $("btn-publish");
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spin"></span>Publishing`;
   post("publish");
 });
-$("btn-audit-sel").addEventListener("click", () => spinAudit("btn-audit-sel", "selection"));
-$("btn-audit-page").addEventListener("click", () => spinAudit("btn-audit-page", "page"));
-$("btn-audit-file").addEventListener("click", () => spinAudit("btn-audit-file", "file"));
 $("inject-icons").addEventListener("click", () => post("inject", { kind: "icon" }));
 $("inject-components").addEventListener("click", () => post("inject", { kind: "component" }));
 $("open-docs").addEventListener("click", () => post("open-docs"));
 $("server-url").addEventListener("change", (e) => post("set-server-url", e.target.value));
 
-let auditElapsedTimer = null;
-function spinAudit(btnId, scope) {
-  const btn = $(btnId);
-  const original = btn.textContent;
-  btn.disabled = true;
-  let s = 0;
-  btn.innerHTML = `<span class="spin"></span>${original} (0s)`;
-  if (auditElapsedTimer) clearInterval(auditElapsedTimer);
-  auditElapsedTimer = setInterval(() => {
-    s++;
-    btn.innerHTML = `<span class="spin"></span>${original} (${s}s)`;
-  }, 1000);
-  post("audit", { scope });
-  document.addEventListener("audit-done", function once() {
-    if (auditElapsedTimer) { clearInterval(auditElapsedTimer); auditElapsedTimer = null; }
-    btn.disabled = false;
-    btn.textContent = original;
-    document.removeEventListener("audit-done", once);
-  });
-}
+/* ════════════════════════════════════════════════════════════════════
+   Settings panel — slide-in overlay
+   ════════════════════════════════════════════════════════════════════ */
+$("open-settings").addEventListener("click", () => {
+  $("settings-overlay").classList.add("open");
+});
+$("close-settings").addEventListener("click", () => {
+  $("settings-overlay").classList.remove("open");
+});
+$("settings-overlay").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) e.currentTarget.classList.remove("open");
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    $("settings-overlay").classList.remove("open");
+  }
+  // Mode shortcuts: 1/2/3 — only when no input focused
+  const a = document.activeElement;
+  if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA")) return;
+  if (e.key === "1") { e.preventDefault(); setMode("publish"); }
+  if (e.key === "2") { e.preventDefault(); setMode("audit"); }
+  if (e.key === "3") { e.preventDefault(); setMode("library"); }
+});
 
-/* ── Toasts ──────────────────────────────────────────────── */
-function pushToast(msg, level) {
+/* ════════════════════════════════════════════════════════════════════
+   Toasts — bottom-right, dismissible, queued
+   ════════════════════════════════════════════════════════════════════ */
+function pushToast({ message, sub, level }) {
+  level = level || "info";
   const t = document.createElement("div");
   t.className = `toast ${level}`;
+
+  const icoSvg =
+    level === "success" ? `<svg width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l3 3 7-7"/></svg>` :
+    level === "error"   ? `!` :
+                          `i`;
+
   const ico = document.createElement("span");
   ico.className = "ico";
-  ico.textContent = level === "success" ? "✓" : level === "error" ? "!" : "i";
-  const text = document.createElement("span");
-  text.textContent = msg;
-  t.append(ico, text);
+  ico.innerHTML = icoSvg;
+
+  const body = document.createElement("div");
+  body.className = "body";
+  body.innerHTML = `<strong>${escapeHtml(message)}</strong>` + (sub ? `<div class="sub">${escapeHtml(sub)}</div>` : "");
+
+  t.append(ico, body);
   $("toaster").appendChild(t);
-  toastsLog.unshift(`[${new Date().toLocaleTimeString()}] [${level}] ${msg}`);
-  if (toastsLog.length > 60) toastsLog.length = 60;
-  $("last-toasts").innerHTML = toastsLog.map((l) => `<div>${escapeHtml(l)}</div>`).join("");
+
+  state.activity.unshift(`[${new Date().toLocaleTimeString()}] [${level}] ${message}${sub ? " · " + sub : ""}`);
+  if (state.activity.length > 80) state.activity.length = 80;
+  refreshActivity();
+
   setTimeout(() => {
-    t.style.transition = "opacity 200ms ease";
+    t.style.transition = "opacity 200ms ease, transform 200ms ease";
     t.style.opacity = "0";
+    t.style.transform = "translateY(4px)";
     setTimeout(() => t.remove(), 240);
-  }, level === "error" ? 5000 : 2800);
+  }, level === "error" ? 5200 : 2800);
 }
 
-/* ── Helpers ─────────────────────────────────────────────── */
+function refreshActivity() {
+  const log = $("activity-log");
+  if (state.activity.length === 0) {
+    log.innerHTML = `<div class="empty-log">No activity yet.</div>`;
+    return;
+  }
+  log.innerHTML = state.activity.map((l) => `<div>${escapeHtml(l)}</div>`).join("");
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Helpers
+   ════════════════════════════════════════════════════════════════════ */
 function escapeHtml(s) {
-  return String(s)
+  return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
+function cssEscape(s) { return String(s).replace(/(["\\])/g, "\\$1"); }
 
-/* ── Inbound ──────────────────────────────────────────────── */
+/* ════════════════════════════════════════════════════════════════════
+   Inbound message handler (protocol unchanged from previous build)
+   ════════════════════════════════════════════════════════════════════ */
 window.onmessage = (event) => {
   const msg = event.data?.pluginMessage;
   if (!msg) return;
   switch (msg.type) {
-    case "selection-summary": renderSelection(msg.payload); break;
-    case "health":            applyHealth(msg.payload); break;
-    case "publish-result":
-      $("btn-publish").disabled = false;
-      $("btn-publish").textContent = "Publish to DS";
+    case "selection-summary":
+      renderSelection(msg.payload);
       break;
-    case "audit-summary":     renderAudit(msg.payload); document.dispatchEvent(new Event("audit-done")); break;
-    case "audit-fixes":       renderFixes(msg.payload); break;
+    case "health":
+      applyHealth(msg.payload);
+      break;
+    case "publish-result": {
+      const btn = $("btn-publish");
+      btn.disabled = false;
+      btn.textContent = state.selection?.publishable
+        ? `Publish ${state.selection.publishable} to DS`
+        : "Publish to DS";
+      break;
+    }
+    case "audit-summary":
+      renderAudit(msg.payload);
+      document.dispatchEvent(new Event("audit-done"));
+      break;
+    case "audit-fixes":
+      renderFixes(msg.payload);
+      break;
     case "audit-applied": {
-      // node-level apply (legacy single-node path)
-      const card = document.querySelector(`[data-node-id="${msg.payload.node_id}"]`);
+      // Single-node apply (legacy path)
+      const card = document.querySelector(`[data-node-id="${cssEscape(msg.payload.node_id)}"]`);
       if (card) card.classList.add("applied");
       break;
     }
@@ -653,26 +1604,51 @@ window.onmessage = (event) => {
       const card = document.querySelector(`[data-key="${cssEscape(msg.payload.key)}"]`);
       if (card) {
         card.classList.add("applied");
-        const btn = card.querySelector(".actions button.primary");
-        if (btn) { btn.textContent = `Applied ${msg.payload.applied}/${msg.payload.total}`; btn.disabled = true; }
+        const btn = card.querySelector(".fix-actions button.primary");
+        if (btn) {
+          btn.innerHTML = `
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 8l3 3 7-7"/>
+            </svg>
+            ${msg.payload.applied}/${msg.payload.total}`;
+          btn.disabled = true;
+        }
       }
       break;
     }
-    case "many-applied":
-      $("apply-all-btn").disabled = false;
-      $("apply-all-btn").textContent = "Applied";
+    case "many-applied": {
+      const btn = $("apply-all-btn");
+      btn.disabled = false;
+      btn.innerHTML = `
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 8l3 3 7-7"/>
+        </svg>
+        Applied`;
       break;
-    case "inject-progress":
-      $("inject-progress").textContent = `${msg.payload.done}/${msg.payload.total}`;
+    }
+    case "inject-progress": {
+      const el = $("inject-progress");
+      if (msg.payload.total === 0) {
+        el.textContent = "";
+      } else if (msg.payload.done < msg.payload.total) {
+        el.innerHTML = `<span class="spin"></span> ${msg.payload.done}/${msg.payload.total}`;
+      } else {
+        el.textContent = `✓ ${msg.payload.done}/${msg.payload.total}`;
+        setTimeout(() => { el.textContent = ""; }, 2400);
+      }
       break;
+    }
     case "toast":
-      pushToast(msg.payload.message, msg.payload.level);
+      pushToast({
+        message: msg.payload.message,
+        sub: msg.payload.sub,
+        level: msg.payload.level,
+      });
       break;
   }
 };
 
-function cssEscape(s) { return s.replace(/(["\\])/g, "\\$1"); }
-
+/* Initial sync */
 post("ready");
 post("set-server-url", $("server-url").value);
 </script>

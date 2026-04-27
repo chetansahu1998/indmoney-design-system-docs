@@ -29,7 +29,10 @@ let auditServerURL = "http://localhost:7474";
 let docsURL = "https://indmoney-design-system-docs.vercel.app";
 let healthTimer = null;
 let knownVariables = {};
-figma.showUI(__html__, { width: 420, height: 680, themeColors: true });
+// 440 × 720 — comfortable for the redesigned three-mode shell. Mode picker
+// + status + scrollable pane + toaster all fit without crowding at this
+// size, and the plugin is still narrow enough to dock alongside the canvas.
+figma.showUI(__html__, { width: 440, height: 720, themeColors: true });
 figma.ui.onmessage = async (msg) => {
     var _a;
     try {
