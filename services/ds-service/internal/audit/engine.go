@@ -316,17 +316,11 @@ func auditDimension(n map[string]any, cov *TokenCoverage, fixes *[]FixCandidate,
 	// Spacing — itemSpacing and the four padding fields when autolayout is on.
 	if mode, _ := n["layoutMode"].(string); mode != "" && mode != "NONE" {
 		if v, ok := n["itemSpacing"].(float64); ok && v > 0 {
-			cov.Spacing.Total++
-			tok, dist := FindClosestPx(v, tokens, "spacing", opts.PxDriftThreshold)
-			if tok != nil && dist == 0 {
-				cov.Spacing.Bound++
-			} else if tok != nil {
-				*fixes = append(*fixes, FixCandidate{
-					NodeID: nodeID, NodeName: nodeName,
-					Property: "spacing", Observed: fmt.Sprintf("%gpx", v),
-					TokenPath: tok.Path, Distance: dist, Reason: "drift",
-					Priority: PriorityForFix("drift", dist, 1, heat),
-				})
+			emitSpacingFix(v, "spacing", cov, fixes, tokens, opts, nodeID, nodeName, heat)
+		}
+		for _, key := range []string{"paddingLeft", "paddingRight", "paddingTop", "paddingBottom"} {
+			if v, ok := n[key].(float64); ok && v > 0 {
+				emitSpacingFix(v, "padding", cov, fixes, tokens, opts, nodeID, nodeName, heat)
 			}
 		}
 	}
@@ -345,6 +339,41 @@ func auditDimension(n map[string]any, cov *TokenCoverage, fixes *[]FixCandidate,
 			})
 		}
 	}
+}
+
+// emitSpacingFix evaluates one observed spacing/padding value against both
+// the published token set (for binding-level coverage) and the 4-pt grid
+// (for drift). An off-grid value is drift even when it happens to match
+// a token — but the published token set is curated from the grid by U17,
+// so in practice the two checks agree.
+func emitSpacingFix(v float64, kind string, cov *TokenCoverage, fixes *[]FixCandidate, tokens []DSToken, opts Options, nodeID, nodeName string, heat int) {
+	cov.Spacing.Total++
+	if IsOnSpacingGrid(v) {
+		// On-grid: counts as bound for the coverage roll-up. Token binding
+		// (variable id) is the harder ask we still want, but landing on
+		// the grid is the strict prerequisite.
+		cov.Spacing.Bound++
+		return
+	}
+	snap := SnapSpacing(v)
+	rationale := fmt.Sprintf("Off the 4-pt grid — snap to %gpx", snap.Snapped)
+	if len(snap.Candidates) > 1 {
+		rationale = fmt.Sprintf("Off the 4-pt grid — sits between %v; round up to %gpx", snap.Candidates, snap.Snapped)
+	}
+	tokenPath := ""
+	if tok, _ := FindClosestPx(snap.Snapped, tokens, kind, 0); tok != nil {
+		tokenPath = tok.Path
+	}
+	*fixes = append(*fixes, FixCandidate{
+		NodeID: nodeID, NodeName: nodeName,
+		Property:  kind,
+		Observed:  fmt.Sprintf("%gpx", v),
+		TokenPath: tokenPath,
+		Distance:  snap.Distance,
+		Reason:    "drift",
+		Rationale: rationale,
+		Priority:  PriorityForFix("drift", snap.Distance, 1, heat),
+	})
 }
 
 func isBoundToVariable(fm map[string]any) bool {

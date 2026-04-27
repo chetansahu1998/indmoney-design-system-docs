@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/audit"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/extractor"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/repo"
@@ -459,9 +460,14 @@ func buildDTCGFromMultiFile(brand string, m *extractor.MultiFileLayoutPatterns) 
 	return root
 }
 
-// histogramToBucketMulti emits one DTCG entry per distinct value (filtered)
-// with a per-file usage breakdown attached so designers can see how the
-// total decomposes across product files.
+// histogramToBucketMulti emits one DTCG entry per distinct value, filtered
+// against the 4-pt grid (radius uses a softer rule — see U19). Off-grid
+// observations are NOT minted as tokens; they appear in the spacing-observed
+// sidecar where U18-driven audit fixes pick them up.
+//
+// The per-file usage breakdown attached so designers can see how the total
+// decomposes across product files (e.g. "16 used 47× in Insta Plus, 38× in
+// Dashboard, …").
 func histogramToBucketMulti(m *extractor.MultiFileLayoutPatterns, dim, prefix string, minPx float64, minCount int) map[string]any {
 	bucket := map[string]any{}
 	hist := pickHist(m.Aggregate, dim)
@@ -469,9 +475,19 @@ func histogramToBucketMulti(m *extractor.MultiFileLayoutPatterns, dim, prefix st
 		if vc.Value < minPx || vc.Count < minCount {
 			continue
 		}
-		frac := vc.Value - float64(int64(vc.Value))
-		if frac != 0 && frac != 0.5 {
-			continue
+		// Spacing + padding: only on-grid values become tokens. Radius is
+		// property-derived (height/2 for pills) and handled separately
+		// in U19 — keep the legacy filter (integer/half-pixel) for now
+		// so radius emission isn't gated on a rule we haven't built yet.
+		if dim == "spacing" || dim == "padding" {
+			if !audit.IsOnSpacingGrid(vc.Value) {
+				continue
+			}
+		} else {
+			frac := vc.Value - float64(int64(vc.Value))
+			if frac != 0 && frac != 0.5 {
+				continue
+			}
 		}
 		key := numKey(vc.Value)
 		perFile := map[string]int{}
@@ -488,6 +504,7 @@ func histogramToBucketMulti(m *extractor.MultiFileLayoutPatterns, dim, prefix st
 				"com.indmoney.usage-count":    vc.Count,
 				"com.indmoney.usage-by-file":  perFile,
 				"com.indmoney.token-path":     prefix + "." + key,
+				"com.indmoney.on-grid":        true,
 			},
 		}
 	}
@@ -509,11 +526,24 @@ func buildSpacingObservedSidecar(brand string, m *extractor.MultiFileLayoutPatte
 					perFile[slug] = c
 				}
 			}
-			out = append(out, map[string]any{
+			row := map[string]any{
 				"value":   vc.Value,
 				"count":   vc.Count,
 				"by_file": perFile,
-			})
+			}
+			// Attach snap suggestion for spacing/padding so docs site +
+			// audit fixes can read drift candidates straight from this
+			// sidecar without re-running grid math.
+			if dim == "spacing" || dim == "padding" {
+				snap := audit.SnapSpacing(vc.Value)
+				row["on_grid"] = snap.OnGrid
+				row["snap_to"] = snap.Snapped
+				row["snap_distance"] = snap.Distance
+				if len(snap.Candidates) > 1 {
+					row["snap_candidates"] = snap.Candidates
+				}
+			}
+			out = append(out, row)
 		}
 		return out
 	}

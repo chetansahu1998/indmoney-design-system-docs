@@ -126,6 +126,87 @@ func TestBuildIndex_CrossFilePattern(t *testing.T) {
 	}
 }
 
+func TestAudit_OffGridSpacingProducesDriftFix(t *testing.T) {
+	// Auto-layout frame with itemSpacing=18 (off-grid; expected snap to 20).
+	tree := map[string]any{
+		"type": "DOCUMENT",
+		"children": []any{
+			map[string]any{
+				"type": "CANVAS", "name": "Page 1",
+				"children": []any{
+					map[string]any{
+						"id": "1:1", "type": "FRAME", "name": "Trade Screen",
+						"layoutMode":  "VERTICAL",
+						"itemSpacing": 18.0,
+						"paddingLeft": 11.0, // off-grid → expect snap to 12
+					},
+				},
+			},
+		},
+	}
+	res := Audit(tree, nil, nil, Options{
+		FileSlug: "demo", Brand: "indmoney",
+	})
+	if len(res.Screens) != 1 {
+		t.Fatalf("got %d screens, want 1", len(res.Screens))
+	}
+	s := res.Screens[0]
+	gridFixes := []FixCandidate{}
+	for _, f := range s.Fixes {
+		if f.Property == "spacing" || f.Property == "padding" {
+			gridFixes = append(gridFixes, f)
+		}
+	}
+	if len(gridFixes) < 2 {
+		t.Fatalf("expected >=2 grid-drift fixes (one per off-grid value), got %d: %+v", len(gridFixes), gridFixes)
+	}
+	// Find the 18→20 fix
+	saw18 := false
+	saw11 := false
+	for _, f := range gridFixes {
+		if f.Observed == "18px" {
+			saw18 = true
+			if f.Rationale == "" || f.Reason != "drift" {
+				t.Errorf("18→20 fix missing rationale or wrong reason: %+v", f)
+			}
+		}
+		if f.Observed == "11px" {
+			saw11 = true
+		}
+	}
+	if !saw18 {
+		t.Errorf("expected drift fix for 18px (snap → 20)")
+	}
+	if !saw11 {
+		t.Errorf("expected drift fix for 11px (snap → 12)")
+	}
+	// On-grid value should NOT produce a drift fix.
+	tree2 := map[string]any{
+		"type": "DOCUMENT",
+		"children": []any{
+			map[string]any{
+				"type": "CANVAS", "name": "Page 1",
+				"children": []any{
+					map[string]any{
+						"id": "2:1", "type": "FRAME", "name": "Watchlist Screen",
+						"layoutMode":  "VERTICAL",
+						"itemSpacing": 16.0, // on-grid
+					},
+				},
+			},
+		},
+	}
+	res2 := Audit(tree2, nil, nil, Options{FileSlug: "demo2", Brand: "indmoney"})
+	for _, f := range res2.Screens[0].Fixes {
+		if f.Property == "spacing" {
+			t.Errorf("on-grid 16px should not produce drift fix; got %+v", f)
+		}
+	}
+	if res2.Screens[0].Coverage.Spacing.Bound != 1 || res2.Screens[0].Coverage.Spacing.Total != 1 {
+		t.Errorf("on-grid 16px should be Bound=1 Total=1; got %+v", res2.Screens[0].Coverage.Spacing)
+	}
+}
+
 func TestSlugify(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"Trade Screen", "trade-screen"},
