@@ -1,12 +1,12 @@
 <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_3458_20094)">
 <g filter="url(#filter0_d_3458_20094)">
-<path d="M0 32C0 14.3269 14.3269 0 32 0C49.6731 0 64 14.3269 64 32C64 49.6731 49.6731 64 32 64C14.3269 64 0 49.6731 0 32Z" fill="currentColor"/>
-<path d="M49.7075 14.292H14.291V49.7084H49.7075V14.292Z" fill="currentColor"/>
-<path d="M47.024 17.4824H16.9736V47.6874H47.024V17.4824Z" fill="currentColor"/>
-<path d="M43.9118 20.248H20.4082V26.2039H43.9118V20.248Z" fill="currentColor"/>
-<path d="M35.0041 29.0752H20.4082V34.6057H35.0041V29.0752Z" fill="currentColor"/>
-<path d="M26.6329 37.7964H20.4082V43.6459H26.6329V37.7964Z" fill="currentColor"/>
+<path d="M0 32C0 14.3269 14.3269 0 32 0C49.6731 0 64 14.3269 64 32C64 49.6731 49.6731 64 32 64C14.3269 64 0 49.6731 0 32Z" fill="#9C1D26"/>
+<path d="M49.7075 14.292H14.291V49.7084H49.7075V14.292Z" fill="white"/>
+<path d="M47.024 17.4824H16.9736V47.6874H47.024V17.4824Z" fill="#9C1D26"/>
+<path d="M43.9118 20.248H20.4082V26.2039H43.9118V20.248Z" fill="white"/>
+<path d="M35.0041 29.0752H20.4082V34.6057H35.0041V29.0752Z" fill="white"/>
+<path d="M26.6329 37.7964H20.4082V43.6459H26.6329V37.7964Z" fill="white"/>
 </g>
 </g>
 <defs>
@@ -21,7 +21,7 @@
 <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3458_20094" result="shape"/>
 </filter>
 <clipPath id="clip0_3458_20094">
-<rect width="64" height="64" fill="currentColor"/>
+<rect width="64" height="64" fill="white"/>
 </clipPath>
 </defs>
 </svg>

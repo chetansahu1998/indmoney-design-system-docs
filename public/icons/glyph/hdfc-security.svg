@@ -1,12 +1,12 @@
 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_3396_49630)">
 <g filter="url(#filter0_d_3396_49630)">
-<path d="M0.375 12C0.375 5.57969 5.57969 0.375 12 0.375C18.4203 0.375 23.625 5.57969 23.625 12C23.625 18.4203 18.4203 23.625 12 23.625C5.57969 23.625 0.375 18.4203 0.375 12Z" fill="currentColor"/>
-<path fill-rule="evenodd" clip-rule="evenodd" d="M4.83789 4.83691H8.91028L10.0051 5.93171V4.83691H19.1612V8.91308L18.0664 10.0079H19.1612V19.1641H15.0888L13.994 18.0691V19.1641H4.83789V15.1334L5.93277 13.9931H4.83789V4.83691Z" fill="currentColor"/>
-<path fill-rule="evenodd" clip-rule="evenodd" d="M6.7627 14.167H13.2481V17.2354H6.7627V14.167Z" fill="currentColor"/>
-<path fill-rule="evenodd" clip-rule="evenodd" d="M10.7061 6.76465H17.1915V9.8331H10.7061V6.76465Z" fill="currentColor"/>
-<path fill-rule="evenodd" clip-rule="evenodd" d="M6.7627 6.76465H9.78568V13.4244H6.7627V6.76465Z" fill="currentColor"/>
-<path fill-rule="evenodd" clip-rule="evenodd" d="M14.168 10.5762H17.2326V17.2357H14.168V10.5762Z" fill="currentColor"/>
+<path d="M0.375 12C0.375 5.57969 5.57969 0.375 12 0.375C18.4203 0.375 23.625 5.57969 23.625 12C23.625 18.4203 18.4203 23.625 12 23.625C5.57969 23.625 0.375 18.4203 0.375 12Z" fill="#EB1923"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M4.83789 4.83691H8.91028L10.0051 5.93171V4.83691H19.1612V8.91308L18.0664 10.0079H19.1612V19.1641H15.0888L13.994 18.0691V19.1641H4.83789V15.1334L5.93277 13.9931H4.83789V4.83691Z" fill="#211E1E"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M6.7627 14.167H13.2481V17.2354H6.7627V14.167Z" fill="white"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M10.7061 6.76465H17.1915V9.8331H10.7061V6.76465Z" fill="white"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M6.7627 6.76465H9.78568V13.4244H6.7627V6.76465Z" fill="#EB1923"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M14.168 10.5762H17.2326V17.2357H14.168V10.5762Z" fill="white"/>
 </g>
 </g>
 <defs>
@@ -21,7 +21,7 @@
 <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3396_49630" result="shape"/>
 </filter>
 <clipPath id="clip0_3396_49630">
-<rect width="24" height="24" fill="currentColor"/>
+<rect width="24" height="24" fill="white"/>
 </clipPath>
 </defs>
 </svg>

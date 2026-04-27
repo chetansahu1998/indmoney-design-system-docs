@@ -1,23 +1,23 @@
 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_6029_8481)">
 <g clip-path="url(#clip1_6029_8481)">
-<path d="M21.5485 14.3011L9.93421 21.0068L2.31481 16.5791L2.29736 10.4734L9.91673 14.9012L13.4461 8.62603L16.9341 10.7712L22.0692 7.80664L21.5485 14.3011Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
-<path d="M16.9295 10.7727L9.31006 6.3449L14.4456 3.37988L22.065 7.80768L16.9295 10.7727Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
-<path d="M17.0569 10.3428L9.4375 5.91502L14.4986 2.99316L22.1179 7.42096C20.5072 8.52139 18.8153 9.49815 17.0569 10.3428Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
-<path d="M9.92593 21.0061L2.30654 16.5783L2.28906 10.4727L9.90846 14.9005L9.92593 21.0061Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
-<path d="M13.4419 8.62648L16.9295 10.7717L22.065 7.80664L22.0824 13.9908L9.92958 21.0073L9.91211 14.9017L13.4419 8.62648Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
-<path d="M13.3877 8.1384L17.061 10.3461L22.1226 7.42383V7.77629L16.9296 10.7735L13.4416 8.6283L9.77664 15.1434L9.55469 15.0267L13.3877 8.1384Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
-<path d="M9.49437 15.0512L1.875 10.6234L5.76005 3.7168L13.3794 8.14459L9.49437 15.0512Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
-<circle cx="22.05" cy="2.925" r="1.8" fill="currentColor"/>
-<path d="M13.3809 15.9756V19.0736L15.061 18.0519V15.0527L13.3809 15.9756Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M21.5485 14.3011L9.93421 21.0068L2.31481 16.5791L2.29736 10.4734L9.91673 14.9012L13.4461 8.62603L16.9341 10.7712L22.0692 7.80664L21.5485 14.3011Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
+<path d="M16.9295 10.7727L9.31006 6.3449L14.4456 3.37988L22.065 7.80768L16.9295 10.7727Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
+<path d="M17.0569 10.3428L9.4375 5.91502L14.4986 2.99316L22.1179 7.42096C20.5072 8.52139 18.8153 9.49815 17.0569 10.3428Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
+<path d="M9.92593 21.0061L2.30654 16.5783L2.28906 10.4727L9.90846 14.9005L9.92593 21.0061Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
+<path d="M13.4419 8.62648L16.9295 10.7717L22.065 7.80664L22.0824 13.9908L9.92958 21.0073L9.91211 14.9017L13.4419 8.62648Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
+<path d="M13.3877 8.1384L17.061 10.3461L22.1226 7.42383V7.77629L16.9296 10.7735L13.4416 8.6283L9.77664 15.1434L9.55469 15.0267L13.3877 8.1384Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
+<path d="M9.49437 15.0512L1.875 10.6234L5.76005 3.7168L13.3794 8.14459L9.49437 15.0512Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
+<circle cx="22.05" cy="2.925" r="1.8" fill="#DF3C27"/>
+<path d="M13.3809 15.9756V19.0736L15.061 18.0519V15.0527L13.3809 15.9756Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
 </g>
 </g>
 <defs>
 <clipPath id="clip0_6029_8481">
-<rect width="24" height="24" fill="currentColor"/>
+<rect width="24" height="24" fill="white"/>
 </clipPath>
 <clipPath id="clip1_6029_8481">
-<rect width="24" height="24" fill="currentColor"/>
+<rect width="24" height="24" fill="white"/>
 </clipPath>
 </defs>
 </svg>

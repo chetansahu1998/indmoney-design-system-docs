@@ -1,10 +1,10 @@
 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_3396_50307)">
 <g filter="url(#filter0_d_3396_50307)">
-<path d="M24 12.0001C24 5.37263 18.6274 0 12 0C5.37258 0 0 5.37263 0 12.0001C0 18.6276 5.37258 24.0002 12 24.0002C18.6274 24.0002 24 18.6276 24 12.0001Z" fill="currentColor"/>
-<path d="M10.3035 6.22077H5.47077V17.7784L10.3035 6.22077Z" fill="currentColor"/>
-<path d="M13.7026 6.22077H18.529V17.7784L13.7026 6.22077Z" fill="currentColor"/>
-<path d="M12.0037 10.4803L15.0796 17.7783H13.0615L12.1422 15.4548H9.89113L12.0037 10.4803Z" fill="currentColor"/>
+<path d="M24 12.0001C24 5.37263 18.6274 0 12 0C5.37258 0 0 5.37263 0 12.0001C0 18.6276 5.37258 24.0002 12 24.0002C18.6274 24.0002 24 18.6276 24 12.0001Z" fill="#FA0C00"/>
+<path d="M10.3035 6.22077H5.47077V17.7784L10.3035 6.22077Z" fill="white"/>
+<path d="M13.7026 6.22077H18.529V17.7784L13.7026 6.22077Z" fill="white"/>
+<path d="M12.0037 10.4803L15.0796 17.7783H13.0615L12.1422 15.4548H9.89113L12.0037 10.4803Z" fill="white"/>
 </g>
 </g>
 <defs>
@@ -19,7 +19,7 @@
 <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3396_50307" result="shape"/>
 </filter>
 <clipPath id="clip0_3396_50307">
-<rect width="23.25" height="23.2502" fill="currentColor" transform="scale(1.03226)"/>
+<rect width="23.25" height="23.2502" fill="white" transform="scale(1.03226)"/>
 </clipPath>
 </defs>
 </svg>

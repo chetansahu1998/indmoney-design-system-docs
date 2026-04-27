@@ -2,12 +2,12 @@
 <g clip-path="url(#clip0_1659_11433)">
 <g filter="url(#filter0_d_1659_11433)">
 <g clip-path="url(#clip1_1659_11433)">
-<path d="M0 12C0 5.37258 5.37258 0 12 0C18.6274 0 24 5.37258 24 12C24 18.6274 18.6274 24 12 24C5.37258 24 0 18.6274 0 12Z" fill="currentColor"/>
-<path d="M18.6406 5.3595H5.35938V18.6406H18.6406V5.3595Z" fill="currentColor"/>
-<path d="M17.6361 6.55591H6.36719V17.8828H17.6361V6.55591Z" fill="currentColor"/>
-<path d="M16.4662 7.59302H7.65234V9.82647H16.4662V7.59302Z" fill="currentColor"/>
-<path d="M13.1258 10.9033H7.65234V12.9773H13.1258V10.9033Z" fill="currentColor"/>
-<path d="M9.98661 14.1736H7.65234V16.3672H9.98661V14.1736Z" fill="currentColor"/>
+<path d="M0 12C0 5.37258 5.37258 0 12 0C18.6274 0 24 5.37258 24 12C24 18.6274 18.6274 24 12 24C5.37258 24 0 18.6274 0 12Z" fill="#9C1D26"/>
+<path d="M18.6406 5.3595H5.35938V18.6406H18.6406V5.3595Z" fill="white"/>
+<path d="M17.6361 6.55591H6.36719V17.8828H17.6361V6.55591Z" fill="#9C1D26"/>
+<path d="M16.4662 7.59302H7.65234V9.82647H16.4662V7.59302Z" fill="white"/>
+<path d="M13.1258 10.9033H7.65234V12.9773H13.1258V10.9033Z" fill="white"/>
+<path d="M9.98661 14.1736H7.65234V16.3672H9.98661V14.1736Z" fill="white"/>
 </g>
 </g>
 </g>
@@ -23,10 +23,10 @@
 <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1659_11433" result="shape"/>
 </filter>
 <clipPath id="clip0_1659_11433">
-<rect width="24" height="24" fill="currentColor"/>
+<rect width="24" height="24" fill="white"/>
 </clipPath>
 <clipPath id="clip1_1659_11433">
-<path d="M0 12C0 5.37258 5.37258 0 12 0C18.6274 0 24 5.37258 24 12C24 18.6274 18.6274 24 12 24C5.37258 24 0 18.6274 0 12Z" fill="currentColor"/>
+<path d="M0 12C0 5.37258 5.37258 0 12 0C18.6274 0 24 5.37258 24 12C24 18.6274 18.6274 24 12 24C5.37258 24 0 18.6274 0 12Z" fill="white"/>
 </clipPath>
 </defs>
 </svg>

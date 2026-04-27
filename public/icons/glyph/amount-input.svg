@@ -1,5 +1,5 @@
 <svg width="343" height="33" viewBox="0 0 343 33" fill="none" xmlns="http://www.w3.org/2000/svg">
-<line y1="1" x2="343" y2="1" stroke="currentColor" stroke-width="2"/>
-<path d="M0 2H343V21C343 27.6274 337.627 33 331 33H12C5.37258 33 0 27.6274 0 21V2Z" fill="currentColor"/>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="98.7734" y="21.7891">This is a copy placeholder</tspan></text>
+<line y1="1" x2="343" y2="1" stroke="#E5E5E5" stroke-width="2"/>
+<path d="M0 2H343V21C343 27.6274 337.627 33 331 33H12C5.37258 33 0 27.6274 0 21V2Z" fill="#F5F7F9"/>
+<text fill="#393B3E" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="98.7734" y="21.7891">This is a copy placeholder</tspan></text>
 </svg>

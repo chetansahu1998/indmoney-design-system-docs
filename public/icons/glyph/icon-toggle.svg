@@ -1,17 +1,17 @@
 <svg width="58" height="32" viewBox="0 0 58 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect x="1" y="1" width="56" height="30" rx="15" fill="currentColor"/>
+<rect x="1" y="1" width="56" height="30" rx="15" fill="#F3F3F2"/>
 <g clip-path="url(#clip0_1339_36749)">
 <g clip-path="url(#clip1_1339_36749)">
-<circle cx="16" cy="16" r="11.5" fill="currentColor"/>
-<path d="M10 16H22M10 12H22M10 20H22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="16" cy="16" r="11.5" fill="#089959"/>
+<path d="M10 16H22M10 12H22M10 20H22" stroke="#FFFFFE" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 </g>
 <defs>
 <clipPath id="clip0_1339_36749">
-<rect width="24" height="24" fill="currentColor" transform="translate(4 4)"/>
+<rect width="24" height="24" fill="white" transform="translate(4 4)"/>
 </clipPath>
 <clipPath id="clip1_1339_36749">
-<rect width="24" height="24" fill="currentColor" transform="translate(4 4)"/>
+<rect width="24" height="24" fill="white" transform="translate(4 4)"/>
 </clipPath>
 </defs>
 </svg>

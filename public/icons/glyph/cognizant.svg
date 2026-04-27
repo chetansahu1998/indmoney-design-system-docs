@@ -1,39 +1,39 @@
 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_3396_53863)">
 <mask id="mask0_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="0" y="0" width="16" height="16">
-<path d="M16 0H0V16H16V0Z" fill="currentColor"/>
+<path d="M16 0H0V16H16V0Z" fill="white"/>
 </mask>
 <g mask="url(#mask0_3396_53863)">
 <g filter="url(#filter0_d_3396_53863)">
-<path d="M7.99999 15.5C12.2802 15.5 15.75 12.0302 15.75 7.75C15.75 3.4698 12.2802 0 7.99999 0C3.71979 0 0.25 3.4698 0.25 7.75C0.25 12.0302 3.71979 15.5 7.99999 15.5Z" fill="currentColor"/>
+<path d="M7.99999 15.5C12.2802 15.5 15.75 12.0302 15.75 7.75C15.75 3.4698 12.2802 0 7.99999 0C3.71979 0 0.25 3.4698 0.25 7.75C0.25 12.0302 3.71979 15.5 7.99999 15.5Z" fill="white"/>
 <mask id="mask1_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="1" y="2" width="14" height="11">
-<path d="M14.25 2.5H1.75V13H14.25V2.5Z" fill="currentColor"/>
+<path d="M14.25 2.5H1.75V13H14.25V2.5Z" fill="white"/>
 </mask>
 <g mask="url(#mask1_3396_53863)">
 <mask id="mask2_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="1" y="2" width="14" height="11">
-<path d="M1.75 2.5H14.274V13H1.75V2.5Z" fill="currentColor"/>
+<path d="M1.75 2.5H14.274V13H1.75V2.5Z" fill="white"/>
 </mask>
 <g mask="url(#mask2_3396_53863)">
 <mask id="mask3_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="1" y="7" width="9" height="6">
-<path d="M1.75 7.75L5.42788 13L9.22595 10.733L7.08655 7.75H1.75Z" fill="currentColor"/>
+<path d="M1.75 7.75L5.42788 13L9.22595 10.733L7.08655 7.75H1.75Z" fill="white"/>
 </mask>
 <g mask="url(#mask3_3396_53863)">
 <path d="M1.75 7.75H9.22595V13H1.75V7.75Z" fill="url(#paint0_linear_3396_53863)"/>
 </g>
 <mask id="mask4_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="5" y="7" width="10" height="6">
-<path d="M5.42871 13H10.6691L14.2749 7.75L5.42871 13Z" fill="currentColor"/>
+<path d="M5.42871 13H10.6691L14.2749 7.75L5.42871 13Z" fill="white"/>
 </mask>
 <g mask="url(#mask4_3396_53863)">
 <path d="M5.42871 7.75H14.2749V13H5.42871V7.75Z" fill="url(#paint1_linear_3396_53863)"/>
 </g>
 <mask id="mask5_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="1" y="2" width="9" height="6">
-<path d="M5.42788 2.5L1.75 7.75H7.08655L9.22595 4.76705L5.42788 2.5Z" fill="currentColor"/>
+<path d="M5.42788 2.5L1.75 7.75H7.08655L9.22595 4.76705L5.42788 2.5Z" fill="white"/>
 </mask>
 <g mask="url(#mask5_3396_53863)">
 <path d="M1.75 2.5H9.22595V7.75H1.75V2.5Z" fill="url(#paint2_linear_3396_53863)"/>
 </g>
 <mask id="mask6_3396_53863" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="5" y="2" width="10" height="6">
-<path d="M5.42871 2.5L14.2749 7.75L10.6691 2.5H5.42871Z" fill="currentColor"/>
+<path d="M5.42871 2.5L14.2749 7.75L10.6691 2.5H5.42871Z" fill="white"/>
 </mask>
 <g mask="url(#mask6_3396_53863)">
 <path d="M5.42871 2.5H14.2749V7.75H5.42871V2.5Z" fill="url(#paint3_linear_3396_53863)"/>
@@ -71,7 +71,7 @@
 <stop offset="1" stop-color="#93DFE3"/>
 </linearGradient>
 <clipPath id="clip0_3396_53863">
-<rect width="16" height="16" fill="currentColor"/>
+<rect width="16" height="16" fill="white"/>
 </clipPath>
 </defs>
 </svg>

@@ -1,12 +1,12 @@
 <svg width="343" height="60" viewBox="0 0 343 60" fill="none" xmlns="http://www.w3.org/2000/svg">
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="0" y="13.5039">Date of Birth</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="0.417969" y="45.1191">DD</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="37.3203" y="45.1191">/</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="54.4023" y="45.1191">MM</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="98.3203" y="45.1191">/</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="115.203" y="45.1191">YYYY</tspan></text>
-<mask id="path-7-inside-1_1428_21404" fill="currentColor">
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="0" y="13.5039">Date of Birth</tspan></text>
+<text fill="#88898A" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="0.417969" y="45.1191">DD</tspan></text>
+<text fill="#88898A" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="37.3203" y="45.1191">/</tspan></text>
+<text fill="#88898A" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="54.4023" y="45.1191">MM</tspan></text>
+<text fill="#88898A" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="98.3203" y="45.1191">/</tspan></text>
+<text fill="#88898A" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="115.203" y="45.1191">YYYY</tspan></text>
+<mask id="path-7-inside-1_1428_21404" fill="white">
 <path d="M0 59H343V60H0V59Z"/>
 </mask>
-<path d="M343 59H0V61H343V59Z" fill="currentColor" mask="url(#path-7-inside-1_1428_21404)"/>
+<path d="M343 59H0V61H343V59Z" fill="#CECECE" mask="url(#path-7-inside-1_1428_21404)"/>
 </svg>

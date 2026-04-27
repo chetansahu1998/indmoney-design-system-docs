@@ -1,23 +1,23 @@
 <svg width="344" height="59" viewBox="0 0 344 59" fill="none" xmlns="http://www.w3.org/2000/svg">
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="0.5" y="13.5039">Card Number</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="1.32422" y="44.6191">x</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="18.3242" y="44.6191">x</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="35.3242" y="44.6191">x</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="52.3242" y="44.6191">x</tspan></text>
-<path d="M0.5 58H63.5" stroke="currentColor" stroke-linecap="round"/>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="94.6575" y="44.6191">x</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="111.657" y="44.6191">x</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="128.657" y="44.6191">x</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="145.657" y="44.6191">x</tspan></text>
-<path d="M93.8333 58H156.833" stroke="currentColor" stroke-linecap="round"/>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="187.991" y="44.6191">x</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="204.991" y="44.6191">x</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="221.991" y="44.6191">x</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="238.991" y="44.6191">x</tspan></text>
-<path d="M187.167 58H250.167" stroke="currentColor" stroke-linecap="round"/>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="281.324" y="44.6191">x</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="298.324" y="44.6191">x</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="315.324" y="44.6191">x</tspan></text>
-<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="332.324" y="44.6191">x</tspan></text>
-<path d="M280.5 58H343.5" stroke="currentColor" stroke-linecap="round"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="0.5" y="13.5039">Card Number</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="1.32422" y="44.6191">x</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="18.3242" y="44.6191">x</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="35.3242" y="44.6191">x</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="52.3242" y="44.6191">x</tspan></text>
+<path d="M0.5 58H63.5" stroke="#CECECE" stroke-linecap="round"/>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="94.6575" y="44.6191">x</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="111.657" y="44.6191">x</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="128.657" y="44.6191">x</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="145.657" y="44.6191">x</tspan></text>
+<path d="M93.8333 58H156.833" stroke="#CECECE" stroke-linecap="round"/>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="187.991" y="44.6191">x</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="204.991" y="44.6191">x</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="221.991" y="44.6191">x</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="238.991" y="44.6191">x</tspan></text>
+<path d="M187.167 58H250.167" stroke="#CECECE" stroke-linecap="round"/>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="281.324" y="44.6191">x</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="298.324" y="44.6191">x</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="315.324" y="44.6191">x</tspan></text>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="332.324" y="44.6191">x</tspan></text>
+<path d="M280.5 58H343.5" stroke="#CECECE" stroke-linecap="round"/>
 </svg>

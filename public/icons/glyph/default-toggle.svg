@@ -1,7 +1,7 @@
 <svg width="61" height="37" viewBox="0 0 61 37" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect x="1.00901" y="1.00901" width="56.5048" height="30.2704" rx="15" fill="currentColor"/>
+<rect x="1.00901" y="1.00901" width="56.5048" height="30.2704" rx="15" fill="#089959"/>
 <g filter="url(#filter0_d_1339_36695)">
-<rect x="30.901" y="3.84686" width="24.5947" height="24.5947" rx="12.1875" fill="currentColor"/>
+<rect x="30.901" y="3.84686" width="24.5947" height="24.5947" rx="12.1875" fill="#FFFFFE"/>
 </g>
 <defs>
 <filter id="filter0_d_1339_36695" x="25.3973" y="1.09501" width="35.6021" height="35.6021" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
