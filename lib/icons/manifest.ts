@@ -10,6 +10,17 @@ import manifestData from "../../public/icons/glyph/manifest.json";
 
 export type IconCategory = string;
 
+export interface VariantEntry {
+  /** Original Figma variant name, e.g. "State=Default, Size=Medium". */
+  name: string;
+  /** Parsed variable=value chips, in original order. */
+  properties: Array<{ name: string; value: string }>;
+  variant_id: string;
+  file: string; // e.g. "1-cta__state=default-size=medium.svg"
+  width: number;
+  height: number;
+}
+
 export interface IconEntry {
   slug: string;
   name: string;
@@ -20,6 +31,8 @@ export interface IconEntry {
   file: string; // e.g. "download-cloud.svg"
   width: number;
   height: number;
+  /** Populated by cmd/variants for kind=component sets. */
+  variants?: VariantEntry[];
 }
 
 /** What an entry actually represents — derived from category + dimensions. */
