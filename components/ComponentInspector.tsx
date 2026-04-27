@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import { iconURL, slugifyCategory, type IconEntry, type VariantEntry } from "@/lib/icons/manifest";
 import { useIsMobile } from "@/lib/use-mobile";
+import DataGapPreview from "@/components/ui/DataGapPreview";
 
 /**
  * Component gallery + inline detail inspector. Click a tile → expands in
@@ -249,29 +250,59 @@ function DetailPanel({ entry, onClose }: { entry: IconEntry; onClose: () => void
 
 function EmptyVariants({ slug }: { slug: string }) {
   return (
-    <div style={{ padding: "32px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
-      <p style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.6, margin: 0 }}>
-        Variants haven&apos;t been extracted for this component yet. Run the variants pipeline to
-        populate the rail with each variable combination (state, size, intent, etc.).
-      </p>
-      <pre
-        style={{
-          margin: 0,
-          padding: 12,
-          background: "var(--bg-surface-2)",
-          borderRadius: 6,
-          fontFamily: "var(--font-mono)",
-          fontSize: 12,
-          color: "var(--text-1)",
-          overflowX: "auto",
-          border: "1px solid var(--border)",
-        }}
-      >{`go run ./services/ds-service/cmd/variants
-# scoped to this component:
-go run ./services/ds-service/cmd/variants --max 1`}</pre>
-      <p style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--font-mono)", margin: 0 }}>
-        Slug: {slug}
-      </p>
+    <div style={{ padding: "20px 8px 8px" }}>
+      <DataGapPreview
+        diagnosis={
+          <>
+            No variants extracted for{" "}
+            <strong style={{ color: "var(--text-1)", fontFamily: "var(--font-mono)" }}>
+              {slug}
+            </strong>{" "}
+            yet. Variants are each property combination of a Glyph component
+            set (state × size × intent). The variant rail stays empty until
+            the pipeline downloads them.
+          </>
+        }
+        unlock={
+          <>
+            Run the variants extractor against the Glyph file. The first run
+            walks every component set; passing{" "}
+            <code style={{ fontFamily: "var(--font-mono)" }}>--max 1</code>{" "}
+            limits to a single set if you&apos;re iterating. Output writes to{" "}
+            <code style={{ fontFamily: "var(--font-mono)" }}>
+              public/icons/glyph/variants/
+            </code>{" "}
+            and the manifest auto-updates.
+          </>
+        }
+        command="go run ./services/ds-service/cmd/variants"
+        preview={
+          <div
+            style={{
+              display: "flex",
+              gap: 8,
+              alignItems: "center",
+              opacity: 0.6,
+            }}
+          >
+            {[0, 1, 2].map((i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, scale: 0.94 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: i * 0.08, duration: 0.4 }}
+                style={{
+                  width: 60,
+                  height: 60,
+                  borderRadius: 8,
+                  background: "var(--bg-surface-2)",
+                  border: "1px dashed var(--border-strong)",
+                }}
+              />
+            ))}
+          </div>
+        }
+      />
     </div>
   );
 }
