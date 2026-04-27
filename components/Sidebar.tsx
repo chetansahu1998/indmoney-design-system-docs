@@ -6,12 +6,29 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { useIsMobile } from "@/lib/use-mobile";
 import { brandLabel, currentBrand } from "@/lib/brand";
 
-// Sidebar nav — anchors must match actual section IDs rendered by sections/*.
-// Color buckets are derived from semantic.tokens.json keys; keep this list in
-// sync when the Glyph extraction surfaces new buckets.
-const nav = [
+/* ── Types ─────────────────────────────────────────────────────────────── */
+
+export interface NavSubItem {
+  label: string;
+  href: string;
+}
+
+export interface NavGroup {
+  label: string;
+  /** Group is expanded by default. Lazy users get the most-used groups
+   *  pre-opened; rare ones stay collapsed. */
+  defaultOpen?: boolean;
+  sub: NavSubItem[];
+}
+
+/* ── Foundations default nav ──────────────────────────────────────────────
+ * Anchors must match section IDs rendered by components/sections/*.
+ * Color buckets are derived from semantic.tokens.json keys; keep this list
+ * in sync when the Glyph extraction surfaces new buckets. */
+export const FOUNDATIONS_NAV: NavGroup[] = [
   {
     label: "Color",
+    defaultOpen: true,
     sub: [
       { label: "Surface",         href: "#color-surface" },
       { label: "Text & icon",     href: "#color-text-n-icon" },
@@ -23,6 +40,7 @@ const nav = [
   },
   {
     label: "Typography",
+    defaultOpen: true,
     sub: [
       { label: "Headings",   href: "#type-heading" },
       { label: "Subtitles",  href: "#type-subtitle" },
@@ -34,55 +52,61 @@ const nav = [
   },
   {
     label: "Iconography",
-    sub: [
-      { label: "All icons",  href: "#iconography" },
-    ],
+    defaultOpen: true,
+    sub: [{ label: "All icons", href: "#iconography" }],
   },
   {
     label: "Spacing",
     sub: [
-      { label: "Scale",      href: "#spacing-scale" },
-      { label: "Padding",    href: "#spacing-padding" },
-      { label: "Radius",     href: "#spacing-radius" },
+      { label: "Scale",   href: "#spacing-scale" },
+      { label: "Padding", href: "#spacing-padding" },
+      { label: "Radius",  href: "#spacing-radius" },
     ],
   },
   {
     label: "Motion",
     sub: [
-      { label: "Spring",     href: "#motion-spring" },
-      { label: "Opacity",    href: "#motion-opacity" },
-      { label: "Scale",      href: "#motion-scale" },
+      { label: "Spring",  href: "#motion-spring" },
+      { label: "Opacity", href: "#motion-opacity" },
+      { label: "Scale",   href: "#motion-scale" },
     ],
   },
   {
     label: "Effects",
-    sub: [
-      { label: "Shadows",    href: "#effects" },
-    ],
+    sub: [{ label: "Shadows", href: "#effects" }],
   },
 ];
 
-function NavTree({
-  activeSection,
-  onNavigate,
-}: {
+/* ── NavTree (the actual list) ───────────────────────────────────────── */
+
+interface NavTreeProps {
+  nav: NavGroup[];
+  title: string;
   activeSection: string;
   onNavigate?: () => void;
-}) {
-  const [open, setOpen] = useState<Record<string, boolean>>({
-    Color: true, Typography: true, Iconography: true, Spacing: false, Motion: false,
+}
+
+function NavTree({ nav, title, activeSection, onNavigate }: NavTreeProps) {
+  const [open, setOpen] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    for (const g of nav) {
+      init[g.label] = g.defaultOpen !== false;
+    }
+    return init;
   });
 
   return (
     <>
       <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)", padding: "10px 16px 6px" }}>
-        Foundations
+        {title}
       </div>
 
       {nav.map((item) => (
         <div key={item.label}>
           <motion.button
-            onClick={() => item.sub.length && setOpen((o) => ({ ...o, [item.label]: !o[item.label] }))}
+            onClick={() =>
+              item.sub.length && setOpen((o) => ({ ...o, [item.label]: !o[item.label] }))
+            }
             whileHover={item.sub.length ? { x: 1 } : {}}
             transition={{ type: "spring", stiffness: 300, damping: 26 }}
             style={{
@@ -163,7 +187,17 @@ function NavTree({
   );
 }
 
-export function DesktopSidebar({ activeSection }: { activeSection: string }) {
+/* ── Desktop + mobile shells ────────────────────────────────────────── */
+
+export function DesktopSidebar({
+  nav,
+  title,
+  activeSection,
+}: {
+  nav: NavGroup[];
+  title: string;
+  activeSection: string;
+}) {
   return (
     <nav
       className="sidebar-desktop"
@@ -173,17 +207,21 @@ export function DesktopSidebar({ activeSection }: { activeSection: string }) {
       }}
     >
       <ScrollArea style={{ height: "100%", padding: "24px 0 48px" }}>
-        <NavTree activeSection={activeSection} />
+        <NavTree nav={nav} title={title} activeSection={activeSection} />
       </ScrollArea>
     </nav>
   );
 }
 
 export function MobileDrawer({
+  nav,
+  title,
   open,
   onClose,
   activeSection,
 }: {
+  nav: NavGroup[];
+  title: string;
   open: boolean;
   onClose: () => void;
   activeSection: string;
@@ -205,7 +243,7 @@ export function MobileDrawer({
           </SheetTitle>
         </SheetHeader>
         <ScrollArea style={{ height: "calc(100% - 64px)" }}>
-          <NavTree activeSection={activeSection} onNavigate={onClose} />
+          <NavTree nav={nav} title={title} activeSection={activeSection} onNavigate={onClose} />
         </ScrollArea>
       </SheetContent>
     </Sheet>
@@ -213,25 +251,29 @@ export function MobileDrawer({
 }
 
 export default function Sidebar({
+  nav = FOUNDATIONS_NAV,
+  title = "Foundations",
   activeSection,
   mobileOpen,
   onMobileClose,
 }: {
+  nav?: NavGroup[];
+  title?: string;
   activeSection: string;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
 }) {
   const isMobile = useIsMobile();
-
   if (isMobile) {
     return (
       <MobileDrawer
+        nav={nav}
+        title={title}
         open={mobileOpen ?? false}
         onClose={onMobileClose ?? (() => {})}
         activeSection={activeSection}
       />
     );
   }
-
-  return <DesktopSidebar activeSection={activeSection} />;
+  return <DesktopSidebar nav={nav} title={title} activeSection={activeSection} />;
 }
