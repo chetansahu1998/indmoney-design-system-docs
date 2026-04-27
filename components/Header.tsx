@@ -122,6 +122,7 @@ export default function Header({
           {brandLabel(brand)} <span style={{ color: "var(--text-3)", fontWeight: 500 }}>DS</span>
         </span>
         <SyncChip tokens={tokenCount} baseColors={baseColors} />
+        <PageNav />
       </motion.div>
 
       {/* Brand switcher (only renders when ≥2 brands available) */}
@@ -332,6 +333,50 @@ export default function Header({
         </motion.div>
       </motion.button>
     </motion.header>
+  );
+}
+
+/** Top-level page navigation — Foundations, Components, Illustrations, Logos. */
+function PageNav() {
+  if (typeof window === "undefined") return <PageNavLinks pathname="/" />;
+  return <PageNavLinks pathname={window.location.pathname} />;
+}
+
+function PageNavLinks({ pathname }: { pathname: string }) {
+  const items = [
+    { href: "/",              label: "Foundations" },
+    { href: "/components",    label: "Components" },
+    { href: "/illustrations", label: "Illustrations" },
+    { href: "/logos",         label: "Logos" },
+  ];
+  return (
+    <nav
+      className="page-nav"
+      aria-label="Site sections"
+      style={{ display: "inline-flex", gap: 4, marginLeft: 6 }}
+    >
+      {items.map((item) => {
+        const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+        return (
+          <a
+            key={item.href}
+            href={item.href}
+            style={{
+              padding: "4px 10px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: active ? 600 : 500,
+              color: active ? "var(--text-1)" : "var(--text-3)",
+              background: active ? "var(--bg-surface-2)" : "transparent",
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {item.label}
+          </a>
+        );
+      })}
+    </nav>
   );
 }
 

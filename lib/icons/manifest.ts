@@ -22,9 +22,61 @@ export interface IconEntry {
   height: number;
 }
 
-export function iconsByCategory(): Map<IconCategory, IconEntry[]> {
+/** What an entry actually represents — derived from category + dimensions. */
+export type AssetKind = "icon" | "component" | "illustration" | "logo";
+
+const LOGO_CATEGORIES = new Set(["Logo", "Logos", "bank", "nvidia"]);
+const ILLUSTRATION_CATEGORIES = new Set(["2D", "3D", "Profilecard", "Wallet", "Cold"]);
+const ICON_CATEGORIES = new Set(["Icon", "Filled Icons"]);
+
+/**
+ * Classify a manifest entry. The Atoms-page extractor walks every
+ * COMPONENT_SET, so the manifest is a mix of icons, illustrations, brand
+ * logos, and large component primitives (CTAs, progress bars, status bars).
+ *
+ * Heuristics:
+ *   - Bank/brand collections → logo
+ *   - 2D/3D/Profilecard/Wallet → illustration
+ *   - Icon / Filled Icons → icon
+ *   - "ui" category → wide assets (>=80px wide AND >=32px tall, or aspect>2)
+ *     are components; tiny ones fall back to icon.
+ *   - Tiny squares ≤32×32 default to icon, larger to illustration.
+ */
+export function classifyAsset(entry: IconEntry): AssetKind {
+  if (LOGO_CATEGORIES.has(entry.category)) return "logo";
+  if (ILLUSTRATION_CATEGORIES.has(entry.category)) return "illustration";
+
+  // Glyph's Icon category is mixed: monochrome icons + named "3D · …" art.
+  // Route the latter to illustrations so colors are preserved + categorized correctly.
+  if (ICON_CATEGORIES.has(entry.category)) {
+    const lower = entry.name.toLowerCase();
+    if (lower.startsWith("3d ") || lower.startsWith("3d·") || lower.startsWith("3d ·")) {
+      return "illustration";
+    }
+    return "icon";
+  }
+
+  const isWide = entry.width >= 80 && entry.height >= 28;
+  const isLandscape = entry.width / Math.max(entry.height, 1) > 2;
+  const isTinySquare = entry.width <= 32 && entry.height <= 32;
+
+  if (entry.category === "ui") {
+    if (isWide || isLandscape) return "component";
+    return "icon";
+  }
+  return isTinySquare ? "icon" : "illustration";
+}
+
+export function iconsByKind(kind: AssetKind): IconEntry[] {
+  return MANIFEST.icons
+    .filter((i) => classifyAsset(i) === kind)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function iconsByCategory(kind?: AssetKind): Map<IconCategory, IconEntry[]> {
   const map = new Map<IconCategory, IconEntry[]>();
-  for (const icon of MANIFEST.icons) {
+  const pool = kind ? iconsByKind(kind) : MANIFEST.icons;
+  for (const icon of pool) {
     const cat = icon.category || "uncategorized";
     if (!map.has(cat)) map.set(cat, []);
     map.get(cat)!.push(icon);

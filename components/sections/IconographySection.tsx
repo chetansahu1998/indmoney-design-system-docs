@@ -6,9 +6,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { fadeUp } from "@/lib/motion-variants";
 import { useIsMobile } from "@/lib/use-mobile";
 import {
-  allIcons,
-  iconCategories,
   iconURL,
+  iconsByKind,
   iconsByCategory,
   type IconEntry,
 } from "@/lib/icons/manifest";
@@ -348,9 +347,9 @@ export default function IconographySection() {
   const [active, setActive] = useState<IconEntry | null>(null);
   const isMobile = useIsMobile();
 
-  const all = useMemo(() => allIcons(), []);
-  const grouped = useMemo(() => iconsByCategory(), []);
-  const cats = useMemo(() => iconCategories(), []);
+  const all = useMemo(() => iconsByKind("icon"), []);
+  const grouped = useMemo(() => iconsByCategory("icon"), []);
+  const cats = useMemo(() => Array.from(grouped.keys()), [grouped]);
 
   const q = query.toLowerCase().trim();
   const matches = useMemo(() => {
@@ -375,8 +374,9 @@ export default function IconographySection() {
         viewport={{ once: true }}
         style={{ fontSize: 16, color: "var(--text-2)", lineHeight: 1.65, maxWidth: 640, marginBottom: 16 }}
       >
-        <strong style={{ color: "var(--text-1)" }}>{all.length} Glyph icons</strong> across{" "}
-        {cats.length} categories, sourced directly from INDmoney&apos;s Figma library. All icons use{" "}
+        <strong style={{ color: "var(--text-1)" }}>{all.length} system icons</strong> across{" "}
+        {cats.length} categories, filtered from the Glyph manifest (logos and illustrations live
+        on their own pages). All icons use{" "}
         <code style={{ fontFamily: "var(--font-mono)", fontSize: 12, background: "var(--bg-surface)", padding: "1px 5px", borderRadius: 3, color: "var(--accent)" }}>
           currentColor
         </code>{" "}
