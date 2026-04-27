@@ -21,6 +21,7 @@ import (
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/dtcg"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/extractor"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/repo"
 )
 
 // stringSlice is a flag.Value that collects repeated --source flags into a list.
@@ -53,7 +54,7 @@ func main() {
 	}
 
 	if *outDir == "" {
-		*outDir = filepath.Join("lib/tokens", *brand)
+		*outDir = filepath.Join(repo.Root(), "lib/tokens", *brand)
 	}
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
 		fatalf(log, "mkdir %s: %v", *outDir, err)
