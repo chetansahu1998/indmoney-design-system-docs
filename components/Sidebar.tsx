@@ -196,6 +196,7 @@ function NavTree({ nav, title, activeSection, onNavigate, layoutScope }: NavTree
                         onClick={onNavigate}
                         whileHover={{ x: 2 }}
                         transition={{ type: "spring", stiffness: 300, damping: 26 }}
+                        aria-current={isActive ? "true" : undefined}
                         style={{
                           position: "relative",
                           display: "block",

@@ -85,6 +85,25 @@
 
 html { scroll-behavior: smooth; }
 
+/* ── Keyboard focus ──────────────────────────────────────────────────────
+   The global * reset and inline button styles stripped the browser's
+   focus outlines. Restore a uniform :focus-visible ring so every
+   interactive element is keyboard-discoverable without hijacking the
+   visual design when users click with a mouse.
+   2px outline at the accent color, 2px offset off the element so the
+   ring doesn't crash into adjacent borders. */
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline-offset: 2px;
+}
+
 /* ── Pre-hydrate FOUC guard ──────────────────────────────────────────────
    Sections marked with data-anim-fade render at opacity 0 until the inline
    <head> script (in app/layout.tsx) removes [data-pre-hydrate] from <html>.
