@@ -67,7 +67,13 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 200<<20)) // cap 200 MB
+	// Cap at 1 GB. Real INDmoney product files (INDstocks V4, Dashboard v5,
+	// Help Center V2) routinely exceed 200 MB once their full node trees
+	// + auto-layout + style refs serialize, so the previous 200 MB cap
+	// silently truncated and the JSON decoder reported "unexpected end of
+	// JSON input" instead of a useful error. 1 GB matches what the Figma
+	// dashboard reports as the practical upper bound today.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<30))
 
 	if resp.StatusCode/100 != 2 {
 		ae := &APIError{Status: resp.StatusCode, Body: truncate(string(body), 4000), URL: url}

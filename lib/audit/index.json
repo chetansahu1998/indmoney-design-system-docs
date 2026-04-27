@@ -8,6 +8,6 @@
   "cross_file_patterns": [],
   "$extensions": {
     "com.indmoney.provenance": "placeholder",
-    "com.indmoney.note": "Run `npm run audit` to populate. Until then, /files renders the empty state and usage chips render as 'not audited'."
+    "com.indmoney.note": "Run the plugin's `Audit file` command in any Figma file (with `npm run audit:serve` running locally) to populate. The audit-server writes lib/audit/<slug>.json + appends to lib/audit-files.json + rebuilds this file."
   }
 }
