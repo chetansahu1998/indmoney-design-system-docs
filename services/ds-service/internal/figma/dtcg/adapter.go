@@ -90,14 +90,15 @@ func Adapt(r *extractor.Result) (*Files, error) {
 		})
 	}
 	contract := map[string]any{
-		"brand":          r.Brand,
-		"sources":        sourceSummaries,
-		"frames":         r.CandidateCount(),
-		"pairs":          r.PairCount(),
-		"observations":   len(r.Observations),
-		"roles":          len(r.Roles),
-		"base_colors":    len(r.BasePalette),
-		"text_styles":    len(r.TextStyles),
+		"brand":         r.Brand,
+		"sources":       sourceSummaries,
+		"frames":        r.CandidateCount(),
+		"pairs":         r.PairCount(),
+		"observations":  len(r.Observations),
+		"roles":         len(r.Roles),
+		"glyph_colors":  len(r.GlyphColors),
+		"base_colors":   len(r.BasePalette),
+		"text_styles":   len(r.TextStyles),
 	}
 	contractBytes, _ := json.MarshalIndent(contract, "", "  ")
 
