@@ -89,10 +89,14 @@ export default function SpacingSection() {
               whileHover={{ backgroundColor: "var(--bg-surface-2)" }}
               style={{
                 display: "grid",
+                // Bar column is fluid (1fr) instead of fixed 200px — narrow
+                // viewports and wide ones both render the bar at the right
+                // proportion. The mobile layout adds the usage count next to
+                // px so the audit signal isn't lost (it used to be desktop-only).
                 gridTemplateColumns: isMobile
-                  ? "80px 1fr 48px"
-                  : (isFigmaScan ? "110px 1fr 60px 70px" : "110px 1fr 60px"),
-                alignItems: "center", gap: isMobile ? 10 : 16,
+                  ? (isFigmaScan ? "84px 1fr 56px 48px" : "84px 1fr 56px")
+                  : (isFigmaScan ? "120px 1fr 64px 76px" : "120px 1fr 64px"),
+                alignItems: "center", gap: isMobile ? 8 : 16,
                 padding: "10px 16px",
                 background: "var(--bg-surface)",
                 border: "1px solid var(--border)",
@@ -104,12 +108,15 @@ export default function SpacingSection() {
                 {s.token}
                 <UsageChip tokenPath={s.token} size="sm" />
               </span>
-              <div style={{ height: 16, display: "flex", alignItems: "center" }}>
+              <div style={{ height: 16, display: "flex", alignItems: "center", minWidth: 0 }}>
                 {s.px > 0 && (
                   <motion.div
                     initial={{ width: 0, opacity: 0 }}
                     whileInView={{
-                      width: Math.max(2, Math.round((s.px / MAX_BAR) * 200)),
+                      // Width as a percentage of the column so the bar
+                      // scales with viewport instead of being clamped
+                      // to a 200px ceiling that overflowed mobile.
+                      width: `${Math.max(2, Math.min(100, (s.px / MAX_BAR) * 100))}%`,
                       opacity: 0.55,
                     }}
                     viewport={{ once: true }}
@@ -121,12 +128,12 @@ export default function SpacingSection() {
               <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 600, color: "var(--text-2)", textAlign: "right" }}>
                 {s.px}px
               </span>
-              {!isMobile && isFigmaScan && (
+              {isFigmaScan && (
                 <span
                   title={`Used by ${s.usageCount ?? 0} frames`}
                   style={{
                     fontFamily: "var(--font-mono)",
-                    fontSize: 11,
+                    fontSize: isMobile ? 10 : 11,
                     color: "var(--text-3)",
                     textAlign: "right",
                   }}
