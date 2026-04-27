@@ -125,6 +125,15 @@ async function runAudit(scope) {
         cache_key: data.cache_key,
         audited_at: Date.now(),
     });
+    if (data.registered) {
+        send({
+            type: "info",
+            payload: `✓ ${fileName} registered in lib/audit-files.json — commit + push to deploy`,
+        });
+    }
+    else if (scope === "file" && data.persisted_path) {
+        send({ type: "info", payload: `✓ Updated ${data.persisted_path}` });
+    }
     const totals = aggregateTotals(data.result);
     send({ type: "audit-summary", payload: totals });
     // Surface the fix list in priority order; cap to 50 in the panel.

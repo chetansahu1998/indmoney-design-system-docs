@@ -24,6 +24,11 @@ type AuditResponse struct {
 	SchemaVersion string      `json:"schema_version"`
 	CacheKey      string      `json:"cache_key"` // file_key + ":" + ds_rev
 	Result        AuditResult `json:"result"`
+	// Registered is true when this audit-server run added (or mutated)
+	// an entry in lib/audit-files.json. The plugin uses it to nudge
+	// the designer ("This file is now tracked — run `git diff` to ship.").
+	Registered     bool   `json:"registered"`
+	PersistedPath  string `json:"persisted_path,omitempty"`
 }
 
 // HandlerConfig wires the audit endpoint's runtime knobs without coupling
@@ -77,20 +82,79 @@ func HandleAudit(cfg HandlerConfig) http.HandlerFunc {
 		opts := Options{
 			FileKey:         req.FileKey,
 			FileName:        req.FileName,
-			FileSlug:        req.FileKey,
+			FileSlug:        slugifyForFileKey(req.FileKey, req.FileName),
 			Brand:           brand,
 			DesignSystemRev: dsRev,
 		}
 		result := Audit(req.NodeTree, tokens, candidates, opts)
+		hashes := CollectHashes(req.NodeTree)
 
 		resp := AuditResponse{
 			SchemaVersion: SchemaVersion,
 			CacheKey:      req.FileKey + ":" + dsRev,
 			Result:        result,
 		}
+
+		// Persist when scope is "file" — a partial-tree audit (selection
+		// or page) shouldn't overwrite the canonical per-file artifact.
+		if req.Scope == "file" {
+			persistedPath, registered, err := PersistResult(
+				filepath.Join(cfg.RepoRoot, "lib/audit"),
+				filepath.Join(cfg.RepoRoot, "lib/audit-files.json"),
+				dsRev,
+				result,
+				hashes,
+			)
+			if err != nil {
+				// Persist failures shouldn't block the plugin — return the
+				// audit result and surface the error in $extensions.
+				if resp.Result.Extensions == nil {
+					resp.Result.Extensions = map[string]any{}
+				}
+				resp.Result.Extensions["com.indmoney.persistError"] = err.Error()
+			}
+			resp.PersistedPath = persistedPath
+			resp.Registered = registered
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}
+}
+
+// slugifyForFileKey turns the file_key + name into the on-disk slug used by
+// lib/audit/<slug>.json. Prefers a name-based slug because it's human-readable;
+// falls back to the file_key if name is empty.
+func slugifyForFileKey(fileKey, name string) string {
+	src := name
+	if src == "" {
+		src = fileKey
+	}
+	var b []rune
+	prevDash := false
+	for _, r := range src {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b = append(b, r)
+			prevDash = false
+		case r >= 'A' && r <= 'Z':
+			b = append(b, r+('a'-'A'))
+			prevDash = false
+		default:
+			if !prevDash && len(b) > 0 {
+				b = append(b, '-')
+				prevDash = true
+			}
+		}
+	}
+	out := string(b)
+	for len(out) > 0 && out[len(out)-1] == '-' {
+		out = out[:len(out)-1]
+	}
+	if out == "" {
+		return fileKey
+	}
+	return out
 }
 
 // designSystemRevFromRepo computes sha256(8) of the published icons manifest.

@@ -1,12 +1,4 @@
 {
-  "$description": "Curated list of Figma files the audit pipeline runs against. Edit this file then run `npm run audit`. Each entry can optionally pin specific node ids as final pages when frame names don't match the screen-keyword heuristic.",
-  "files": [
-    {
-      "file_key": "REPLACE_WITH_FIGMA_FILE_KEY",
-      "name": "INDstocks V4 (example)",
-      "brand": "indmoney",
-      "owner": "design-team",
-      "final_pages": []
-    }
-  ]
+  "$description": "Auto-registered by the Figma plugin. Each entry comes from a designer running an audit on that file. Edit `final_pages` here to override LooksLikeScreen detection. The batch CLI (`npm run audit`) walks this same list — keep it sorted alphabetically.",
+  "files": []
 }
