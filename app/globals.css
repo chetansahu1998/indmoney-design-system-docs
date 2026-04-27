@@ -43,6 +43,14 @@
     --accent:        #4d93fc;
     --border:        #2e2e2e;
     --border-strong: #404040;
+    /* Status semantic colors. Used by audit chips, drift highlights, fix
+       priority pills. Defined here (not in lib/tokens) because they're
+       UI-chrome concerns, not Glyph DS tokens — Glyph owns product color,
+       this owns docs-site signal. */
+    --success:       #34c759;
+    --warning:       #ffb13b;
+    --danger:        #ff6b6b;
+    --info:          var(--accent);
 
     /* ── Layout ── */
     --sidebar-w:  296px;
@@ -64,6 +72,12 @@
     --accent:        #0f61ff;
     --border:        #eaecf0;
     --border-strong: #d0d4dd;
+    /* Light-theme status colors — slightly higher saturation since the
+       white background washes them out otherwise. */
+    --success:       #2aa84a;
+    --warning:       #d97600;
+    --danger:        #e0354c;
+    --info:          var(--accent);
   }
 }
 

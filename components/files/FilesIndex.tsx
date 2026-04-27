@@ -195,7 +195,7 @@ function Stat({
 }) {
   const color =
     tone === "good" ? "var(--accent)"
-      : tone === "warning" ? "var(--danger, #ff6060)"
+      : tone === "warning" ? "var(--danger)"
       : "var(--text-2)";
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>

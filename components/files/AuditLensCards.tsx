@@ -72,7 +72,7 @@ function CoverageRow({
     pct === null ? "var(--text-3)"
       : pct >= 90 ? "var(--accent)"
       : pct >= 70 ? "color-mix(in srgb, var(--accent) 60%, var(--warn, #f6a738))"
-      : "var(--danger, #ff6060)";
+      : "var(--danger)";
   return (
     <motion.div
       variants={itemFadeUp}
@@ -130,7 +130,7 @@ function ComponentsCard({ screen }: { screen: AuditScreen }) {
           label="Custom"
           count={s.custom}
           total={total}
-          color="var(--danger, #ff6060)"
+          color="var(--danger)"
           tone="warning"
         />
       </div>
@@ -156,7 +156,7 @@ function CompStat({
     <motion.div variants={itemFadeUp} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
         <span style={{ fontSize: 11, color: "var(--text-3)" }}>{label}</span>
-        <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: tone === "warning" && count > 0 ? "var(--danger, #ff6060)" : "var(--text-2)" }}>
+        <span style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: tone === "warning" && count > 0 ? "var(--danger)" : "var(--text-2)" }}>
           {count}
         </span>
       </div>
@@ -244,7 +244,7 @@ function FixRow({ fix }: { fix: FixCandidate }) {
 function PriorityPill({ priority }: { priority: "P1" | "P2" | "P3" }) {
   const styles =
     priority === "P1"
-      ? { bg: "var(--danger, #ff6060)", fg: "#fff" }
+      ? { bg: "var(--danger)", fg: "#fff" }
       : priority === "P2"
       ? { bg: "var(--warn, #f6a738)", fg: "#1a1a1a" }
       : { bg: "var(--bg-surface-2)", fg: "var(--text-3)" };
