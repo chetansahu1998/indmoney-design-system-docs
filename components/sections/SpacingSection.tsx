@@ -5,6 +5,7 @@ import SectionHeading from "@/components/ui/SectionHeading";
 import DSTable from "@/components/ui/DSTable";
 import { fadeUp, stagger, itemFadeUp } from "@/lib/motion-variants";
 import { useIsMobile } from "@/lib/use-mobile";
+import UsageChip from "@/components/audit/UsageChip";
 
 export default function SpacingSection() {
   const isMobile = useIsMobile();
@@ -99,7 +100,10 @@ export default function SpacingSection() {
                 transition: "background 0.15s",
               }}
             >
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{s.token}</span>
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                {s.token}
+                <UsageChip tokenPath={s.token} size="sm" />
+              </span>
               <div style={{ height: 16, display: "flex", alignItems: "center" }}>
                 {s.px > 0 && (
                   <motion.div

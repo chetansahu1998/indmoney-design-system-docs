@@ -10,6 +10,7 @@ import {
   buildSemanticPairs,
   getExtractionMeta,
 } from "@/lib/tokens/loader";
+import UsageChip from "@/components/audit/UsageChip";
 
 // Source data — resolved at module load. The lib/tokens/loader walks the
 // extractor's DTCG JSON; values are derived from real Figma observations.
@@ -171,13 +172,26 @@ function PairCard({
             <div>
               <div
                 style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: "var(--text-1)",
-                  letterSpacing: "-0.1px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 6,
                 }}
               >
-                {leaf}
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "var(--text-1)",
+                    letterSpacing: "-0.1px",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {leaf}
+                </div>
+                <UsageChip tokenPath={path} size="sm" />
               </div>
               <div
                 style={{

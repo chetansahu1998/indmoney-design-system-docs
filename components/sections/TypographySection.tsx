@@ -5,6 +5,7 @@ import SectionHeading from "@/components/ui/SectionHeading";
 import { fadeUp, stagger, itemFadeUp } from "@/lib/motion-variants";
 import { useIsMobile } from "@/lib/use-mobile";
 import { loadTypography, typographyByCategory, type DereferencedTypography } from "@/lib/tokens/typography";
+import UsageChip from "@/components/audit/UsageChip";
 
 const CATEGORY_ORDER = ["heading", "subtitle", "body", "caption", "overline", "small", "other"];
 const CATEGORY_LABEL: Record<string, string> = {
@@ -101,9 +102,14 @@ function TypographyRow({ token, sample }: { token: DereferencedTypography; sampl
             fontSize: 11,
             fontFamily: "var(--font-mono)",
             color: "var(--text-3)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexWrap: "wrap",
           }}
         >
-          {token.slug} · {fontMetricsLabel(token)}
+          <span>{token.slug} · {fontMetricsLabel(token)}</span>
+          <UsageChip tokenPath={`text.${token.slug}`} size="sm" />
         </div>
       </div>
 
