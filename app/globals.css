@@ -60,8 +60,14 @@
     --elev-shadow-3: 0 32px 80px rgba(0, 0, 0, 0.45);
 
     /* ── Layout ── */
-    --sidebar-w:  296px;
-    --header-h:   72px;
+    /* --density-scale is set imperatively by lib/ui-store on hydration:
+       compact 0.875, default 1, comfortable 1.125. The layout vars below
+       multiply through it so the Header and Sidebar (and any padding
+       defined as a multiple of --density-pad) shrink/grow together. */
+    --density-scale: 1;
+    --density-pad:  calc(8px * var(--density-scale));
+    --sidebar-w:    calc(296px * var(--density-scale));
+    --header-h:     calc(72px * var(--density-scale));
 
     /* ── Fonts ── */
     --font-sans: "Noontree", -apple-system, BlinkMacSystemFont, sans-serif;
