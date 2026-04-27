@@ -36,8 +36,10 @@ import (
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/repo"
 )
 
-// Categories that classify as `kind=component` per lib/icons/manifest.ts.
-var componentCategories = map[string]bool{"ui": true}
+// Legacy fallback for manifests that lack the kind field on each entry.
+// New manifests carry `kind` directly; this set is only consulted when the
+// kind field is absent.
+var legacyComponentCategories = map[string]bool{"ui": true}
 
 type Variant struct {
 	Name       string              `json:"name"`
@@ -51,6 +53,7 @@ type Variant struct {
 type IconEntry struct {
 	Slug       string    `json:"slug"`
 	Name       string    `json:"name"`
+	Kind       string    `json:"kind,omitempty"`
 	Category   string    `json:"category"`
 	Source     string    `json:"source,omitempty"`
 	SetID      string    `json:"set_id"`
@@ -122,7 +125,7 @@ func main() {
 	// Filter targets
 	var targets []int
 	for i, e := range m.Icons {
-		if !isKind(e.Category, *kind) {
+		if !entryMatchesKind(e, *kind) {
 			continue
 		}
 		targets = append(targets, i)
@@ -287,10 +290,14 @@ func main() {
 	log.Info("DONE", "manifest", *manifest, "variants", len(pending), "sets_with_variants", len(byEntry))
 }
 
-func isKind(category, kind string) bool {
+func entryMatchesKind(e IconEntry, kind string) bool {
+	if e.Kind != "" {
+		return e.Kind == kind
+	}
+	// Legacy manifest without a kind field — fall back to category.
 	switch kind {
 	case "component":
-		return componentCategories[category]
+		return legacyComponentCategories[e.Category]
 	}
 	return false
 }

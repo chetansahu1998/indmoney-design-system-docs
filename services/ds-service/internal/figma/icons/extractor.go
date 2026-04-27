@@ -28,7 +28,8 @@ import (
 type Icon struct {
 	Slug      string `json:"slug"`       // "download-cloud"
 	Name      string `json:"name"`       // "Download Cloud"
-	Category  string `json:"category"`   // "2D" | "bank" | "merchant" | "stock" | "ui"
+	Kind      string `json:"kind"`       // "icon" | "component" | "logo" | "illustration"
+	Category  string `json:"category"`   // For kind=component: parent SECTION name. For others: source group ("2D", "bank", etc.).
 	Source    string `json:"source"`     // "icons-fresh" | "atoms" — which page it came from
 	Sets      string `json:"set_id"`     // Figma component_set node id
 	VariantID string `json:"variant_id"` // The variant id we exported
@@ -70,6 +71,7 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 	type setEntry struct {
 		setID    string
 		setName  string
+		kind     string // "icon" | "component" | "logo" | "illustration"
 		category string
 		source   string
 		slug     string
@@ -98,9 +100,16 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 			continue
 		}
 
-		// Walk children: COMPONENT_SETs at top-level OR inside SECTIONs
-		var collectSets func(node map[string]any)
-		collectSets = func(node map[string]any) {
+		// Walk children: COMPONENT_SETs at top-level OR nested inside SECTIONs.
+		// We thread the enclosing SECTION name down: any COMPONENT_SET reached
+		// while inside a SECTION is treated as a component, with the SECTION
+		// name as its category. Top-level (no SECTION ancestor) sets are then
+		// classified by name heuristics — bank, merchant, masthead, sub-brand
+		// logo, or fall through to a generic "ui" bucket.
+		//
+		// kind is decided here, in one place, so the manifest carries it.
+		var collectSets func(node map[string]any, sectionName string)
+		collectSets = func(node map[string]any, sectionName string) {
 			if node == nil {
 				return
 			}
@@ -113,29 +122,61 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 				}
 				category, display := splitIconName(setName)
 				if page.NamePrefix != "" && strings.HasPrefix(setName, page.NamePrefix) {
-					// Use the rest of the name after prefix as display
 					rest := strings.TrimPrefix(setName, page.NamePrefix)
 					category, display = splitIconName(rest)
 				}
-				if category == "uncategorized" || category == strings.ToLower(category) {
-					// Inherit from source if no explicit category
-					if page.Source == "atoms" {
-						// Atoms page items default to "ui" except names matching banks
-						if isBankLike(setName) {
-							category = "bank"
-						} else if isMerchantLike(setName) {
-							category = "merchant"
-						} else {
-							category = "ui"
-						}
+
+				// Decide kind + category. Single source of truth, priority-ordered:
+				//
+				//   1. Inside a SECTION → component (SECTION name is the category).
+				//   2. Category prefix from the set name says it's a logo/illustration.
+				//   3. Name heuristics catch banks / merchants / mastheads / sub-brand wordmarks.
+				//   4. icons-fresh source with Icon/Filled Icons category → icon.
+				//   5. Default falls through to "icon" — the safest bucket.
+				kind := ""
+				if sectionName != "" {
+					kind = "component"
+					category = sectionName
+					display = setName
+				} else if isLogoNameLike(setName, category) {
+					kind = "logo"
+					if category == "uncategorized" || category == "" {
+						category = "Logo"
+					}
+				} else if isBankLike(setName) {
+					kind = "logo"
+					category = "bank"
+				} else if isMerchantLike(setName) {
+					kind = "logo"
+					category = "merchant"
+				} else if isMastheadLike(setName) {
+					kind = "illustration"
+					category = "Masthead"
+				} else if isIllustrationCategory(category) {
+					kind = "illustration"
+				} else if isIconCategory(category) {
+					kind = "icon"
+				} else if page.Source == "icons-fresh" {
+					// Icons Fresh page items without a recognized category
+					// (no Logo/2D/3D/Icon prefix) — true monochrome icons.
+					kind = "icon"
+				} else {
+					// Atoms top-level item with no signal — most likely a
+					// branded / partner asset. Bias to logo so colors are
+					// preserved; can re-classify later if it surfaces wrong.
+					kind = "logo"
+					if category == "uncategorized" || category == "" {
+						category = "Logo"
 					}
 				}
+
 				if display == "" {
 					return
 				}
 				sets = append(sets, setEntry{
 					setID:    setID,
 					setName:  setName,
+					kind:     kind,
 					category: category,
 					source:   page.Source,
 					slug:     slugify(display),
@@ -143,11 +184,21 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 				})
 				return
 			}
-			if t == "SECTION" || t == "FRAME" || t == "GROUP" {
+			if t == "SECTION" {
+				secName, _ := node["name"].(string)
 				children, _ := node["children"].([]any)
 				for _, ch := range children {
 					if m, ok := ch.(map[string]any); ok {
-						collectSets(m)
+						collectSets(m, secName)
+					}
+				}
+				return
+			}
+			if t == "FRAME" || t == "GROUP" {
+				children, _ := node["children"].([]any)
+				for _, ch := range children {
+					if m, ok := ch.(map[string]any); ok {
+						collectSets(m, sectionName)
 					}
 				}
 			}
@@ -155,7 +206,7 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 		topChildren, _ := doc["children"].([]any)
 		for _, ch := range topChildren {
 			if m, ok := ch.(map[string]any); ok {
-				collectSets(m)
+				collectSets(m, "")
 			}
 		}
 		log.Info("page enumerated", "source", page.Source, "sets_so_far", len(sets))
@@ -281,7 +332,7 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 		}
 		wg.Add(1)
 		sema <- struct{}{}
-		preserve := preserveColorsForAsset(sets[i].category, sets[i].display)
+		preserve := preserveColorsForKind(sets[i].kind, sets[i].display)
 		go func(i int, url string, preserve bool) {
 			defer wg.Done()
 			defer func() { <-sema }()
@@ -318,6 +369,7 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 		icons = append(icons, Icon{
 			Slug:      s.slug,
 			Name:      s.display,
+			Kind:      s.kind,
 			Category:  s.category,
 			Source:    s.source,
 			Sets:      s.setID,
@@ -489,23 +541,60 @@ func downloadAndWrite(ctx context.Context, url, dst string, preserveColors bool)
 	return os.WriteFile(dst, svg, 0o644)
 }
 
-// preserveColorsForAsset returns true when the SVG should keep its original
-// Figma fills (illustrations, logos, multi-color components, and the "3D ·"
-// named entries that live inside the Icon category but are full color art).
-// Returns false for true monochrome system icons that benefit from
-// currentColor recoloring via CSS.
-func preserveColorsForAsset(category, displayName string) bool {
-	switch category {
-	case "Logo", "Logos", "bank", "nvidia", "merchant",
-		"2D", "3D", "Profilecard", "Wallet", "Cold",
-		"ui":
+// preserveColorsForKind decides whether an asset's SVG should keep its
+// native Figma fills. The kind classification lives in one place — the
+// extractor's collectSets — and this function reads from it.
+func preserveColorsForKind(kind, displayName string) bool {
+	switch kind {
+	case "component", "logo", "illustration":
 		return true
 	}
-	// Glyph stuffs "3D · Car - Family", "3D · Cash - New", etc. into the Icon
-	// category. They're 24×24 but the source has real fills — preserve them.
+	// "icon" kind — but Glyph stuffs "3D · Car - Family" into the Icon
+	// category, and those have real fills. Preserve them too.
 	lower := strings.ToLower(displayName)
 	if strings.HasPrefix(lower, "3d ") || strings.HasPrefix(lower, "3d·") || strings.HasPrefix(lower, "3d ·") {
 		return true
+	}
+	return false
+}
+
+// isIconCategory matches names produced by Figma styles that actually
+// contain monochrome system icons (Glyph publishes them under "Icon" or
+// "Filled Icons" inside the Icons Fresh page).
+func isIconCategory(category string) bool {
+	switch category {
+	case "Icon", "Filled Icons":
+		return true
+	}
+	return false
+}
+
+// isIllustrationCategory captures legacy categories that came from set-name
+// prefixes ("2D · …", "3D · …", "Profilecard", "Wallet", "Cold").
+func isIllustrationCategory(category string) bool {
+	switch category {
+	case "2D", "3D", "Profilecard", "Wallet", "Cold":
+		return true
+	}
+	return false
+}
+
+// isLogoNameLike picks up sub-brand and partner-logo COMPONENT_SETs — names
+// like "Icons/Logo/INDpay", "Visa", "Diners", "UPI" — that aren't covered
+// by the bank or merchant heuristics but are clearly logos.
+func isLogoNameLike(setName, category string) bool {
+	if category == "Logo" || category == "Logos" {
+		return true
+	}
+	if strings.HasPrefix(setName, "Icons/Logo/") || strings.HasPrefix(strings.ToLower(setName), "icons/logo/") {
+		return true
+	}
+	for _, kw := range []string{"INDmoney", "INDstocks", "INDglobal", "INDcredit", "INDpay", "INDwheels", "INDprotect",
+		"Visa", "Mastercard", "Rupay", "Amex", "American express", "Diners", "Discover", "Apple pay", "Gpay",
+		"UPI", "NSE", "BSE", "Bharat Connect", "Bharat connect"} {
+		if strings.EqualFold(setName, kw) {
+			return true
+		}
 	}
 	return false
 }
@@ -572,6 +661,19 @@ func isBankLike(name string) bool {
 func isMerchantLike(name string) bool {
 	lower := strings.ToLower(name)
 	for _, kw := range []string{"phonepe", "google pay", "gpay", "paytm", "amazon pay", "bhim", "upi", "razorpay", "cred", "mobikwik", "freecharge"} {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// isMastheadLike detects large page-template COMPONENT_SETs that aren't
+// reusable components — Glyph's "Mini App", "Dashboard", "Cold Masthead",
+// "Insta Masthead". They're heavy raster mocks that belong with illustrations.
+func isMastheadLike(name string) bool {
+	lower := strings.ToLower(name)
+	for _, kw := range []string{"mini app", "dashboard", "masthead", "ind community", "iso "} {
 		if strings.Contains(lower, kw) {
 			return true
 		}

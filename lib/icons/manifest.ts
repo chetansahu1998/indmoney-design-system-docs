@@ -24,6 +24,8 @@ export interface VariantEntry {
 export interface IconEntry {
   slug: string;
   name: string;
+  /** Populated by the Go extractor; absent on legacy manifests. */
+  kind?: AssetKind;
   category: IconCategory;
   source?: string; // "atoms" | "icons-fresh" | etc — Figma page of origin
   set_id: string;
@@ -38,9 +40,14 @@ export interface IconEntry {
 /** What an entry actually represents — derived from category + dimensions. */
 export type AssetKind = "icon" | "component" | "illustration" | "logo";
 
-const LOGO_CATEGORIES = new Set(["Logo", "Logos", "bank", "nvidia"]);
-const ILLUSTRATION_CATEGORIES = new Set(["2D", "3D", "Profilecard", "Wallet", "Cold"]);
-const ICON_CATEGORIES = new Set(["Icon", "Filled Icons"]);
+// Legacy classifiers — used only when an entry lacks `kind` (manifests
+// produced before the Go extractor learned to emit it). New extractions are
+// fully data-driven and don't read these sets.
+const LEGACY_LOGO_CATEGORIES = new Set(["Logo", "Logos", "bank", "nvidia", "merchant"]);
+const LEGACY_ILLUSTRATION_CATEGORIES = new Set([
+  "2D", "3D", "Profilecard", "Wallet", "Cold", "Masthead",
+]);
+const LEGACY_ICON_CATEGORIES = new Set(["Icon", "Filled Icons"]);
 
 /**
  * Classify a manifest entry. The Atoms-page extractor walks every
@@ -56,26 +63,25 @@ const ICON_CATEGORIES = new Set(["Icon", "Filled Icons"]);
  *   - Tiny squares ≤32×32 default to icon, larger to illustration.
  */
 export function classifyAsset(entry: IconEntry): AssetKind {
-  if (LOGO_CATEGORIES.has(entry.category)) return "logo";
-  if (ILLUSTRATION_CATEGORIES.has(entry.category)) return "illustration";
+  // The extractor stamps `kind` directly. New manifests use this branch only.
+  if (entry.kind) return entry.kind;
 
-  // Glyph's Icon category is mixed: monochrome icons + named "3D · …" art.
-  // Route the latter to illustrations so colors are preserved + categorized correctly.
-  if (ICON_CATEGORIES.has(entry.category)) {
+  // ── Legacy fallback: classify on the fly for manifests produced before
+  // the extractor was kind-aware. Will be retired once a fresh sync runs.
+  if (LEGACY_LOGO_CATEGORIES.has(entry.category)) return "logo";
+  if (LEGACY_ILLUSTRATION_CATEGORIES.has(entry.category)) return "illustration";
+  if (LEGACY_ICON_CATEGORIES.has(entry.category)) {
     const lower = entry.name.toLowerCase();
     if (lower.startsWith("3d ") || lower.startsWith("3d·") || lower.startsWith("3d ·")) {
       return "illustration";
     }
     return "icon";
   }
-
   const isWide = entry.width >= 80 && entry.height >= 28;
   const isLandscape = entry.width / Math.max(entry.height, 1) > 2;
   const isTinySquare = entry.width <= 32 && entry.height <= 32;
-
   if (entry.category === "ui") {
-    if (isWide || isLandscape) return "component";
-    return "icon";
+    return isWide || isLandscape ? "component" : "icon";
   }
   return isTinySquare ? "icon" : "illustration";
 }
