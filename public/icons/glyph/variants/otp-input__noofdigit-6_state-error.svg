@@ -1,0 +1,22 @@
+<svg width="343" height="82" viewBox="0 0 343 82" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="1" y="1" width="45.1667" height="52" rx="7" fill="white"/>
+<rect x="1" y="1" width="45.1667" height="52" rx="7" stroke="#DD2624" stroke-width="2"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="19.0286" y="32.6953">2</tspan></text>
+<rect x="60.1665" y="1" width="45.1667" height="52" rx="7" fill="white"/>
+<rect x="60.1665" y="1" width="45.1667" height="52" rx="7" stroke="#DD2624" stroke-width="2"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="78.0467" y="32.6953">4</tspan></text>
+<rect x="119.333" y="1" width="45.1667" height="52" rx="7" fill="white"/>
+<rect x="119.333" y="1" width="45.1667" height="52" rx="7" stroke="#DD2624" stroke-width="2"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="137.589" y="32.6953">7</tspan></text>
+<rect x="178.5" y="1" width="45.1667" height="52" rx="7" fill="white"/>
+<rect x="178.5" y="1" width="45.1667" height="52" rx="7" stroke="#DD2624" stroke-width="2"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="196.38" y="32.6953">4</tspan></text>
+<rect x="237.667" y="1" width="45.1667" height="52" rx="7" fill="white"/>
+<rect x="237.667" y="1" width="45.1667" height="52" rx="7" stroke="#DD2624" stroke-width="2"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="255.695" y="32.6953">2</tspan></text>
+<rect x="296.833" y="1" width="45.1667" height="52" rx="7" fill="white"/>
+<rect x="296.833" y="1" width="45.1667" height="52" rx="7" stroke="#DD2624" stroke-width="2"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="314.597" y="32.6953">3</tspan></text>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M8.00016 67.3333C4.32016 67.3333 1.3335 70.32 1.3335 74C1.3335 77.68 4.32016 80.6666 8.00016 80.6666C11.6802 80.6666 14.6668 77.68 14.6668 74C14.6668 70.32 11.6802 67.3333 8.00016 67.3333ZM7.3335 77.3333V76H8.66683V77.3333H7.3335ZM7.3335 70.6666V74.6666H8.66683V70.6666H7.3335Z" fill="#DD2625"/>
+<text fill="#DD2624" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="20.2969" y="78.2891">Please enter a valid 10-digit mobile number</tspan></text>
+</svg>

@@ -1,0 +1,30 @@
+<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_1661_1762)">
+<g filter="url(#filter0_d_1661_1762)">
+<g clip-path="url(#clip1_1661_1762)">
+<path d="M0 10C0 4.47715 4.47715 0 10 0C15.5228 0 20 4.47715 20 10C20 15.5228 15.5228 20 10 20C4.47715 20 0 15.5228 0 10Z" fill="white"/>
+<path d="M8.32491 6.73261V3.67578H5.92578V10.9055C5.92578 9.12573 6.89181 7.56393 8.32491 6.73261Z" fill="#21317D"/>
+<path d="M11.0275 6.09619V8.51404C12.2126 8.66202 13.1318 9.67497 13.1318 10.9025C13.1318 12.2372 12.0575 13.3156 10.7285 13.3156C9.40362 13.3156 8.32688 12.2372 8.32688 10.9025H8.32422V15.078C9.0322 15.4873 9.8536 15.7267 10.7285 15.7267C13.3819 15.7267 15.532 13.5693 15.532 10.9053C15.532 8.34622 13.5414 6.24998 11.0275 6.09619Z" fill="#21317D"/>
+<path d="M8.32491 6.73251C6.89181 7.56383 5.92578 9.12563 5.92578 10.9053V15.3593V16.3248H8.32491V15.6936V15.0777V10.9025H8.32757C8.32757 9.67497 9.24415 8.66227 10.4296 8.51404V6.09619C9.66613 6.14182 8.94882 6.3686 8.32491 6.73251Z" fill="#ED1C24"/>
+</g>
+</g>
+</g>
+<defs>
+<filter id="filter0_d_1661_1762" x="-6" y="-5" width="32" height="32" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="1"/>
+<feGaussianBlur stdDeviation="3"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.08 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1661_1762"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1661_1762" result="shape"/>
+</filter>
+<clipPath id="clip0_1661_1762">
+<rect width="20" height="20" fill="white"/>
+</clipPath>
+<clipPath id="clip1_1661_1762">
+<path d="M0 10C0 4.47715 4.47715 0 10 0C15.5228 0 20 4.47715 20 10C20 15.5228 15.5228 20 10 20C4.47715 20 0 15.5228 0 10Z" fill="white"/>
+</clipPath>
+</defs>
+</svg>

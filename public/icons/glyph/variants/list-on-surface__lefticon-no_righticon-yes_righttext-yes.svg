@@ -1,0 +1,15 @@
+<svg width="343" height="67" viewBox="0 0 343 67" fill="none" xmlns="http://www.w3.org/2000/svg">
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="0" y="11.7891">Overline </tspan></text>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="0" y="37.8394">Heading</tspan></text>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="0" y="63.5039">Subtext</tspan></text>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="266.863" y="27.3394">Text 1</tspan></text>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="273.801" y="51.2891">Text 2</tspan></text>
+<g clip-path="url(#clip0_835_20316)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M327.355 29.3389L332.069 33.5054L327.355 37.6718C326.882 38.0906 326.882 38.7671 327.355 39.1859C327.829 39.6047 328.595 39.6047 329.068 39.1859L334.645 34.257C335.118 33.8383 335.118 33.1617 334.645 32.743L329.068 27.8141C328.595 27.3953 327.829 27.3953 327.355 27.8141C326.894 28.2329 326.882 28.9201 327.355 29.3389Z" fill="#88898A"/>
+</g>
+<defs>
+<clipPath id="clip0_835_20316">
+<rect width="24" height="24" fill="white" transform="translate(319 21.5)"/>
+</clipPath>
+</defs>
+</svg>

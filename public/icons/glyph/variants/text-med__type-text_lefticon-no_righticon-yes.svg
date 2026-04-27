@@ -1,0 +1,16 @@
+<svg width="73" height="19" viewBox="0 0 73 19" fill="none" xmlns="http://www.w3.org/2000/svg">
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="0.483887" y="14.8394">Button</tspan></text>
+<g clip-path="url(#clip0_1434_22892)">
+<g clip-path="url(#clip1_1434_22892)">
+<path d="M64.9987 6.83333V12.1667M62.332 9.49999H67.6654M71.6654 9.49999C71.6654 13.1819 68.6806 16.1667 64.9987 16.1667C61.3168 16.1667 58.332 13.1819 58.332 9.49999C58.332 5.8181 61.3168 2.83333 64.9987 2.83333C68.6806 2.83333 71.6654 5.8181 71.6654 9.49999Z" stroke="#FFFFFE" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+<defs>
+<clipPath id="clip0_1434_22892">
+<rect width="16" height="16" fill="white" transform="translate(57 1.5)"/>
+</clipPath>
+<clipPath id="clip1_1434_22892">
+<rect width="16" height="16" fill="white" transform="translate(57 1.5)"/>
+</clipPath>
+</defs>
+</svg>

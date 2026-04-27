@@ -1,0 +1,12 @@
+<svg width="102" height="28" viewBox="0 0 102 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="102" height="28" rx="8" fill="#2D374F"/>
+<text fill="#FFFFFB" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="16.4805" y="18.9834">Selected</tspan></text>
+<g clip-path="url(#clip0_1126_11673)">
+<path d="M88 11.5L84 16.5L80 11.5H88Z" fill="#FFFFFB"/>
+</g>
+<defs>
+<clipPath id="clip0_1126_11673">
+<rect width="12" height="12" fill="white" transform="translate(78 8)"/>
+</clipPath>
+</defs>
+</svg>

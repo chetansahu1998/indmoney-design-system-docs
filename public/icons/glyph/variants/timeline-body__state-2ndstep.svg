@@ -1,0 +1,25 @@
+<svg width="222" height="135" viewBox="0 0 222 135" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_2740_34119)">
+<g clip-path="url(#clip1_2740_34119)">
+<circle cx="8.00016" cy="8.00001" r="7.66667" fill="#1FD8AD"/>
+<path d="M11.5554 5.33331L6.66656 10.2222L4.44434 7.99998" stroke="#223464" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+<path d="M8 16L8 47" stroke="#1FD8AD" stroke-dasharray="2 2"/>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="28" y="14.8394">F&#38;O Activated</tspan></text>
+<rect x="0.5" y="47.5" width="15" height="15" rx="7.5" stroke="#1FD8AD"/>
+<circle cx="8" cy="55" r="4" fill="#1FD8AD"/>
+<path d="M8 63L8 116" stroke="#C0C2C6" stroke-dasharray="2 2"/>
+<text fill="#1FD8AD" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="28" y="62.6953">Add money </tspan></text>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="28" y="84.5039">Activate your wallet to trade</tspan></text>
+<rect x="0.5" y="116.5" width="15" height="15" rx="7.5" stroke="#C0C2C6"/>
+<text fill="#C0C2C6" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="28" y="130.861">Place your 1st Trade</tspan></text>
+<defs>
+<clipPath id="clip0_2740_34119">
+<rect width="16" height="16" fill="white"/>
+</clipPath>
+<clipPath id="clip1_2740_34119">
+<rect width="16" height="16" fill="white"/>
+</clipPath>
+</defs>
+</svg>

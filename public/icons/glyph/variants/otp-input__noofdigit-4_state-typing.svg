@@ -1,0 +1,13 @@
+<svg width="343" height="54" viewBox="0 0 343 54" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="0.5" y="0.5" width="75.75" height="53" rx="7.5" fill="white"/>
+<rect x="0.5" y="0.5" width="75.75" height="53" rx="7.5" stroke="#5E6063"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="33.8203" y="32.6953">2</tspan></text>
+<rect x="89.25" y="0.5" width="75.75" height="53" rx="7.5" fill="white"/>
+<rect x="89.25" y="0.5" width="75.75" height="53" rx="7.5" stroke="#5E6063"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="122.422" y="32.6953">4</tspan></text>
+<rect x="178.5" y="1" width="74.75" height="52" rx="7" fill="white"/>
+<rect x="178.5" y="1" width="74.75" height="52" rx="7" stroke="#089958" stroke-width="2"/>
+<text fill="#089958" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="211.547" y="32.6953">7</tspan></text>
+<rect x="266.75" y="0.5" width="75.75" height="53" rx="7.5" fill="white"/>
+<rect x="266.75" y="0.5" width="75.75" height="53" rx="7.5" stroke="#CECECE"/>
+</svg>

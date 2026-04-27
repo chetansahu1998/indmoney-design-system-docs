@@ -1,0 +1,14 @@
+<svg width="343" height="50" viewBox="0 0 343 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="0" y="12.7891">Payable amount</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="0" y="43.6191">&#x20b9;2,84,334</tspan></text>
+<rect x="213" width="130" height="50" rx="25" fill="#089958"/>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="229.188" y="30.6953">Pay Now</tspan></text>
+<g clip-path="url(#clip0_1625_46662)">
+<path d="M315 21V29M311 25H319M325 25C325 30.5228 320.523 35 315 35C309.477 35 305 30.5228 305 25C305 19.4772 309.477 15 315 15C320.523 15 325 19.4772 325 25Z" stroke="#FFFFFE" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<defs>
+<clipPath id="clip0_1625_46662">
+<rect width="24" height="24" fill="white" transform="translate(303 13)"/>
+</clipPath>
+</defs>
+</svg>

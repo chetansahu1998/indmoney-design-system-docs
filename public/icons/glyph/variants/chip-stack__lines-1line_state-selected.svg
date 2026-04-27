@@ -1,0 +1,10 @@
+<svg width="343" height="32" viewBox="0 0 343 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="93" height="32" rx="16" fill="#089959"/>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="16.2988" y="20.9834">Chip One</tspan></text>
+<rect x="101" width="89" height="32" rx="16" fill="#F5F7F9"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="117.333" y="21.0039">Chip Two</tspan></text>
+<rect x="198" width="61" height="32" rx="16" fill="#F5F7F9"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="214.484" y="20.1465">Chip</tspan></text>
+<rect x="267" width="61" height="32" rx="16" fill="#F5F7F9"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="283.484" y="20.1465">Chip</tspan></text>
+</svg>

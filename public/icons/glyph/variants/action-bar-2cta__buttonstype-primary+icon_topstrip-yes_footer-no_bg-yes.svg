@@ -1,0 +1,25 @@
+<svg width="375" height="126" viewBox="0 0 375 126" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M0 0H375V106C375 117.046 366.046 126 355 126H20C8.95431 126 0 117.046 0 106V0Z" fill="white"/>
+<rect x="18.5013" y="14.5" width="15" height="15" rx="2.5" fill="#089959" stroke="#089959" stroke-width="1.66667"/>
+<path d="M22.668 22L24.8733 24.2054C25.0361 24.3681 25.2999 24.3681 25.4626 24.2054L30.168 19.5" stroke="#FFFFFE" stroke-width="1.66667" stroke-linecap="round"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="40" y="26.2891">I agree to Insta Plus TnC and authorize sharing details</tspan></text>
+<rect x="16" y="44" width="285" height="50" rx="25" fill="#089959"/>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="132.883" y="74.6953">Button</tspan></text>
+<rect x="309.7" y="44.7" width="48.6" height="48.6" rx="24.3" stroke="#089958" stroke-width="1.4"/>
+<g clip-path="url(#clip0_1625_47532)">
+<path d="M334 63C334.552 63 335 62.5523 335 62C335 61.4477 334.552 61 334 61C333.448 61 333 61.4477 333 62C333 62.5523 333.448 63 334 63Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M334 70C334.552 70 335 69.5523 335 69C335 68.4477 334.552 68 334 68C333.448 68 333 68.4477 333 69C333 69.5523 333.448 70 334 70Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M334 77C334.552 77 335 76.5523 335 76C335 75.4477 334.552 75 334 75C333.448 75 333 75.4477 333 76C333 76.5523 333.448 77 334 77Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M341 63C341.552 63 342 62.5523 342 62C342 61.4477 341.552 61 341 61C340.448 61 340 61.4477 340 62C340 62.5523 340.448 63 341 63Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M341 70C341.552 70 342 69.5523 342 69C342 68.4477 341.552 68 341 68C340.448 68 340 68.4477 340 69C340 69.5523 340.448 70 341 70Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M341 77C341.552 77 342 76.5523 342 76C342 75.4477 341.552 75 341 75C340.448 75 340 75.4477 340 76C340 76.5523 340.448 77 341 77Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M327 63C327.552 63 328 62.5523 328 62C328 61.4477 327.552 61 327 61C326.448 61 326 61.4477 326 62C326 62.5523 326.448 63 327 63Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M327 70C327.552 70 328 69.5523 328 69C328 68.4477 327.552 68 327 68C326.448 68 326 68.4477 326 69C326 69.5523 326.448 70 327 70Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M327 77C327.552 77 328 76.5523 328 76C328 75.4477 327.552 75 327 75C326.448 75 326 75.4477 326 76C326 76.5523 326.448 77 327 77Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<defs>
+<clipPath id="clip0_1625_47532">
+<rect width="24" height="24" fill="white" transform="translate(322 57)"/>
+</clipPath>
+</defs>
+</svg>

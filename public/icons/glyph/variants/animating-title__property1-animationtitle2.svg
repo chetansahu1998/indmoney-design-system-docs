@@ -1,0 +1,10 @@
+<svg width="45" height="19" viewBox="0 0 45 19" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_1385_4136)">
+<text fill="white" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="0" y="-5.28125">Text 1&#x2028;</tspan><tspan x="0" y="14.7188">Text 2&#x2028;</tspan><tspan x="0" y="34.7188">Text 3</tspan></text>
+</g>
+<defs>
+<clipPath id="clip0_1385_4136">
+<rect width="45" height="19" fill="white"/>
+</clipPath>
+</defs>
+</svg>

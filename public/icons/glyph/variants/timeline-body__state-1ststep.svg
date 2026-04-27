@@ -1,0 +1,12 @@
+<svg width="222" height="135" viewBox="0 0 222 135" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="0.5" y="0.5" width="15" height="15" rx="7.5" stroke="#1FD8AD"/>
+<circle cx="8" cy="8" r="4" fill="#1FD8AD"/>
+<path d="M8 16L8 69" stroke="#C0C2C6" stroke-dasharray="2 2"/>
+<text fill="#1FD8AD" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="28" y="15.6953">Activate F&#38;O </tspan></text>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="28" y="37.5039">A few steps away</tspan></text>
+<rect x="0.5" y="69.5" width="15" height="15" rx="7.5" stroke="#C0C2C6"/>
+<path d="M8 86L8 116" stroke="#1FD8AD" stroke-dasharray="2 2"/>
+<text fill="#D7DAE0" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="28" y="83.8613">F&#38;O Activated</tspan></text>
+<rect x="0.5" y="116.5" width="15" height="15" rx="7.5" stroke="#C0C2C6"/>
+<text fill="#C0C2C6" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="28" y="130.861">Place your 1st Trade</tspan></text>
+</svg>

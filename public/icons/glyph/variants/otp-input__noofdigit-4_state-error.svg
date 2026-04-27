@@ -1,0 +1,16 @@
+<svg width="343" height="82" viewBox="0 0 343 82" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="1" y="1" width="74.75" height="52" rx="7" fill="white"/>
+<rect x="1" y="1" width="74.75" height="52" rx="7" stroke="#DD2624" stroke-width="2"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="33.8203" y="32.6953">2</tspan></text>
+<rect x="89.75" y="1" width="74.75" height="52" rx="7" fill="white"/>
+<rect x="89.75" y="1" width="74.75" height="52" rx="7" stroke="#DD2624" stroke-width="2"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="122.422" y="32.6953">4</tspan></text>
+<rect x="178.5" y="1" width="74.75" height="52" rx="7" fill="white"/>
+<rect x="178.5" y="1" width="74.75" height="52" rx="7" stroke="#DD2624" stroke-width="2"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="211.547" y="32.6953">7</tspan></text>
+<rect x="267.25" y="1" width="74.75" height="52" rx="7" fill="white"/>
+<rect x="267.25" y="1" width="74.75" height="52" rx="7" stroke="#DD2624" stroke-width="2"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="299.922" y="32.6953">4</tspan></text>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M7.99992 67.3333C4.31992 67.3333 1.33325 70.32 1.33325 74C1.33325 77.68 4.31992 80.6666 7.99992 80.6666C11.6799 80.6666 14.6666 77.68 14.6666 74C14.6666 70.32 11.6799 67.3333 7.99992 67.3333ZM7.33325 77.3333V76H8.66659V77.3333H7.33325ZM7.33325 70.6666V74.6666H8.66659V70.6666H7.33325Z" fill="#DD2625"/>
+<text fill="#DD2624" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="20.2969" y="78.2891">Please enter a valid 10-digit mobile number</tspan></text>
+</svg>

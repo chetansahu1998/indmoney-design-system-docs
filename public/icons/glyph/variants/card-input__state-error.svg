@@ -1,0 +1,25 @@
+<svg width="344" height="86" viewBox="0 0 344 86" fill="none" xmlns="http://www.w3.org/2000/svg">
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="0.5" y="13.5039">Card Number</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="2.25195" y="44.6191">1</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="17.8066" y="44.6191">2</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="34.4746" y="44.6191">3</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="51.6211" y="44.6191">4</tspan></text>
+<path d="M0.5 58H63.5" stroke="#DD2624" stroke-linecap="round"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="93.8958" y="44.6191">5</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="110.652" y="44.6191">6</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="128.423" y="44.6191">7</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="144.818" y="44.6191">8</tspan></text>
+<path d="M93.8333 58H156.833" stroke="#DD2624" stroke-linecap="round"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="188.919" y="44.6191">1</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="204.473" y="44.6191">2</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="221.141" y="44.6191">3</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="238.288" y="44.6191">4</tspan></text>
+<path d="M187.167 58H250.167" stroke="#DD2624" stroke-linecap="round"/>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="280.562" y="44.6191">5</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="297.318" y="44.6191">6</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="315.09" y="44.6191">7</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="331.484" y="44.6191">8</tspan></text>
+<path d="M280.5 58H343.5" stroke="#DD2624" stroke-linecap="round"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M8.49992 71.3333C4.81992 71.3333 1.83325 74.32 1.83325 78C1.83325 81.68 4.81992 84.6666 8.49992 84.6666C12.1799 84.6666 15.1666 81.68 15.1666 78C15.1666 74.32 12.1799 71.3333 8.49992 71.3333ZM7.83325 81.3333V80H9.16659V81.3333H7.83325ZM7.83325 74.6666V78.6666H9.16659V74.6666H7.83325Z" fill="#DD2625"/>
+<text fill="#DD2624" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="20.5" y="82.2891">Please enter a valid 10-digit mobile number</tspan></text>
+</svg>

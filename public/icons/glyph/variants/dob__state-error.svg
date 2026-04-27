@@ -1,0 +1,21 @@
+<svg width="343" height="102" viewBox="0 0 343 102" fill="none" xmlns="http://www.w3.org/2000/svg">
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="0" y="13.5039">Date of Birth</tspan></text>
+<g clip-path="url(#clip0_1428_21403)">
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="0.113281" y="45.1191">22</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="31.3203" y="45.1191">/</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="48.4727" y="45.1191">10</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="78.3203" y="45.1191">/</tspan></text>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="95.2324" y="45.1191">2008</tspan></text>
+</g>
+<circle cx="331" cy="38" r="10" fill="#F5F7F9"/>
+<path d="M331.881 38L334.569 35.3187C334.686 35.2011 334.753 35.0414 334.753 34.875C334.753 34.7086 334.686 34.5489 334.569 34.4312C334.451 34.3136 334.291 34.2474 334.125 34.2474C333.959 34.2474 333.799 34.3136 333.681 34.4312L331 37.1187L328.319 34.4312C328.201 34.3136 328.041 34.2474 327.875 34.2474C327.709 34.2474 327.549 34.3136 327.431 34.4312C327.314 34.5489 327.247 34.7086 327.247 34.875C327.247 35.0414 327.314 35.2011 327.431 35.3187L330.119 38L327.431 40.6812C327.373 40.7393 327.326 40.8085 327.294 40.8846C327.263 40.9608 327.246 41.0425 327.246 41.125C327.246 41.2075 327.263 41.2892 327.294 41.3654C327.326 41.4415 327.373 41.5106 327.431 41.5687C327.489 41.6273 327.558 41.6738 327.635 41.7056C327.711 41.7373 327.792 41.7536 327.875 41.7536C327.957 41.7536 328.039 41.7373 328.115 41.7056C328.191 41.6738 328.261 41.6273 328.319 41.5687L331 38.8812L333.681 41.5687C333.739 41.6273 333.808 41.6738 333.885 41.7056C333.961 41.7373 334.042 41.7536 334.125 41.7536C334.207 41.7536 334.289 41.7373 334.365 41.7056C334.441 41.6738 334.511 41.6273 334.569 41.5687C334.627 41.5106 334.674 41.4415 334.706 41.3654C334.737 41.2892 334.754 41.2075 334.754 41.125C334.754 41.0425 334.737 40.9608 334.706 40.8846C334.674 40.8085 334.627 40.7393 334.569 40.6812L331.881 38Z" fill="#88898A"/>
+<line x1="148.5" y1="25" x2="148.5" y2="51" stroke="#089958"/>
+<path d="M343 59.5H0V60.5H343V59.5Z" fill="#DD2624"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M7.99992 80.3333C4.31992 80.3333 1.33325 83.32 1.33325 87C1.33325 90.68 4.31992 93.6666 7.99992 93.6666C11.6799 93.6666 14.6666 90.68 14.6666 87C14.6666 83.32 11.6799 80.3333 7.99992 80.3333ZM7.33325 90.3333V89H8.66659V90.3333H7.33325ZM7.33325 83.6666V87.6666H8.66659V83.6666H7.33325Z" fill="#DD2625"/>
+<text fill="#DD2624" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="20" y="83.7891">You must be older than 18 years to create your </tspan><tspan x="20" y="98.7891">investment account</tspan></text>
+<defs>
+<clipPath id="clip0_1428_21403">
+<rect width="144" height="25" fill="white" transform="translate(0 25.5)"/>
+</clipPath>
+</defs>
+</svg>

@@ -1,0 +1,15 @@
+<svg width="343" height="162" viewBox="0 0 343 162" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M107 1.33331C103.32 1.33331 100.333 4.31998 100.333 7.99998C100.333 11.68 103.32 14.6666 107 14.6666C110.68 14.6666 113.667 11.68 113.667 7.99998C113.667 4.31998 110.68 1.33331 107 1.33331ZM106.333 11.3333V9.99998H107.667V11.3333H106.333ZM106.333 4.66665V8.66665H107.667V4.66665H106.333Z" fill="#DD2624"/>
+<text fill="#DD2624" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="1px"><tspan x="119" y="12.2715">MINIMUM AMOUNT</tspan></text>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="40" letter-spacing="0px"><tspan x="121.055" y="63.1797">&#x20b9;</tspan></text>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="40" letter-spacing="0px"><tspan x="148.008" y="63.1797">500</tspan></text>
+<line y1="81" x2="343" y2="81" stroke="#E5E5E5" stroke-width="2"/>
+<path d="M0 82H343V101C343 107.627 337.627 113 331 113H12C5.37258 113 0 107.627 0 101V82Z" fill="#F5F7F9"/>
+<text fill="#393B3E" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="98.7734" y="101.789">This is a copy placeholder</tspan></text>
+<rect x="63.5" y="129" width="64" height="33" rx="16.5" fill="#F5F7F9"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="79.856" y="149.646">&#x20b9;100</tspan></text>
+<rect x="139.5" y="129" width="64" height="33" rx="16.5" fill="#F5F7F9"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="155.729" y="150.504">&#x20b9;100</tspan></text>
+<rect x="215.5" y="129" width="64" height="33" rx="16.5" fill="#F5F7F9"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="231.729" y="150.504">&#x20b9;100</tspan></text>
+</svg>

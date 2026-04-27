@@ -1,0 +1,16 @@
+<svg width="542" height="28" viewBox="0 0 542 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="90" height="28" rx="8" fill="#2D374F"/>
+<text fill="#FFFFFB" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="16.4805" y="18.9834">Selected</tspan></text>
+<rect x="98.25" y="0.25" width="104.5" height="27.5" rx="7.75" fill="white"/>
+<rect x="98.25" y="0.25" width="104.5" height="27.5" rx="7.75" stroke="#E5E5E5" stroke-width="0.5"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="114.181" y="19.0039">Deselected</tspan></text>
+<rect x="211.25" y="0.25" width="104.5" height="27.5" rx="7.75" fill="white"/>
+<rect x="211.25" y="0.25" width="104.5" height="27.5" rx="7.75" stroke="#E5E5E5" stroke-width="0.5"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="227.181" y="19.0039">Deselected</tspan></text>
+<rect x="324.25" y="0.25" width="104.5" height="27.5" rx="7.75" fill="white"/>
+<rect x="324.25" y="0.25" width="104.5" height="27.5" rx="7.75" stroke="#E5E5E5" stroke-width="0.5"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="340.181" y="19.0039">Deselected</tspan></text>
+<rect x="437.25" y="0.25" width="104.5" height="27.5" rx="7.75" fill="white"/>
+<rect x="437.25" y="0.25" width="104.5" height="27.5" rx="7.75" stroke="#E5E5E5" stroke-width="0.5"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="453.181" y="19.0039">Deselected</tspan></text>
+</svg>

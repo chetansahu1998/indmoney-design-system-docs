@@ -1,0 +1,22 @@
+<svg width="375" height="94" viewBox="0 0 375 94" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M0 0H375V74C375 85.0457 366.046 94 355 94H20C8.95431 94 0 85.0457 0 74V0Z" fill="white"/>
+<rect x="16" y="12" width="285" height="50" rx="25" fill="#089959"/>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="132.883" y="42.6953">Button</tspan></text>
+<rect x="309.7" y="12.7" width="48.6" height="48.6" rx="24.3" stroke="#089958" stroke-width="1.4"/>
+<g clip-path="url(#clip0_1625_47534)">
+<path d="M334 31C334.552 31 335 30.5523 335 30C335 29.4477 334.552 29 334 29C333.448 29 333 29.4477 333 30C333 30.5523 333.448 31 334 31Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M334 38C334.552 38 335 37.5523 335 37C335 36.4477 334.552 36 334 36C333.448 36 333 36.4477 333 37C333 37.5523 333.448 38 334 38Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M334 45C334.552 45 335 44.5523 335 44C335 43.4477 334.552 43 334 43C333.448 43 333 43.4477 333 44C333 44.5523 333.448 45 334 45Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M341 31C341.552 31 342 30.5523 342 30C342 29.4477 341.552 29 341 29C340.448 29 340 29.4477 340 30C340 30.5523 340.448 31 341 31Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M341 38C341.552 38 342 37.5523 342 37C342 36.4477 341.552 36 341 36C340.448 36 340 36.4477 340 37C340 37.5523 340.448 38 341 38Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M341 45C341.552 45 342 44.5523 342 44C342 43.4477 341.552 43 341 43C340.448 43 340 43.4477 340 44C340 44.5523 340.448 45 341 45Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M327 31C327.552 31 328 30.5523 328 30C328 29.4477 327.552 29 327 29C326.448 29 326 29.4477 326 30C326 30.5523 326.448 31 327 31Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M327 38C327.552 38 328 37.5523 328 37C328 36.4477 327.552 36 327 36C326.448 36 326 36.4477 326 37C326 37.5523 326.448 38 327 38Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M327 45C327.552 45 328 44.5523 328 44C328 43.4477 327.552 43 327 43C326.448 43 326 43.4477 326 44C326 44.5523 326.448 45 327 45Z" stroke="#089958" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<defs>
+<clipPath id="clip0_1625_47534">
+<rect width="24" height="24" fill="white" transform="translate(322 25)"/>
+</clipPath>
+</defs>
+</svg>
