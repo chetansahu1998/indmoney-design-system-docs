@@ -41,9 +41,13 @@ export default function BackToTop() {
           whileTap={{ scale: 0.94 }}
           transition={{ type: "spring", stiffness: 380, damping: 28 }}
           style={{
+            // bottom-right placement — left side is occupied by the
+            // Next dev-mode indicator and would intercept clicks. Toast
+            // host is also bottom-right but offset higher (24+offset)
+            // so the two stack rather than collide.
             position: "fixed",
-            bottom: 24,
-            left: 24,
+            bottom: 80,
+            right: 24,
             zIndex: 90,
             width: 40,
             height: 40,

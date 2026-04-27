@@ -228,23 +228,35 @@ body {
   }
 }
 
-/* Sync chip — informational; hide below 1100px so the page-nav has
-   room to breathe. The same data is repeated in the footer receipt. */
+/* Sync chip — informational; hide below 1280px so the page-nav has
+   room to breathe (six top-level routes need ~520px on their own).
+   The same data is repeated in the footer receipt. */
 .sync-chip {
   display: inline-flex;
 }
 
-@media (max-width: 1099px) {
+@media (max-width: 1380px) {
   .sync-chip {
     display: none;
   }
 }
 
-/* Tablet: drop the Sync/Download text labels, keep the icons. */
-@media (max-width: 1023px) {
+/* Sub-1280: drop the Sync/Download text labels — icons-only saves
+   ~120px combined and leaves room for all six nav links. */
+@media (max-width: 1380px) {
   .sync-text-label,
   .download-text-label {
     display: none;
+  }
+}
+
+/* Sub-1280: hide Download button entirely — the same dialog opens
+   from the footer "Download tokens" link. Sync stays because it's
+   the most-used action for designers (and is keyboard-reachable
+   only via the modal it opens). */
+@media (max-width: 1380px) {
+  .download-btn {
+    display: none !important;
   }
 }
 
