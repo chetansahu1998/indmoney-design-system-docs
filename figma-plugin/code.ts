@@ -48,6 +48,7 @@ interface MessageToUI {
     | "publish-result"
     | "audit-summary"
     | "audit-fixes"
+    | "audit-matches"
     | "audit-applied"
     | "group-applied"
     | "many-applied"
@@ -458,6 +459,20 @@ async function runAudit(scope: AuditScope) {
   for (const s of data.result.screens) for (const f of s.fixes) flat.push(f);
   send({ type: "audit-fixes", payload: flat.slice(0, 100) });
 
+  // Forward component matches that have a matched_slug — these power the
+  // "Component matches" section. Reject decisions are dropped to keep the
+  // panel signal-rich; ambiguous + accept both surface so designers can
+  // verify ambiguous cases manually.
+  const matches: AuditComponentMatch[] = [];
+  for (const s of data.result.screens) {
+    if (!s.component_matches) continue;
+    for (const m of s.component_matches) {
+      if (m.decision === "reject" || !m.matched_slug) continue;
+      matches.push(m);
+    }
+  }
+  send({ type: "audit-matches", payload: matches.slice(0, 60) });
+
   await prefetchVariables();
 }
 
@@ -476,11 +491,24 @@ interface AuditFix {
   reason: string;
 }
 
+interface AuditComponentMatch {
+  node_id: string;
+  node_name: string;
+  decision: "accept" | "reject" | "ambiguous";
+  matched_slug?: string;
+  matched_name?: string;
+  matched_description?: string;
+  axis_count?: number;
+  set_key?: string;
+  score: number;
+}
+
 interface AuditResult {
   screens: Array<{
     coverage: { fills: { bound: number; total: number }; text: { bound: number; total: number }; spacing: { bound: number; total: number }; radius: { bound: number; total: number } };
     component_summary: { from_ds: number; ambiguous: number; custom: number };
     fixes: AuditFix[];
+    component_matches?: AuditComponentMatch[];
   }>;
 }
 

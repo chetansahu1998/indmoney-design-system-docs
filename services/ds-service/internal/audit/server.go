@@ -195,10 +195,15 @@ func loadComponentsFromRepo(root string) ([]DSCandidate, error) {
 	}
 	var raw struct {
 		Icons []struct {
-			Slug  string `json:"slug"`
-			Name  string `json:"name"`
-			Kind  string `json:"kind"`
-			SetID string `json:"set_id"`
+			Slug        string `json:"slug"`
+			Name        string `json:"name"`
+			Kind        string `json:"kind"`
+			SetID       string `json:"set_id"`
+			Key         string `json:"key"`
+			Description string `json:"description"`
+			VariantAxes []struct {
+				Name string `json:"name"`
+			} `json:"variant_axes"`
 		} `json:"icons"`
 	}
 	if err := json.Unmarshal(bs, &raw); err != nil {
@@ -209,7 +214,14 @@ func loadComponentsFromRepo(root string) ([]DSCandidate, error) {
 		if i.Kind != "component" {
 			continue
 		}
-		out = append(out, DSCandidate{Slug: i.Slug, Name: i.Name, ComponentKey: i.SetID})
+		out = append(out, DSCandidate{
+			Slug:         i.Slug,
+			Name:         i.Name,
+			ComponentKey: i.SetID,
+			SetKey:       i.Key,
+			Description:  i.Description,
+			AxisCount:    len(i.VariantAxes),
+		})
 	}
 	return out, nil
 }

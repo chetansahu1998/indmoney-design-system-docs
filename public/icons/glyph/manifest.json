@@ -17127,6 +17127,7 @@
           "file": "variants/dynamic-bottom-nav__selection-dashboard.svg",
           "width": 375,
           "height": 72,
+          "key": "42ef09338e2e14ea1298fb2a0d72936cebe77e9d",
           "axis_values": {
             "Selection": "Dashboard"
           },
@@ -17163,6 +17164,7 @@
           "file": "variants/dynamic-bottom-nav__selection-indianstocks.svg",
           "width": 375,
           "height": 72,
+          "key": "857f430391ef9466ac24cfd617ca9a044dcdcd8e",
           "axis_values": {
             "Selection": "Indian Stocks"
           },
@@ -17198,6 +17200,7 @@
           "file": "variants/dynamic-bottom-nav__selection-instacash.svg",
           "width": 375,
           "height": 72,
+          "key": "e97ac861b63e4612b9d9f86dac8f70d780490b39",
           "axis_values": {
             "Selection": "Instacash"
           },
@@ -17222,6 +17225,7 @@
           ]
         }
       ],
+      "key": "bcbdd0cb89da4c14be8ffd506809c6321ea0dfca",
       "prop_defs": [
         {
           "name": "Selection",
@@ -21732,6 +21736,7 @@
           "file": "variants/indices__property1-bsesensex.svg",
           "width": 36,
           "height": 36,
+          "key": "113fbc286f0ca11d2b983859a3951312fabdd5cf",
           "axis_values": {
             "Property 1": "BSE Sensex"
           },
@@ -21770,6 +21775,7 @@
           "file": "variants/indices__property1-nifty50.svg",
           "width": 36,
           "height": 36,
+          "key": "abf8665ff22da3edf1f54551a9493569b64c0600",
           "axis_values": {
             "Property 1": "Nifty 50"
           },
@@ -21810,6 +21816,7 @@
           "file": "variants/indices__property1-bse500.svg",
           "width": 36,
           "height": 36,
+          "key": "80a93d7dc397ae101c5eeaacd3defcc055a0860c",
           "axis_values": {
             "Property 1": "BSE 500"
           },
@@ -21854,6 +21861,7 @@
           "file": "variants/indices__property1-bseit.svg",
           "width": 36,
           "height": 36,
+          "key": "58997b2fa373b3d2c6fdd251c34e192322090455",
           "axis_values": {
             "Property 1": "BSE IT"
           },
@@ -21898,6 +21906,7 @@
           "file": "variants/indices__property1-bsefmcg.svg",
           "width": 36,
           "height": 36,
+          "key": "dee4f6952a205246f570f81362c3fb3cd2cea8ee",
           "axis_values": {
             "Property 1": "BSE FMCG"
           },
@@ -21942,6 +21951,7 @@
           "file": "variants/indices__property1-bsehealthcare.svg",
           "width": 36,
           "height": 36,
+          "key": "1e94353bcdfe0da1192e100d4e9cc6b043357d3e",
           "axis_values": {
             "Property 1": "BSE Healthcare"
           },
@@ -21986,6 +21996,7 @@
           "file": "variants/indices__property1-bse201.svg",
           "width": 36,
           "height": 36,
+          "key": "76cc54c5b8f61ab2920430cfdfa65b5e93dddf70",
           "axis_values": {
             "Property 1": "BSE 201"
           },
@@ -22030,6 +22041,7 @@
           "file": "variants/indices__property1-bse200.svg",
           "width": 36,
           "height": 36,
+          "key": "20eb5941fd9f4500db8c157a68950a7a7162fbae",
           "axis_values": {
             "Property 1": "BSE 200"
           },
@@ -22074,6 +22086,7 @@
           "file": "variants/indices__property1-bsetech.svg",
           "width": 36,
           "height": 36,
+          "key": "d5c1ae864b8438f3457390b9e38e9ffdd834abea",
           "axis_values": {
             "Property 1": "BSE Tech"
           },
@@ -22118,6 +22131,7 @@
           "file": "variants/indices__property1-niftynext50.svg",
           "width": 36,
           "height": 36,
+          "key": "2956bef1387cf5773d630489ee80406ba78be9cd",
           "axis_values": {
             "Property 1": "Nifty next 50"
           },
@@ -22169,6 +22183,7 @@
           "file": "variants/indices__property1-nifty501.svg",
           "width": 36,
           "height": 36,
+          "key": "55987d34fa336b5470f3fbcfa4b1df3e91c8fb7f",
           "axis_values": {
             "Property 1": "Nifty 501"
           },
@@ -22220,6 +22235,7 @@
           "file": "variants/indices__property1-bsebankex.svg",
           "width": 36,
           "height": 36,
+          "key": "ba29aa3d80d9181a0a3f483d22004669fdc6751d",
           "axis_values": {
             "Property 1": "BSE Bankex"
           },
@@ -22264,6 +22280,7 @@
           "file": "variants/indices__property1-niftyit.svg",
           "width": 36,
           "height": 36,
+          "key": "409332d6d93ffb03813ede6208c162773f83096d",
           "axis_values": {
             "Property 1": "Nifty IT"
           },
@@ -22308,6 +22325,7 @@
           "file": "variants/indices__property1-bseauto.svg",
           "width": 36,
           "height": 36,
+          "key": "d4218284b8b67892b83bd6980d8f0e127bf585cf",
           "axis_values": {
             "Property 1": "BSE Auto"
           },
@@ -22352,6 +22370,7 @@
           "file": "variants/indices__property1-bsemidcap.svg",
           "width": 36,
           "height": 36,
+          "key": "9a8080f7a43141c7214854a3a171aa8f5b0fdcbb",
           "axis_values": {
             "Property 1": "BSE midcap"
           },
@@ -22389,6 +22408,7 @@
           "file": "variants/indices__property1-bsesmallcap.svg",
           "width": 36,
           "height": 36,
+          "key": "614aae419245d00701a9351f00de059ef13d44c2",
           "axis_values": {
             "Property 1": "BSE smallcap"
           },
@@ -22426,6 +22446,7 @@
           "file": "variants/indices__property1-niftybank.svg",
           "width": 36,
           "height": 36,
+          "key": "d8f6a23af57c56399df41c94ec2ac40492d2cbad",
           "axis_values": {
             "Property 1": "Nifty Bank"
           },
@@ -22470,6 +22491,7 @@
           "file": "variants/indices__property1-niftypharma.svg",
           "width": 36,
           "height": 36,
+          "key": "b491aa4b4ec4bfa2c597a055c8c6e33d575e1af0",
           "axis_values": {
             "Property 1": "Nifty Pharma"
           },
@@ -22514,6 +22536,7 @@
           "file": "variants/indices__property1-nifty100.svg",
           "width": 36,
           "height": 36,
+          "key": "9732582defbfc7db2595e2d177b92ef2236ebdf2",
           "axis_values": {
             "Property 1": "Nifty 100"
           },
@@ -22565,6 +22588,7 @@
           "file": "variants/indices__property1-niftymidcap100.svg",
           "width": 36,
           "height": 36,
+          "key": "d7ce891afae1dddf029dae89190023bb717929aa",
           "axis_values": {
             "Property 1": "Nifty midcap 100"
           },
@@ -22598,6 +22622,7 @@
           "file": "variants/indices__property1-niftyinfra.svg",
           "width": 36,
           "height": 36,
+          "key": "7ae5c45aa4e1939fd0b0f6153b6ab2eeb9532edf",
           "axis_values": {
             "Property 1": "Nifty Infra"
           },
@@ -22642,6 +22667,7 @@
           "file": "variants/indices__property1-niftyrealty.svg",
           "width": 36,
           "height": 36,
+          "key": "70eaa38a840abc4f6b2850d4309fb0066fdfcd9e",
           "axis_values": {
             "Property 1": "Nifty Realty"
           },
@@ -22686,6 +22712,7 @@
           "file": "variants/indices__property1-niftyfmcg.svg",
           "width": 36,
           "height": 36,
+          "key": "fabfe2daed22bcbc06f7f14e8801278f0701eee9",
           "axis_values": {
             "Property 1": "Nifty FMCG"
           },
@@ -22730,6 +22757,7 @@
           "file": "variants/indices__property1-niftysmallcap.svg",
           "width": 36,
           "height": 36,
+          "key": "d1b7d5783e9f39b14aa97b6a3dd073bb8d12cd2b",
           "axis_values": {
             "Property 1": "Nifty smallcap"
           },
@@ -22763,6 +22791,7 @@
           "file": "variants/indices__property1-niftyauto.svg",
           "width": 36,
           "height": 36,
+          "key": "8bebc8d1b7367b640c7419c4eb23d3bef58c84a6",
           "axis_values": {
             "Property 1": "Nifty Auto"
           },
@@ -22807,6 +22836,7 @@
           "file": "variants/indices__property1-niftymetal.svg",
           "width": 36,
           "height": 36,
+          "key": "a10073c66031f48e5e7621187272d2b3375d1020",
           "axis_values": {
             "Property 1": "Nifty Metal"
           },
@@ -22851,6 +22881,7 @@
           "file": "variants/indices__property1-niftymedia.svg",
           "width": 36,
           "height": 36,
+          "key": "7ace7ab48d79afb2fd96dcad6681520a990207b7",
           "axis_values": {
             "Property 1": "Nifty Media"
           },
@@ -22895,6 +22926,7 @@
           "file": "variants/indices__property1-niftyfinancialservices.svg",
           "width": 36,
           "height": 36,
+          "key": "7c0726e387774676d32738a32288d6ef9f959dae",
           "axis_values": {
             "Property 1": "Nifty Financial Services"
           },
@@ -22939,6 +22971,7 @@
           "file": "variants/indices__property1-nifty50value20.svg",
           "width": 36,
           "height": 36,
+          "key": "8b730b275f0f684fe35d5437ffee32ed57c3df03",
           "axis_values": {
             "Property 1": "Nifty 50 value 20"
           },
@@ -22972,6 +23005,7 @@
           "file": "variants/indices__property1-bseinfra.svg",
           "width": 36,
           "height": 36,
+          "key": "b29245f349c15d2d666eedfcd390755053db0245",
           "axis_values": {
             "Property 1": "BSE Infra"
           },
@@ -23016,6 +23050,7 @@
           "file": "variants/indices__property1-nifty100equalweight.svg",
           "width": 36,
           "height": 36,
+          "key": "df64c47f843a5fd723e246cea49809bf6a9eaf1a",
           "axis_values": {
             "Property 1": "Nifty100 equal weight"
           },
@@ -23067,6 +23102,7 @@
           "file": "variants/indices__property1-bseenergy.svg",
           "width": 36,
           "height": 36,
+          "key": "3c8205d26d8b50856ded23218a90ab968c0b047a",
           "axis_values": {
             "Property 1": "BSE Energy"
           },
@@ -23111,6 +23147,7 @@
           "file": "variants/indices__property1-bsefinance.svg",
           "width": 36,
           "height": 36,
+          "key": "58f563d92921e1c3f0e11e3bb691bbbce4beff34",
           "axis_values": {
             "Property 1": "BSE Finance"
           },
@@ -23155,6 +23192,7 @@
           "file": "variants/indices__property1-nifty100quality30.svg",
           "width": 36,
           "height": 36,
+          "key": "a36187999eb06e67b79882d5773fbbd9112e9eb9",
           "axis_values": {
             "Property 1": "Nifty100 Quality 30"
           },
@@ -23206,6 +23244,7 @@
           "file": "variants/indices__property1-bse100.svg",
           "width": 36,
           "height": 36,
+          "key": "f9b92b6a8152699861ac4f8538b1e4fe605213d9",
           "axis_values": {
             "Property 1": "BSE 100"
           },
@@ -23243,6 +23282,7 @@
           "file": "variants/indices__property1-nifty200quality30.svg",
           "width": 36,
           "height": 36,
+          "key": "5385b6f210796dae8828dcee4fe0372252375608",
           "axis_values": {
             "Property 1": "Nifty200 Quality 30"
           },
@@ -23294,6 +23334,7 @@
           "file": "variants/indices__property1-niftyoil\u0026gas.svg",
           "width": 36,
           "height": 36,
+          "key": "47e86c09e83ac9b874eb3211a330e057af180838",
           "axis_values": {
             "Property 1": "Nifty Oil\u0026Gas"
           },
@@ -23338,6 +23379,7 @@
           "file": "variants/indices__property1-nifty200momentum30.svg",
           "width": 36,
           "height": 36,
+          "key": "0ecb66d9fcb1df88be8af06f726885e8a624a11d",
           "axis_values": {
             "Property 1": "Nifty200 Momentum 30"
           },
@@ -23389,6 +23431,7 @@
           "file": "variants/indices__property1-niftymidcap.svg",
           "width": 36,
           "height": 36,
+          "key": "eb5f2c136793c07240fb049bc1b330e547072749",
           "axis_values": {
             "Property 1": "Nifty midcap"
           },
@@ -23411,6 +23454,7 @@
           ]
         }
       ],
+      "key": "3300d8b0d66dad07687918862506bd087b8dafb7",
       "prop_defs": [
         {
           "name": "Property 1",
@@ -37261,6 +37305,7 @@
           "file": "variants/static-nav__selection-instacash.svg",
           "width": 375,
           "height": 72,
+          "key": "a85f8d74e105df2e7105996cd5587ae572b1a775",
           "axis_values": {
             "Selection": "Insta Cash"
           },
@@ -37296,6 +37341,7 @@
           "file": "variants/static-nav__selection-dashboard.svg",
           "width": 375,
           "height": 72,
+          "key": "959705b93f852acd734b77c8988c8053c008cc93",
           "axis_values": {
             "Selection": "Dashboard"
           },
@@ -37390,6 +37436,7 @@
           "file": "variants/static-nav__selection-indstocks.svg",
           "width": 375,
           "height": 72,
+          "key": "569914ad5e16c0c2eb610bb5baddf829e17285fd",
           "axis_values": {
             "Selection": "INDstocks"
           },
@@ -37424,6 +37471,7 @@
           "file": "variants/static-nav__selection-bottomnav.svg",
           "width": 375,
           "height": 72,
+          "key": "7be9b9fccf7202f6cac4117a289ea20766352afd",
           "axis_values": {
             "Selection": "Bottom Nav"
           },
@@ -37458,6 +37506,7 @@
           "file": "variants/static-nav__selection-usstocks.svg",
           "width": 375,
           "height": 72,
+          "key": "bc685c141091ac4a240c1e631acaf31c3f8f6a46",
           "axis_values": {
             "Selection": "US Stocks"
           },
@@ -37492,6 +37541,7 @@
           "file": "variants/static-nav__selection-mutualfunds.svg",
           "width": 375,
           "height": 72,
+          "key": "e6e1da87fbf60fda057ba9778ddd2be9243b056a",
           "axis_values": {
             "Selection": "Mutual Funds"
           },
@@ -37515,6 +37565,7 @@
           ]
         }
       ],
+      "key": "83d97553e8f0af8a08c48e290efa621d1ccc516c",
       "prop_defs": [
         {
           "name": "Selection",
@@ -37569,6 +37620,7 @@
           "file": "variants/static-nav-insta-cash__tabselected-creditscore.svg",
           "width": 375,
           "height": 72,
+          "key": "8dd2cb7b12858f098df1e6e74bb6b37c53d79aa4",
           "axis_values": {
             "Tab Selected": "Credit Score"
           },
@@ -37603,6 +37655,7 @@
           "file": "variants/static-nav-insta-cash__tabselected-instacash.svg",
           "width": 375,
           "height": 72,
+          "key": "ce8cdc1f7003e3fbc44955b1973c80d77692a1ad",
           "axis_values": {
             "Tab Selected": "Insta Cash"
           },
@@ -37638,6 +37691,7 @@
           "file": "variants/static-nav-insta-cash__tabselected-instaplus.svg",
           "width": 375,
           "height": 72,
+          "key": "7bd5ba886a157c1b620f270ac2942a2c2d6127b1",
           "axis_values": {
             "Tab Selected": "Insta Plus"
           },
@@ -37672,6 +37726,7 @@
           "file": "variants/static-nav-insta-cash__tabselected-cards.svg",
           "width": 375,
           "height": 72,
+          "key": "3ab2c0a43802ff0b1fe2e609f2b1daebdec13552",
           "axis_values": {
             "Tab Selected": "Cards"
           },
@@ -37695,6 +37750,7 @@
           ]
         }
       ],
+      "key": "4dafecade30ecec3508abb6584bc9b2642f8f4e2",
       "prop_defs": [
         {
           "name": "Tab Selected",
@@ -37745,6 +37801,7 @@
           "file": "variants/sticky-nav-cta__variant-iconwtext.svg",
           "width": 51,
           "height": 20,
+          "key": "3cd2d26b11d38442c6c071c1a3d5c3d793754205",
           "axis_values": {
             "Variant": "Icon w Text"
           },
@@ -37793,6 +37850,7 @@
           "file": "variants/sticky-nav-cta__variant-onlyicon.svg",
           "width": 20,
           "height": 20,
+          "key": "e317bbfaf568bdf9f03936342d5a003a67fb0ec0",
           "axis_values": {
             "Variant": "Only Icon"
           },
@@ -37821,6 +37879,7 @@
           ]
         }
       ],
+      "key": "37d1bf17a711a207203d0eb75e00f2f94e45f2e0",
       "prop_defs": [
         {
           "name": "Right Icon#4871:31",
@@ -43943,6 +44002,7 @@
           "file": "variants/us-market-ticker__property1-us5.svg",
           "width": 182,
           "height": 28,
+          "key": "2a740ee7bdcd0d159a9bd9c62eab36bd1060360e",
           "axis_values": {
             "Property 1": "US 5"
           },
@@ -43979,6 +44039,7 @@
           "file": "variants/us-market-ticker__property1-us2.svg",
           "width": 182,
           "height": 28,
+          "key": "e1bf3e743b312e2b6a1638d795a5d4d87362b376",
           "axis_values": {
             "Property 1": "US2"
           },
@@ -44014,6 +44075,7 @@
           "file": "variants/us-market-ticker__property1-us6.svg",
           "width": 182,
           "height": 28,
+          "key": "776d7afae4c5382befef97a8e6cbd2abebdcc64b",
           "axis_values": {
             "Property 1": "US 6"
           },
@@ -44049,6 +44111,7 @@
           "file": "variants/us-market-ticker__property1-us7.svg",
           "width": 182,
           "height": 28,
+          "key": "e719c602553d0cd45a5b153aa4602ea6fcd17752",
           "axis_values": {
             "Property 1": "US 7"
           },
@@ -44073,6 +44136,7 @@
           ]
         }
       ],
+      "key": "9664d323ee84d0f73ebff82e0540acf6875f8816",
       "prop_defs": [
         {
           "name": "Property 1",

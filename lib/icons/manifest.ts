@@ -10,15 +10,115 @@ import manifestData from "../../public/icons/glyph/manifest.json";
 
 export type IconCategory = string;
 
+/* ── Rich-extraction types ────────────────────────────────────────────────
+ * Mirror Go structs in services/ds-service/cmd/variants/types.go. Every
+ * field here is optional because:
+ *   1. Old manifests produced before the rich-extraction phase don't
+ *      carry these fields.
+ *   2. Some components have no description / no doc_links / no variant
+ *      axes (e.g. single-variant utility components) — they keep the
+ *      legacy shape.
+ * Consumers should treat absence as "no data captured" not "intentionally
+ * empty"; render an empty state rather than a zero-value badge.
+ */
+
+export interface ComponentProperty {
+  /** Full name with #N:M suffix preserved for non-VARIANT types. */
+  name: string;
+  type: "VARIANT" | "BOOLEAN" | "TEXT" | "INSTANCE_SWAP";
+  default_value?: string | boolean | number | null;
+  variant_options?: string[];
+  preferred_values?: { type: string; key: string }[];
+}
+
+export interface VariantAxis {
+  name: string;
+  values: string[];
+  default?: string;
+}
+
+export interface LayoutInfo {
+  mode?: "HORIZONTAL" | "VERTICAL" | "NONE";
+  wrap?: "NO_WRAP" | "WRAP";
+  padding_left?: number;
+  padding_right?: number;
+  padding_top?: number;
+  padding_bottom?: number;
+  item_spacing?: number;
+  counter_axis_spacing?: number;
+  primary_align?: "MIN" | "CENTER" | "MAX" | "SPACE_BETWEEN";
+  counter_align?: "MIN" | "CENTER" | "MAX" | "BASELINE";
+  primary_sizing?: "FIXED" | "AUTO" | "HUG" | "FILL";
+  counter_sizing?: "FIXED" | "AUTO" | "HUG" | "FILL";
+  clips_content?: boolean;
+  min_width?: number;
+  max_width?: number;
+  min_height?: number;
+  max_height?: number;
+}
+
+export interface FillInfo {
+  type: string;
+  color?: string;
+  opacity?: number;
+  visible: boolean;
+  blend_mode?: string;
+  bound_variable_id?: string;
+}
+
+export interface EffectInfo {
+  type: "DROP_SHADOW" | "INNER_SHADOW" | "LAYER_BLUR" | "BACKGROUND_BLUR" | string;
+  radius?: number;
+  spread?: number;
+  offset_x?: number;
+  offset_y?: number;
+  color?: string;
+  visible: boolean;
+  bound_variable_id?: string;
+}
+
+export interface CornerInfo {
+  uniform?: number;
+  individual?: number[];
+  smoothing?: number;
+  bound_variable_id?: string;
+}
+
+export interface ChildSummary {
+  id: string;
+  type: string;
+  name: string;
+  component_id?: string;
+  characters?: string;
+  property_refs?: Record<string, string>;
+  bound_variables?: Record<string, string>;
+  width?: number;
+  height?: number;
+}
+
 export interface VariantEntry {
   /** Original Figma variant name, e.g. "State=Default, Size=Medium". */
   name: string;
-  /** Parsed variable=value chips, in original order. */
+  /** Parsed variable=value chips, in original order (legacy). */
   properties: Array<{ name: string; value: string }>;
   variant_id: string;
-  file: string; // e.g. "1-cta__state=default-size=medium.svg"
+  file: string;
   width: number;
   height: number;
+
+  /* Rich fields (Phase A extraction) — absent on legacy manifests. */
+  key?: string;
+  axis_values?: Record<string, string>;
+  is_default?: boolean;
+  layout?: LayoutInfo;
+  fills?: FillInfo[];
+  strokes?: FillInfo[];
+  stroke_weight?: number;
+  effects?: EffectInfo[];
+  corner?: CornerInfo;
+  opacity?: number;
+  bound_variables?: Record<string, string>;
+  children?: ChildSummary[];
 }
 
 export interface IconEntry {
@@ -27,14 +127,21 @@ export interface IconEntry {
   /** Populated by the Go extractor; absent on legacy manifests. */
   kind?: AssetKind;
   category: IconCategory;
-  source?: string; // "atoms" | "icons-fresh" | etc — Figma page of origin
+  source?: string; // "atoms" | "icons-fresh" | etc
   set_id: string;
   variant_id: string;
-  file: string; // e.g. "download-cloud.svg"
+  file: string;
   width: number;
   height: number;
-  /** Populated by cmd/variants for kind=component sets. */
   variants?: VariantEntry[];
+
+  /* Rich fields (Phase A extraction). */
+  key?: string;
+  description?: string;
+  doc_links?: string[];
+  prop_defs?: ComponentProperty[];
+  variant_axes?: VariantAxis[];
+  single_variant_set?: boolean;
 }
 
 /** What an entry actually represents — derived from category + dimensions. */
@@ -146,4 +253,131 @@ export function searchIcons(query: string, limit = 100): IconEntry[] {
   return MANIFEST.icons
     .filter((i) => i.name.toLowerCase().includes(q) || i.slug.includes(q))
     .slice(0, limit);
+}
+
+/* ── Rich-data helpers ──────────────────────────────────────────────────
+ * Used by the new component detail pages (`/components/[slug]`), the
+ * health dashboard (`/health`), and the inspector enrichments. All
+ * defensive: missing fields yield empty results rather than throw.
+ */
+
+/** Find a single component by slug — used by /components/[slug]. */
+export function componentBySlug(slug: string): IconEntry | null {
+  return MANIFEST.icons.find(
+    (i) => i.slug === slug && (i.kind === "component" || (!i.kind && classifyAsset(i) === "component")),
+  ) ?? null;
+}
+
+/**
+ * Find a component by its durable Component.Key (the published-library
+ * identifier from /v1/files/:key/component_sets). Returns null when no
+ * component carries that key — most useful as a cross-file lookup; consumers
+ * wanting "any component with this slug" should prefer componentBySlug.
+ */
+export function componentByKey(key: string): IconEntry | null {
+  if (!key) return null;
+  return MANIFEST.icons.find((i) => i.key === key) ?? null;
+}
+
+/**
+ * Flatten an entry's VARIANT properties into a row-of-axis structure
+ * convenient for table rendering: each row carries the axis name, every
+ * possible value, and which value is the default. Non-VARIANT properties
+ * (BOOLEAN/TEXT/INSTANCE_SWAP) are returned separately so the consumer can
+ * render them with the appropriate type tag.
+ */
+export interface AxisMatrix {
+  axes: VariantAxis[];
+  /** Non-VARIANT properties — BOOLEAN / TEXT / INSTANCE_SWAP. */
+  scalars: ComponentProperty[];
+}
+export function axisMatrix(entry: IconEntry): AxisMatrix {
+  const axes = entry.variant_axes ?? [];
+  const scalars = (entry.prop_defs ?? []).filter((p) => p.type !== "VARIANT");
+  return { axes, scalars };
+}
+
+/** All components that have rich data (prop_defs OR variant_axes captured). */
+export function componentsWithRichData(): IconEntry[] {
+  return MANIFEST.icons.filter(
+    (i) =>
+      (i.kind === "component" || (!i.kind && classifyAsset(i) === "component")) &&
+      ((i.prop_defs && i.prop_defs.length > 0) || (i.variant_axes && i.variant_axes.length > 0)),
+  );
+}
+
+/** Return the variant flagged is_default, or fall back to the first. */
+export function defaultVariantOf(entry: IconEntry): VariantEntry | null {
+  const vs = entry.variants ?? [];
+  if (vs.length === 0) return null;
+  return vs.find((v) => v.is_default) ?? vs[0];
+}
+
+/** Total count of variants across all components. */
+export function totalVariantCount(): number {
+  let n = 0;
+  for (const i of MANIFEST.icons) n += i.variants?.length ?? 0;
+  return n;
+}
+
+/** Aggregate: how many of each property type exist across all components. */
+export function propTypeBreakdown(): { variant: number; boolean: number; text: number; instance_swap: number } {
+  const out = { variant: 0, boolean: 0, text: 0, instance_swap: 0 };
+  for (const i of componentsWithRichData()) {
+    for (const p of i.prop_defs ?? []) {
+      if (p.type === "VARIANT") out.variant++;
+      else if (p.type === "BOOLEAN") out.boolean++;
+      else if (p.type === "TEXT") out.text++;
+      else if (p.type === "INSTANCE_SWAP") out.instance_swap++;
+    }
+  }
+  return out;
+}
+
+/** Aggregate: how many fills across all variants are bound to a Variable. */
+export function bindingCoverage(): { fillsBound: number; fillsTotal: number; effectsBound: number; effectsTotal: number } {
+  let fillsBound = 0, fillsTotal = 0, effectsBound = 0, effectsTotal = 0;
+  for (const i of MANIFEST.icons) {
+    for (const v of i.variants ?? []) {
+      for (const f of v.fills ?? []) {
+        if (f.type !== "SOLID") continue;
+        fillsTotal++;
+        if (f.bound_variable_id) fillsBound++;
+      }
+      for (const e of v.effects ?? []) {
+        effectsTotal++;
+        if (e.bound_variable_id) effectsBound++;
+      }
+    }
+  }
+  return { fillsBound, fillsTotal, effectsBound, effectsTotal };
+}
+
+/** Find components grouped by their first VARIANT axis name — for nav. */
+export function componentsByPrimaryAxis(): Map<string, IconEntry[]> {
+  const map = new Map<string, IconEntry[]>();
+  for (const i of componentsWithRichData()) {
+    const axis = i.variant_axes?.[0]?.name ?? "(no axis)";
+    if (!map.has(axis)) map.set(axis, []);
+    map.get(axis)!.push(i);
+  }
+  return map;
+}
+
+/** Total components, variants, and bound-variable count — for /health. */
+export function systemStats() {
+  const components = MANIFEST.icons.filter(
+    (i) => i.kind === "component" || (!i.kind && classifyAsset(i) === "component"),
+  );
+  const totalVariants = components.reduce((n, i) => n + (i.variants?.length ?? 0), 0);
+  const withDescription = components.filter((i) => i.description && i.description.trim().length > 0).length;
+  return {
+    components: components.length,
+    variants: totalVariants,
+    components_with_props: componentsWithRichData().length,
+    components_with_description: withDescription,
+    icons: MANIFEST.icons.filter((i) => classifyAsset(i) === "icon").length,
+    illustrations: MANIFEST.icons.filter((i) => classifyAsset(i) === "illustration").length,
+    logos: MANIFEST.icons.filter((i) => classifyAsset(i) === "logo").length,
+  };
 }

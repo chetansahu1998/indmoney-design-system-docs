@@ -69,14 +69,24 @@ type MatchEvidence struct {
 }
 
 // ComponentMatch annotates an INSTANCE / COMPONENT node with the DS-match outcome.
+//
+// SetKey, MatchedName, MatchedDescription, and AxisCount are tooltip-grade
+// metadata: present when an Accept/Ambiguous decision lands on a known DS
+// candidate, omitted when the decision is Reject. They let the plugin and
+// docs site show "Button · 6 axes" chips and hover-cards without having to
+// re-resolve the DS manifest at render time.
 type ComponentMatch struct {
 	NodeID       string         `json:"node_id"`
 	NodeName     string         `json:"node_name"`
 	ComponentKey string         `json:"component_key,omitempty"`
+	SetKey       string         `json:"set_key,omitempty"`            // durable COMPONENT_SET key
 	Score        float64        `json:"score"`
 	Decision     Decision       `json:"decision"`
 	Evidence     MatchEvidence  `json:"evidence"`
-	MatchedSlug  string         `json:"matched_slug,omitempty"` // DS component slug, if accepted
+	MatchedSlug  string         `json:"matched_slug,omitempty"`       // DS component slug, if accepted
+	MatchedName  string         `json:"matched_name,omitempty"`       // DS component display name
+	MatchedDescription string   `json:"matched_description,omitempty"` // DS component description (markdown)
+	AxisCount    int            `json:"axis_count,omitempty"`         // number of VARIANT axes on the matched set
 }
 
 // TokenCoverage is per-property bound/total counts.

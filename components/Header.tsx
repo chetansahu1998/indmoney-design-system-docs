@@ -400,6 +400,7 @@ function PageNav() {
     { href: "/illustrations", label: "Illustrations" },
     { href: "/logos",         label: "Logos" },
     { href: "/files",         label: "Files" },
+    { href: "/health",        label: "Health" },
   ];
   return (
     <LayoutGroup id="topnav">

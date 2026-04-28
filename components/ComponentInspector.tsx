@@ -1,7 +1,17 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
-import { iconURL, slugifyCategory, type IconEntry, type VariantEntry } from "@/lib/icons/manifest";
+import {
+  iconURL,
+  slugifyCategory,
+  axisMatrix,
+  defaultVariantOf,
+  type IconEntry,
+  type VariantEntry,
+  type ComponentProperty,
+  type LayoutInfo,
+} from "@/lib/icons/manifest";
 import { useIsMobile } from "@/lib/use-mobile";
 import DataGapPreview from "@/components/ui/DataGapPreview";
 
@@ -321,10 +331,16 @@ function InspectorBody({ entry, onClose }: { entry: IconEntry; onClose: () => vo
     for (const v of variants) for (const p of v.properties) set.add(p.name);
     return Array.from(set);
   }, [variants]);
+  const matrix = useMemo(() => axisMatrix(entry), [entry]);
+  const defaultVariant = useMemo(() => defaultVariantOf(entry), [entry]);
+  const hasAxes = matrix.axes.length > 0 || matrix.scalars.length > 0;
+  const hasLayout = !!defaultVariant?.layout?.mode && defaultVariant.layout.mode !== "NONE";
 
   return (
     <>
-      {/* Sticky header inside the inspector — name, slug/meta, close. */}
+      {/* Sticky header inside the inspector — name, slug/meta, close. The
+       *  sticky positioning keeps the title in view while the body scrolls
+       *  through Description → Axes → Layout → Variants. */}
       <div
         style={{
           padding: "16px 18px",
@@ -333,6 +349,10 @@ function InspectorBody({ entry, onClose }: { entry: IconEntry; onClose: () => vo
           alignItems: "flex-start",
           gap: 12,
           flexShrink: 0,
+          position: "sticky",
+          top: 0,
+          background: "var(--bg-surface)",
+          zIndex: 1,
         }}
       >
         <div style={{ minWidth: 0, flex: 1 }}>
@@ -376,6 +396,25 @@ function InspectorBody({ entry, onClose }: { entry: IconEntry; onClose: () => vo
               <Pill>{propertyKeys.join(" · ")}</Pill>
             )}
           </div>
+          {/* Detail-page deep link — promoted into the inspector header
+           *  so designers always have a path from quick-browse → full
+           *  spec without going back to the top nav. */}
+          <Link
+            href={`/components/${entry.slug}`}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              marginTop: 10,
+              fontSize: 11,
+              fontWeight: 600,
+              color: "var(--accent)",
+              textDecoration: "none",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            Open detail →
+          </Link>
         </div>
         <button
           onClick={onClose}
@@ -398,20 +437,310 @@ function InspectorBody({ entry, onClose }: { entry: IconEntry; onClose: () => vo
         </button>
       </div>
 
-      {/* Body — variants list, vertical (one per row) so each fills the
-       *  panel width comfortably and shows its property chips beneath. */}
+      {/* Body — Description, Variant Axes, Layout, then the variants list.
+       *  Order matches what a designer asks first: "what is this", "what
+       *  knobs does it have", "how is it laid out", "show me each one".
+       *  Sections are present-only — empty data renders nothing rather
+       *  than a "no description yet" placeholder, keeping the panel terse. */}
       <div style={{ overflowY: "auto", flex: 1 }}>
+        {entry.description && (
+          <DescriptionSection
+            description={entry.description}
+            docLinks={entry.doc_links ?? []}
+          />
+        )}
+        {hasAxes && <AxesSection matrix={matrix} />}
+        {hasLayout && defaultVariant?.layout && (
+          <LayoutSection layout={defaultVariant.layout} />
+        )}
         {variants.length === 0 ? (
           <EmptyVariants slug={entry.slug} />
         ) : (
-          <div style={{ padding: "12px 14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
-            {variants.map((v) => (
-              <VariantRow key={v.variant_id} variant={v} />
-            ))}
-          </div>
+          <>
+            <SectionHeader label="Variants" count={variants.length} />
+            <div style={{ padding: "0 14px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+              {variants.map((v) => (
+                <VariantRow key={v.variant_id} variant={v} />
+              ))}
+            </div>
+          </>
         )}
       </div>
     </>
+  );
+}
+
+function SectionHeader({ label, count }: { label: string; count?: number }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "16px 14px 8px",
+        fontSize: 11,
+        fontWeight: 600,
+        color: "var(--text-3)",
+        textTransform: "uppercase",
+        letterSpacing: "0.07em",
+      }}
+    >
+      <span>{label}</span>
+      {count !== undefined && (
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 10,
+            background: "var(--bg-surface-2)",
+            border: "1px solid var(--border)",
+            padding: "1px 6px",
+            borderRadius: 4,
+          }}
+        >
+          {count}
+        </span>
+      )}
+      <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+    </div>
+  );
+}
+
+function DescriptionSection({
+  description,
+  docLinks,
+}: {
+  description: string;
+  docLinks: string[];
+}) {
+  return (
+    <div>
+      <SectionHeader label="Description" />
+      <div
+        style={{
+          padding: "0 14px 4px",
+          fontSize: 13,
+          lineHeight: 1.5,
+          color: "var(--text-2)",
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {description}
+      </div>
+      {docLinks.length > 0 && (
+        <div style={{ padding: "8px 14px 4px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {docLinks.map((href, i) => (
+            <a
+              key={href + i}
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                fontSize: 11,
+                fontFamily: "var(--font-mono)",
+                color: "var(--accent)",
+                textDecoration: "none",
+                background: "color-mix(in srgb, var(--accent) 10%, transparent)",
+                padding: "2px 8px",
+                borderRadius: 4,
+              }}
+            >
+              docs ↗
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AxesSection({ matrix }: { matrix: ReturnType<typeof axisMatrix> }) {
+  return (
+    <div>
+      <SectionHeader label="Variant axes" count={matrix.axes.length + matrix.scalars.length} />
+      <div style={{ padding: "0 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+        {matrix.axes.map((axis) => (
+          <div
+            key={axis.name}
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 10,
+              padding: "8px 10px",
+              background: "var(--bg-surface-2)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+            }}
+          >
+            <div
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 11,
+                color: "var(--text-1)",
+                fontWeight: 600,
+                minWidth: 60,
+                paddingTop: 2,
+              }}
+            >
+              {axis.name}
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4, flex: 1 }}>
+              {axis.values.map((v) => (
+                <span
+                  key={v}
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 10,
+                    padding: "2px 7px",
+                    background:
+                      v === axis.default
+                        ? "color-mix(in srgb, var(--accent) 14%, transparent)"
+                        : "var(--bg-surface)",
+                    border: `1px solid ${v === axis.default ? "var(--accent)" : "var(--border)"}`,
+                    color: v === axis.default ? "var(--accent)" : "var(--text-2)",
+                    borderRadius: 4,
+                    fontWeight: v === axis.default ? 600 : 500,
+                  }}
+                  title={v === axis.default ? "Default value" : undefined}
+                >
+                  {v}
+                  {v === axis.default && " ★"}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+        {matrix.scalars.map((p) => (
+          <ScalarPropRow key={p.name} prop={p} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ScalarPropRow({ prop }: { prop: ComponentProperty }) {
+  const cleanName = prop.name.split("#")[0];
+  const tone =
+    prop.type === "BOOLEAN"
+      ? "color-mix(in srgb, var(--success) 14%, transparent)"
+      : prop.type === "TEXT"
+        ? "color-mix(in srgb, var(--accent) 14%, transparent)"
+        : "color-mix(in srgb, var(--warn) 14%, transparent)";
+  const toneColor =
+    prop.type === "BOOLEAN" ? "var(--success)" : prop.type === "TEXT" ? "var(--accent)" : "var(--warn)";
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "8px 10px",
+        background: "var(--bg-surface-2)",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 11,
+          color: "var(--text-1)",
+          fontWeight: 600,
+          flex: 1,
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {cleanName}
+      </div>
+      <span
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 9,
+          padding: "2px 6px",
+          background: tone,
+          color: toneColor,
+          borderRadius: 3,
+          fontWeight: 600,
+        }}
+      >
+        {prop.type}
+      </span>
+      {prop.default_value !== undefined && prop.default_value !== null && (
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 10,
+            color: "var(--text-2)",
+            maxWidth: 100,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={String(prop.default_value)}
+        >
+          {String(prop.default_value)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function LayoutSection({ layout }: { layout: LayoutInfo }) {
+  const padding =
+    layout.padding_top !== undefined ||
+    layout.padding_right !== undefined ||
+    layout.padding_bottom !== undefined ||
+    layout.padding_left !== undefined
+      ? `${layout.padding_top ?? 0} ${layout.padding_right ?? 0} ${layout.padding_bottom ?? 0} ${layout.padding_left ?? 0}`
+      : null;
+  const rows: Array<[string, string | null | undefined]> = [
+    ["mode", layout.mode],
+    ["wrap", layout.wrap === "WRAP" ? "wrap" : layout.wrap === "NO_WRAP" ? "no wrap" : null],
+    ["padding", padding],
+    ["gap", layout.item_spacing != null ? `${layout.item_spacing}px` : null],
+    [
+      "align",
+      layout.primary_align && layout.counter_align
+        ? `${layout.primary_align} · ${layout.counter_align}`
+        : null,
+    ],
+    [
+      "sizing",
+      layout.primary_sizing || layout.counter_sizing
+        ? `${layout.primary_sizing ?? "—"} · ${layout.counter_sizing ?? "—"}`
+        : null,
+    ],
+  ];
+  const filled = rows.filter(([, v]) => v != null && v !== "");
+  if (filled.length === 0) return null;
+  return (
+    <div>
+      <SectionHeader label="Layout" />
+      <div
+        style={{
+          margin: "0 14px 4px",
+          padding: "10px 12px",
+          background: "var(--bg-surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          display: "grid",
+          gridTemplateColumns: "max-content 1fr",
+          rowGap: 6,
+          columnGap: 14,
+          fontFamily: "var(--font-mono)",
+          fontSize: 11,
+        }}
+      >
+        {filled.map(([k, v]) => (
+          <Fragment key={k}>
+            <span style={{ color: "var(--text-3)" }}>{k}</span>
+            <span style={{ color: "var(--text-1)" }}>{v}</span>
+          </Fragment>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -486,6 +815,13 @@ function EmptyVariants({ slug }: { slug: string }) {
 
 function VariantRow({ variant }: { variant: VariantEntry }) {
   const url = `/icons/glyph/${variant.file.replace(/^variants\//, "variants/")}`;
+  const boundCount =
+    Object.keys(variant.bound_variables ?? {}).length +
+    (variant.fills ?? []).filter((f) => f.bound_variable_id).length +
+    (variant.effects ?? []).filter((e) => e.bound_variable_id).length;
+  const axisEntries = variant.axis_values
+    ? Object.entries(variant.axis_values)
+    : variant.properties.map((p) => [p.name, p.value] as [string, string]);
   return (
     <div
       style={{
@@ -494,7 +830,7 @@ function VariantRow({ variant }: { variant: VariantEntry }) {
         gap: 8,
         padding: 10,
         background: "var(--bg-surface-2)",
-        border: "1px solid var(--border)",
+        border: `1px solid ${variant.is_default ? "var(--accent)" : "var(--border)"}`,
         borderRadius: 8,
       }}
     >
@@ -508,8 +844,29 @@ function VariantRow({ variant }: { variant: VariantEntry }) {
           border: "1px solid var(--border)",
           borderRadius: 6,
           padding: 8,
+          position: "relative",
         }}
       >
+        {variant.is_default && (
+          <span
+            title="Default variant"
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 6,
+              fontSize: 9,
+              fontWeight: 700,
+              color: "var(--accent)",
+              background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+              padding: "2px 6px",
+              borderRadius: 4,
+              fontFamily: "var(--font-mono)",
+              letterSpacing: "0.04em",
+            }}
+          >
+            ★ DEFAULT
+          </span>
+        )}
         <img
           src={url}
           alt={variant.name}
@@ -518,20 +875,40 @@ function VariantRow({ variant }: { variant: VariantEntry }) {
         />
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-        {variant.properties.length === 0 ? (
+        {axisEntries.length === 0 ? (
           <PropChip k="default" v="" />
         ) : (
-          variant.properties.map((p) => <PropChip key={p.name} k={p.name} v={p.value} />)
+          axisEntries.map(([k, v]) => <PropChip key={k} k={k} v={v} />)
         )}
       </div>
       <div
         style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
           fontSize: 10,
           fontFamily: "var(--font-mono)",
           color: "var(--text-3)",
         }}
       >
-        {variant.width} × {variant.height}
+        <span>
+          {variant.width} × {variant.height}
+        </span>
+        {boundCount > 0 && (
+          <span
+            title={`${boundCount} property${boundCount === 1 ? "" : "ies"} bound to a Figma Variable`}
+            style={{
+              background: "color-mix(in srgb, var(--success) 14%, transparent)",
+              color: "var(--success)",
+              padding: "2px 6px",
+              borderRadius: 4,
+              fontWeight: 600,
+            }}
+          >
+            🎯 {boundCount} bound
+          </span>
+        )}
       </div>
     </div>
   );

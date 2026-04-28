@@ -46,10 +46,18 @@ export interface ComponentMatch {
   node_id: string;
   node_name: string;
   component_key?: string;
+  /** Durable COMPONENT_SET key — for plugin to importComponentByKeyAsync. */
+  set_key?: string;
   score: number;
   decision: Decision;
   evidence: MatchEvidence;
   matched_slug?: string;
+  /** Human-readable name of the matched DS component (for chips/tooltips). */
+  matched_name?: string;
+  /** Markdown description from Figma's component-set "description" field. */
+  matched_description?: string;
+  /** Number of VARIANT axes on the matched set — drives the "· N axes" chip. */
+  axis_count?: number;
 }
 
 export interface Coverage {

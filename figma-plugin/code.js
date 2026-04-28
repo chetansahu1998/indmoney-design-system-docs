@@ -369,6 +369,21 @@ async function runAudit(scope) {
         for (const f of s.fixes)
             flat.push(f);
     send({ type: "audit-fixes", payload: flat.slice(0, 100) });
+    // Forward component matches that have a matched_slug — these power the
+    // "Component matches" section. Reject decisions are dropped to keep the
+    // panel signal-rich; ambiguous + accept both surface so designers can
+    // verify ambiguous cases manually.
+    const matches = [];
+    for (const s of data.result.screens) {
+        if (!s.component_matches)
+            continue;
+        for (const m of s.component_matches) {
+            if (m.decision === "reject" || !m.matched_slug)
+                continue;
+            matches.push(m);
+        }
+    }
+    send({ type: "audit-matches", payload: matches.slice(0, 60) });
     await prefetchVariables();
 }
 function aggregateAuditTotals(result) {

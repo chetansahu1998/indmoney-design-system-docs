@@ -21,6 +21,7 @@ export default function Footer() {
     { label: "Illustrations", href: "/illustrations" },
     { label: "Logos", href: "/logos" },
     { label: "Files audit", href: "/files" },
+    { label: "Health", href: "/health" },
   ];
   const resources: { label: string; href: string }[] = [
     { label: "Sync from Figma", href: "/?sync=open" },

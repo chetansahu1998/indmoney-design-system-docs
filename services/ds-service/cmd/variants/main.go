@@ -197,6 +197,13 @@ func main() {
 	defer cancel()
 	c := client.New(pat)
 
+	// 0. Fetch durable per-node metadata: /components + /component_sets
+	// give us {node_id → {key, description}} for every published item in
+	// this file. The /nodes/?ids=… path also has key/description but they
+	// live nested inside `document` and miss when extraction edits aren't
+	// yet published; the index endpoints are the source of truth here.
+	keyByNodeID, descByNodeID := fetchPublishedIndex(ctx, c, fileKey, log)
+
 	// 1. Resolve children of each COMPONENT_SET in batches of 25
 	type variantKey struct {
 		entryIdx int
@@ -240,8 +247,17 @@ func main() {
 			if defs, ok := doc["componentPropertyDefinitions"].(map[string]any); ok {
 				m.Icons[idx].PropDefs = parseComponentPropertyDefinitions(defs)
 			}
-			if desc, ok := doc["description"].(string); ok && desc != "" {
+			// Description: prefer the /component_sets index entry (richer,
+			// survives node-document quirks); fall back to the document's
+			// inline description field.
+			if d, ok := descByNodeID[setID]; ok && d != "" {
+				m.Icons[idx].Description = d
+			} else if desc, ok := doc["description"].(string); ok && desc != "" {
 				m.Icons[idx].Description = desc
+			}
+			// Durable set key — only present once the file is published.
+			if k, ok := keyByNodeID[setID]; ok && k != "" {
+				m.Icons[idx].Key = k
 			}
 			if links, ok := doc["documentationLinks"].([]any); ok {
 				for _, l := range links {
@@ -282,6 +298,7 @@ func main() {
 					Properties: parseProps(vname),
 					AxisValues: parseAxisValues(vname),
 					VariantID:  vid,
+					Key:        keyByNodeID[vid],
 					IsDefault:  vid == defaultVariantID,
 					File: filepath.Join(
 						"variants",

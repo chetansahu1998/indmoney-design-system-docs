@@ -131,6 +131,31 @@ func (c *Client) GetFileNodes(ctx context.Context, fileKey string, nodeIDs []str
 	return out, nil
 }
 
+// GetFileComponents fetches `/v1/files/<key>/components` — the file's published
+// components with their durable Component.Key (stable across edits/publishes).
+// Each entry carries node_id + key + name + description, which lets us
+// cross-reference Figma node trees back to the durable identifier the
+// Plugin API uses for `importComponentByKeyAsync`.
+func (c *Client) GetFileComponents(ctx context.Context, fileKey string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.get(ctx, "/v1/files/"+fileKey+"/components", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetFileComponentSets fetches `/v1/files/<key>/component_sets` — the file's
+// published component sets (variant matrices). Same shape as GetFileComponents
+// but for COMPONENT_SET nodes. Sets are what we treat as "the component" in
+// the docs site and the audit; their key is what survives publish-cycles.
+func (c *Client) GetFileComponentSets(ctx context.Context, fileKey string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.get(ctx, "/v1/files/"+fileKey+"/component_sets", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GetStyles fetches the published-styles list for the file.
 // Used to extract typography (TEXT styles) which Glyph DOES expose.
 func (c *Client) GetStyles(ctx context.Context, fileKey string) (map[string]any, error) {

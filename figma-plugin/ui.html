@@ -632,6 +632,51 @@
   .apply-all .copy { flex: 1; min-width: 0; color: var(--text-2); }
   .apply-all strong { color: var(--text-1); font-weight: 600; }
 
+  /* ── Component matches list (above fixes) ──────────────────────── */
+  .matches { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+  .matches-header {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--text-3);
+    padding: 0 2px 4px;
+  }
+  .matches-list { display: flex; flex-direction: column; gap: 4px; }
+  .match-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    background: var(--bg-surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    cursor: default;
+  }
+  .match-row .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--text-1);
+  }
+  .match-row .meta {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-3);
+  }
+  .match-row .chip {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  .match-row .chip.accept { background: color-mix(in srgb, var(--accent-success, #16a34a) 14%, transparent); color: var(--accent-success, #16a34a); }
+  .match-row .chip.ambiguous { background: color-mix(in srgb, var(--accent-warn, #ca8a04) 14%, transparent); color: var(--accent-warn, #ca8a04); }
+
   /* ── Fix groups ────────────────────────────────────────────────── */
   .fixes { display: flex; flex-direction: column; gap: 6px; }
   .fix-grp {
@@ -1031,6 +1076,14 @@
           <button class="primary tiny" id="apply-all-btn">Apply all</button>
         </div>
 
+        <!-- Component matches — accept/ambiguous decisions only, with
+             matched DS set name + axis count + tooltip carrying description.
+             Only renders when there's at least one match to surface. -->
+        <div class="matches" id="matches" style="display:none">
+          <div class="matches-header">Component matches</div>
+          <div class="matches-list" id="matches-list"></div>
+        </div>
+
         <!-- Fix groups -->
         <div class="fixes" id="fixes"></div>
       </div>
@@ -1364,6 +1417,66 @@ function titleCase(s) {
     .split(/[-_]+/)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
+}
+
+/**
+ * Renders the "Component matches" list — accept + ambiguous decisions
+ * carry matched_slug; reject decisions are filtered upstream. Each row
+ * shows the actual node name (left) and the matched DS component (chip
+ * + axis count) so a designer scanning the audit panel sees both sides
+ * of the match. Hovering the chip reveals the description (component-set
+ * description from Figma); clicking selects the node so the designer can
+ * jump to it on canvas.
+ */
+function renderMatches(matches) {
+  const wrap = $("matches");
+  const list = $("matches-list");
+  if (!matches || matches.length === 0) {
+    wrap.style.display = "none";
+    list.innerHTML = "";
+    return;
+  }
+  // Group by matched_slug so we can show "Button · 6 axes · 12 instances".
+  const groups = new Map();
+  for (const m of matches) {
+    const slug = m.matched_slug || "unknown";
+    if (!groups.has(slug)) {
+      groups.set(slug, {
+        slug,
+        name: m.matched_name || slug,
+        description: m.matched_description || "",
+        axisCount: m.axis_count || 0,
+        decisions: { accept: 0, ambiguous: 0 },
+        nodeIds: [],
+      });
+    }
+    const g = groups.get(slug);
+    g.decisions[m.decision] = (g.decisions[m.decision] || 0) + 1;
+    g.nodeIds.push(m.node_id);
+  }
+  const sorted = Array.from(groups.values()).sort((a, b) => b.nodeIds.length - a.nodeIds.length);
+
+  wrap.style.display = "flex";
+  list.innerHTML = "";
+  for (const g of sorted) {
+    const row = document.createElement("div");
+    row.className = "match-row";
+    if (g.description) row.title = g.description;
+    const ambiguous = g.decisions.ambiguous > 0 && g.decisions.accept === 0;
+    row.innerHTML = `
+      <span class="chip ${ambiguous ? "ambiguous" : "accept"}">${escapeHtml(g.name)}${g.axisCount > 0 ? ` · ${g.axisCount} ${g.axisCount === 1 ? "axis" : "axes"}` : ""}</span>
+      <span class="name">${g.nodeIds.length} instance${g.nodeIds.length === 1 ? "" : "s"}${ambiguous ? " · review" : ""}</span>
+    `;
+    list.appendChild(row);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function renderFixes(fixes) {
@@ -1731,6 +1844,9 @@ window.onmessage = (event) => {
       break;
     case "audit-fixes":
       renderFixes(msg.payload);
+      break;
+    case "audit-matches":
+      renderMatches(msg.payload);
       break;
     case "audit-applied": {
       // Single-node apply (legacy path)

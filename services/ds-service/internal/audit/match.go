@@ -39,10 +39,18 @@ func DefaultMatchingWeights() MatchingWeights {
 }
 
 // DSCandidate is a published-DS component the matcher can consider.
+//
+// SetKey, Description, and AxisCount are tooltip-grade metadata that ride
+// along with the candidate; they get copied onto the resulting
+// ComponentMatch when this candidate wins so consumers don't have to
+// re-resolve the manifest at render time.
 type DSCandidate struct {
 	Slug         string
 	Name         string
 	ComponentKey string // Figma component id
+	SetKey       string // durable COMPONENT_SET key
+	Description  string
+	AxisCount    int
 	StyleIDs     []string
 	Colors       []string // hex strings of fills the DS uses
 }
@@ -71,7 +79,11 @@ func Match(in MatchInput, candidates []DSCandidate, w MatchingWeights) Component
 			best.Score = s
 			best.Evidence = ev
 			best.ComponentKey = c.ComponentKey
+			best.SetKey = c.SetKey
 			best.MatchedSlug = c.Slug
+			best.MatchedName = c.Name
+			best.MatchedDescription = c.Description
+			best.AxisCount = c.AxisCount
 		}
 	}
 	switch {
@@ -81,8 +93,12 @@ func Match(in MatchInput, candidates []DSCandidate, w MatchingWeights) Component
 		best.Decision = DecisionAmbiguous
 	default:
 		best.Decision = DecisionReject
-		// Clear matched slug — we're rejecting.
+		// Clear matched-candidate fields — we're rejecting.
 		best.MatchedSlug = ""
+		best.MatchedName = ""
+		best.MatchedDescription = ""
+		best.AxisCount = 0
+		best.SetKey = ""
 		best.ComponentKey = ""
 	}
 	return best
