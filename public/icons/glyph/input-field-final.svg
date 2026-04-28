@@ -1,0 +1,19 @@
+<svg width="343" height="82" viewBox="0 0 343 82" fill="none" xmlns="http://www.w3.org/2000/svg">
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="0" y="13.5039">10 Digit mobile number</tspan></text>
+<g clip-path="url(#clip0_1583_13447)">
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="0.216797" y="45.1191">+91</tspan></text>
+<path d="M43 35.5L39 40.5L35 35.5H43Z" fill="#5E6063"/>
+</g>
+<text fill="#CECECE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="49" y="45.1191">Enter your number here</tspan></text>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M335.161 34.3554L330.995 39.0691L326.828 34.3554C326.409 33.8815 325.733 33.8815 325.314 34.3554C324.895 34.8292 324.895 35.5945 325.314 36.0683L330.243 41.6446C330.662 42.1185 331.338 42.1185 331.757 41.6446L336.686 36.0683C337.105 35.5945 337.105 34.8292 336.686 34.3554C336.267 33.8937 335.58 33.8815 335.161 34.3554Z" fill="#5E6063"/>
+<mask id="path-6-inside-1_1583_13447" fill="white">
+<path d="M0 59H343V60H0V59Z"/>
+</mask>
+<path d="M343 60V59H0V60V61H343V60Z" fill="#CECECE" mask="url(#path-6-inside-1_1583_13447)"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="0" y="78.7891">Your mobile number should begin with a digit between 6 to 9</tspan></text>
+<defs>
+<clipPath id="clip0_1583_13447">
+<rect width="45" height="25" fill="white" transform="translate(0 25.5)"/>
+</clipPath>
+</defs>
+</svg>

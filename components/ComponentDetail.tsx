@@ -1,11 +1,13 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { fadeUp, stagger, itemFadeUp } from "@/lib/motion-variants";
 import {
   iconURL,
   defaultVariantOf,
+  resolveComposition,
   type IconEntry,
   type VariantEntry,
   type ComponentProperty,
@@ -14,6 +16,7 @@ import {
   type EffectInfo,
   type CornerInfo,
   type ChildSummary,
+  type CompositionRef,
 } from "@/lib/icons/manifest";
 import { showToast } from "@/components/ui/Toast";
 
@@ -41,6 +44,13 @@ import { showToast } from "@/components/ui/Toast";
 export default function ComponentDetail({ entry }: { entry: IconEntry }) {
   const def = defaultVariantOf(entry);
 
+  // For parent components, the per-variant deep output (Layout, Appearance,
+  // Structure, Built from) lives inside each VariantCard via the inline
+  // expander — so we drop the top-level default-only sections to avoid
+  // the same data appearing in two places. Atoms and untiered components
+  // keep the top-level sections (no per-variant composition to surface).
+  const isParent = entry.tier === "parent";
+
   return (
     <motion.div variants={stagger} initial="hidden" animate="visible" style={{ display: "flex", flexDirection: "column", gap: 48 }}>
       <Hero entry={entry} def={def} />
@@ -50,13 +60,13 @@ export default function ComponentDetail({ entry }: { entry: IconEntry }) {
       {entry.prop_defs && entry.prop_defs.length > 0 && (
         <PropsSection props={entry.prop_defs} />
       )}
-      {def?.layout && (
+      {!isParent && def?.layout && (
         <LayoutSection layout={def.layout} />
       )}
-      {def && (def.fills?.length || def.strokes?.length || def.effects?.length || def.corner) && (
+      {!isParent && def && (def.fills?.length || def.strokes?.length || def.effects?.length || def.corner) && (
         <AppearanceSection variant={def} />
       )}
-      {def?.children && def.children.length > 0 && (
+      {!isParent && def?.children && def.children.length > 0 && (
         <StructureSection variant={def} />
       )}
       <CodeSection entry={entry} def={def} />
@@ -241,6 +251,7 @@ function Pill({ children }: { children: React.ReactNode }) {
 
 function VariantsSection({ entry }: { entry: IconEntry }) {
   const variants = entry.variants ?? [];
+  const isParent = entry.tier === "parent";
   return (
     <motion.section
       variants={fadeUp}
@@ -251,21 +262,48 @@ function VariantsSection({ entry }: { entry: IconEntry }) {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+          // Parent cards show much more per-variant detail when expanded,
+          // so give them more breathing room (320 vs 220 min). Atoms can
+          // pack tighter.
+          gridTemplateColumns: isParent
+            ? "repeat(auto-fill, minmax(320px, 1fr))"
+            : "repeat(auto-fill, minmax(220px, 1fr))",
           gap: 12,
         }}
       >
         {variants.map((v) => (
-          <VariantCard key={v.variant_id} variant={v} entrySlug={entry.slug} />
+          <VariantCard
+            key={v.variant_id}
+            variant={v}
+            entrySlug={entry.slug}
+            isParent={isParent}
+          />
         ))}
       </div>
     </motion.section>
   );
 }
 
-function VariantCard({ variant, entrySlug }: { variant: VariantEntry; entrySlug: string }) {
+function VariantCard({
+  variant,
+  entrySlug,
+  isParent,
+}: {
+  variant: VariantEntry;
+  entrySlug: string;
+  isParent: boolean;
+}) {
+  const [open, setOpen] = useState(!!variant.is_default);
   const url = `/icons/glyph/${variant.file.replace(/^variants\//, "variants/")}`;
   const boundCount = countBound(variant);
+  const composes = variant.composes ?? [];
+  const hasLayout = !!variant.layout?.mode && variant.layout.mode !== "NONE";
+  const hasAppearance =
+    (variant.fills?.length ?? 0) > 0 ||
+    (variant.strokes?.length ?? 0) > 0 ||
+    (variant.effects?.length ?? 0) > 0 ||
+    !!variant.corner;
+  const hasStructure = (variant.children?.length ?? 0) > 0;
   return (
     <motion.div
       variants={itemFadeUp}
@@ -336,13 +374,387 @@ function VariantCard({ variant, entrySlug }: { variant: VariantEntry; entrySlug:
       )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-3)" }}>
         <span>{variant.width} × {variant.height}</span>
-        {boundCount > 0 && (
-          <span style={{ color: "var(--accent)" }}>
-            {boundCount} bound
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {boundCount > 0 && (
+            <span style={{ color: "var(--accent)" }}>{boundCount} bound</span>
+          )}
+          {composes.length > 0 && (
+            <span
+              style={{
+                color: "var(--success, #16a34a)",
+                background: "color-mix(in srgb, var(--success, #16a34a) 14%, transparent)",
+                padding: "1px 6px",
+                borderRadius: 4,
+                fontWeight: 600,
+              }}
+              title={`${composes.length} atoms composed`}
+            >
+              {composes.length} atoms
+            </span>
+          )}
+          <button
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            style={{
+              background: "var(--bg-surface-2)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              padding: "2px 7px",
+              fontSize: 10,
+              cursor: "pointer",
+              color: "var(--text-2)",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            {open ? "hide" : "details"}
+          </button>
+        </div>
+      </div>
+
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18 }}
+            style={{ overflow: "hidden" }}
+          >
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+                paddingTop: 10,
+                marginTop: 6,
+                borderTop: "1px solid var(--border)",
+              }}
+            >
+              {composes.length > 0 && (
+                <BuiltFromRail composes={composes} />
+              )}
+              {hasLayout && variant.layout && (
+                <CompactLayout layout={variant.layout} />
+              )}
+              {hasAppearance && (
+                <CompactAppearance variant={variant} />
+              )}
+              {hasStructure && variant.children && (
+                <CompactStructure children={variant.children} />
+              )}
+              {!composes.length && !hasLayout && !hasAppearance && !hasStructure && (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "var(--text-3)",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  No deeper data captured for this variant.
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+/* ── Built from rail — atoms this variant composes ────────────────────── */
+
+function BuiltFromRail({ composes }: { composes: CompositionRef[] }) {
+  return (
+    <div>
+      <SubLabel>Built from <SubCount>{composes.length}</SubCount></SubLabel>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 6,
+        }}
+      >
+        {composes.map((ref, i) => (
+          <BuiltFromTile key={ref.component_id + i} ref={ref} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BuiltFromTile({ ref }: { ref: CompositionRef }) {
+  const atom = resolveComposition(ref);
+  const inner = (
+    <div
+      title={ref.path ? `${ref.path}` : undefined}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "4px 8px",
+        background: atom ? "var(--bg-surface-2)" : "color-mix(in srgb, var(--warn, #ca8a04) 8%, transparent)",
+        border: `1px solid ${atom ? "var(--border)" : "color-mix(in srgb, var(--warn, #ca8a04) 30%, transparent)"}`,
+        borderRadius: 4,
+        fontSize: 10,
+        fontFamily: "var(--font-mono)",
+        color: atom ? "var(--text-1)" : "var(--text-2)",
+        textDecoration: "none",
+      }}
+    >
+      {atom && (
+        <img
+          src={iconURL(atom)}
+          alt=""
+          loading="lazy"
+          style={{ width: 14, height: 14, objectFit: "contain", flexShrink: 0 }}
+        />
+      )}
+      <span>{ref.resolved_name || ref.instance_name}</span>
+      {ref.resolved_tier && ref.resolved_tier !== "atom" && (
+        <span style={{ color: "var(--text-3)" }}>· {ref.resolved_tier}</span>
+      )}
+      {!atom && (
+        <span style={{ color: "var(--warn, #ca8a04)" }}>· unresolved</span>
+      )}
+    </div>
+  );
+  if (atom) {
+    return (
+      <Link
+        href={`/components?c=${atom.slug}`}
+        style={{ textDecoration: "none" }}
+      >
+        {inner}
+      </Link>
+    );
+  }
+  return inner;
+}
+
+function SubLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: 10,
+        fontWeight: 600,
+        color: "var(--text-3)",
+        textTransform: "uppercase",
+        letterSpacing: "0.07em",
+        marginBottom: 6,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SubCount({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        fontWeight: 600,
+        color: "var(--text-2)",
+        background: "var(--bg-surface-2)",
+        border: "1px solid var(--border)",
+        padding: "1px 5px",
+        borderRadius: 3,
+        marginLeft: 4,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+/* ── Compact per-variant Layout / Appearance / Structure ──────────────── */
+
+function CompactLayout({ layout }: { layout: LayoutInfo }) {
+  const padding =
+    layout.padding_top !== undefined ||
+    layout.padding_right !== undefined ||
+    layout.padding_bottom !== undefined ||
+    layout.padding_left !== undefined
+      ? `${layout.padding_top ?? 0} ${layout.padding_right ?? 0} ${layout.padding_bottom ?? 0} ${layout.padding_left ?? 0}`
+      : null;
+  const rawRows: Array<[string, string | null | undefined]> = [
+    ["mode", layout.mode],
+    ["padding", padding],
+    ["gap", layout.item_spacing != null ? `${layout.item_spacing}px` : null],
+    [
+      "align",
+      layout.primary_align && layout.counter_align
+        ? `${layout.primary_align} · ${layout.counter_align}`
+        : null,
+    ],
+    [
+      "sizing",
+      layout.primary_sizing || layout.counter_sizing
+        ? `${layout.primary_sizing ?? "—"} · ${layout.counter_sizing ?? "—"}`
+        : null,
+    ],
+  ];
+  const rows = rawRows.filter(([, v]) => v != null && v !== "") as Array<
+    [string, string]
+  >;
+  if (rows.length === 0) return null;
+  return (
+    <div>
+      <SubLabel>Layout</SubLabel>
+      <div
+        style={{
+          padding: "8px 10px",
+          background: "var(--bg-surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: 6,
+          display: "grid",
+          gridTemplateColumns: "max-content 1fr",
+          rowGap: 4,
+          columnGap: 12,
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+        }}
+      >
+        {rows.map(([k, v]) => (
+          <span key={k} style={{ display: "contents" }}>
+            <span style={{ color: "var(--text-3)" }}>{k}</span>
+            <span style={{ color: "var(--text-1)" }}>{v}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CompactAppearance({ variant }: { variant: VariantEntry }) {
+  const fills = variant.fills?.filter((f) => f.visible !== false) ?? [];
+  const strokes = variant.strokes?.filter((f) => f.visible !== false) ?? [];
+  const effects = variant.effects?.filter((e) => e.visible !== false) ?? [];
+  const corner = variant.corner;
+  return (
+    <div>
+      <SubLabel>Appearance</SubLabel>
+      <div
+        style={{
+          padding: "8px 10px",
+          background: "var(--bg-surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: 6,
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+          fontSize: 10,
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        {fills.length > 0 && (
+          <PaintRow label="fills" paints={fills} />
+        )}
+        {strokes.length > 0 && (
+          <PaintRow label="strokes" paints={strokes} />
+        )}
+        {effects.length > 0 && (
+          <span style={{ display: "flex", gap: 6 }}>
+            <span style={{ color: "var(--text-3)", minWidth: 50 }}>effects</span>
+            <span style={{ color: "var(--text-1)" }}>
+              {effects.map((e) => e.type.toLowerCase().replace("_", " ")).join(" · ")}
+            </span>
+          </span>
+        )}
+        {corner && (
+          <span style={{ display: "flex", gap: 6 }}>
+            <span style={{ color: "var(--text-3)", minWidth: 50 }}>radius</span>
+            <span style={{ color: "var(--text-1)" }}>
+              {corner.uniform != null
+                ? `${corner.uniform}px`
+                : corner.individual?.join(" / ") ?? "—"}
+              {corner.bound_variable_id && (
+                <span style={{ color: "var(--accent)" }}> · bound</span>
+              )}
+            </span>
           </span>
         )}
       </div>
-    </motion.div>
+    </div>
+  );
+}
+
+function PaintRow({ label, paints }: { label: string; paints: FillInfo[] }) {
+  return (
+    <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <span style={{ color: "var(--text-3)", minWidth: 50 }}>{label}</span>
+      <span style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
+        {paints.map((p, i) => (
+          <span
+            key={i}
+            title={p.bound_variable_id ? `bound: ${p.bound_variable_id}` : p.color}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              border: "1px solid var(--border)",
+              borderRadius: 3,
+              padding: "1px 5px 1px 1px",
+              background: "var(--bg-surface)",
+            }}
+          >
+            <span
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 2,
+                background: p.type === "SOLID" && p.color ? p.color : "var(--bg-surface-2)",
+                border: "1px solid var(--border)",
+                flexShrink: 0,
+              }}
+            />
+            <span style={{ color: "var(--text-1)" }}>
+              {p.type === "SOLID" ? p.color : p.type.toLowerCase().replace("_", " ")}
+            </span>
+            {p.bound_variable_id && (
+              <span style={{ color: "var(--accent)", fontWeight: 600 }}>·</span>
+            )}
+          </span>
+        ))}
+      </span>
+    </span>
+  );
+}
+
+function CompactStructure({ children }: { children: ChildSummary[] }) {
+  return (
+    <div>
+      <SubLabel>Structure <SubCount>{children.length}</SubCount></SubLabel>
+      <div
+        style={{
+          padding: "8px 10px",
+          background: "var(--bg-surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: 6,
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          fontSize: 10,
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        {children.map((c, i) => (
+          <span key={c.id + i} style={{ display: "flex", gap: 8 }}>
+            <span style={{ color: "var(--text-3)", minWidth: 80 }}>
+              {c.type.toLowerCase()}
+            </span>
+            <span style={{ color: "var(--text-1)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {c.name || c.characters || "—"}
+            </span>
+            {c.property_refs && Object.keys(c.property_refs).length > 0 && (
+              <span style={{ color: "var(--text-3)" }}>
+                ↩ {Object.values(c.property_refs).join(" ")}
+              </span>
+            )}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 

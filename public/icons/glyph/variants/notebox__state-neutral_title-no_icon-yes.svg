@@ -1,0 +1,12 @@
+<svg width="343" height="83" viewBox="0 0 343 83" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="343" height="83" rx="12" fill="#F3F3F2"/>
+<g clip-path="url(#clip0_3160_57615)">
+<path d="M26.0003 29.3334V26.0001M26.0003 22.6667H26.0087M34.3337 26.0001C34.3337 30.6025 30.6027 34.3334 26.0003 34.3334C21.398 34.3334 17.667 30.6025 17.667 26.0001C17.667 21.3977 21.398 17.6667 26.0003 17.6667C30.6027 17.6667 34.3337 21.3977 34.3337 26.0001Z" stroke="#393B3E" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="44" y="29.5039">It is taking longer for your complaint to be </tspan><tspan x="44" y="46.5039">resolved, please reach out to your bank </tspan><tspan x="44" y="63.5039">directly for further action</tspan></text>
+<defs>
+<clipPath id="clip0_3160_57615">
+<rect width="20" height="20" fill="white" transform="translate(16 16)"/>
+</clipPath>
+</defs>
+</svg>

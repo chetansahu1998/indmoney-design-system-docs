@@ -1,26 +1,26 @@
 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_6029_7969)">
 <g clip-path="url(#clip1_6029_7969)">
-<path d="M5.80672 15.0073H5.80605V8.7959H18.1932L18.1934 15.1995C18.1934 15.2024 18.1909 15.2048 18.188 15.2048C18.1265 16.0539 17.5369 16.8867 16.4172 17.5224C14.031 18.8773 10.0845 18.8773 7.6472 17.5224C6.41509 16.8375 5.80157 15.9237 5.80668 15.0073H5.80672Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M12.0129 3.74023L22.1245 9.49527L12.0129 15.1382L1.87488 9.43925L12.0129 3.74023Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
-<path d="M22.125 9.53027V10.1843L12.0134 15.8273V15.1196L22.125 9.53027Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M12.0137 15.8276V15.1199L1.87565 9.47461V10.1286L12.0137 15.8276Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M11.6699 9.88582L7.21826 12.4153L6.77416 12.168L11.4396 9.47461L11.6699 9.88582Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M12.605 9.09188C12.9375 9.28208 12.937 9.59479 12.6036 9.78682C12.2702 9.97881 11.726 9.97881 11.3941 9.78682C11.0622 9.59475 11.0628 9.28208 11.3955 9.09188C11.728 8.90167 12.2724 8.90167 12.605 9.09188Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M7.05566 12.4885V18.1686L6.6116 17.8602V12.2412L7.05566 12.4885Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
-<path d="M7.05692 12.4888L7.2207 12.4153L6.7766 12.168L6.61285 12.2416L7.05692 12.4888Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
-<path d="M7.05692 18.1677L7.2207 18.0942V12.4141L7.05692 12.4876V18.1677Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M7.05566 18.1687L6.77983 20.2596L6.3028 19.9373L6.6116 17.8604L7.05566 18.1687Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
-<path d="M7.22102 18.0947L7.66064 19.8177L6.7814 20.2592L7.05724 18.1683L7.22102 18.0947Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<circle cx="20.925" cy="3.675" r="1.8" fill="#DF3C27"/>
+<path d="M5.80672 15.0073H5.80605V8.7959H18.1932L18.1934 15.1995C18.1934 15.2024 18.1909 15.2048 18.188 15.2048C18.1265 16.0539 17.5369 16.8867 16.4172 17.5224C14.031 18.8773 10.0845 18.8773 7.6472 17.5224C6.41509 16.8375 5.80157 15.9237 5.80668 15.0073H5.80672Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M12.0129 3.74023L22.1245 9.49527L12.0129 15.1382L1.87488 9.43925L12.0129 3.74023Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M22.125 9.53027V10.1843L12.0134 15.8273V15.1196L22.125 9.53027Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M12.0137 15.8276V15.1199L1.87565 9.47461V10.1286L12.0137 15.8276Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M11.6699 9.88582L7.21826 12.4153L6.77416 12.168L11.4396 9.47461L11.6699 9.88582Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M12.605 9.09188C12.9375 9.28208 12.937 9.59479 12.6036 9.78682C12.2702 9.97881 11.726 9.97881 11.3941 9.78682C11.0622 9.59475 11.0628 9.28208 11.3955 9.09188C11.728 8.90167 12.2724 8.90167 12.605 9.09188Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M7.05566 12.4885V18.1686L6.6116 17.8602V12.2412L7.05566 12.4885Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M7.05692 12.4888L7.2207 12.4153L6.7766 12.168L6.61285 12.2416L7.05692 12.4888Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M7.05692 18.1677L7.2207 18.0942V12.4141L7.05692 12.4876V18.1677Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M7.05566 18.1687L6.77983 20.2596L6.3028 19.9373L6.6116 17.8604L7.05566 18.1687Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M7.22102 18.0947L7.66064 19.8177L6.7814 20.2592L7.05724 18.1683L7.22102 18.0947Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<circle cx="20.925" cy="3.675" r="1.8" fill="currentColor"/>
 </g>
 </g>
 <defs>
 <clipPath id="clip0_6029_7969">
-<rect width="24" height="24" fill="white"/>
+<rect width="24" height="24" fill="currentColor"/>
 </clipPath>
 <clipPath id="clip1_6029_7969">
-<rect width="24" height="24" fill="white"/>
+<rect width="24" height="24" fill="currentColor"/>
 </clipPath>
 </defs>
 </svg>

@@ -49,16 +49,40 @@ func main() {
 	c := client.New(pat)
 	ctx := context.Background()
 
+	// Pages walked in order. Tier is page-driven for the COMPONENT_SETs
+	// found on each — Design System 🌟 holds parents, Bottom Sheet holds
+	// molecules, Atoms holds atomic primitives. Tier-empty pages
+	// (Icons Fresh) carry icons / illustrations / logos which aren't
+	// part of the atomic-design hierarchy.
+	//
+	// Order matters: parents come first so their names land in
+	// parentNameSet before the atoms-page walk; the name-pattern
+	// fallback in extractor.go then promotes any matching atom-page
+	// entries to parent tier.
 	pages := []icons.PageSpec{
 		{
+			NodeID:   getenvOr("FIGMA_NODE_ID_INDMONEY_GLYPH_DESIGN_SYSTEM", "87:7405"),
+			PageName: "Design System 🌟",
+			Source:   "design-system",
+			Tier:     "parent",
+		},
+		{
+			NodeID:   getenvOr("FIGMA_NODE_ID_INDMONEY_GLYPH_BOTTOM_SHEET", "3466:24922"),
+			PageName: "Bottom Sheet",
+			Source:   "bottom-sheet",
+			Tier:     "molecule",
+		},
+		{
 			NodeID:     getenvOr("FIGMA_NODE_ID_INDMONEY_GLYPH_ICONS", "1440:29094"),
+			PageName:   "Icons Fresh",
 			Source:     "icons-fresh",
 			NamePrefix: "Icons/",
 		},
 		{
-			NodeID:     getenvOr("FIGMA_NODE_ID_INDMONEY_GLYPH_ATOMS", "1583:36915"),
-			Source:     "atoms",
-			NamePrefix: "",
+			NodeID:   getenvOr("FIGMA_NODE_ID_INDMONEY_GLYPH_ATOMS", "1583:36915"),
+			PageName: "Atoms ",
+			Source:   "atoms",
+			Tier:     "atom",
 		},
 	}
 

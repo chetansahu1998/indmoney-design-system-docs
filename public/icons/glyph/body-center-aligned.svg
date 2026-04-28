@@ -1,0 +1,31 @@
+<svg width="375" height="528" viewBox="0 0 375 528" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="375" height="528" rx="20" fill="white"/>
+<rect width="375" height="250" rx="20" fill="#D9D9D9"/>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="149.121" y="293.619">Heading</tspan></text>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="162.091" y="320.504">Subtitle</tspan></text>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="16" y="361.339">Heading</tspan></text>
+<g clip-path="url(#clip0_3961_74206)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M343.355 351.839L348.069 356.005L343.355 360.172C342.882 360.591 342.882 361.267 343.355 361.686C343.829 362.105 344.595 362.105 345.068 361.686L350.645 356.757C351.118 356.338 351.118 355.662 350.645 355.243L345.068 350.314C344.595 349.895 343.829 349.895 343.355 350.314C342.894 350.733 342.882 351.42 343.355 351.839Z" fill="#88898A"/>
+</g>
+<path d="M16 388H359" stroke="#EFEFEF"/>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="16" y="421.339">Heading</tspan></text>
+<g clip-path="url(#clip1_3961_74206)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M343.355 411.839L348.069 416.005L343.355 420.172C342.882 420.591 342.882 421.267 343.355 421.686C343.829 422.105 344.595 422.105 345.068 421.686L350.645 416.757C351.118 416.338 351.118 415.662 350.645 415.243L345.068 410.314C344.595 409.895 343.829 409.895 343.355 410.314C342.894 410.733 342.882 411.42 343.355 411.839Z" fill="#88898A"/>
+</g>
+<path d="M16 448H359" stroke="#EFEFEF"/>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="16" y="481.339">Heading</tspan></text>
+<g clip-path="url(#clip2_3961_74206)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M343.355 471.839L348.069 476.005L343.355 480.172C342.882 480.591 342.882 481.267 343.355 481.686C343.829 482.105 344.595 482.105 345.068 481.686L350.645 476.757C351.118 476.338 351.118 475.662 350.645 475.243L345.068 470.314C344.595 469.895 343.829 469.895 343.355 470.314C342.894 470.733 342.882 471.42 343.355 471.839Z" fill="#88898A"/>
+</g>
+<defs>
+<clipPath id="clip0_3961_74206">
+<rect width="24" height="24" fill="white" transform="translate(335 344)"/>
+</clipPath>
+<clipPath id="clip1_3961_74206">
+<rect width="24" height="24" fill="white" transform="translate(335 404)"/>
+</clipPath>
+<clipPath id="clip2_3961_74206">
+<rect width="24" height="24" fill="white" transform="translate(335 464)"/>
+</clipPath>
+</defs>
+</svg>

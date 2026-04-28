@@ -1,0 +1,14 @@
+<svg width="311" height="77" viewBox="0 0 311 77" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M0 0H311V65C311 71.6274 305.627 77 299 77H12C5.37258 77 0 71.6274 0 65V0Z" fill="#FFE6E4"/>
+<text fill="#393B3E" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="16.0078" y="61.5039">Expenses are up by </tspan></text>
+<text fill="#DD2624" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="147.172" y="61.4834">20%</tspan></text>
+<text fill="#DD2624" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="219.15" y="61.5039">Set alert</tspan></text>
+<g clip-path="url(#clip0_4869_52274)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M284.571 53.726L287.713 56.5036L284.571 59.2812C284.255 59.5604 284.255 60.0114 284.571 60.2906C284.887 60.5698 285.397 60.5698 285.713 60.2906L289.43 57.0047C289.746 56.7255 289.746 56.2745 289.43 55.9953L285.713 52.7094C285.397 52.4302 284.887 52.4302 284.571 52.7094C284.263 52.9886 284.255 53.4468 284.571 53.726Z" fill="#393B3E"/>
+</g>
+<defs>
+<clipPath id="clip0_4869_52274">
+<rect width="16" height="16" fill="white" transform="translate(279 48.5)"/>
+</clipPath>
+</defs>
+</svg>

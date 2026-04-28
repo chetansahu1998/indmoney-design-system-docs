@@ -54,3 +54,6 @@ logs/
 test-results/
 playwright-report/
 playwright/.cache/
+
+# Claude Code worktrees + agent state
+.claude/

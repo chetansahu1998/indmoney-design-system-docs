@@ -30,19 +30,39 @@ type Icon struct {
 	Name      string `json:"name"`       // "Download Cloud"
 	Kind      string `json:"kind"`       // "icon" | "component" | "logo" | "illustration"
 	Category  string `json:"category"`   // For kind=component: parent SECTION name. For others: source group ("2D", "bank", etc.).
-	Source    string `json:"source"`     // "icons-fresh" | "atoms" — which page it came from
+	Source    string `json:"source"`     // "icons-fresh" | "atoms" | "design-system" | "bottom-sheet" — which page it came from
 	Sets      string `json:"set_id"`     // Figma component_set node id
 	VariantID string `json:"variant_id"` // The variant id we exported
 	File      string `json:"file"`       // "download-cloud.svg" (relative to /icons/glyph/)
 	WidthPx   int    `json:"width"`
 	HeightPx  int    `json:"height"`
+
+	// — Atomic-design tier classification —
+	// Tier sorts components into atomic-design strata so /components can
+	// surface PARENT components (organisms) by default and let designers
+	// drill into atoms separately. Empty for kind=icon|logo|illustration
+	// (those aren't tiered). For kind=component:
+	//   "atom"     — single primitive (Buttons page, Input Field, …)
+	//   "molecule" — pattern composed of atoms (Bottom Sheet headers, list rows)
+	//   "parent"   — final consumed component (Toast, Status Bar, Footer CTA, Masthead/*)
+	// Source of truth is the page the COMPONENT_SET lives on, with a
+	// name-pattern fallback for cross-shelved sets (e.g. Masthead/Hot
+	// hosted under Atoms is still parent-tier).
+	Tier   string `json:"tier,omitempty"`
+	Page   string `json:"page,omitempty"`    // page name for human-readable provenance
+	PageID string `json:"page_id,omitempty"` // page node id for cross-references
 }
 
 // PageSpec describes one input page to extract icons from.
 type PageSpec struct {
-	NodeID  string // Figma page node id
-	Source  string // friendly source name ("icons-fresh", "atoms")
+	NodeID     string // Figma page node id
+	PageName   string // human-readable name written into Icon.Page (defaults to source)
+	Source     string // friendly source name ("icons-fresh", "atoms", "design-system", "bottom-sheet")
 	NamePrefix string // strip if present (e.g. "Icons/" for Icons Fresh)
+	// Tier is the default tier stamped on every COMPONENT_SET found on
+	// this page. Leave empty for icon/logo/illustration pages — they
+	// aren't part of the atomic-design hierarchy.
+	Tier string
 }
 
 // variantInfo is the chosen export variant per icon set.
@@ -76,9 +96,21 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 		source   string
 		slug     string
 		display  string
+		tier     string // "atom" | "molecule" | "parent" (empty for non-component kinds)
+		pageName string
+		pageID   string
 	}
 
 	var sets []setEntry
+
+	// parentNameSet collects every COMPONENT_SET name found on a page with
+	// Tier=parent during the first pass. After all pages are walked, any
+	// atom-page set whose name matches a parent name (or matches a known
+	// parent-prefix pattern like "Masthead/*") is lifted to parent tier.
+	// This honors Figma's hierarchical naming convention — a/b/c paths
+	// with "/" separators — without hardcoding which atoms get promoted.
+	parentNameSet := map[string]bool{}
+	parentPrefixes := []string{"Masthead/"} // path-prefix lift (configurable)
 
 	// 1. Walk each page, enumerate COMPONENT_SETs at the top level + within SECTIONs
 	for _, page := range pages {
@@ -128,13 +160,35 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 
 				// Decide kind + category. Single source of truth, priority-ordered:
 				//
-				//   1. Inside a SECTION → component (SECTION name is the category).
-				//   2. Category prefix from the set name says it's a logo/illustration.
-				//   3. Name heuristics catch banks / merchants / mastheads / sub-brand wordmarks.
-				//   4. icons-fresh source with Icon/Filled Icons category → icon.
-				//   5. Default falls through to "icon" — the safest bucket.
+				//   1. Page declares a Tier → kind=component (page.Tier wins
+				//      regardless of SECTION wrapper). Design System and
+				//      Bottom Sheet pages are component-only; their SECTION
+				//      wrappers are mostly cosmetic and often unnamed.
+				//   2. Inside a named SECTION → component (SECTION name is
+				//      the category). Atoms page uses this — its SECTIONs
+				//      ARE the categories ("Buttons", "Input Field", …).
+				//   3. Category prefix from the set name says it's a logo/illustration.
+				//   4. Name heuristics catch banks / merchants / mastheads / sub-brand wordmarks.
+				//   5. icons-fresh source with Icon/Filled Icons category → icon.
+				//   6. Default falls through to "icon" — the safest bucket.
 				kind := ""
-				if sectionName != "" {
+				if page.Tier != "" {
+					kind = "component"
+					// Category for parent/molecule pages: prefer the path-
+					// prefix from the set name (Figma's "/" hierarchy),
+					// then SECTION name if present, then "uncategorized".
+					if cat, _ := splitIconName(setName); cat != "" && cat != "uncategorized" {
+						category = cat
+					} else if sectionName != "" {
+						category = sectionName
+					} else {
+						category = page.PageName
+						if category == "" {
+							category = "uncategorized"
+						}
+					}
+					display = setName
+				} else if sectionName != "" {
 					kind = "component"
 					category = sectionName
 					display = setName
@@ -152,9 +206,37 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 				} else if isMastheadLike(setName) {
 					kind = "illustration"
 					category = "Masthead"
-				} else if isIllustrationCategory(category) {
+				} else if isIllustrationByDisplayName(display) {
+					// PRIMARY illustration signal — the display name
+					// itself carries "2D · …" / "3D · …" / "Profilecard …".
+					// In the Glyph file this naming is reserved for the
+					// genuinely illustrated assets; siblings in the same
+					// 2D/3D folder without this prefix are stroke icons
+					// (most are 24×24 line glyphs). Path-prefix awareness
+					// — Figma's "node/node/property/…" convention — is
+					// honored: we override category to the canonical
+					// folder name so the illustration page groups them
+					// cleanly.
 					kind = "illustration"
-				} else if isIconCategory(category) {
+					lowerDisplay := strings.ToLower(display)
+					if strings.HasPrefix(lowerDisplay, "3d") {
+						category = "3D"
+					} else if strings.HasPrefix(lowerDisplay, "2d") {
+						category = "2D"
+					}
+				} else if isIllustrationCategory(category) && category != "2D" && category != "3D" {
+					// Keep Profilecard, Wallet, Cold etc. as illustrations
+					// by category since their folder names ARE descriptive.
+					// Drop 2D/3D from this rule because in this file those
+					// folders contain 24×24 stroke icons mixed with the
+					// occasional named illustration.
+					kind = "illustration"
+				} else if isIconCategory(category) || category == "2D" || category == "3D" {
+					// Items in 2D / 3D folders without the "X · Name"
+					// display marker are stroke icons grouped by visual
+					// style. Preserve the folder name as their category
+					// so the icon page can offer "2D · 256" / "3D · 135"
+					// browse buckets.
 					kind = "icon"
 				} else if page.Source == "icons-fresh" {
 					// Icons Fresh page items without a recognized category
@@ -173,6 +255,21 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 				if display == "" {
 					return
 				}
+				// Tier is page-driven for the component kinds; non-component
+				// assets (icons, logos, illustrations) carry no tier. This
+				// keeps the manifest honest about which entries participate
+				// in the atomic-design hierarchy.
+				tier := ""
+				if kind == "component" && page.Tier != "" {
+					tier = page.Tier
+				}
+				if tier == "parent" {
+					parentNameSet[setName] = true
+				}
+				pageName := page.PageName
+				if pageName == "" {
+					pageName = page.Source
+				}
 				sets = append(sets, setEntry{
 					setID:    setID,
 					setName:  setName,
@@ -181,6 +278,9 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 					source:   page.Source,
 					slug:     slugify(display),
 					display:  display,
+					tier:     tier,
+					pageName: pageName,
+					pageID:   page.NodeID,
 				})
 				return
 			}
@@ -212,20 +312,61 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 		log.Info("page enumerated", "source", page.Source, "sets_so_far", len(sets))
 	}
 
-	// Dedupe by slug — multiple pages can have the same slug (e.g. "download-cloud" in both Icons Fresh and Atoms)
+	// Tier name-pattern fallback. Any kind=component set still tiered as
+	// atom whose name (a) appears verbatim on a parent-tier page or
+	// (b) starts with a known parent prefix gets lifted to parent. This
+	// respects Figma's "/"-path hierarchy — `Masthead/Hot` placed on the
+	// Atoms page is still authored as a parent piece even if the file is
+	// laid out in an atom-shaped place. Done before dedupe so the lifted
+	// tier wins when the same slug appears on both pages.
+	for i := range sets {
+		s := &sets[i]
+		if s.kind != "component" || s.tier == "parent" {
+			continue
+		}
+		if parentNameSet[s.setName] {
+			s.tier = "parent"
+			continue
+		}
+		for _, prefix := range parentPrefixes {
+			if strings.HasPrefix(s.setName, prefix) {
+				s.tier = "parent"
+				break
+			}
+		}
+	}
+
+	// Dedupe by slug. When a parent and an atom share a slug (e.g. the
+	// same name appears on Atoms and Design System pages), keep the
+	// PARENT entry — that's the canonical published surface. Otherwise
+	// first-seen wins.
 	{
-		seen := map[string]bool{}
+		seen := map[string]int{} // slug → index in uniq
 		uniq := sets[:0]
 		for _, s := range sets {
-			if seen[s.slug] {
+			if existingIdx, ok := seen[s.slug]; ok {
+				if s.tier == "parent" && uniq[existingIdx].tier != "parent" {
+					uniq[existingIdx] = s
+				}
 				continue
 			}
-			seen[s.slug] = true
+			seen[s.slug] = len(uniq)
 			uniq = append(uniq, s)
 		}
 		sets = uniq
 	}
-	log.Info("found icon sets total", "count", len(sets))
+	{
+		// Per-tier counts for log honesty.
+		counts := map[string]int{}
+		for _, s := range sets {
+			if s.kind == "component" {
+				counts[s.tier]++
+			} else {
+				counts[s.kind]++
+			}
+		}
+		log.Info("found icon sets total", "count", len(sets), "breakdown", counts)
+	}
 
 	// 2. For each set, fetch its variants at depth=2 and pick "BG=No, Size=24px"
 	// We batch the variant lookups
@@ -377,6 +518,9 @@ func Extract(ctx context.Context, c *client.Client, fileKey string, pages []Page
 			File:      s.slug + ".svg",
 			WidthPx:   v.width,
 			HeightPx:  v.height,
+			Tier:      s.tier,
+			Page:      s.pageName,
+			PageID:    s.pageID,
 		})
 		categorySet[s.category] = true
 	}
@@ -575,6 +719,32 @@ func isIllustrationCategory(category string) bool {
 	switch category {
 	case "2D", "3D", "Profilecard", "Wallet", "Cold":
 		return true
+	}
+	return false
+}
+
+// isIllustrationByDisplayName detects illustrations by their display name
+// when the path-prefix category misses them. Figma stores 2D and 3D
+// illustrations with display names like "3D · Car - Family" or
+// "2D · Foreclose"; if these get parented under an "Icon/" group the
+// category becomes "Icon" and the isIconCategory branch would
+// mis-classify them. Detecting the literal "2D" / "3D" / "Profilecard"
+// prefix on the *display* name is the honest signal — the asset's
+// rendering tells us what tier of detail it carries.
+func isIllustrationByDisplayName(display string) bool {
+	d := strings.TrimSpace(display)
+	if d == "" {
+		return false
+	}
+	lower := strings.ToLower(d)
+	// Allow "3d ·", "3d-", "3d ", and the same for "2d". Case-insensitive
+	// because Figma's authoring is inconsistent — "3D · Car", "3d · sip100"
+	// both appear in the same file.
+	prefixes := []string{"3d ·", "3d·", "3d-", "3d ", "2d ·", "2d·", "2d-", "2d ", "profilecard"}
+	for _, p := range prefixes {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
 	}
 	return false
 }

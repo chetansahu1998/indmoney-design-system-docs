@@ -1,17 +1,17 @@
 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_6029_9428)">
-<path d="M2.96002 16.3232L2.01914 16.3403L7.73343 22.1236L8.67432 22.1065L2.96002 16.3232Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M2.8158 8.00395L2.95801 16.3252L2.01727 16.342L1.87506 8.02073L2.8158 8.00395Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M8.33105 2.01758L7.39017 2.03466L1.8766 8.01867L2.81748 8.00158L8.33105 2.01758Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M8.33165 2.01693L2.81808 8.00093L2.96025 16.3234L8.67455 22.1067L16.6114 21.9657L22.125 15.9817L21.9828 7.66137L16.2685 1.87598L8.33165 2.01693Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
-<path d="M16.0415 20.6988L20.8379 15.4922L20.7124 8.19265L15.7425 3.16113L8.89913 3.28286L4.10272 8.4895L4.22817 15.7891L9.19812 20.8206L16.0415 20.6988Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<circle cx="5.08134" cy="5.08134" r="5.08134" transform="matrix(-1 0 0 1 17.5557 6.91113)" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
-<path d="M10.8491 15.0066V9.95776V8.97754L15.1807 11.9921L10.8491 15.0066Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<circle cx="22.05" cy="1.8" r="1.8" fill="#DF3C27"/>
+<path d="M2.96002 16.3232L2.01914 16.3403L7.73343 22.1236L8.67432 22.1065L2.96002 16.3232Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M2.8158 8.00395L2.95801 16.3252L2.01727 16.342L1.87506 8.02073L2.8158 8.00395Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M8.33105 2.01758L7.39017 2.03466L1.8766 8.01867L2.81748 8.00158L8.33105 2.01758Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M8.33165 2.01693L2.81808 8.00093L2.96025 16.3234L8.67455 22.1067L16.6114 21.9657L22.125 15.9817L21.9828 7.66137L16.2685 1.87598L8.33165 2.01693Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M16.0415 20.6988L20.8379 15.4922L20.7124 8.19265L15.7425 3.16113L8.89913 3.28286L4.10272 8.4895L4.22817 15.7891L9.19812 20.8206L16.0415 20.6988Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<circle cx="5.08134" cy="5.08134" r="5.08134" transform="matrix(-1 0 0 1 17.5557 6.91113)" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M10.8491 15.0066V9.95776V8.97754L15.1807 11.9921L10.8491 15.0066Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<circle cx="22.05" cy="1.8" r="1.8" fill="currentColor"/>
 </g>
 <defs>
 <clipPath id="clip0_6029_9428">
-<rect width="24" height="24" fill="white"/>
+<rect width="24" height="24" fill="currentColor"/>
 </clipPath>
 </defs>
 </svg>

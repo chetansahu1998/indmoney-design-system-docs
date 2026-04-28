@@ -1,0 +1,8 @@
+<svg width="375" height="430" viewBox="0 0 375 430" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="375" height="430" rx="20" fill="white"/>
+<rect width="375" height="250" rx="20" fill="#D9D9D9"/>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="20" letter-spacing="0px"><tspan x="149.121" y="293.619">Heading</tspan></text>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="162.091" y="320.504">Subtitle</tspan></text>
+<rect x="16" y="348" width="343" height="50" rx="25" fill="#089959"/>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="16" letter-spacing="0px"><tspan x="161.883" y="378.695">Button</tspan></text>
+</svg>

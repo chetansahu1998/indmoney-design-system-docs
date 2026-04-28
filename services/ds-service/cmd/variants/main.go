@@ -74,6 +74,13 @@ type Variant struct {
 	Opacity        float64           `json:"opacity,omitempty"`
 	BoundVariables map[string]string `json:"bound_variables,omitempty"`
 	Children       []ChildSummary    `json:"children,omitempty"`
+	// Composes is the list of every INSTANCE found while walking this
+	// variant's node tree. Populated only when the parent entry's tier
+	// is "parent" (atom variants have no INSTANCEs by definition;
+	// molecules sometimes do but we don't surface that yet). Resolved
+	// AtomSlug is filled in a post-pass that cross-references against
+	// the atoms table.
+	Composes []CompositionRef `json:"composes,omitempty"`
 }
 
 type IconEntry struct {
@@ -89,6 +96,14 @@ type IconEntry struct {
 	Width     int       `json:"width"`
 	Height    int       `json:"height"`
 	Variants  []Variant `json:"variants,omitempty"`
+
+	// Tier / Page / PageID echo the icons.Icon fields. cmd/variants only
+	// reads them — the values are decided once during cmd/icons. They're
+	// repeated here so the manifest survives a roundtrip through
+	// cmd/variants without dropping fields.
+	Tier   string `json:"tier,omitempty"`
+	Page   string `json:"page,omitempty"`
+	PageID string `json:"page_id,omitempty"`
 
 	// — rich fields, populated by the deep-fetch path —
 	// Key is the COMPONENT_SET's durable identifier from
@@ -324,6 +339,14 @@ func main() {
 				}
 				v.BoundVariables = extractBoundVarIDs(cm["boundVariables"])
 				v.Children = extractChildren(cm["children"])
+				// Composition graph — only walked for tier=parent. Atoms
+				// have no INSTANCEs and molecules aren't surfaced yet.
+				// The walk is shallow (depth=3 fetch caps it anyway) and
+				// stops at INSTANCE boundaries so we don't double-count
+				// nested compositions.
+				if m.Icons[idx].Tier == "parent" {
+					v.Composes = walkVariantInstances(cm)
+				}
 				pending = append(pending, variantKey{idx, v})
 			}
 
@@ -405,6 +428,11 @@ func main() {
 	for idx, vs := range byEntry {
 		m.Icons[idx].Variants = vs
 	}
+
+	// 5. Resolve compositions — every parent CompositionRef gets its
+	// AtomSlug filled by cross-referencing against the full manifest.
+	// Done after stitching so byVariantID is populated for every entry.
+	resolveCompositions(&m)
 
 	out, _ := json.MarshalIndent(m, "", "  ")
 	if err := os.WriteFile(*manifest, append(out, '\n'), 0o644); err != nil {

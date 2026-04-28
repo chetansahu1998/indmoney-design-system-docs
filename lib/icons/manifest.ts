@@ -96,6 +96,21 @@ export interface ChildSummary {
   height?: number;
 }
 
+export interface CompositionRef {
+  /** What the parent calls this slot ("Trailing Icon", "Action Bar_2CTA"). */
+  instance_name: string;
+  /** Figma node id this INSTANCE points at — COMPONENT or COMPONENT_SET. */
+  component_id: string;
+  /** "/"-joined ancestor name path from variant root down to this instance. */
+  path?: string;
+  /** Resolved atom slug if the componentId matches an extracted entry. */
+  atom_slug?: string;
+  /** Resolved tier of the embedded component (atom / molecule / parent). */
+  resolved_tier?: "atom" | "molecule" | "parent";
+  /** Resolved display name — saves a manifest lookup at render time. */
+  resolved_name?: string;
+}
+
 export interface VariantEntry {
   /** Original Figma variant name, e.g. "State=Default, Size=Medium". */
   name: string;
@@ -119,7 +134,11 @@ export interface VariantEntry {
   opacity?: number;
   bound_variables?: Record<string, string>;
   children?: ChildSummary[];
+  /** INSTANCEs in this variant's tree, with atom resolution. Parents only. */
+  composes?: CompositionRef[];
 }
+
+export type ComponentTier = "atom" | "molecule" | "parent";
 
 export interface IconEntry {
   slug: string;
@@ -142,6 +161,11 @@ export interface IconEntry {
   prop_defs?: ComponentProperty[];
   variant_axes?: VariantAxis[];
   single_variant_set?: boolean;
+
+  /* Atomic-design tier classification (plan-002 Phase G). */
+  tier?: ComponentTier;
+  page?: string;     // human-readable page name ("Design System 🌟", "Atoms ")
+  page_id?: string;  // Figma node id of the page
 }
 
 /** What an entry actually represents — derived from category + dimensions. */
@@ -362,6 +386,48 @@ export function componentsByPrimaryAxis(): Map<string, IconEntry[]> {
     map.get(axis)!.push(i);
   }
   return map;
+}
+
+/** Filter to only the parent-tier (organism) components. */
+export function parentComponents(): IconEntry[] {
+  return MANIFEST.icons
+    .filter((i) => i.tier === "parent")
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Filter to only atom-tier components. */
+export function atomComponents(): IconEntry[] {
+  return MANIFEST.icons
+    .filter((i) => i.tier === "atom")
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Filter to only molecule-tier components. */
+export function moleculeComponents(): IconEntry[] {
+  return MANIFEST.icons
+    .filter((i) => i.tier === "molecule")
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Resolve a CompositionRef to the full atom IconEntry it points at, by
+ * looking up either the resolved atom_slug (preferred — set by the
+ * extractor) or the raw component_id against any variant_id /set_id
+ * we know about.
+ */
+export function resolveComposition(ref: CompositionRef): IconEntry | null {
+  if (ref.atom_slug) {
+    const e = MANIFEST.icons.find((i) => i.slug === ref.atom_slug);
+    if (e) return e;
+  }
+  if (!ref.component_id) return null;
+  return (
+    MANIFEST.icons.find(
+      (i) =>
+        i.set_id === ref.component_id ||
+        (i.variants ?? []).some((v) => v.variant_id === ref.component_id),
+    ) ?? null
+  );
 }
 
 /** Total components, variants, and bound-variable count — for /health. */

@@ -1,19 +1,19 @@
 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_2176_8321)">
 <g clip-path="url(#clip1_2176_8321)">
-<path d="M7.15114 1.79697V6.28813C7.15114 6.89707 7.15114 7.20155 7.05273 7.43413C6.96616 7.63872 6.82802 7.80506 6.65812 7.9093C6.46497 8.02781 6.21212 8.02781 5.70642 8.02781H1.97674M7.15114 1.50391H11.8465C13.3636 1.50391 14.1221 1.50391 14.7016 1.85943C15.2113 2.17216 15.6257 2.67117 15.8854 3.28494C16.1807 3.9827 16.1807 4.89613 16.1807 6.72297V18.0309C16.1807 19.8578 16.1807 20.7712 15.8854 21.469C15.6257 22.0827 15.2113 22.5817 14.7016 22.8945C14.1221 23.25 13.3636 23.25 11.8465 23.25H6.0676C4.5505 23.25 3.79195 23.25 3.21249 22.8945C2.70279 22.5817 2.28838 22.0827 2.02868 21.469C1.73343 20.7712 1.73343 19.8578 1.73343 18.0309L1.73633 7.40699L7.15114 1.50391Z" stroke="#223466" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="5.6709" y="10.4492" width="17.3171" height="10.0312" rx="2.125" fill="#F5F7F9" stroke="#223466" stroke-width="1.75"/>
-<path d="M9.92188 4.32422H13.3027" stroke="#223466" stroke-width="1.5" stroke-linecap="round"/>
-<path d="M9.89941 7.26562H11.524" stroke="#223466" stroke-width="1.5" stroke-linecap="round"/>
-<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="6" font-weight="bold" letter-spacing="0px"><tspan x="8.79395" y="17.0078">EPF</tspan></text>
+<path d="M7.15114 1.79697V6.28813C7.15114 6.89707 7.15114 7.20155 7.05273 7.43413C6.96616 7.63872 6.82802 7.80506 6.65812 7.9093C6.46497 8.02781 6.21212 8.02781 5.70642 8.02781H1.97674M7.15114 1.50391H11.8465C13.3636 1.50391 14.1221 1.50391 14.7016 1.85943C15.2113 2.17216 15.6257 2.67117 15.8854 3.28494C16.1807 3.9827 16.1807 4.89613 16.1807 6.72297V18.0309C16.1807 19.8578 16.1807 20.7712 15.8854 21.469C15.6257 22.0827 15.2113 22.5817 14.7016 22.8945C14.1221 23.25 13.3636 23.25 11.8465 23.25H6.0676C4.5505 23.25 3.79195 23.25 3.21249 22.8945C2.70279 22.5817 2.28838 22.0827 2.02868 21.469C1.73343 20.7712 1.73343 19.8578 1.73343 18.0309L1.73633 7.40699L7.15114 1.50391Z" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="5.6709" y="10.4492" width="17.3171" height="10.0312" rx="2.125" fill="currentColor" stroke="currentColor" stroke-width="1.75"/>
+<path d="M9.92188 4.32422H13.3027" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+<path d="M9.89941 7.26562H11.524" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+<text fill="currentColor" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="6" font-weight="bold" letter-spacing="0px"><tspan x="8.79395" y="17.0078">EPF</tspan></text>
 </g>
 </g>
 <defs>
 <clipPath id="clip0_2176_8321">
-<rect width="24" height="24" fill="white"/>
+<rect width="24" height="24" fill="currentColor"/>
 </clipPath>
 <clipPath id="clip1_2176_8321">
-<rect width="24" height="24" fill="white"/>
+<rect width="24" height="24" fill="currentColor"/>
 </clipPath>
 </defs>
 </svg>

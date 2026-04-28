@@ -1,0 +1,63 @@
+<svg width="343" height="104" viewBox="0 0 343 104" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="0.5" y="0.5" width="342" height="47" rx="11.5" stroke="#EFEFEF"/>
+<g clip-path="url(#clip0_3904_38155)">
+<g filter="url(#filter0_d_3904_38155)">
+<g clip-path="url(#clip1_3904_38155)">
+<path d="M16 24C16 17.3726 21.3726 12 28 12C34.6274 12 40 17.3726 40 24C40 30.6274 34.6274 36 28 36C21.3726 36 16 30.6274 16 24Z" fill="#AE285D"/>
+<path d="M35.969 29.3162H31.0119L28.002 24.1255H32.9584L35.969 29.3162Z" fill="white"/>
+<path d="M27.9839 15.6558L30.4696 19.8832L24.9789 29.3165H20.0312L27.9839 15.6558Z" fill="white"/>
+</g>
+</g>
+</g>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="52" y="29.3394">Heading</tspan></text>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M322.125 20.2097L313.804 28.6204C313.555 28.8727 313.225 29 312.899 29C312.571 29 312.244 28.8727 311.994 28.6204L308.375 24.9625C307.875 24.4563 307.875 23.6375 308.375 23.1319C308.875 22.6263 309.685 22.6263 310.186 23.1319L312.899 25.876L320.315 18.3788C320.815 17.8737 321.624 17.8737 322.125 18.3788C322.625 18.8853 322.625 19.704 322.125 20.2097Z" fill="#88898A"/>
+<rect x="0.5" y="56.5" width="342" height="47" rx="11.5" stroke="#EFEFEF"/>
+<g clip-path="url(#clip2_3904_38155)">
+<g filter="url(#filter1_d_3904_38155)">
+<g clip-path="url(#clip3_3904_38155)">
+<path d="M16 80C16 73.3726 21.3726 68 28 68C34.6274 68 40 73.3726 40 80C40 86.6274 34.6274 92 28 92C21.3726 92 16 86.6274 16 80Z" fill="#9C1D26"/>
+<path d="M34.6406 73.3594H21.3594V86.6405H34.6406V73.3594Z" fill="white"/>
+<path d="M33.6341 74.5557H22.3652V85.8825H33.6341V74.5557Z" fill="#9C1D26"/>
+<path d="M32.4681 75.5928H23.6543V77.8262H32.4681V75.5928Z" fill="white"/>
+<path d="M29.1278 78.9033H23.6543V80.9773H29.1278V78.9033Z" fill="white"/>
+<path d="M25.9886 82.1733H23.6543V84.3669H25.9886V82.1733Z" fill="white"/>
+</g>
+</g>
+</g>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="52" y="85.3394">Pending</tspan></text>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M322.125 76.2097L313.804 84.6204C313.555 84.8727 313.225 85 312.899 85C312.571 85 312.244 84.8727 311.994 84.6204L308.375 80.9625C307.875 80.4563 307.875 79.6375 308.375 79.1319C308.875 78.6263 309.685 78.6263 310.186 79.1319L312.899 81.876L320.315 74.3788C320.815 73.8737 321.624 73.8737 322.125 74.3788C322.625 74.8853 322.625 75.704 322.125 76.2097Z" fill="#88898A"/>
+<defs>
+<filter id="filter0_d_3904_38155" x="10" y="7" width="36" height="36" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="1"/>
+<feGaussianBlur stdDeviation="3"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.08 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3904_38155"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3904_38155" result="shape"/>
+</filter>
+<filter id="filter1_d_3904_38155" x="10" y="63" width="36" height="36" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset dy="1"/>
+<feGaussianBlur stdDeviation="3"/>
+<feComposite in2="hardAlpha" operator="out"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.08 0"/>
+<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_3904_38155"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_3904_38155" result="shape"/>
+</filter>
+<clipPath id="clip0_3904_38155">
+<rect width="24" height="24" fill="white" transform="translate(16 12)"/>
+</clipPath>
+<clipPath id="clip1_3904_38155">
+<path d="M16 24C16 17.3726 21.3726 12 28 12C34.6274 12 40 17.3726 40 24C40 30.6274 34.6274 36 28 36C21.3726 36 16 30.6274 16 24Z" fill="white"/>
+</clipPath>
+<clipPath id="clip2_3904_38155">
+<rect width="24" height="24" fill="white" transform="translate(16 68)"/>
+</clipPath>
+<clipPath id="clip3_3904_38155">
+<path d="M16 80C16 73.3726 21.3726 68 28 68C34.6274 68 40 73.3726 40 80C40 86.6274 34.6274 92 28 92C21.3726 92 16 86.6274 16 80Z" fill="white"/>
+</clipPath>
+</defs>
+</svg>

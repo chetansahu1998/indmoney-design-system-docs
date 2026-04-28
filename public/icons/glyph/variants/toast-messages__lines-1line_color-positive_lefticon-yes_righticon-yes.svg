@@ -1,0 +1,19 @@
+<svg width="343" height="51" viewBox="0 0 343 51" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect width="343" height="51" rx="8" fill="#089959"/>
+<g clip-path="url(#clip0_1660_8304)">
+<path d="M21.0007 25.5002L23.0007 27.5002L27.0007 23.5002M30.6673 25.5002C30.6673 29.1821 27.6826 32.1668 24.0007 32.1668C20.3188 32.1668 17.334 29.1821 17.334 25.5002C17.334 21.8183 20.3188 18.8335 24.0007 18.8335C27.6826 18.8335 30.6673 21.8183 30.6673 25.5002Z" stroke="#FFFFFE" stroke-width="1.16667" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="40" y="30.8394">NAME added to &#60;watchlist&#62;</tspan></text>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="255.15" y="31.0039">Set alert</tspan></text>
+<g clip-path="url(#clip1_1660_8304)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M320.571 23.226L323.713 26.0036L320.571 28.7812C320.255 29.0604 320.255 29.5114 320.571 29.7906C320.887 30.0698 321.397 30.0698 321.713 29.7906L325.43 26.5047C325.746 26.2255 325.746 25.7745 325.43 25.4953L321.713 22.2094C321.397 21.9302 320.887 21.9302 320.571 22.2094C320.263 22.4886 320.255 22.9468 320.571 23.226Z" fill="#FFFFFE"/>
+</g>
+<defs>
+<clipPath id="clip0_1660_8304">
+<rect width="16" height="16" fill="white" transform="translate(16 17.5)"/>
+</clipPath>
+<clipPath id="clip1_1660_8304">
+<rect width="16" height="16" fill="white" transform="translate(315 18)"/>
+</clipPath>
+</defs>
+</svg>

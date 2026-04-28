@@ -1,0 +1,18 @@
+<svg width="375" height="40" viewBox="0 0 375 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_5375_55131)">
+<path d="M27.67 5.8701L25.9 4.1001L16 14.0001L25.9 23.9001L27.67 22.1301L19.54 14.0001L27.67 5.8701Z" fill="#FFFFFE"/>
+</g>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="308.094" y="18.9834">CTA </tspan></text>
+<g clip-path="url(#clip1_5375_55131)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M345.962 10.5324L349.89 14.0045L345.962 17.4765C345.567 17.8255 345.567 18.3893 345.962 18.7383C346.357 19.0872 346.995 19.0872 347.39 18.7383L352.037 14.6309C352.431 14.2819 352.431 13.7181 352.037 13.3691L347.39 9.26174C346.995 8.91275 346.357 8.91275 345.962 9.26174C345.577 9.61074 345.567 10.1834 345.962 10.5324Z" fill="#FFFFFE"/>
+</g>
+<line y1="39.5" x2="375" y2="39.5" stroke="white" stroke-opacity="0.1"/>
+<defs>
+<clipPath id="clip0_5375_55131">
+<rect width="24" height="24" fill="white" transform="translate(16 2)"/>
+</clipPath>
+<clipPath id="clip1_5375_55131">
+<rect width="20" height="20" fill="white" transform="translate(339 4)"/>
+</clipPath>
+</defs>
+</svg>

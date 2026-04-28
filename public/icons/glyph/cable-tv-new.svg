@@ -1,24 +1,24 @@
 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_6029_6228)">
 <g clip-path="url(#clip1_6029_6228)">
-<path d="M11.6646 11.8116L9.84173 10.7402V20.8068L11.6646 21.8782V11.8116Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
-<path d="M9.81541 10.7303L20.376 4.63574L20.193 4.6425L19.1397 4.94929L8.66019 11.0425L8.67626 11.075L9.81541 10.7303Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M19.1377 4.93648L12.3297 2.12109L1.88707 8.25838L8.66711 11.0622L19.1377 4.93648Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M9.82959 10.7376L8.67629 11.0746L8.66109 11.0739L1.87527 8.26758V14.4123L8.67244 20.1187L9.82959 20.7988V10.7376Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M11.7332 21.8455C12.9919 21.1022 14.271 20.3451 15.5078 19.6131C17.6697 18.3336 19.9051 17.0104 22.1075 15.716L22.125 15.7057V5.67188L11.6785 11.8115V21.8172L11.6997 21.8654L11.7334 21.8455H11.7332Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M22.1187 5.66052L20.375 4.63574L9.84884 10.7289L11.6718 11.8003L22.1187 5.66052Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
-<path d="M21.2036 15.1642V7.33203L12.6305 12.3706V20.2028L21.2036 15.1642Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path d="M21.2373 15.1426L20.4934 14.7051L12.6292 19.3271V20.2017L21.2373 15.1426Z" fill="#017AFF" stroke="black" stroke-width="0.075"/>
-<path fill-rule="evenodd" clip-rule="evenodd" d="M20.5347 7.80859L12.6638 12.4345V19.4408C15.4777 18.0494 18.1902 16.5779 20.5347 14.8149C20.7516 12.7379 20.8194 10.144 20.5347 7.80859Z" fill="#EBF7FF" stroke="black" stroke-width="0.075"/>
-<circle cx="19.8" cy="2.175" r="1.8" fill="#DF3C27"/>
+<path d="M11.6646 11.8116L9.84173 10.7402V20.8068L11.6646 21.8782V11.8116Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M9.81541 10.7303L20.376 4.63574L20.193 4.6425L19.1397 4.94929L8.66019 11.0425L8.67626 11.075L9.81541 10.7303Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M19.1377 4.93648L12.3297 2.12109L1.88707 8.25838L8.66711 11.0622L19.1377 4.93648Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M9.82959 10.7376L8.67629 11.0746L8.66109 11.0739L1.87527 8.26758V14.4123L8.67244 20.1187L9.82959 20.7988V10.7376Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M11.7332 21.8455C12.9919 21.1022 14.271 20.3451 15.5078 19.6131C17.6697 18.3336 19.9051 17.0104 22.1075 15.716L22.125 15.7057V5.67188L11.6785 11.8115V21.8172L11.6997 21.8654L11.7334 21.8455H11.7332Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M22.1187 5.66052L20.375 4.63574L9.84884 10.7289L11.6718 11.8003L22.1187 5.66052Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M21.2036 15.1642V7.33203L12.6305 12.3706V20.2028L21.2036 15.1642Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path d="M21.2373 15.1426L20.4934 14.7051L12.6292 19.3271V20.2017L21.2373 15.1426Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M20.5347 7.80859L12.6638 12.4345V19.4408C15.4777 18.0494 18.1902 16.5779 20.5347 14.8149C20.7516 12.7379 20.8194 10.144 20.5347 7.80859Z" fill="currentColor" stroke="currentColor" stroke-width="0.075"/>
+<circle cx="19.8" cy="2.175" r="1.8" fill="currentColor"/>
 </g>
 </g>
 <defs>
 <clipPath id="clip0_6029_6228">
-<rect width="24" height="24" fill="white"/>
+<rect width="24" height="24" fill="currentColor"/>
 </clipPath>
 <clipPath id="clip1_6029_6228">
-<rect width="24" height="24" fill="white" transform="matrix(-1 0 0 1 24 0)"/>
+<rect width="24" height="24" fill="currentColor" transform="matrix(-1 0 0 1 24 0)"/>
 </clipPath>
 </defs>
 </svg>

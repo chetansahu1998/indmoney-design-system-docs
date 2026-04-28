@@ -1,0 +1,25 @@
+<svg width="343" height="131" viewBox="0 0 343 131" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="21" y="10" width="9" height="4" rx="2" fill="#089958"/>
+<rect width="24" height="24" rx="12" fill="#F9F9F9"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="8.65381" y="17.3394">1</tspan></text>
+<rect x="11" y="24" width="2" height="107" rx="1" fill="#EFEFEF"/>
+<text fill="#88898A" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="36" y="14.8394">Enter copy here</tspan></text>
+<text fill="#88898A" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="36" y="40.5039">on 09:30PM, 24th Aug&#x2019;24</tspan></text>
+<rect x="36" y="52" width="62" height="20" rx="6" fill="#CECECE"/>
+<circle cx="47" cy="62" r="3" fill="#FFFFFE"/>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="54" y="66.2891">Badge</tspan></text>
+<text fill="#88898A" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="36" y="95.7891">Resolution Expected by: 23rd Jul&#x2019;24</tspan></text>
+<g clip-path="url(#clip0_4013_66459)">
+<g clip-path="url(#clip1_4013_66459)">
+<path d="M337.167 8.33333V6.66667C337.167 4.36548 335.302 2.5 333.001 2.5C330.699 2.5 328.834 4.36548 328.834 6.66667V8.33333M333.001 12.0833V13.75M330.334 17.5H335.667C337.067 17.5 337.768 17.5 338.302 17.2275C338.773 16.9878 339.155 16.6054 339.395 16.135C339.667 15.6002 339.667 14.9001 339.667 13.5V12.3333C339.667 10.9332 339.667 10.2331 339.395 9.69836C339.155 9.22795 338.773 8.8455 338.302 8.60582C337.768 8.33333 337.067 8.33333 335.667 8.33333H330.334C328.934 8.33333 328.234 8.33333 327.699 8.60582C327.229 8.8455 326.846 9.22795 326.606 9.69836C326.334 10.2331 326.334 10.9332 326.334 12.3333V13.5C326.334 14.9001 326.334 15.6002 326.606 16.135C326.846 16.6054 327.229 16.9878 327.699 17.2275C328.234 17.5 328.934 17.5 330.334 17.5Z" stroke="#88898A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+</g>
+<defs>
+<clipPath id="clip0_4013_66459">
+<rect width="20" height="20" fill="white" transform="translate(323)"/>
+</clipPath>
+<clipPath id="clip1_4013_66459">
+<rect width="20" height="20" fill="white" transform="translate(323)"/>
+</clipPath>
+</defs>
+</svg>

@@ -1,0 +1,21 @@
+<svg width="343" height="131" viewBox="0 0 343 131" fill="none" xmlns="http://www.w3.org/2000/svg">
+<rect x="21" y="10" width="9" height="4" rx="2" fill="#089958"/>
+<rect width="24" height="24" rx="12" fill="#F9F9F9"/>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="8.65381" y="17.3394">1</tspan></text>
+<rect x="11" y="24" width="2" height="107" rx="1" fill="#EFEFEF"/>
+<text fill="#393B3E" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="36" y="14.8394">Enter copy here</tspan></text>
+<text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="36" y="40.5039">on 09:30PM, 24th Aug&#x2019;24</tspan></text>
+<rect x="36" y="52" width="62" height="20" rx="6" fill="#FF7631"/>
+<circle cx="47" cy="62" r="3" fill="#FFFFFE"/>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="54" y="66.2891">Badge</tspan></text>
+<text fill="#393B3E" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="36" y="95.7891">Resolution Expected by: 23rd Jul&#x2019;24</tspan></text>
+<g clip-path="url(#clip0_1690_8951)">
+<path d="M332.995 0.833496C327.935 0.833496 323.828 4.94016 323.828 10.0002C323.828 15.0602 327.935 19.1668 332.995 19.1668C338.055 19.1668 342.161 15.0602 342.161 10.0002C342.161 4.94016 338.055 0.833496 332.995 0.833496Z" fill="#089958"/>
+<path fill-rule="evenodd" clip-rule="evenodd" d="M336.601 8.29261L332.236 12.657C332.105 12.7879 331.932 12.854 331.761 12.854C331.589 12.854 331.418 12.7879 331.286 12.657L329.388 10.7589C329.126 10.4962 329.126 10.0714 329.388 9.80898C329.651 9.5466 330.075 9.5466 330.338 9.80898L331.761 11.2329L335.651 7.34256C335.913 7.08047 336.338 7.08047 336.601 7.34256C336.863 7.60538 336.863 8.03023 336.601 8.29261Z" fill="#FFFFFE"/>
+</g>
+<defs>
+<clipPath id="clip0_1690_8951">
+<rect width="20" height="20" fill="white" transform="translate(323)"/>
+</clipPath>
+</defs>
+</svg>

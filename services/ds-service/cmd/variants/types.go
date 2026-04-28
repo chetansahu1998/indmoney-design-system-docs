@@ -153,6 +153,42 @@ type ChildSummary struct {
 	Height         int               `json:"height,omitempty"`
 }
 
+// CompositionRef is one INSTANCE encountered while walking a variant's
+// node tree. Parents (atomic-design organisms) are built by composing
+// atoms — each instance is a slot the parent fills with a published
+// component. The ref captures both Figma's identity (component_id) and
+// our extracted identity (atom_slug) so the docs UI can render a
+// thumbnail rail of "this variant is built from [Action Bar, Top Strip,
+// Footer Button]" without re-walking trees at render time.
+//
+// Path follows Figma's hierarchical naming convention: a slash-joined
+// chain of node names from the variant root down to the instance
+// ("FooterCTA / Container / Action Bar"), so designers can see *where*
+// in the variant the instance sits.
+type CompositionRef struct {
+	// InstanceName is what the parent calls this slot. Often matches the
+	// embedded component's name but designers sometimes rename instances
+	// to reflect role ("Trailing Icon", "Submit Button").
+	InstanceName string `json:"instance_name"`
+	// ComponentID is the Figma node id this INSTANCE points at. May
+	// reference a COMPONENT (a specific variant) or a COMPONENT_SET.
+	ComponentID string `json:"component_id"`
+	// Path joins ancestor names from the variant's root down to this
+	// instance with "/" — Figma's own pathing convention.
+	Path string `json:"path,omitempty"`
+	// AtomSlug, when present, resolves the ComponentID against our
+	// extracted manifest. Empty when the instance points at a component
+	// we don't extract (a Bottom Sheet molecule, an unpublished helper,
+	// an external library asset).
+	AtomSlug string `json:"atom_slug,omitempty"`
+	// ResolvedTier, when present, mirrors the resolved entry's tier so
+	// the UI can colour-code atoms vs molecules vs cross-parent refs.
+	ResolvedTier string `json:"resolved_tier,omitempty"`
+	// ResolvedName carries the resolved entry's display name to spare
+	// the consumer a manifest lookup at render time.
+	ResolvedName string `json:"resolved_name,omitempty"`
+}
+
 // Note: Variant and IconEntry are extended in main.go; their existing
 // definitions there are kept for backwards compat and additional fields
 // are added inline. See main.go for the full struct.

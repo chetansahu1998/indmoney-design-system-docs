@@ -278,8 +278,11 @@ function Header({
           maxWidth: 640,
         }}
       >
-        Component primitives extracted from Glyph&apos;s Atoms page. Pick a category
-        on the left, click any component to open its full spec on the right.
+        Parent components extracted from Glyph&apos;s Design System page —
+        the organisms designers consume, each composed from atom primitives.
+        Pick a category on the left, click any component to open its full
+        spec on the right; expand any variant to see its props, layout,
+        appearance, structure, and the atoms it&apos;s built from.
       </p>
       <div
         style={{

@@ -1,0 +1,20 @@
+<svg width="343" height="77" viewBox="0 0 343 77" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M0 0H343V65C343 71.6274 337.627 77 331 77H12C5.37258 77 0 71.6274 0 65V0Z" fill="#F3F3F2"/>
+<g clip-path="url(#clip0_1660_5826)">
+<path d="M24 61.8332V51.1665M24 51.1665L20 55.1665M24 51.1665L28 55.1665" stroke="#393B3E" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="40.2656" y="61.5039">Your expenses are up by </tspan></text>
+<text fill="#393B3E" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="204.172" y="61.4834">20%</tspan></text>
+<text fill="#393B3E" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="255.15" y="62.5039">Set alert</tspan></text>
+<g clip-path="url(#clip1_1660_5826)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M320.571 54.726L323.713 57.5036L320.571 60.2812C320.255 60.5604 320.255 61.0114 320.571 61.2906C320.887 61.5698 321.397 61.5698 321.713 61.2906L325.43 58.0047C325.746 57.7255 325.746 57.2745 325.43 56.9953L321.713 53.7094C321.397 53.4302 320.887 53.4302 320.571 53.7094C320.263 53.9886 320.255 54.4468 320.571 54.726Z" fill="#5E6063"/>
+</g>
+<defs>
+<clipPath id="clip0_1660_5826">
+<rect width="16" height="16" fill="white" transform="translate(16 48.5)"/>
+</clipPath>
+<clipPath id="clip1_1660_5826">
+<rect width="16" height="16" fill="white" transform="translate(315 49.5)"/>
+</clipPath>
+</defs>
+</svg>

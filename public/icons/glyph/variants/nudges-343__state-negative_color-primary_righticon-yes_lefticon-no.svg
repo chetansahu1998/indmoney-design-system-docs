@@ -1,0 +1,14 @@
+<svg width="343" height="77" viewBox="0 0 343 77" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M0 0H343V65C343 71.6274 337.627 77 331 77H12C5.37258 77 0 71.6274 0 65V0Z" fill="#DD2625"/>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="16.3721" y="61.5039">Use this only for</tspan></text>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="128.11" y="61.4834">Masterhead</tspan></text>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="255.15" y="62.5039">Set alert</tspan></text>
+<g clip-path="url(#clip0_1660_5789)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M320.571 54.726L323.713 57.5036L320.571 60.2812C320.255 60.5604 320.255 61.0114 320.571 61.2906C320.887 61.5698 321.397 61.5698 321.713 61.2906L325.43 58.0047C325.746 57.7255 325.746 57.2745 325.43 56.9953L321.713 53.7094C321.397 53.4302 320.887 53.4302 320.571 53.7094C320.263 53.9886 320.255 54.4468 320.571 54.726Z" fill="#FFFFFE"/>
+</g>
+<defs>
+<clipPath id="clip0_1660_5789">
+<rect width="16" height="16" fill="white" transform="translate(315 49.5)"/>
+</clipPath>
+</defs>
+</svg>

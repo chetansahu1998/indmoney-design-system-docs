@@ -1,0 +1,20 @@
+<svg width="343" height="77" viewBox="0 0 343 77" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M0 0H343V65C343 71.6274 337.627 77 331 77H12C5.37258 77 0 71.6274 0 65V0Z" fill="#DD2625"/>
+<g clip-path="url(#clip0_1660_5778)">
+<path d="M24 61.8334V51.1667M24 51.1667L20 55.1667M24 51.1667L28 55.1667" stroke="#FFFFFE" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="40.3721" y="61.5039">Use this only for</tspan></text>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="152.11" y="61.4834">Masterhead</tspan></text>
+<text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="251.15" y="61.5039">Set alert</tspan></text>
+<g clip-path="url(#clip1_1660_5778)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M316.571 53.726L319.713 56.5036L316.571 59.2812C316.255 59.5604 316.255 60.0114 316.571 60.2906C316.887 60.5698 317.397 60.5698 317.713 60.2906L321.43 57.0047C321.746 56.7255 321.746 56.2745 321.43 55.9953L317.713 52.7094C317.397 52.4302 316.887 52.4302 316.571 52.7094C316.263 52.9886 316.255 53.4468 316.571 53.726Z" fill="#FFFFFE"/>
+</g>
+<defs>
+<clipPath id="clip0_1660_5778">
+<rect width="16" height="16" fill="white" transform="translate(16 48.5)"/>
+</clipPath>
+<clipPath id="clip1_1660_5778">
+<rect width="16" height="16" fill="white" transform="translate(311 48.5)"/>
+</clipPath>
+</defs>
+</svg>

@@ -1,0 +1,27 @@
+<svg width="343" height="144" viewBox="0 0 343 144" fill="none" xmlns="http://www.w3.org/2000/svg">
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="0" y="17.3394">Heading</tspan></text>
+<g clip-path="url(#clip0_3744_7329)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M327.355 7.83893L332.069 12.0054L327.355 16.1718C326.882 16.5906 326.882 17.2671 327.355 17.6859C327.829 18.1047 328.595 18.1047 329.068 17.6859L334.645 12.757C335.118 12.3383 335.118 11.6617 334.645 11.243L329.068 6.31409C328.595 5.8953 327.829 5.8953 327.355 6.31409C326.894 6.73289 326.882 7.42013 327.355 7.83893Z" fill="#88898A"/>
+</g>
+<path d="M0 44H343" stroke="#EFEFEF"/>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="0" y="77.3394">Heading</tspan></text>
+<g clip-path="url(#clip1_3744_7329)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M327.355 67.8389L332.069 72.0054L327.355 76.1718C326.882 76.5906 326.882 77.2671 327.355 77.6859C327.829 78.1047 328.595 78.1047 329.068 77.6859L334.645 72.757C335.118 72.3383 335.118 71.6617 334.645 71.243L329.068 66.3141C328.595 65.8953 327.829 65.8953 327.355 66.3141C326.894 66.7329 326.882 67.4201 327.355 67.8389Z" fill="#88898A"/>
+</g>
+<path d="M0 104H343" stroke="#EFEFEF"/>
+<text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="0" y="137.339">Heading</tspan></text>
+<g clip-path="url(#clip2_3744_7329)">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M327.355 127.839L332.069 132.005L327.355 136.172C326.882 136.591 326.882 137.267 327.355 137.686C327.829 138.105 328.595 138.105 329.068 137.686L334.645 132.757C335.118 132.338 335.118 131.662 334.645 131.243L329.068 126.314C328.595 125.895 327.829 125.895 327.355 126.314C326.894 126.733 326.882 127.42 327.355 127.839Z" fill="#88898A"/>
+</g>
+<defs>
+<clipPath id="clip0_3744_7329">
+<rect width="24" height="24" fill="white" transform="translate(319)"/>
+</clipPath>
+<clipPath id="clip1_3744_7329">
+<rect width="24" height="24" fill="white" transform="translate(319 60)"/>
+</clipPath>
+<clipPath id="clip2_3744_7329">
+<rect width="24" height="24" fill="white" transform="translate(319 120)"/>
+</clipPath>
+</defs>
+</svg>
