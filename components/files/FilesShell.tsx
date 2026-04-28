@@ -25,12 +25,20 @@ export default function FilesShell({
   title,
   sectionIds,
   children,
+  fullBleed = false,
 }: {
   nav: NavGroup[];
   title: string;
   /** All anchor ids the sidebar references — used by scroll-spy. */
   sectionIds: string[];
   children: React.ReactNode;
+  /**
+   * When true, drops the 1100px max-width and the heavy padding so the
+   * page can render a full-bleed canvas. Used by `/components` for the
+   * horizontal-scroll designer canvas — that surface needs the whole
+   * viewport width and is responsible for its own internal padding.
+   */
+  fullBleed?: boolean;
 }) {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const activeSection = useUIStore((s) => s.activeSection);
@@ -73,7 +81,11 @@ export default function FilesShell({
 
   useActiveSection(sectionIds);
 
-  const mainPadding = isMobile ? "32px 16px 80px" : "72px 80px 120px";
+  const mainPadding = fullBleed
+    ? 0
+    : isMobile
+      ? "32px 16px 80px"
+      : "72px 80px 120px";
 
   return (
     <>
@@ -109,7 +121,7 @@ export default function FilesShell({
             flex: 1,
             minWidth: 0,
             padding: mainPadding,
-            maxWidth: isMobile ? "100%" : 1100,
+            maxWidth: fullBleed ? "none" : isMobile ? "100%" : 1100,
           }}
         >
           {children}
