@@ -1,19 +1,21 @@
-import ComponentCanvas from "@/components/ComponentCanvas";
+import ComponentBrowser from "@/components/ComponentBrowser";
 import FilesShell from "@/components/files/FilesShell";
 import { iconsByKind, iconsByCategory, slugifyCategory } from "@/lib/icons/manifest";
 import type { NavGroup } from "@/components/Sidebar";
 
 /**
- * /components — horizontal-canvas component browser.
+ * /components — three-section workspace.
  *
- * The canvas owns the entire viewport below the global header. Its own
- * toolbar carries title + search + category jumps, so the page passes
- * `fullBleed` to FilesShell to drop the 1100px column constraint and
- * renders ComponentCanvas as the only child.
+ *   Section 1: FilesShell sidebar with categories (same nav pattern as
+ *              every other tab).
+ *   Section 2: Components grid for the active category, filling the
+ *              full main column by default.
+ *   Section 3: Detail panel — opens on demand when a card is clicked,
+ *              docks beside the grid (desktop) or as a bottom sheet
+ *              (mobile). Closing it returns the grid to full width.
  *
- * Sidebar stays — it's how the docs site stitches navigation together —
- * and category sub-anchors trigger horizontal pan via in-canvas listeners
- * (the canvas reads its `data-cat` lookup from the hash).
+ * Sidebar order and grid order share `orderedCategories`, so clicking a
+ * sidebar entry filters the grid in lockstep.
  */
 export default function ComponentsPage() {
   const entries = iconsByKind("component");
@@ -22,6 +24,8 @@ export default function ComponentsPage() {
   const cats = Array.from(grouped.entries())
     .sort((a, b) => b[1].length - a[1].length)
     .map(([cat, list]) => ({ cat, count: list.length }));
+
+  const orderedCategories = cats.map((c) => c.cat);
 
   const nav: NavGroup[] = [
     {
@@ -33,11 +37,13 @@ export default function ComponentsPage() {
       })),
     },
   ];
-  const sectionIds = cats.map(({ cat }) => `cat-${slugifyCategory(cat)}`);
 
+  // sectionIds intentionally empty — this page doesn't use vertical
+  // scroll-spy; ComponentBrowser drives activeSection from clicks on
+  // sidebar links via the global UI store.
   return (
-    <FilesShell nav={nav} title="Components" sectionIds={sectionIds} fullBleed>
-      <ComponentCanvas entries={entries} />
+    <FilesShell nav={nav} title="Components" sectionIds={[]}>
+      <ComponentBrowser entries={entries} orderedCategories={orderedCategories} />
     </FilesShell>
   );
 }
