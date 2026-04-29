@@ -336,6 +336,14 @@ func (s *server) routes(mux *http.ServeMux) {
 	// Authorization headers. Ticket is single-use, scoped to user/tenant/trace,
 	// 60s TTL.
 	mux.HandleFunc("GET /v1/projects/{slug}/events", s.projectsServer.HandleProjectEvents)
+
+	// PNG screenshot route (U11). Auth-gated, tenant-scoped via repo. Files
+	// live under services/ds-service/data/screens/ (NOT public/) — the
+	// route streams them with Cache-Control: private and tenant-isolation
+	// returning 404 (no existence oracle). Phase 8 swaps to S3 signed URLs
+	// without changing the route shape.
+	mux.HandleFunc("GET /v1/projects/{slug}/screens/{id}/png",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleScreenPNG())))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────

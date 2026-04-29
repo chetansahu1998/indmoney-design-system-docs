@@ -526,6 +526,46 @@ func (t *TenantRepo) HeartbeatVersion(ctx context.Context, versionID string) err
 	return err
 }
 
+// GetScreenForServe looks up a screen joined to its project + version for the
+// authed PNG route handler (U11). Returns ErrNotFound when the screen doesn't
+// exist OR the project's tenant_id doesn't match the caller's claim — same
+// 404 response either way (no existence oracle).
+//
+// Result fields are intentionally minimal — just what the handler needs to
+// serve the file: the storage key, the version_id (for path construction),
+// and the screen's own ID (echoed for log lines).
+type ScreenServeInfo struct {
+	ScreenID      string
+	VersionID     string
+	PngStorageKey string
+}
+
+func (t *TenantRepo) GetScreenForServe(ctx context.Context, projectSlug, screenID string) (*ScreenServeInfo, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	var info ScreenServeInfo
+	var pngKey sql.NullString
+	err := t.r.db.QueryRowContext(ctx,
+		`SELECT s.id, s.version_id, s.png_storage_key
+		 FROM screens s
+		 JOIN project_versions v ON v.id = s.version_id
+		 JOIN projects p ON p.id = v.project_id
+		 WHERE p.slug = ? AND p.tenant_id = ? AND p.deleted_at IS NULL AND s.id = ?`,
+		projectSlug, t.tenantID, screenID,
+	).Scan(&info.ScreenID, &info.VersionID, &pngKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if pngKey.Valid {
+		info.PngStorageKey = pngKey.String
+	}
+	return &info, nil
+}
+
 // SetScreenPNG records the persisted PNG storage key for a screen.
 func (t *TenantRepo) SetScreenPNG(ctx context.Context, screenID, storageKey string) error {
 	if t.tenantID == "" {
