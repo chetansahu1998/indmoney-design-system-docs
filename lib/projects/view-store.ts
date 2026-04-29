@@ -27,6 +27,14 @@ interface ProjectViewState {
   /** Persisted. The Auto value defers to `prefers-color-scheme`. */
   theme: ThemeMode;
   setTheme: (theme: ThemeMode) => void;
+  /**
+   * The screen the JSON tab should focus. Wired by U7's atlas click handler:
+   * AtlasCanvas calls `setSelectedScreenID(id)` and ProjectShell switches the
+   * active tab to `json`; U8's JSONTab subscribes to this slice and lazy-fetches
+   * the canonical_tree for the selected screen. Session-only — not persisted.
+   */
+  selectedScreenID: string | null;
+  setSelectedScreenID: (id: string | null) => void;
 }
 
 export const useProjectView = create<ProjectViewState>()(
@@ -34,6 +42,8 @@ export const useProjectView = create<ProjectViewState>()(
     (set) => ({
       theme: "auto",
       setTheme: (theme) => set({ theme }),
+      selectedScreenID: null,
+      setSelectedScreenID: (id) => set({ selectedScreenID: id }),
     }),
     {
       name: "indmoney-projects-view",
