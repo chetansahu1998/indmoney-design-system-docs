@@ -136,6 +136,32 @@ func main() {
 	defer recoveryCancel()
 	go projects.RunRecoveryLoop(recoveryCtx, dbConn.DB, log)
 
+	// ─── Audit-job worker pool (U5) ──────────────────────────────────────
+	// Phase 1: size=1. Phase 2 grows to 6 once additional rule runners
+	// (theme parity / cross-persona / a11y / flow graph) come online.
+	workerRepo := projects.NewWorkerRepo(dbConn.DB, nil)
+	auditCoreRunner := projects.NewAuditCoreRunner(projects.AuditCoreRunnerConfig{
+		Loader: projects.NewDBVersionScreenLoader(dbConn.DB),
+		// Phase 1 ships with empty token + candidate slices in this wiring;
+		// the audit core gracefully emits zero violations against an empty
+		// catalog. Production catalogs are loaded by cmd/audit today and
+		// will be threaded through here in U10's wiring step.
+	})
+	workerPool := &projects.WorkerPool{
+		Size:          1,
+		Repo:          workerRepo,
+		Runner:        auditCoreRunner,
+		Broker:        broker,
+		Notifications: auditEnqueuer.Notifications(),
+		Log:           log,
+	}
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	if err := workerPool.Start(workerCtx); err != nil {
+		log.Error("worker pool start", "err", err)
+		os.Exit(1)
+	}
+
 	srv := &server{
 		cfg:            cfg,
 		db:             dbConn,
