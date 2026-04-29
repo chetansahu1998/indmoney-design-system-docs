@@ -40,6 +40,8 @@ import (
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/db"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/extractor"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/sse"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/sync"
 )
 
@@ -80,13 +82,68 @@ func main() {
 		GitPush: cfg.SyncGitPush,
 	}
 
+	// ─── Projects (U4) wiring ────────────────────────────────────────────
+	// Build the SSE broker, ticket store, rate limiter, idempotency cache,
+	// and audit-job enqueuer once at process boot — all are in-memory and
+	// outlive any single request.
+	broker := sse.NewMemoryBroker(sse.BrokerOptions{Logger: log})
+	tickets := sse.NewMemoryTicketStore(sse.DefaultTicketGCInterval)
+	rateLimiter := projects.NewRateLimiter()
+	idempotencyCache := projects.NewIdempotencyCache()
+	auditEnqueuer := projects.NewAuditEnqueuer()
+	projectsAuditLogger := &projects.AuditLogger{DB: dbConn}
+
+	dataDir := filepath.Join(cfg.RepoDir, "services/ds-service/data")
+	pipelineFactory := func(ctx context.Context, tenantID string, repo *projects.TenantRepo) (*projects.Pipeline, error) {
+		// Decrypt per-tenant Figma PAT.
+		rec, err := dbConn.GetFigmaToken(ctx, tenantID)
+		if err != nil {
+			return nil, fmt.Errorf("get figma token: %w", err)
+		}
+		pat, err := cfg.EncryptionKey.Decrypt(rec.EncryptedToken)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt figma token: %w", err)
+		}
+		fc := client.New(string(pat))
+		renderer := projects.NewHTTPFigmaRenderer(string(pat))
+		return &projects.Pipeline{
+			Repo:          repo,
+			Renderer:      renderer,
+			NodeFetcher:   fc,
+			SSE:           broker,
+			AuditEnqueuer: auditEnqueuer,
+			AuditLogger:   projectsAuditLogger,
+			DataDir:       dataDir,
+			Log:           log,
+		}, nil
+	}
+
+	projectsServer := projects.NewServer(projects.ServerDeps{
+		DB:              dbConn,
+		Broker:          broker,
+		Tickets:         tickets,
+		RateLimiter:     rateLimiter,
+		Idempotency:     idempotencyCache,
+		AuditLogger:     projectsAuditLogger,
+		AuditEnqueuer:   auditEnqueuer,
+		DataDir:         dataDir,
+		PipelineFactory: pipelineFactory,
+		Log:             log,
+	})
+
+	// Recovery sweeper — startup sweep + 60s loop. Background goroutine.
+	recoveryCtx, recoveryCancel := context.WithCancel(context.Background())
+	defer recoveryCancel()
+	go projects.RunRecoveryLoop(recoveryCtx, dbConn.DB, log)
+
 	srv := &server{
-		cfg:  cfg,
-		db:   dbConn,
-		jwt:  cfg.JWTKey,
-		enc:  cfg.EncryptionKey,
-		orch: orch,
-		log:  log,
+		cfg:            cfg,
+		db:             dbConn,
+		jwt:            cfg.JWTKey,
+		enc:            cfg.EncryptionKey,
+		orch:           orch,
+		log:            log,
+		projectsServer: projectsServer,
 	}
 
 	mux := http.NewServeMux()
@@ -217,12 +274,13 @@ func loadDotEnv() {
 // ─── Server ─────────────────────────────────────────────────────────────────
 
 type server struct {
-	cfg  *config
-	db   *db.DB
-	jwt  *auth.SigningKey
-	enc  *auth.EncryptionKey
-	orch *sync.Orchestrator
-	log  *slog.Logger
+	cfg            *config
+	db             *db.DB
+	jwt            *auth.SigningKey
+	enc            *auth.EncryptionKey
+	orch           *sync.Orchestrator
+	log            *slog.Logger
+	projectsServer *projects.Server
 }
 
 func (s *server) routes(mux *http.ServeMux) {
@@ -233,6 +291,25 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/sync/{tenant}", s.requireAuth(s.handleSync))
 	mux.HandleFunc("GET /v1/audit/{tenant}", s.requireAuth(s.handleAudit))
 	mux.HandleFunc("GET /v1/me", s.requireAuth(s.handleMe))
+
+	// ─── Projects (U4) ───────────────────────────────────────────────────
+	// Auth shape is identical to the existing /v1/audit and /v1/sync routes:
+	// JWT bearer token verified by requireAuth, claims placed in r.Context()
+	// under the cmd/server key. The projects package re-reads them via the
+	// AdaptAuthMiddleware shim to keep its handlers stdlib-portable.
+	claimsReader := func(r *http.Request) *auth.Claims { return claimsFrom(r) }
+	mux.HandleFunc("POST /v1/projects/export",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleExport)))
+	mux.HandleFunc("GET /v1/projects",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectList)))
+	mux.HandleFunc("GET /v1/projects/{slug}",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectGet)))
+	mux.HandleFunc("POST /v1/projects/{slug}/events/ticket",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleEventsTicket)))
+	// SSE events endpoint is ticket-authed (NOT JWT) — EventSource cannot send
+	// Authorization headers. Ticket is single-use, scoped to user/tenant/trace,
+	// 60s TTL.
+	mux.HandleFunc("GET /v1/projects/{slug}/events", s.projectsServer.HandleProjectEvents)
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────
