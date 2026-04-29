@@ -37,7 +37,10 @@ interface MessageFromUI {
     | "apply-many"
     | "inject"
     | "open-docs"
-    | "request-selection-summary";
+    | "request-selection-summary"
+    | "projects.set-active"
+    | "projects.refresh-detection"
+    | "projects.send";
   payload?: unknown;
 }
 
@@ -53,7 +56,11 @@ interface MessageToUI {
     | "group-applied"
     | "many-applied"
     | "inject-progress"
-    | "toast";
+    | "toast"
+    | "projects.detected-groups"
+    | "projects.send"
+    | "projects.send-result"
+    | "projects.send-progress";
   payload?: unknown;
 }
 
@@ -65,6 +72,14 @@ let auditServerURL = "http://localhost:7474";
 let docsURL = "https://indmoney-design-system-docs.vercel.app";
 let healthTimer: ReturnType<typeof setInterval> | null = null;
 let knownVariables: Record<string, Variable> = {};
+
+// Projects mode (U3) — when the UI is on the Projects tab, selectionchange
+// re-runs detection. The flag is toggled from the UI ("projects.set-active").
+// Detection itself is debounced to coalesce rapid marquee-drag selectionchange
+// bursts.
+let projectsModeActive = false;
+let projectsDetectTimer: ReturnType<typeof setTimeout> | null = null;
+let allPagesLoaded = false;
 
 // 440 × 720 — comfortable for the redesigned three-mode shell. Mode picker
 // + status + scrollable pane + toaster all fit without crowding at this
@@ -105,6 +120,27 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
         return;
       case "request-selection-summary":
         return emitSelectionSummary();
+      case "projects.set-active":
+        projectsModeActive = !!(msg.payload && (msg.payload as any).active);
+        if (projectsModeActive) await runProjectsDetection();
+        return;
+      case "projects.refresh-detection":
+        return runProjectsDetection();
+      case "projects.send":
+        // U3: backend wiring lands in U4. For now we only echo a "result" so
+        // the UI re-enables its Send button cleanly. Plugin code never
+        // serializes the payload here — UI logs it to the JS console as a
+        // placeholder. We just confirm receipt.
+        send({
+          type: "projects.send-result",
+          payload: {
+            ok: true,
+            phase: "u3-placeholder",
+            note: "Send wired to console.log only; backend lands in U4.",
+          },
+        });
+        toast("Projects payload logged to console (U3 placeholder).", "info");
+        return;
     }
   } catch (e: unknown) {
     toast(`Error: ${(e as Error).message ?? "unknown"}`, "error");
@@ -112,9 +148,16 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
 };
 
 // Selection-change watcher — emits a live summary so the UI can update without
-// the user clicking anything.
+// the user clicking anything. When Projects mode is active, also re-runs the
+// smart-grouping detection (debounced 150ms to coalesce marquee bursts).
 figma.on("selectionchange", () => {
   emitSelectionSummary();
+  if (projectsModeActive) {
+    if (projectsDetectTimer) clearTimeout(projectsDetectTimer);
+    projectsDetectTimer = setTimeout(() => {
+      void runProjectsDetection();
+    }, 150);
+  }
 });
 
 // Restore stored URL on boot.
@@ -127,6 +170,20 @@ figma.on("selectionchange", () => {
 if (figma.command === "auditFile") runAudit("file").catch(() => {});
 if (figma.command === "auditSelection") runAudit("selection").catch(() => {});
 if (figma.command === "publishSelection") runPublish().catch(() => {});
+if (figma.command === "openProjects") {
+  // The "projects.open-via-command" hint tells the UI to switch to the
+  // Projects tab on its first message-pump tick. UI handles the toggle —
+  // we just flag intent here.
+  send({ type: "toast", payload: { message: "Switching to Projects mode…", level: "info", ts: Date.now() } });
+  // Defer so the UI has its message handlers in place. The UI listens for
+  // a synthetic toast and additionally for a dedicated payload on
+  // projects.send-progress, but the simplest contract is: UI clicks its
+  // own mode-projects button after seeing the menu intent. We piggyback on
+  // a special `projects.send-progress` shape.
+  setTimeout(() => {
+    send({ type: "projects.send-progress", payload: { phase: "open-via-command" } });
+  }, 100);
+}
 if (figma.command === "openDocsSite") {
   figma.openExternal(docsURL);
   figma.closePlugin();
@@ -947,6 +1004,344 @@ async function runInject(kind: "icon" | "component") {
   figma.viewport.scrollAndZoomIntoView([host]);
   send({ type: "inject-progress", payload: { done, total: targets.length } });
   toast(`Injected ${done} ${kind}${done === 1 ? "" : "s"}`, "success");
+}
+
+/* ── Projects mode (U3) ─────────────────────────────────────────────── */
+
+/**
+ * Smart-grouping payload sent to the UI. The UI renders one card per group
+ * with editable fields + per-pair toggles, and on Send-click constructs the
+ * full ds-service /v1/projects/export payload (which is U4's wiring).
+ *
+ * Geometry primitives carry only the small set of properties the UI needs
+ * to draw a preview row; full canonical_tree extraction is server-side.
+ */
+interface ProjectsFrameInfo {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  // Mode metadata — captured from `explicitVariableModes` and best-effort
+  // resolved into a human label ("light"/"dark"/"default" or the mode's
+  // raw name from the collection).
+  mode_label: string | null;
+  variable_collection_id: string | null;
+  variable_mode_id: string | null;
+  explicit_variable_modes: Record<string, string>;
+  // Lightweight depth-2 structural skeleton — used by the cross-validation
+  // step to flag pairs whose layouts diverge beyond their bound variables.
+  skeleton: string;
+}
+
+interface ProjectsModePair {
+  // The "primary" frame in the pair; for a 2-mode pair this is the lower-y
+  // (typically light); the UI lets the designer override.
+  primary_frame_id: string;
+  paired_frame_ids: string[];
+  modes: string[];
+  theme_parity_warning: boolean;
+}
+
+interface ProjectsGroup {
+  group_key: string; // section.id OR `freeform-<n>`
+  section_id: string | null;
+  section_name: string | null;
+  default_name: string;
+  // platform auto-detect: <500 → mobile, ≥1024 → web, else null (designer picks)
+  platform_default: "mobile" | "web" | null;
+  frames: ProjectsFrameInfo[];
+  pairs: ProjectsModePair[];
+  unpaired_frame_ids: string[];
+}
+
+interface ProjectsDetectedGroupsPayload {
+  file_key: string;
+  file_name: string;
+  total_frames: number;
+  groups: ProjectsGroup[];
+  warnings: string[];
+}
+
+async function runProjectsDetection() {
+  // Per the 2026 dynamic-page manifest requirement, the plugin must call
+  // loadAllPagesAsync before walking parent chains that may cross page
+  // boundaries. We do it once per session (it's cheap-ish; cached in core).
+  const warnings: string[] = [];
+  if (!allPagesLoaded) {
+    try {
+      // `loadAllPagesAsync` is only present on dynamic-page manifests.
+      const fn = (figma as any).loadAllPagesAsync as undefined | (() => Promise<void>);
+      if (typeof fn === "function") {
+        await fn.call(figma);
+        allPagesLoaded = true;
+      } else {
+        warnings.push("loadAllPagesAsync not available; falling back to current page only.");
+      }
+    } catch (e) {
+      warnings.push(`loadAllPagesAsync failed: ${(e as Error).message ?? "unknown"}`);
+    }
+  }
+
+  const sel = figma.currentPage.selection;
+  // Collect candidate "screen" frames — the user may have selected a
+  // SECTION (we expand to its children), a FRAME (we keep it), or a mix.
+  const frames: SceneNode[] = [];
+  for (const n of sel) {
+    if (n.type === "SECTION") {
+      for (const c of (n as SectionNode).children) {
+        if (c.type === "FRAME") frames.push(c);
+      }
+    } else if (n.type === "FRAME") {
+      frames.push(n);
+    } else if (n.type === "GROUP" || n.type === "COMPONENT" || n.type === "INSTANCE") {
+      // Treat top-level container nodes as candidate screens too — designers
+      // sometimes select a row of components rather than frames.
+      frames.push(n);
+    }
+  }
+
+  if (frames.length === 0) {
+    send({
+      type: "projects.detected-groups",
+      payload: {
+        file_key: (figma as any).fileKey || "unknown",
+        file_name: figma.root.name,
+        total_frames: 0,
+        groups: [],
+        warnings: warnings.concat(["Select frames inside a section to start grouping."]),
+      } as ProjectsDetectedGroupsPayload,
+    });
+    return;
+  }
+
+  // ── Step 1: group by enclosing SECTION ────────────────────────────
+  // Walk parent chain; key = section.id, OR `freeform-<n>` if no section.
+  const sectionGroups = new Map<string, { section: SectionNode | null; frames: SceneNode[] }>();
+  let freeformIdx = 0;
+  const freeformBucket = new Map<string, { section: SectionNode | null; frames: SceneNode[] }>();
+
+  for (const f of frames) {
+    const section = findEnclosingSection(f);
+    if (section) {
+      const k = section.id;
+      let g = sectionGroups.get(k);
+      if (!g) {
+        g = { section, frames: [] };
+        sectionGroups.set(k, g);
+      }
+      g.frames.push(f);
+    } else {
+      // Bucket all freeform frames into a single freeform-1 group by default;
+      // the designer can split via the UI. (If we wanted finer freeform
+      // groupings we'd cluster by spatial proximity — left to a future unit.)
+      const k = `freeform-${freeformIdx === 0 ? (freeformIdx = 1, 1) : freeformIdx}`;
+      let g = freeformBucket.get(k);
+      if (!g) {
+        g = { section: null, frames: [] };
+        freeformBucket.set(k, g);
+      }
+      g.frames.push(f);
+    }
+  }
+
+  // ── Step 2: build ProjectsFrameInfo + detect mode pairs per group ──
+  const groups: ProjectsGroup[] = [];
+
+  for (const [groupKey, bucket] of sectionGroups) {
+    groups.push(await buildGroup(groupKey, bucket.section, bucket.frames));
+  }
+  let ffN = 1;
+  for (const [, bucket] of freeformBucket) {
+    groups.push(await buildGroup(`freeform-${ffN}`, null, bucket.frames));
+    ffN++;
+  }
+
+  send({
+    type: "projects.detected-groups",
+    payload: {
+      file_key: (figma as any).fileKey || "unknown",
+      file_name: figma.root.name,
+      total_frames: frames.length,
+      groups,
+      warnings,
+    } as ProjectsDetectedGroupsPayload,
+  });
+}
+
+function findEnclosingSection(node: SceneNode): SectionNode | null {
+  let p: BaseNode | null = node.parent;
+  while (p) {
+    if (p.type === "SECTION") return p as SectionNode;
+    if (p.type === "PAGE" || p.type === "DOCUMENT") return null;
+    p = (p as any).parent ?? null;
+  }
+  return null;
+}
+
+async function buildGroup(
+  groupKey: string,
+  section: SectionNode | null,
+  rawFrames: SceneNode[],
+): Promise<ProjectsGroup> {
+  // Build frame info objects. `explicitVariableModes` returns a map of
+  // VariableCollectionId → mode-id, whose mode-id we look up against the
+  // collection to derive a human label.
+  const frames: ProjectsFrameInfo[] = [];
+  for (const f of rawFrames) {
+    frames.push(await buildFrameInfo(f));
+  }
+
+  // Pair detection: for each frame, look at siblings sharing a column
+  // (|Δx|<10) and a different y, where their explicitVariableModes share a
+  // VariableCollectionId but a different mode id.
+  const pairs: ProjectsModePair[] = [];
+  const used = new Set<string>();
+  for (let i = 0; i < frames.length; i++) {
+    const a = frames[i];
+    if (used.has(a.id)) continue;
+    const matches: ProjectsFrameInfo[] = [];
+    for (let j = 0; j < frames.length; j++) {
+      if (i === j) continue;
+      const b = frames[j];
+      if (used.has(b.id)) continue;
+      if (Math.abs(a.x - b.x) >= 10) continue;
+      if (a.y === b.y) continue;
+      // Variable-mode cross-check: must share a collection, different mode.
+      if (!a.variable_collection_id || !b.variable_collection_id) continue;
+      if (a.variable_collection_id !== b.variable_collection_id) continue;
+      if (a.variable_mode_id === b.variable_mode_id) continue;
+      matches.push(b);
+    }
+    if (matches.length > 0) {
+      // Cross-validate skeleton; if any matched frame's skeleton diverges
+      // from `a` (depth=2 path/type pairs), flag theme_parity_warning.
+      let warn = false;
+      for (const m of matches) {
+        if (m.skeleton !== a.skeleton) {
+          warn = true;
+          break;
+        }
+      }
+      pairs.push({
+        primary_frame_id: a.id,
+        paired_frame_ids: matches.map((m) => m.id),
+        modes: [a.mode_label || "default", ...matches.map((m) => m.mode_label || "default")],
+        theme_parity_warning: warn,
+      });
+      used.add(a.id);
+      for (const m of matches) used.add(m.id);
+    }
+  }
+
+  const unpaired = frames.filter((f) => !used.has(f.id)).map((f) => f.id);
+
+  // Platform auto-detect — use the widest frame in the group (most
+  // representative of "the screen size" rather than a stray button).
+  const widest = frames.reduce((acc, f) => (f.width > acc ? f.width : acc), 0);
+  let platform_default: "mobile" | "web" | null = null;
+  if (widest > 0 && widest < 500) platform_default = "mobile";
+  else if (widest >= 1024) platform_default = "web";
+
+  const default_name = section
+    ? section.name
+    : groupKey.startsWith("freeform-")
+      ? `Freeform ${groupKey.split("-")[1]}`
+      : groupKey;
+
+  return {
+    group_key: groupKey,
+    section_id: section ? section.id : null,
+    section_name: section ? section.name : null,
+    default_name,
+    platform_default,
+    frames,
+    pairs,
+    unpaired_frame_ids: unpaired,
+  };
+}
+
+async function buildFrameInfo(node: SceneNode): Promise<ProjectsFrameInfo> {
+  const x = "x" in node ? node.x : 0;
+  const y = "y" in node ? node.y : 0;
+  const width = "width" in node ? Math.round(node.width) : 0;
+  const height = "height" in node ? Math.round(node.height) : 0;
+
+  // explicitVariableModes is { [VariableCollectionId]: mode_id }
+  const explicit: Record<string, string> = {};
+  let collectionId: string | null = null;
+  let modeId: string | null = null;
+  let modeLabel: string | null = null;
+  try {
+    const evm = (node as any).explicitVariableModes as Record<string, string> | undefined;
+    if (evm && typeof evm === "object") {
+      for (const k of Object.keys(evm)) {
+        explicit[k] = evm[k];
+      }
+      // Pick the first explicit collection — typical Glyph setup binds a
+      // single mode collection per frame at the top level.
+      const keys = Object.keys(explicit);
+      if (keys.length > 0) {
+        collectionId = keys[0];
+        modeId = explicit[collectionId];
+        modeLabel = await resolveModeLabel(collectionId, modeId);
+      }
+    }
+  } catch {}
+
+  return {
+    id: node.id,
+    name: node.name,
+    x: Math.round(x),
+    y: Math.round(y),
+    width,
+    height,
+    mode_label: modeLabel,
+    variable_collection_id: collectionId,
+    variable_mode_id: modeId,
+    explicit_variable_modes: explicit,
+    skeleton: depth2Skeleton(node),
+  };
+}
+
+const modeLabelCache: Record<string, Record<string, string>> = {};
+
+async function resolveModeLabel(collectionId: string, modeId: string): Promise<string | null> {
+  if (modeLabelCache[collectionId] && modeLabelCache[collectionId][modeId]) {
+    return modeLabelCache[collectionId][modeId];
+  }
+  try {
+    const coll = await figma.variables.getVariableCollectionByIdAsync(collectionId);
+    if (!coll) return null;
+    const map: Record<string, string> = {};
+    for (const m of coll.modes) {
+      map[m.modeId] = m.name;
+    }
+    modeLabelCache[collectionId] = map;
+    return map[modeId] || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * depth=2 structural skeleton — walks node + its direct children + grandchildren,
+ * concatenating type/path tokens. Used to detect when two ostensibly-paired
+ * frames diverge structurally beyond what bound-variable swaps explain.
+ */
+function depth2Skeleton(node: SceneNode): string {
+  const parts: string[] = [node.type];
+  const children = "children" in node ? (node as ChildrenMixin).children : [];
+  for (const c of children) {
+    parts.push("[" + c.type);
+    const grand = "children" in c ? (c as ChildrenMixin).children : [];
+    for (const g of grand) {
+      parts.push("(" + g.type + ")");
+    }
+    parts.push("]");
+  }
+  return parts.join("");
 }
 
 /* ── Toast ──────────────────────────────────────────────────────────── */
