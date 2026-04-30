@@ -97,6 +97,10 @@ func main() {
 	projectsAuditLogger := &projects.AuditLogger{DB: dbConn}
 
 	dataDir := filepath.Join(cfg.RepoDir, "services/ds-service/data")
+	// Phase 3.5 U2: KTX2 transcoder. Probes basisu on PATH at boot;
+	// when missing, the transcoder is Available=false and every
+	// Transcode call short-circuits gracefully.
+	ktx2 := projects.NewKTX2Transcoder(log)
 	pipelineFactory := func(ctx context.Context, tenantID string, repo *projects.TenantRepo) (*projects.Pipeline, error) {
 		// Decrypt per-tenant Figma PAT.
 		rec, err := dbConn.GetFigmaToken(ctx, tenantID)
@@ -118,6 +122,7 @@ func main() {
 			AuditLogger:   projectsAuditLogger,
 			DataDir:       dataDir,
 			Log:           log,
+			KTX2:          ktx2,
 		}, nil
 	}
 
@@ -390,6 +395,10 @@ func (s *server) routes(mux *http.ServeMux) {
 	// without changing the route shape.
 	mux.HandleFunc("GET /v1/projects/{slug}/screens/{id}/png",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleScreenPNG())))
+	// Phase 3.5 U2 — KTX2 sidecar route. Returns 404 when basisu wasn't
+	// on PATH at persist time; frontend falls back to .png.
+	mux.HandleFunc("GET /v1/projects/{slug}/screens/{id}/ktx2",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleScreenKTX2())))
 
 	// Canonical-tree lazy-fetch (U8). The JSON tab calls this on screen
 	// click. Auth-gated, tenant-scoped, returns the raw canonical_tree JSON

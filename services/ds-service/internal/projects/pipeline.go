@@ -102,6 +102,11 @@ type Pipeline struct {
 	AuditLogger     *AuditLogger
 	DataDir         string // services/ds-service/data — caller passes absolute path
 	Log             *slog.Logger
+	// Phase 3.5 U2: optional KTX2 transcoder. nil = disabled (PNG-only
+	// flow). When set, persistPNG forks basisu to emit a sibling .ktx2
+	// after the rename. Failure is non-fatal — the PNG is the source
+	// of truth and the frontend falls back when .ktx2 is missing.
+	KTX2 *KTX2Transcoder
 }
 
 // PipelineInputs is what the HTTP handler hands off after persisting the
@@ -449,6 +454,22 @@ func (p *Pipeline) persistPNG(tenantID, versionID, screenID string, data []byte)
 	if err := os.Rename(tmp, absPath); err != nil {
 		return "", err
 	}
+
+	// Phase 3.5 U2: opportunistic KTX2 transcode. Failure is non-fatal —
+	// the PNG is the canonical asset; .ktx2 is an optimization the
+	// frontend uses when present. We pass a background context so a
+	// caller cancellation doesn't kill an in-flight transcode mid-write
+	// (which would leave a half-written .ktx2 the frontend then 404s on
+	// in a confusing way).
+	if p.KTX2 != nil && p.KTX2.Available {
+		if err := p.KTX2.Transcode(context.Background(), absPath); err != nil {
+			if p.Log != nil {
+				p.Log.Warn("ktx2: transcode failed; PNG remains the source",
+					"screen_id", screenID, "err", err.Error())
+			}
+		}
+	}
+
 	return relPath, nil
 }
 

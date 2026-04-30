@@ -144,3 +144,112 @@ func (s *Server) HandleScreenPNG() http.HandlerFunc {
 		}
 	}
 }
+
+// HandleScreenKTX2 returns the HTTP handler for
+// `GET /v1/projects/:slug/screens/:id/ktx2` (Phase 3.5 U2). Mirrors
+// HandleScreenPNG but swaps the .png suffix for .ktx2 when resolving
+// the disk path. Returns 404 when the sidecar isn't present (basisu
+// missing at persist time, transcode failure, etc.) — frontend falls
+// back to the PNG URL on that 404.
+func (s *Server) HandleScreenKTX2() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		claims, _ := ctx.Value(ctxKeyClaims).(*auth.Claims)
+		if claims == nil {
+			writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+			return
+		}
+		tenantID := s.resolveTenantID(claims)
+		if tenantID == "" {
+			writeJSONErr(w, http.StatusForbidden, "forbidden", "no tenant in claims")
+			return
+		}
+
+		slug := r.PathValue("slug")
+		screenID := r.PathValue("id")
+		if slug == "" || screenID == "" {
+			http.Error(w, "missing path params", http.StatusBadRequest)
+			return
+		}
+
+		repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+		info, err := repo.GetScreenForServe(ctx, slug, screenID)
+		if errors.Is(err, ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			slog.Error("ktx2 handler: repo lookup failed",
+				"err", err, "tenant", tenantID, "slug", slug, "screen", screenID)
+			http.Error(w, "internal", http.StatusInternalServerError)
+			return
+		}
+		if info.PngStorageKey == "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Swap suffix: <id>@2x.png → <id>@2x.ktx2.
+		ktx2Key := info.PngStorageKey
+		if strings.HasSuffix(ktx2Key, ".png") {
+			ktx2Key = ktx2Key[:len(ktx2Key)-len(".png")] + ".ktx2"
+		} else {
+			http.NotFound(w, r)
+			return
+		}
+
+		baseDir, err := filepath.Abs(filepath.Join(s.deps.DataDir, "screens"))
+		if err != nil {
+			slog.Error("ktx2 handler: abs base dir", "err", err)
+			http.Error(w, "internal", http.StatusInternalServerError)
+			return
+		}
+		fullPath, err := filepath.Abs(filepath.Join(baseDir, filepath.Clean(ktx2Key)))
+		if err != nil {
+			slog.Error("ktx2 handler: abs full path", "err", err, "key", ktx2Key)
+			http.Error(w, "internal", http.StatusInternalServerError)
+			return
+		}
+		if !strings.HasPrefix(fullPath, baseDir+string(os.PathSeparator)) && fullPath != baseDir {
+			slog.Warn("ktx2 handler: path traversal rejected",
+				"key", ktx2Key, "fullPath", fullPath, "baseDir", baseDir,
+				"tenant", tenantID, "screen", screenID)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		f, err := os.Open(fullPath)
+		if errors.Is(err, os.ErrNotExist) {
+			// Common path: basisu wasn't on PATH at persist time, or
+			// transcode failed for this particular screen. Frontend
+			// observes 404 and falls back to .png — no loud log.
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			slog.Error("ktx2 handler: open failed", "err", err, "path", fullPath)
+			http.Error(w, "internal", http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+
+		st, err := f.Stat()
+		if err != nil {
+			slog.Error("ktx2 handler: stat failed", "err", err)
+			http.Error(w, "internal", http.StatusInternalServerError)
+			return
+		}
+
+		// image/ktx2 per Khronos. nosniff so proxies don't auto-detect.
+		w.Header().Set("Content-Type", "image/ktx2")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", st.Size()))
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Disposition", "inline")
+
+		if _, err := io.Copy(w, f); err != nil {
+			slog.Debug("ktx2 handler: copy failed (client disconnect?)",
+				"err", err, "path", fullPath)
+		}
+	}
+}
