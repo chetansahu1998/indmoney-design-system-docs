@@ -1,0 +1,76 @@
+name: perf-budgets
+
+# Phase 1 perf-budget enforcer. Two assertions:
+#
+#   1. Bundle sizes (gzipped) per the budgets in
+#      docs/plans/2026-04-29-001-feat-projects-flow-atlas-phase-1-plan.md.
+#      Runs `npm run build` then `npm run check:bundles`.
+#
+#   2. Cold fast-preview Go pipeline ≤ 15 s on a synthetic 5-flow input.
+#      Runs the bench-tagged `BenchmarkRunFastPreview_5Flows` with
+#      `-benchtime=3x` so we get three cold runs per check.
+#
+# Triggers on PRs touching the relevant code paths. Failures here block
+# merge but do NOT cancel the existing build.yml workflow.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/projects/**"
+      - "components/projects/**"
+      - "lib/projects/**"
+      - "lib/animations/**"
+      - "services/ds-service/internal/projects/**"
+      - "services/ds-service/internal/sse/**"
+      - "scripts/check-bundle-sizes.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/perf-budgets.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bundle-sizes:
+    runs-on: ubuntu-22.04
+    name: Bundle size budgets
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run tokens:build
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_BRAND: indmoney
+      - name: Check Phase 1 bundle budgets
+        run: npm run check:bundles
+
+  pipeline-bench:
+    runs-on: ubuntu-22.04
+    name: Cold pipeline ≤ 15s
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: services/ds-service/go.sum
+      - name: Run bench-tagged pipeline budget test
+        working-directory: services/ds-service
+        run: |
+          go test -bench=. -tags=bench -benchtime=3x \
+            -run='^$' \
+            ./internal/projects/... \
+            | tee bench-output.txt
+      - name: Upload bench output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-bench-output
+          path: services/ds-service/bench-output.txt
+          retention-days: 14

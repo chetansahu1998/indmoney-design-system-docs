@@ -14,7 +14,8 @@
     "audit:serve": "cd services/ds-service && go run ./cmd/audit-server",
     "tokens:build": "tz build",
     "prebuild": "tz build",
-    "test:parity": "playwright test --project=indmoney-light"
+    "test:parity": "playwright test --project=indmoney-light",
+    "check:bundles": "node scripts/check-bundle-sizes.mjs"
   },
   "dependencies": {
     "@blocknote/core": "^0.49.0",
