@@ -388,12 +388,19 @@ func (a *workerRepoAdapter) ClaimNextJob(ctx context.Context, workerID string) (
 
 	nowUnix := a.now().UTC().Unix()
 	var jobID, versionID, tenantID, traceID string
+	// Phase 2 U7: dequeue ordering is priority-aware. Recently-edited flow
+	// exports get priority=100 (default 50 for routine exports), fan-out
+	// re-audits land at priority=10 so designer-driven work isn't starved
+	// behind a token-publish fan-out. The compound index
+	// idx_audit_jobs_status_priority_created (migration 0002) gives the
+	// planner a clean path. Phase 1's idx_audit_jobs_status_created stays
+	// available — the planner picks.
 	row := tx.QueryRowContext(ctx,
 		`SELECT id, version_id, tenant_id, trace_id
 		   FROM audit_jobs
 		  WHERE status = 'queued'
 		     OR (status = 'running' AND (lease_expires_at IS NULL OR lease_expires_at < ?))
-		  ORDER BY created_at ASC
+		  ORDER BY priority DESC, created_at ASC
 		  LIMIT 1`,
 		nowUnix,
 	)

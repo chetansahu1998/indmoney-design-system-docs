@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -136,19 +137,22 @@ func main() {
 	defer recoveryCancel()
 	go projects.RunRecoveryLoop(recoveryCtx, dbConn.DB, log)
 
-	// ─── Audit-job worker pool (U5) ──────────────────────────────────────
-	// Phase 1: size=1. Phase 2 grows to 6 once additional rule runners
-	// (theme parity / cross-persona / a11y / flow graph) come online.
+	// ─── Audit-job worker pool (Phase 1 U5; Phase 2 U7 scaling) ──────────
+	// Phase 1 shipped size=1. Phase 2 scales to 6 (env-tunable via
+	// DS_AUDIT_WORKERS) so AE-7's 47-flow fan-out can land within the 5-min
+	// budget. Heartbeat goroutine + ResetStaleRunningJobs + ClaimNextJob's
+	// stale-lease takeover already shipped in Phase 1.
 	workerRepo := projects.NewWorkerRepo(dbConn.DB, nil)
 	auditCoreRunner := projects.NewAuditCoreRunner(projects.AuditCoreRunnerConfig{
 		Loader: projects.NewDBVersionScreenLoader(dbConn.DB),
 		// Phase 1 ships with empty token + candidate slices in this wiring;
 		// the audit core gracefully emits zero violations against an empty
-		// catalog. Production catalogs are loaded by cmd/audit today and
-		// will be threaded through here in U10's wiring step.
+		// catalog. Phase 2 prod-wire registers the 5 new rule classes
+		// alongside this baseline runner via a composite RuleRunner.
 	})
+	workerPoolSize := workerPoolSizeFromEnv(log)
 	workerPool := &projects.WorkerPool{
-		Size:          1,
+		Size:          workerPoolSize,
 		Repo:          workerRepo,
 		Runner:        auditCoreRunner,
 		Broker:        broker,
@@ -268,6 +272,35 @@ func getenv(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// workerPoolSizeFromEnv reads DS_AUDIT_WORKERS and returns a clamped pool size.
+// Defaults to 6 (Phase 2 target — AE-7 47-flow fan-out under 5min). Clamped to
+// [1, 32]: 0/negative → 1 (single worker still serves), >32 → 32 (avoid
+// runaway parallelism on shared SQLite which serializes writes anyway). Logs
+// the resolved size + reason at boot for ops visibility.
+func workerPoolSizeFromEnv(log *slog.Logger) int {
+	const defaultSize = 6
+	const maxSize = 32
+	raw := os.Getenv("DS_AUDIT_WORKERS")
+	if raw == "" {
+		return defaultSize
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Warn("worker_pool: DS_AUDIT_WORKERS not an integer; using default",
+			"raw", raw, "default", defaultSize, "err", err.Error())
+		return defaultSize
+	}
+	if n <= 0 {
+		log.Warn("worker_pool: DS_AUDIT_WORKERS clamped to 1", "raw", n)
+		return 1
+	}
+	if n > maxSize {
+		log.Warn("worker_pool: DS_AUDIT_WORKERS clamped to max", "raw", n, "max", maxSize)
+		return maxSize
+	}
+	return n
 }
 
 // loadDotEnv reads .env.local from cwd or any ancestor.
