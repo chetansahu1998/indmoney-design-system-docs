@@ -91,9 +91,17 @@ func (s *Server) HandleScreenPNG() http.HandlerFunc {
 			http.Error(w, "internal", http.StatusInternalServerError)
 			return
 		}
-		fullPath, err := filepath.Abs(filepath.Join(baseDir, filepath.Clean(info.PngStorageKey)))
+		// Phase 3.5 follow-up #2: optional LOD tier via ?tier=l1|l2.
+		// When unset → serve the full-size PNG (Phase 1 default). When
+		// the requested tier file is missing on disk (LOD generation
+		// failed for this screen, or the screen pre-dates the LOD
+		// pipeline change), 404 + frontend's pickLOD falls back via
+		// lodURL → "full" tier on retry.
+		tieredKey := applyLODSuffix(info.PngStorageKey, r.URL.Query().Get("tier"), ".png")
+
+		fullPath, err := filepath.Abs(filepath.Join(baseDir, filepath.Clean(tieredKey)))
 		if err != nil {
-			slog.Error("png handler: abs full path", "err", err, "key", info.PngStorageKey)
+			slog.Error("png handler: abs full path", "err", err, "key", tieredKey)
 			http.Error(w, "internal", http.StatusInternalServerError)
 			return
 		}
@@ -101,7 +109,7 @@ func (s *Server) HandleScreenPNG() http.HandlerFunc {
 			// Storage key tried to escape the base dir. Should never happen
 			// with server-generated keys; treated as a hard error.
 			slog.Warn("png handler: path traversal rejected",
-				"key", info.PngStorageKey, "fullPath", fullPath, "baseDir", baseDir,
+				"key", tieredKey, "fullPath", fullPath, "baseDir", baseDir,
 				"tenant", tenantID, "screen", screenID)
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
@@ -189,8 +197,11 @@ func (s *Server) HandleScreenKTX2() http.HandlerFunc {
 			return
 		}
 
-		// Swap suffix: <id>@2x.png → <id>@2x.ktx2.
-		ktx2Key := info.PngStorageKey
+		// Phase 3.5 follow-up #2: optional LOD tier via ?tier=l1|l2.
+		// Apply the tier suffix to the PNG key first, then swap the
+		// final extension to .ktx2.
+		tieredPngKey := applyLODSuffix(info.PngStorageKey, r.URL.Query().Get("tier"), ".png")
+		ktx2Key := tieredPngKey
 		if strings.HasSuffix(ktx2Key, ".png") {
 			ktx2Key = ktx2Key[:len(ktx2Key)-len(".png")] + ".ktx2"
 		} else {
@@ -252,4 +263,36 @@ func (s *Server) HandleScreenKTX2() http.HandlerFunc {
 				"err", err, "path", fullPath)
 		}
 	}
+}
+
+// applyLODSuffix splices the LOD tier suffix (".l1" / ".l2") into a
+// storage key just before the file extension. tier="" or any unknown
+// value returns the input unchanged.
+//
+// "screens/<tenant>/<version>/<id>@2x.png", "l1", ".png"
+//   → "screens/<tenant>/<version>/<id>@2x.l1.png"
+//
+// extSuffix is the trailing file extension to splice before (".png"
+// for the PNG handler, ".ktx2" for the KTX2 handler — though the KTX2
+// handler also runs through this for the .png key first then swaps
+// the suffix to .ktx2 since the PNG storage key is the canonical
+// reference).
+func applyLODSuffix(storageKey, tier, extSuffix string) string {
+	if tier == "" {
+		return storageKey
+	}
+	var infix string
+	switch tier {
+	case "l1":
+		infix = ".l1"
+	case "l2":
+		infix = ".l2"
+	default:
+		return storageKey
+	}
+	if strings.HasSuffix(storageKey, extSuffix) {
+		base := storageKey[:len(storageKey)-len(extSuffix)]
+		return base + infix + extSuffix
+	}
+	return storageKey
 }

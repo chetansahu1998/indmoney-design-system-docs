@@ -455,17 +455,56 @@ func (p *Pipeline) persistPNG(tenantID, versionID, screenID string, data []byte)
 		return "", err
 	}
 
-	// Phase 3.5 U2: opportunistic KTX2 transcode. Failure is non-fatal —
-	// the PNG is the canonical asset; .ktx2 is an optimization the
-	// frontend uses when present. We pass a background context so a
-	// caller cancellation doesn't kill an in-flight transcode mid-write
-	// (which would leave a half-written .ktx2 the frontend then 404s on
-	// in a confusing way).
+	// Phase 3.5 U2: opportunistic KTX2 transcode. Failure is non-fatal.
 	if p.KTX2 != nil && p.KTX2.Available {
 		if err := p.KTX2.Transcode(context.Background(), absPath); err != nil {
 			if p.Log != nil {
 				p.Log.Warn("ktx2: transcode failed; PNG remains the source",
 					"screen_id", screenID, "err", err.Error())
+			}
+		}
+	}
+
+	// Phase 3.5 follow-up #2: LOD tier generation. Emit @2x.l1.png (50%)
+	// and @2x.l2.png (25%) sibling files so the frontend's pickLOD()
+	// helper can request smaller textures at thumbnail-zoom and full
+	// textures only when the frame fills a meaningful chunk of the
+	// viewport. Failures are non-fatal — the canonical full-size PNG
+	// is what the frontend falls back to (lodURL gracefully resolves
+	// to the full URL when tier-specific files are absent).
+	for _, tier := range []LODTier{LODL1, LODL2} {
+		tierBytes, terr := DownsampleByFraction(data, LODFractionFor(tier))
+		if terr != nil {
+			if p.Log != nil {
+				p.Log.Warn("lod: downsample failed",
+					"tier", tier, "screen_id", screenID, "err", terr.Error())
+			}
+			continue
+		}
+		tierPath := absPath[:len(absPath)-len(".png")] + LODSuffixFor(tier) + ".png"
+		tierTmp := tierPath + ".tmp"
+		if err := os.WriteFile(tierTmp, tierBytes, 0o644); err != nil {
+			if p.Log != nil {
+				p.Log.Warn("lod: write failed",
+					"tier", tier, "path", tierPath, "err", err.Error())
+			}
+			continue
+		}
+		if err := os.Rename(tierTmp, tierPath); err != nil {
+			if p.Log != nil {
+				p.Log.Warn("lod: rename failed",
+					"tier", tier, "path", tierPath, "err", err.Error())
+			}
+			continue
+		}
+		// Sibling KTX2 transcode for this tier — same opportunistic
+		// failure semantics as the full-size KTX2 above.
+		if p.KTX2 != nil && p.KTX2.Available {
+			if err := p.KTX2.Transcode(context.Background(), tierPath); err != nil {
+				if p.Log != nil {
+					p.Log.Warn("ktx2: tier transcode failed",
+						"tier", tier, "screen_id", screenID, "err", err.Error())
+				}
 			}
 		}
 	}

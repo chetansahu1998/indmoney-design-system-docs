@@ -68,19 +68,19 @@ export function pickLOD(
 }
 
 /**
- * Builds the URL for a given LOD tier. Today the backend serves a
- * single canonical PNG/KTX2 per screen — every tier resolves to the
- * same URL. When the backend LOD-tier generation lands the pattern
- * extends to <id>@2x.l1.png / l2.png suffixes.
+ * Builds the URL for a given LOD tier. Backend serves tier-specific
+ * downsamples via the `?tier=l1` / `?tier=l2` query param on the
+ * existing PNG + KTX2 routes; "full" → no query param.
  *
- * Exposed as a single function so the swap is one-call when the
- * backend ships LOD tiers.
+ * When the backend doesn't have a tier file on disk (LOD generation
+ * failed / pre-LOD screen / ops cleared sidecars), the handler
+ * returns 404 and the frontend's getTextureKTX2OrPNG falls back
+ * cleanly to the .png path WITHOUT the tier suffix. So tier=l2 →
+ * 404 ktx2 → 404 png → useEffect onError, and AtlasFrame can re-
+ * render with tier=full to recover.
  */
 export function lodURL(baseURL: string, tier: LODTier): string {
-  // Phase 3.5: backend doesn't yet emit LOD tier files. Returning
-  // baseURL for every tier is the correct degradation — the GPU's
-  // mipmap chain (from KTX2 transcode -mipmap flag, U2) handles
-  // downsample sampling on the GPU instead.
-  void tier;
-  return baseURL;
+  if (tier === "full") return baseURL;
+  const sep = baseURL.includes("?") ? "&" : "?";
+  return `${baseURL}${sep}tier=${tier}`;
 }
