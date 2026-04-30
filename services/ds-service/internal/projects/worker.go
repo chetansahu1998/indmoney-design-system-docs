@@ -508,9 +508,10 @@ func (a *workerRepoAdapter) PersistRunIdempotent(ctx context.Context, jobID, ver
 	if len(violations) > 0 {
 		stmt, err := tx.PrepareContext(ctx,
 			`INSERT INTO violations (
-			    id, version_id, screen_id, tenant_id, rule_id, severity,
-			    property, observed, suggestion, persona_id, mode_label, status, created_at
-			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+			    id, version_id, screen_id, tenant_id, rule_id, severity, category,
+			    property, observed, suggestion, persona_id, mode_label, status,
+			    auto_fixable, created_at
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		if err != nil {
 			return err
 		}
@@ -524,10 +525,22 @@ func (a *workerRepoAdapter) PersistRunIdempotent(ctx context.Context, jobID, ver
 			if v.Status == "" {
 				v.Status = "active"
 			}
+			// Category defaults to 'token_drift' to match the column DEFAULT for
+			// Phase 1 runners that don't set it explicitly. Phase 2 runners set
+			// Category directly on every Violation they emit.
+			category := v.Category
+			if category == "" {
+				category = "token_drift"
+			}
+			autoFix := 0
+			if v.AutoFixable {
+				autoFix = 1
+			}
 			if _, err := stmt.ExecContext(ctx,
-				v.ID, v.VersionID, v.ScreenID, v.TenantID, v.RuleID, v.Severity,
+				v.ID, v.VersionID, v.ScreenID, v.TenantID, v.RuleID, v.Severity, category,
 				v.Property, v.Observed, v.Suggestion,
-				nullString(v.PersonaID), nullString(v.ModeLabel), v.Status, now,
+				nullString(v.PersonaID), nullString(v.ModeLabel), v.Status,
+				autoFix, now,
 			); err != nil {
 				return fmt.Errorf("insert violation: %w", err)
 			}

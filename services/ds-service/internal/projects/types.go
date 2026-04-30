@@ -120,20 +120,28 @@ type AuditJob struct {
 }
 
 // Violation mirrors the violations table.
+//
+// Category and AutoFixable were added in Phase 2 (migration 0002) so the
+// Violations tab can filter by rule category and the Phase 4 Fix-in-Figma
+// CTA can render conditionally. Phase 1 runners that don't set Category
+// fall back to the column DEFAULT 'token_drift' on insert (see worker
+// PersistRunIdempotent for the COALESCE behavior).
 type Violation struct {
-	ID         string
-	VersionID  string
-	ScreenID   string
-	TenantID   string
-	RuleID     string
-	Severity   string
-	Property   string
-	Observed   string
-	Suggestion string
-	PersonaID  *string
-	ModeLabel  *string
-	Status     string
-	CreatedAt  time.Time
+	ID          string
+	VersionID   string
+	ScreenID    string
+	TenantID    string
+	RuleID      string
+	Severity    string
+	Category    string // Phase 2: theme_parity | cross_persona | a11y_contrast | ... (empty falls back to 'token_drift' on insert)
+	Property    string
+	Observed    string
+	Suggestion  string
+	PersonaID   *string
+	ModeLabel   *string
+	Status      string
+	AutoFixable bool // Phase 2: drives the Fix-in-Figma CTA wired in Phase 4
+	CreatedAt   time.Time
 }
 
 // CompositionRef is reserved for cross-version composition references introduced
