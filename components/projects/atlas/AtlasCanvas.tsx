@@ -37,14 +37,20 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import * as THREE from "three";
 import type { Screen } from "@/lib/projects/types";
 import { screenPngUrl } from "@/lib/projects/client";
 import AtlasControls from "./AtlasControls";
 import AtlasFrame from "./AtlasFrame";
+import AtlasPostprocessing, {
+  POSTPROCESSING_FROM_ZERO,
+  type AtlasPostprocessingState,
+} from "./AtlasPostprocessing";
 import { useAtlasViewport } from "./useAtlasViewport";
 import { totalBytes, TEXTURE_BUDGET_BYTES } from "./textureCache";
+import { atlasBloomBuildUp } from "@/lib/animations/timelines/atlasBloomBuildUp";
 
 interface AtlasCanvasProps {
   /** URL slug — used by `screenPngUrl()` for the authed PNG route. */
@@ -66,15 +72,33 @@ const DOLLY_MS = 600;
  * Inner scene component. Lives below the `<Canvas>` so r3f hooks (`useThree`)
  * can resolve. The default camera is the orthographic camera created here.
  */
+interface SceneProps extends AtlasCanvasProps {
+  /** Phase 3 U1: state-setter for postprocessing values driven by GSAP. */
+  applyPostprocessing: (next: AtlasPostprocessingState) => void;
+}
+
 function Scene({
   slug,
   screens,
   versionID,
   onFrameSelect,
   selectedScreenID,
-}: AtlasCanvasProps) {
+  applyPostprocessing,
+}: SceneProps) {
   const viewport = useAtlasViewport(slug, screens, versionID);
   const { camera, size } = useThree();
+
+  // Phase 3 U1: Bloom build-up timeline. Plays once on mount; consumer
+  // (ProjectShell) can re-trigger on theme toggle via a separate hook.
+  // The timeline updates the postprocessing state via the applyPostprocessing
+  // setter so r3f reconciles each frame.
+  useEffect(() => {
+    const tl = atlasBloomBuildUp(applyPostprocessing);
+    tl.play();
+    return () => {
+      tl.kill();
+    };
+  }, [applyPostprocessing]);
 
   // Animation handle for the click-to-snap dolly. We tween manually via
   // requestAnimationFrame inside a ref so we don't pull in GSAP — r3f's
@@ -213,9 +237,20 @@ function Scene({
 /**
  * Dynamic-imported entry. Keyed by `pathname` so Next 16's componentCache
  * cannot replay a stale r3f tree on back/forward navigation.
+ *
+ * Phase 3 U1: holds the postprocessing state above the Canvas so the GSAP
+ * build-up timeline (running inside Scene) can drive it via setState
+ * without bypassing r3f's reconciler.
  */
 export default function AtlasCanvas(props: AtlasCanvasProps) {
   const pathname = usePathname() ?? "/";
+
+  // Phase 3 U1: postprocessing values live here (above Canvas) so they
+  // survive Scene re-mounts and so the EffectComposer reads the same React
+  // state the GSAP timeline updates.
+  const [postState, setPostState] = useState<AtlasPostprocessingState>(
+    POSTPROCESSING_FROM_ZERO,
+  );
 
   return (
     <Suspense
@@ -248,7 +283,8 @@ export default function AtlasCanvas(props: AtlasCanvasProps) {
         // so the OrbitControls pan handler always sees the gesture.
         eventPrefix="client"
       >
-        <Scene {...props} />
+        <Scene {...props} applyPostprocessing={setPostState} />
+        <AtlasPostprocessing state={postState} />
       </Canvas>
     </Suspense>
   );
