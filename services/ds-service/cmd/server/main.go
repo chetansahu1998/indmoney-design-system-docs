@@ -37,6 +37,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/auditbyslug"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/auth"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/db"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
@@ -403,6 +404,19 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleGetDRD)))
 	mux.HandleFunc("PUT /v1/projects/{slug}/flows/{flow_id}/drd",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandlePutDRD)))
+
+	// Phase 2 U10 — Audit-by-slug read path. /files/[slug] in the docs site
+	// reads from this endpoint instead of importing the JSON sidecar at build
+	// time. Returns the same lib/audit/types.ts AuditResult shape so the
+	// frontend doesn't change types. System-tenant fallback gated by env
+	// DS_AUDIT_BY_SLUG_INCLUDE_SYSTEM (default on) — backfilled sidecar rows
+	// live under the system tenant and cross-tenant query is a 404 by default.
+	mux.HandleFunc("GET /v1/audit/by-slug/{slug}",
+		s.requireAuth(auditbyslug.Handler(auditbyslug.Deps{
+			DB:           s.db.DB,
+			ClaimsReader: claimsReader,
+			Log:          s.log,
+		})))
 
 	// Phase 2 U8 — Audit fan-out trigger. Super-admin only. Enqueues
 	// audit_jobs at priority=10 for every active flow's latest version when
