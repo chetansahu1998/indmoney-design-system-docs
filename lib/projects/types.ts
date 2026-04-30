@@ -247,7 +247,11 @@ export type ProjectEventType =
   /** Phase 3 U6: per-rule audit progress tick. Emitted by the worker
    *  after each rule in the composite registry completes; throttled at
    *  100ms per channel server-side. */
-  | "audit_progress";
+  | "audit_progress"
+  /** Phase 4 U1: violation lifecycle transition (Active → Acknowledged →
+   *  Fixed | Dismissed, plus admin reactivation). The Inbox + Violations
+   *  tab subscribe and reconcile the row in place. */
+  | "violation_lifecycle_changed";
 
 export interface ProjectEvent {
   type: ProjectEventType;
