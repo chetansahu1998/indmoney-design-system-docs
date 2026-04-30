@@ -144,6 +144,28 @@ type Violation struct {
 	CreatedAt   time.Time
 }
 
+// PrototypeLink mirrors the screen_prototype_links table (added in migration
+// 0002). Cache of Figma prototype connections per screen — populated by U5's
+// flow-graph runner on first audit of a version, reused on re-audit so the
+// Figma REST round-trip happens at most once per version.
+//
+// DestinationScreenID is nullable: NULL when the destination is OUT_OF_FLOW
+// (close / back / external link / scroll-to). DestinationNodeID is preserved
+// even when the screen reference is null so Phase 5+ DRD `/figma-link` blocks
+// can render even when the destination isn't in our screens table.
+type PrototypeLink struct {
+	ID                  string
+	ScreenID            string
+	TenantID            string
+	SourceNodeID        string
+	DestinationScreenID *string
+	DestinationNodeID   *string
+	Trigger             string // ON_CLICK | ON_HOVER | AFTER_TIMEOUT | …
+	Action              string // NAVIGATE | OVERLAY | SWAP | CLOSE | BACK | URL
+	Metadata            *string
+	CreatedAt           time.Time
+}
+
 // CompositionRef is reserved for cross-version composition references introduced
 // in Phase 4. Phase 1 doesn't read or write it but the type is defined here so
 // downstream code can import it without the package shape changing twice.

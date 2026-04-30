@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -323,5 +324,201 @@ func TestRepo_ListProjects_FiltersDeleted(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Name != "Active" {
 		t.Fatalf("expected only Active; got %d projects", len(got))
+	}
+}
+
+// ─── Phase 2 U5: prototype_links cache ──────────────────────────────────────
+
+// seedFlowAndScreens is a small helper for the U5 tests below: creates a
+// project + flow + 2 screens scoped to the given tenant, and returns the
+// (versionID, [screen1, screen2]) the test can use.
+func seedFlowAndScreens(t *testing.T, repo *TenantRepo, userID string) (string, []string) {
+	t.Helper()
+	ctx := context.Background()
+	p, err := repo.UpsertProject(ctx, Project{
+		Name: "P", Platform: "mobile", Product: "Plutus", Path: "X", OwnerUserID: userID,
+	})
+	if err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+	v, err := repo.CreateVersion(ctx, p.ID, userID)
+	if err != nil {
+		t.Fatalf("create version: %v", err)
+	}
+	f, err := repo.UpsertFlow(ctx, Flow{ProjectID: p.ID, FileID: "F", Name: "Flow"})
+	if err != nil {
+		t.Fatalf("upsert flow: %v", err)
+	}
+	screens := []Screen{
+		{VersionID: v.ID, FlowID: f.ID, X: 0, Y: 0, Width: 375, Height: 812},
+		{VersionID: v.ID, FlowID: f.ID, X: 0, Y: 1000, Width: 375, Height: 812},
+	}
+	if err := repo.InsertScreens(ctx, screens); err != nil {
+		t.Fatalf("insert screens: %v", err)
+	}
+	return v.ID, []string{screens[0].ID, screens[1].ID}
+}
+
+func TestRepo_UpsertPrototypeLinks_RoundTrip(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	versionID, screens := seedFlowAndScreens(t, repo, uA)
+
+	link := PrototypeLink{
+		ScreenID:            screens[0],
+		SourceNodeID:        "btn-1",
+		DestinationScreenID: &screens[1],
+		Trigger:             "ON_CLICK",
+		Action:              "NAVIGATE",
+	}
+	if err := repo.UpsertPrototypeLinks(ctx, []PrototypeLink{link}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	got, err := repo.GetPrototypeLinks(ctx, versionID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 link, got %d", len(got))
+	}
+	if got[0].ScreenID != screens[0] || got[0].SourceNodeID != "btn-1" {
+		t.Errorf("round-trip mismatch: %+v", got[0])
+	}
+	if got[0].DestinationScreenID == nil || *got[0].DestinationScreenID != screens[1] {
+		t.Errorf("destination_screen_id round-trip mismatch: %+v", got[0].DestinationScreenID)
+	}
+	if got[0].Trigger != "ON_CLICK" || got[0].Action != "NAVIGATE" {
+		t.Errorf("trigger/action mismatch: trigger=%q action=%q", got[0].Trigger, got[0].Action)
+	}
+	if got[0].ID == "" {
+		t.Error("ID should be auto-assigned on insert")
+	}
+}
+
+func TestRepo_PrototypeLinks_TenantScoping(t *testing.T) {
+	d, tA, tB, uA := newTestDB(t)
+	repoA := NewTenantRepo(d.DB, tA)
+	repoB := NewTenantRepo(d.DB, tB)
+	ctx := context.Background()
+
+	versionA, screensA := seedFlowAndScreens(t, repoA, uA)
+
+	if err := repoA.UpsertPrototypeLinks(ctx, []PrototypeLink{{
+		ScreenID:     screensA[0],
+		SourceNodeID: "btn-A",
+		Trigger:      "ON_CLICK",
+		Action:       "CLOSE",
+	}}); err != nil {
+		t.Fatalf("upsert tenantA: %v", err)
+	}
+
+	// Tenant B asks for tenant A's version → zero rows (no existence oracle).
+	gotB, err := repoB.GetPrototypeLinks(ctx, versionA)
+	if err != nil {
+		t.Fatalf("get from tenantB: %v", err)
+	}
+	if len(gotB) != 0 {
+		t.Errorf("cross-tenant query returned %d rows; want 0", len(gotB))
+	}
+}
+
+func TestRepo_UpsertPrototypeLinks_Idempotent(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	versionID, screens := seedFlowAndScreens(t, repo, uA)
+
+	links := []PrototypeLink{
+		{ScreenID: screens[0], SourceNodeID: "btn-1", DestinationScreenID: &screens[1], Trigger: "ON_CLICK", Action: "NAVIGATE"},
+	}
+	if err := repo.UpsertPrototypeLinks(ctx, links); err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+
+	// Second upsert with a DIFFERENT link set on the SAME screen — replace-set
+	// semantics replaces the prior row, leaving exactly one row.
+	updated := []PrototypeLink{
+		{ScreenID: screens[0], SourceNodeID: "btn-2", DestinationScreenID: &screens[1], Trigger: "ON_CLICK", Action: "OVERLAY"},
+	}
+	if err := repo.UpsertPrototypeLinks(ctx, updated); err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+	got, err := repo.GetPrototypeLinks(ctx, versionID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("idempotent replace: expected 1 link, got %d", len(got))
+	}
+	if got[0].SourceNodeID != "btn-2" || got[0].Action != "OVERLAY" {
+		t.Errorf("replace-set mismatch: %+v", got[0])
+	}
+}
+
+func TestRepo_UpsertPrototypeLinks_EmptyNoOp(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	versionID, _ := seedFlowAndScreens(t, repo, uA)
+
+	if err := repo.UpsertPrototypeLinks(context.Background(), nil); err != nil {
+		t.Errorf("nil upsert should be no-op, got error: %v", err)
+	}
+	got, err := repo.GetPrototypeLinks(context.Background(), versionID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 links after nil upsert, got %d", len(got))
+	}
+}
+
+func TestRepo_UpsertPrototypeLinks_RejectsMissingScreenID(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	_, _ = seedFlowAndScreens(t, repo, uA)
+
+	err := repo.UpsertPrototypeLinks(context.Background(), []PrototypeLink{{
+		// ScreenID intentionally empty.
+		SourceNodeID: "btn-1", Trigger: "ON_CLICK", Action: "CLOSE",
+	}})
+	if err == nil {
+		t.Fatal("expected error on missing ScreenID")
+	}
+}
+
+func TestRepo_GetPrototypeLinks_TenantRequired(t *testing.T) {
+	d, _, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, "") // empty tenant
+	_, err := repo.GetPrototypeLinks(context.Background(), "v-1")
+	if err == nil || !strings.Contains(err.Error(), "tenant_id") {
+		t.Errorf("expected tenant_id error, got: %v", err)
+	}
+}
+
+func TestRepo_PrototypeLinks_CascadeOnScreenDelete(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+	versionID, screens := seedFlowAndScreens(t, repo, uA)
+
+	if err := repo.UpsertPrototypeLinks(ctx, []PrototypeLink{
+		{ScreenID: screens[0], SourceNodeID: "btn-1", DestinationScreenID: &screens[1], Trigger: "ON_CLICK", Action: "NAVIGATE"},
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// Deleting screens[0] should CASCADE the link.
+	if _, err := d.DB.ExecContext(ctx, `DELETE FROM screens WHERE id = ?`, screens[0]); err != nil {
+		t.Fatalf("delete screen: %v", err)
+	}
+	got, err := repo.GetPrototypeLinks(ctx, versionID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 links after CASCADE delete; got %d", len(got))
 	}
 }

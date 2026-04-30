@@ -854,3 +854,149 @@ func makeSlug(product, path string) string {
 	}
 	return out
 }
+
+// ─── Phase 2: prototype-link cache (U5 flow-graph rule) ──────────────────────
+
+// GetPrototypeLinks returns every prototype link cached for the screens belonging
+// to a given version. Tenant-scoped via TenantRepo.tenantID — cross-tenant
+// queries return zero rows (no existence oracle).
+//
+// Empty slice + nil error = cache miss (the runner should fetch from Figma and
+// call UpsertPrototypeLinks). The runner distinguishes "no links exist for this
+// flow" from "we never tried to populate" by checking whether the prototype
+// fetch has run on this version (typically tracked via audit_jobs metadata).
+func (t *TenantRepo) GetPrototypeLinks(ctx context.Context, versionID string) ([]PrototypeLink, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	rows, err := t.r.db.QueryContext(ctx,
+		`SELECT pl.id, pl.screen_id, pl.tenant_id, pl.source_node_id,
+		        pl.destination_screen_id, pl.destination_node_id,
+		        pl.trigger, pl.action, pl.metadata, pl.created_at
+		   FROM screen_prototype_links pl
+		   JOIN screens s ON s.id = pl.screen_id
+		  WHERE s.version_id = ? AND pl.tenant_id = ?`,
+		versionID, t.tenantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query prototype_links: %w", err)
+	}
+	defer rows.Close()
+	var out []PrototypeLink
+	for rows.Next() {
+		var link PrototypeLink
+		var dstScreen, dstNode, metadata sql.NullString
+		var createdAt string
+		if err := rows.Scan(
+			&link.ID, &link.ScreenID, &link.TenantID, &link.SourceNodeID,
+			&dstScreen, &dstNode,
+			&link.Trigger, &link.Action, &metadata, &createdAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan prototype_link: %w", err)
+		}
+		if dstScreen.Valid {
+			s := dstScreen.String
+			link.DestinationScreenID = &s
+		}
+		if dstNode.Valid {
+			n := dstNode.String
+			link.DestinationNodeID = &n
+		}
+		if metadata.Valid {
+			m := metadata.String
+			link.Metadata = &m
+		}
+		link.CreatedAt = parseTime(createdAt)
+		out = append(out, link)
+	}
+	return out, rows.Err()
+}
+
+// UpsertPrototypeLinks replaces the prototype links for every screen mentioned
+// in the input slice. Replace-set semantics in a single transaction:
+//
+//  1. DELETE links scoped by tenant_id + screen_ids.
+//  2. INSERT every link in the input.
+//
+// Idempotent on re-audit: calling twice with the same input produces the same
+// row set. Tenant-scoped — cross-tenant rows are never touched.
+//
+// Empty slice = no-op (returns nil); the caller may want to skip the call to
+// avoid an empty transaction.
+func (t *TenantRepo) UpsertPrototypeLinks(ctx context.Context, links []PrototypeLink) error {
+	if t.tenantID == "" {
+		return errors.New("projects: tenant_id required")
+	}
+	if len(links) == 0 {
+		return nil
+	}
+
+	// Collect distinct screen_ids — those define the replace-set scope.
+	screenSet := map[string]struct{}{}
+	for _, l := range links {
+		if l.ScreenID == "" {
+			return errors.New("projects: prototype link missing screen_id")
+		}
+		screenSet[l.ScreenID] = struct{}{}
+	}
+	screenIDs := make([]string, 0, len(screenSet))
+	for s := range screenSet {
+		screenIDs = append(screenIDs, s)
+	}
+
+	tx, err := t.r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// DELETE prior links for these screens, scoped by tenant.
+	placeholders := make([]string, len(screenIDs))
+	args := make([]any, 0, len(screenIDs)+1)
+	for i, sid := range screenIDs {
+		placeholders[i] = "?"
+		args = append(args, sid)
+	}
+	args = append(args, t.tenantID)
+	deleteSQL := `DELETE FROM screen_prototype_links WHERE screen_id IN (` +
+		strings.Join(placeholders, ",") + `) AND tenant_id = ?`
+	if _, err := tx.ExecContext(ctx, deleteSQL, args...); err != nil {
+		return fmt.Errorf("delete prior prototype_links: %w", err)
+	}
+
+	// INSERT the new set.
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO screen_prototype_links
+		   (id, screen_id, tenant_id, source_node_id, destination_screen_id,
+		    destination_node_id, trigger, action, metadata, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	now := rfc3339(t.now().UTC())
+	for i := range links {
+		l := &links[i]
+		if l.ID == "" {
+			l.ID = uuid.NewString()
+		}
+		l.TenantID = t.tenantID
+		var dstScreen, dstNode, metadata any
+		if l.DestinationScreenID != nil {
+			dstScreen = *l.DestinationScreenID
+		}
+		if l.DestinationNodeID != nil {
+			dstNode = *l.DestinationNodeID
+		}
+		if l.Metadata != nil {
+			metadata = *l.Metadata
+		}
+		if _, err := stmt.ExecContext(ctx,
+			l.ID, l.ScreenID, t.tenantID, l.SourceNodeID,
+			dstScreen, dstNode, l.Trigger, l.Action, metadata, now,
+		); err != nil {
+			return fmt.Errorf("insert prototype_link: %w", err)
+		}
+	}
+	return tx.Commit()
+}
