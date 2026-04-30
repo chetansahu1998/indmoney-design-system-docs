@@ -20,6 +20,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { listProjects } from "@/lib/projects/client";
 import type { Project } from "@/lib/projects/types";
+import EmptyState from "@/components/empty-state/EmptyState";
 
 type LoadState =
   | { status: "loading" }
@@ -84,50 +85,49 @@ export default function ProjectsIndexPage() {
         </p>
       </header>
 
-      {state.status === "loading" && (
-        <div
-          style={{
-            color: "var(--text-3)",
-            fontFamily: "var(--font-mono)",
-            fontSize: 12,
-          }}
-        >
-          Loading projects…
-        </div>
-      )}
+      {state.status === "loading" && <EmptyState variant="loading" />}
 
       {state.status === "error" && (
-        <div
-          role="alert"
-          style={{
-            padding: 16,
-            border: "1px solid var(--border)",
-            borderRadius: 8,
-            background: "var(--bg-surface)",
-            fontFamily: "var(--font-mono)",
-            fontSize: 12,
-            color: "var(--text-1)",
-          }}
-        >
-          Couldn&apos;t load projects: {state.error} (status{" "}
-          {state.statusCode || "n/a"})
-        </div>
+        <EmptyState
+          variant="error"
+          title="Couldn't load projects"
+          description={`${state.error} (status ${state.statusCode || "n/a"})`}
+        />
       )}
 
       {state.status === "ok" && state.projects.length === 0 && (
-        <div
-          style={{
-            padding: 24,
-            border: "1px dashed var(--border)",
-            borderRadius: 8,
-            color: "var(--text-3)",
-            fontFamily: "var(--font-mono)",
-            fontSize: 12,
-            textAlign: "center",
-          }}
-        >
-          No projects yet. Export a flow from the Figma plugin to see it here.
-        </div>
+        <EmptyState
+          variant="welcome"
+          action={
+            <Link
+              href="/onboarding"
+              style={{
+                display: "inline-block",
+                padding: "8px 16px",
+                fontSize: 12,
+                fontFamily: "var(--font-mono)",
+                background: "var(--accent)",
+                color: "var(--bg-base, #fff)",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                textDecoration: "none",
+              }}
+            >
+              See the day-1 walkthrough →
+            </Link>
+          }
+          secondary={
+            <span
+              style={{
+                fontSize: 11,
+                color: "var(--text-3)",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              Or run the plugin in Figma to export your first flow.
+            </span>
+          }
+        />
       )}
 
       {state.status === "ok" &&

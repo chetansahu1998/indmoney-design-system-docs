@@ -32,6 +32,7 @@ import { useGSAPContext } from "@/lib/animations/hooks/useGSAPContext";
 import { useReducedMotion } from "@/lib/animations/context";
 import { STAGGER_MAX_MS, STAGGER_PER_FRAME_MS } from "@/lib/animations/easings";
 import EmptyTab from "./EmptyTab";
+import EmptyState from "@/components/empty-state/EmptyState";
 import { CategoryFilterChips } from "./violations/CategoryFilterChips";
 
 const SEVERITY_ORDER: readonly ViolationSeverity[] = [
@@ -192,27 +193,22 @@ export default function ViolationsTab({
   }, [ctx, state, reduced]);
 
   if (state.status === "loading") {
-    return (
-      <div
-        style={{
-          padding: 24,
-          color: "var(--text-3)",
-          fontSize: 12,
-          fontFamily: "var(--font-mono)",
-        }}
-      >
-        Loading violations…
-      </div>
-    );
+    return <EmptyState variant="loading" title="Loading violations…" />;
   }
 
   if (state.status === "empty") {
+    // Distinguish "audit ran and produced nothing" (zero-violations: positive
+    // state, celebrate) from other empty reasons (use the supplied copy).
+    if (state.reason.startsWith("No violations found")) {
+      return <EmptyState variant="zero-violations" />;
+    }
     return <EmptyTab title="No violations" description={state.reason} />;
   }
 
   if (state.status === "error") {
     return (
-      <EmptyTab
+      <EmptyState
+        variant="error"
         title="Couldn't load violations"
         description={`${state.error} (status ${state.statusCode || "n/a"})`}
       />

@@ -26,6 +26,7 @@ import {
 import type { Screen, ScreenMode } from "@/lib/projects/types";
 import { resolveTheme, useProjectView } from "@/lib/projects/view-store";
 import EmptyTab from "./EmptyTab";
+import EmptyState from "@/components/empty-state/EmptyState";
 import JSONTreeNode from "./JSONTreeNode";
 
 interface JSONTabProps {
@@ -169,13 +170,16 @@ export default function JSONTab({ slug, screens, screenModes }: JSONTabProps) {
           overflowY: "auto",
         }}
       >
-        {loading && (
-          <div style={{ color: "var(--text-3)", fontSize: 12, padding: 8 }}>Loading…</div>
-        )}
+        {loading && <EmptyState variant="loading" compact />}
         {error && (
-          <div style={{ color: "var(--danger, #c00)", fontSize: 12, padding: 8 }}>
-            {error}
-          </div>
+          // 404 here means "this screen has no canonical_tree" — the
+          // re-export-needed variant explains the action; other errors fall
+          // back to the generic error variant with the detail attached.
+          /404|not found|not yet captured/i.test(error) ? (
+            <EmptyState variant="re-export-needed" description={error} compact />
+          ) : (
+            <EmptyState variant="error" description={error} compact />
+          )
         )}
         {!loading && !error && tree !== null && (
           <JSONTreeNode
