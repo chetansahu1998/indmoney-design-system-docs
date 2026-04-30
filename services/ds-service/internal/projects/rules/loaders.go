@@ -37,11 +37,48 @@ package rules
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects"
 )
+
+// annotateResolved attaches a `_resolved` sidecar to the base tree's root
+// keyed by node_id → field → ResolvedValue. Phase 3.5 introduces this
+// shape so theme_parity (resolved-tree diff) and a11y_contrast (per-fill
+// resolved hex lookup) can both read mode-specific values without
+// re-running the resolver. The original tree shape is preserved
+// untouched — the sidecar lives at the root level under a leading
+// underscore key so canonical-tree consumers ignore it.
+//
+// Returns a SHALLOW-cloned root with the sidecar key set; nested nodes
+// are reused by reference.
+func annotateResolved(
+	base map[string]any,
+	resolved map[string]map[string]*ResolvedValue,
+) map[string]any {
+	if base == nil {
+		return map[string]any{"_resolved": resolved}
+	}
+	out := make(map[string]any, len(base)+1)
+	for k, v := range base {
+		out[k] = v
+	}
+	out["_resolved"] = resolved
+	return out
+}
+
+// encodeTree marshals a (possibly annotated) tree back to JSON. Used by
+// the resolved-tree loader to emit the per-mode JSON the
+// ResolvedScreen.ResolvedTree field carries.
+func encodeTree(tree map[string]any) (string, error) {
+	bs, err := json.Marshal(tree)
+	if err != nil {
+		return "", err
+	}
+	return string(bs), nil
+}
 
 // ─── Touch-target loader ────────────────────────────────────────────────────
 
@@ -110,7 +147,8 @@ func (l *dbScreenModeLoader) LoadScreenModesForVersion(ctx context.Context, vers
 		return nil, errors.New("rules: tenant_id required for production loader")
 	}
 	rows, err := l.db.QueryContext(ctx,
-		`SELECT s.id, m.mode_label, COALESCE(t.canonical_tree, '{}')
+		`SELECT s.id, m.mode_label, m.explicit_variable_modes_json,
+		        COALESCE(t.canonical_tree, '{}')
 		   FROM screens s
 		   JOIN screen_modes m       ON m.screen_id = s.id
 		   LEFT JOIN screen_canonical_trees t ON t.screen_id = s.id
@@ -122,24 +160,68 @@ func (l *dbScreenModeLoader) LoadScreenModesForVersion(ctx context.Context, vers
 		return nil, fmt.Errorf("screen_mode loader: %w", err)
 	}
 	defer rows.Close()
-	var out []ScreenModeTree
+
+	// Group rows by screen so we can build a per-screen list of mode bindings
+	// before resolving — the resolver needs all modes for a screen up-front to
+	// pick the active one.
+	type screenAccum struct {
+		screenID string
+		modes    []ModeBindings
+		base     map[string]any
+	}
+	bySID := map[string]*screenAccum{}
+	order := []string{}
 	for rows.Next() {
-		var screenID, modeLabel, treeJSON string
-		if err := rows.Scan(&screenID, &modeLabel, &treeJSON); err != nil {
+		var screenID, modeLabel, varJSON, treeJSON string
+		if err := rows.Scan(&screenID, &modeLabel, &varJSON, &treeJSON); err != nil {
 			return nil, err
 		}
-		out = append(out, ScreenModeTree{
-			ScreenID:      screenID,
-			ModeLabel:     modeLabel,
-			CanonicalTree: decodeTree(treeJSON),
+		acc, ok := bySID[screenID]
+		if !ok {
+			acc = &screenAccum{
+				screenID: screenID,
+				base:     decodeTree(treeJSON),
+			}
+			bySID[screenID] = acc
+			order = append(order, screenID)
+		}
+		acc.modes = append(acc.modes, ModeBindings{
+			Label:  modeLabel,
+			Values: ParseVariableValueMap(varJSON),
 		})
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Phase 3.5 — emit one ScreenModeTree per (screen, mode). The base tree
+	// is shared across modes; the active resolution is what the rule reads
+	// when it walks bindings. We attach a hidden _resolved sidecar map at
+	// the root so a11y_contrast can ask "what's mode X's hex for binding Y?"
+	// without re-running the resolver.
+	out := make([]ScreenModeTree, 0, len(bySID))
+	for _, sid := range order {
+		acc := bySID[sid]
+		for _, mb := range acc.modes {
+			resolver := NewModeResolver(mb.Label, acc.modes)
+			resolved := ResolveTreeForMode(acc.base, resolver)
+			treeCopy := annotateResolved(acc.base, resolved)
+			out = append(out, ScreenModeTree{
+				ScreenID:      sid,
+				ModeLabel:     mb.Label,
+				CanonicalTree: treeCopy,
+			})
+		}
+	}
+	return out, nil
 }
 
-// dbResolvedTreeLoader returns ResolvedScreen rows for theme parity. Same
-// degraded-but-defensive behavior as ScreenModeLoader: every mode returns the
-// same canonical_tree blob until the Variable resolver ships.
+// dbResolvedTreeLoader returns ResolvedScreen rows for theme parity.
+// Phase 3.5 — applies the Variable resolver per-mode so the ResolvedTree
+// JSON carries each binding's resolved value. theme_parity.Diff() can
+// then catch the AE-2 case (hand-painted dark fill while light is bound):
+// the resolved color differs on the offending node even though the raw
+// tree structure is identical.
 type dbResolvedTreeLoader struct {
 	db       *sql.DB
 	tenantID string
@@ -155,7 +237,8 @@ func (l *dbResolvedTreeLoader) LoadResolvedScreens(ctx context.Context, versionI
 		return nil, errors.New("rules: tenant_id required for production loader")
 	}
 	rows, err := l.db.QueryContext(ctx,
-		`SELECT s.id, m.mode_label, COALESCE(t.canonical_tree, '{}')
+		`SELECT s.id, m.mode_label, m.explicit_variable_modes_json,
+		        COALESCE(t.canonical_tree, '{}')
 		   FROM screens s
 		   JOIN screen_modes m       ON m.screen_id = s.id
 		   LEFT JOIN screen_canonical_trees t ON t.screen_id = s.id
@@ -167,19 +250,61 @@ func (l *dbResolvedTreeLoader) LoadResolvedScreens(ctx context.Context, versionI
 		return nil, fmt.Errorf("resolved_tree loader: %w", err)
 	}
 	defer rows.Close()
-	var out []ResolvedScreen
+
+	// Same per-screen accumulation as dbScreenModeLoader so each screen's
+	// per-mode resolution sees ALL its modes when the resolver constructs.
+	type screenAccum struct {
+		modes    []ModeBindings
+		baseJSON string
+	}
+	bySID := map[string]*screenAccum{}
+	order := []string{}
 	for rows.Next() {
-		var screenID, modeLabel, treeJSON string
-		if err := rows.Scan(&screenID, &modeLabel, &treeJSON); err != nil {
+		var screenID, modeLabel, varJSON, treeJSON string
+		if err := rows.Scan(&screenID, &modeLabel, &varJSON, &treeJSON); err != nil {
 			return nil, err
 		}
-		out = append(out, ResolvedScreen{
-			ScreenID:     screenID,
-			ModeLabel:    modeLabel,
-			ResolvedTree: treeJSON,
+		acc, ok := bySID[screenID]
+		if !ok {
+			acc = &screenAccum{baseJSON: treeJSON}
+			bySID[screenID] = acc
+			order = append(order, screenID)
+		}
+		acc.modes = append(acc.modes, ModeBindings{
+			Label:  modeLabel,
+			Values: ParseVariableValueMap(varJSON),
 		})
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Emit one ResolvedScreen per (screen, mode). ResolvedTree is the JSON
+	// of the base canonical_tree with a `_resolved_<mode>` sidecar map at
+	// the root carrying every (node_id, field) → resolved-hex binding.
+	// theme_parity's tree-diff strips boundVariables (so unbound divergences
+	// don't false-positive) but reads the sidecar to compare resolved
+	// values across modes.
+	out := make([]ResolvedScreen, 0, len(bySID))
+	for _, sid := range order {
+		acc := bySID[sid]
+		base := decodeTree(acc.baseJSON)
+		for _, mb := range acc.modes {
+			resolver := NewModeResolver(mb.Label, acc.modes)
+			resolved := ResolveTreeForMode(base, resolver)
+			annotated := annotateResolved(base, resolved)
+			treeJSON, err := encodeTree(annotated)
+			if err != nil {
+				return nil, fmt.Errorf("encode resolved tree: %w", err)
+			}
+			out = append(out, ResolvedScreen{
+				ScreenID:     sid,
+				ModeLabel:    mb.Label,
+				ResolvedTree: treeJSON,
+			})
+		}
+	}
+	return out, nil
 }
 
 // ─── Cross-persona loader ───────────────────────────────────────────────────
