@@ -20,12 +20,12 @@ Phase 1 of the Projects · Flow Atlas product (origin: [`docs/brainstorms/2026-0
 - A 4th plugin mode "Projects" that smart-groups selected frames by section, auto-detects light/dark mode pairs via `explicitVariableModes`, and submits to a new backend endpoint.
 - A two-phase backend pipeline: fast preview ≤15s p95 (raw JSON pulled, PNGs rendered + size-capped, screens persisted, mode pairs deduped to canonical_trees) + async audit job ≤5min p95.
 - A new `/projects/[slug]` route in the docs site with a 4-tab shell (DRD · Violations · Decisions · JSON), atlas surface (r3f frames at preserved x/y), theme + persona toggles, and a cinematic page-load animation choreography that establishes the visual language all subsequent phases build on.
-- Foundational infra: SQLite schema with full tenant scoping + FK enforcement + migration discipline, SSE event stream with ticket-based auth, in-process worker pool for the audit queue, animation library (GSAP + ScrollTrigger + Lenis) that Phase 6 click-and-hold-zoom-into-node hangs off.
+- Foundational infra: SQLite schema with full tenant scoping + FK enforcement + migration discipline, SSE event stream with ticket-based auth, in-process worker pool for the audit queue, animation library (GSAP + ScrollTrigger + Lenis) that Phase 6 mind-graph node interactions hang off.
 
 **Phase 1 deliberately stubs:**
 - Audit engine extensions (theme parity / cross-persona / a11y / flow-graph) — Phase 2.
 - BlockNote multi-user collab via Yjs — Phase 5.
-- Mind graph (`/atlas` route, click-and-hold-zoom-into-node) — Phase 6.
+- Mind graph (`/atlas` route) — Phase 6.
 - Auto-fix in plugin — Phase 4.
 - Per-resource ACL grants table — Phase 7. Phase 1 piggybacks on existing `cmd/server` JWT roles with denormalized `tenant_id` + scoped repository pattern as the trust boundary.
 
@@ -44,7 +44,7 @@ This is **Phase 1 of 8**. Subsequent phases get their own `ce-plan` invocations.
 | 3 | Atlas surface polish | Bloom + ChromaticAberration postprocessing. KTX2 / Basis Universal texture compression. InstancedMesh for >50-frame sections. LOD tiles. Camera-fit + theme-toggle animation choreography refinements. | 2-3 |
 | 4 | Violation lifecycle + designer surfaces | Active → Acknowledged → Fixed/Dismissed lifecycle. Designer personal inbox `/inbox`. Per-component reverse view. DS lead dashboard. Auto-fix in plugin (token + style class only, ~60% violation coverage). | 3 |
 | 5 | DRD multi-user collab + decisions | Hocuspocus collaboration server. Yjs persistence (sqlite-backed). Custom blocks `/decision` `/figma-link` `/violation-ref` with full data wiring. Decisions first-class entities + supersession chain. Comment threads. Paste-from-Notion / paste-from-Word handlers. | 3-4 |
-| 6 | **Mind graph** (`/atlas`) | react-force-graph-3d "2D human brain" with bloom postprocessing. **Click-and-hold-to-zoom-into-node** progressive zoom interaction (resn.co.nz-style hold mechanic). Filter chips for edge classes. Hover signal cards. Recursive expand. Shared-element morph leaf↔project view. Mobile/Web universal toggle crossfade. | 4-5 |
+| 6 | **Mind graph** (`/atlas`) | react-force-graph-3d "2D human brain" with bloom postprocessing. **Single-click expands a node**, recursive collapse on others. **Click-and-hold sends a tactile-signal animation** (three.js default `mousedown`/`mouseup` raycaster events drive particle convergence, label brightening, edge pulse) — soothing visual feedback only, NOT a zoom. Filter chips for edge classes. Hover signal cards. Shared-element morph leaf↔project view. Mobile/Web universal toggle crossfade. | 4-5 |
 | 7 | Auth, ACL, admin | Per-resource grants table + Next.js middleware for route-group gating. DS lead admin surfaces (rule curation editor, taxonomy curation tree, persona library approval). Audit log infra. Notifications (in-app inbox + Slack/email digest). | 3 |
 | 8 | Search, asset migration, activity feed | Pagefind-style global search across flow names + DRD + decisions. Per-flow activity feed. Asset migration to S3 + CDN with signed URLs. | 2-3 |
 
@@ -56,7 +56,7 @@ This is **Phase 1 of 8**. Subsequent phases get their own `ce-plan` invocations.
 
 Designers ship product flows by stitching screens in Figma and handing off via Slack threads, Notion docs with pasted screenshots, and FigJam boards. Engineering plays archaeologist. The current docs site shows components and tokens but doesn't carry the *flow* — there's no surface that says "here's how Onboarding works in Indian Stocks for a KYC-pending user, in light + dark, and here's what's wrong with it."
 
-Phase 1 plants the spine: section-as-canvas storage, theme-toggle-via-Variable-Modes (verified live against `INDstocks V4` on 2026-04-29 — same node tree, only `explicitVariableModes` differs), the project view that subsequent phases hang DRD/Violations/Decisions/Mind-graph off, and the animation philosophy library that Phase 6's click-and-hold mind-graph zoom + Phase 3's atlas postprocessing all build on.
+Phase 1 plants the spine: section-as-canvas storage, theme-toggle-via-Variable-Modes (verified live against `INDstocks V4` on 2026-04-29 — same node tree, only `explicitVariableModes` differs), the project view that subsequent phases hang DRD/Violations/Decisions/Mind-graph off, and the animation philosophy library that Phase 6's mind-graph signal animations + Phase 3's atlas postprocessing all build on.
 
 ---
 
@@ -65,7 +65,7 @@ Phase 1 plants the spine: section-as-canvas storage, theme-toggle-via-Variable-M
 Phase 1 establishes the animation language. The references:
 
 - **[mhdyousuf.me](https://www.mhdyousuf.me/)** — GSAP-driven, terminal aesthetic, snappy micro-interactions, smooth-scroll, scroll-triggered character/word stagger reveals, magnetic cursor on interactive elements, Cmd+K command palette pattern, monospace + bright accent contrast, sub-400ms easing on UI affordances.
-- **[resn.co.nz](https://resn.co.nz/#)** + **[/work/all](https://resn.co.nz/#!/work/all)** — soothing scroll-driven gallery transitions, atmospheric WebGL backgrounds, **click-and-hold mechanic** where holding the mouse progressively charges/zooms-deeper-with-visual-feedback (particles, edge thinning, label brightening) and releasing commits the action; release-too-early springs back. Smooth easing curves (cubic-bezier, spring physics), 800-1200ms transition windows, never abrupt cuts.
+- **[resn.co.nz](https://resn.co.nz/#)** + **[/work/all](https://resn.co.nz/#!/work/all)** — soothing scroll-driven gallery transitions, atmospheric WebGL backgrounds, smooth easing curves (cubic-bezier, spring physics), 800-1200ms transition windows, never abrupt cuts. Reference for *animation feel* across the product (Phases 1–8) — not for any specific gesture mechanic.
 
 **Synthesis for our product:**
 
@@ -78,13 +78,13 @@ Phase 1 establishes the animation language. The references:
 | Atlas click-to-snap | 1 | Camera dolly to fit frame to viewport (~600ms ease-in-out). JSON tab simultaneously cross-fades to focus that screen. |
 | Violations row hover | 1 | Severity chip pulses + breadcrumb characters stagger-reveal left-to-right (mhdyousuf type-on, ~30ms per char). |
 | DRD page open | 1 | BlockNote editor mounts behind a brief mask wipe — content fades up. |
-| **Mind graph click-and-hold-zoom-into-node** | **6** | **resn.co.nz mechanic.** While mouse held on a node: camera progressively dollies toward the node (linear-to-quintic ease); the node's label brightens; orbiting particles converge inward; edges to children fade in; a thin ring under the cursor charges (0 → full in ~800ms). Release within charge window → commit zoom (camera lands at child layer). Release before charge complete → spring back, particles dissipate. Visual feedback at every moment under the cursor. |
+| **Mind graph click-and-hold signal** | **6** | **Tactile feedback gesture, not a navigation mechanic.** Implemented with three.js default raycaster `mousedown` / `mouseup` events on a node mesh — no charging, no progressive zoom, no commit-on-release. While the mouse is held: orbiting particles converge inward, the node's label brightens, child-edge segments pulse softly, and a soft glow ring fades in under the node. On release: particles dissipate and the node settles back to idle. Single-click is the navigation gesture (expand-in-place / recurse children). Click-and-hold is purely a *signal animation* that says "yes, you're touching this node" — soothing, never abrupt, GSAP-eased per the animation philosophy. |
 | Mind graph leaf → project view | 6 | Shared-element morph (~600ms) — leaf circle + label tween into project view title bar (Framer Motion `layoutId` from r3f-projected NDC coords to DOM). Brain dissolves; canvas + tabs render behind. |
 
 **Tech stack added in Phase 1:**
 - **GSAP 3.13+** + **GSAP ScrollTrigger** — page-load timelines, tab transitions, hover micro-interactions, scroll-triggered reveals on long DRDs and violation lists
 - **Lenis 1.x** — smooth-scroll for the project page (subtle; auto-disabled with `prefers-reduced-motion`)
-- **Framer Motion 11+** (already in repo) — `layoutId` shared elements, gesture handling for the future click-and-hold
+- **Framer Motion 11+** (already in repo) — `layoutId` shared elements, gesture handling for the future mind-graph signal interactions
 
 **Bundle impact:** GSAP ~30KB gz (core + ScrollTrigger), Lenis ~10KB gz. Folded into the `animations` chunk (see Bundle Budgets in Documentation).
 
@@ -168,7 +168,7 @@ This plan advances a subset of the origin doc's 27 requirements; remaining requi
 
 ### Institutional Learnings
 
-`docs/solutions/` does not exist in this repo (verified). No prior captured learnings for r3f, BlockNote, Yjs, Figma plugin, Go job queues, audit/drift detection, ACL patterns, large-manifest performance, Variable Modes, force-directed layouts, GSAP/Lenis, or click-and-hold WebGL interactions. This plan is among the first major artifacts in these areas; future learnings should be captured under `docs/solutions/` once Phase 1 ships.
+`docs/solutions/` does not exist in this repo (verified). No prior captured learnings for r3f, BlockNote, Yjs, Figma plugin, Go job queues, audit/drift detection, ACL patterns, large-manifest performance, Variable Modes, force-directed layouts, GSAP/Lenis, or three.js raycaster signal interactions. This plan is among the first major artifacts in these areas; future learnings should be captured under `docs/solutions/` once Phase 1 ships.
 
 ### External References
 
@@ -180,8 +180,8 @@ This plan advances a subset of the origin doc's 27 requirements; remaining requi
 - [Figma plugin manifest 2026](https://developers.figma.com/docs/plugins/manifest/) — `documentAccess: "dynamic-page"` strongly recommended; `figma.loadAllPagesAsync()` required before walking.
 - [GSAP 3.13 + ScrollTrigger](https://gsap.com/docs/v3/) — for page-load + tab + hover animations.
 - [Lenis 1.x](https://lenis.darkroom.engineering/) — smooth-scroll provider.
-- [react-force-graph](https://github.com/vasturiano/react-force-graph) — Phase 6 for the mind graph (with custom click-and-hold layer on top).
-- [resn.co.nz](https://resn.co.nz/) — animation philosophy reference (click-and-hold, soothing transitions, atmospheric WebGL).
+- [react-force-graph](https://github.com/vasturiano/react-force-graph) — Phase 6 for the mind graph (with a custom three.js raycaster signal layer on top for click-and-hold feedback).
+- [resn.co.nz](https://resn.co.nz/) — animation philosophy reference (soothing transitions, easing curves, atmospheric WebGL feel — *not* a gesture mechanic).
 - [mhdyousuf.me](https://www.mhdyousuf.me/) — animation philosophy reference (GSAP-driven, terminal aesthetic, snappy micro-interactions).
 
 ### Cross-cutting tech context
@@ -288,7 +288,7 @@ Enforced by `next build --analyze` parsing in CI.
 - **Concurrent-export race** — `idempotency_key` UUID per export attempt; 60s TTL coalesce.
 - **DRD ETag** — `revision INTEGER` monotonic counter, not `updated_at`.
 - **SchemaVersion** — Audit core stays "1.0"; new `ProjectsSchemaVersion = "1.0"` separate.
-- **Animation references** — mhdyousuf.me + resn.co.nz; tech stack GSAP + ScrollTrigger + Lenis + Framer Motion. Click-and-hold-zoom mechanic deferred to Phase 6 mind-graph.
+- **Animation references** — mhdyousuf.me + resn.co.nz; tech stack GSAP + ScrollTrigger + Lenis + Framer Motion. Mind-graph node interactions (single-click expand, click-and-hold signal animation) deferred to Phase 6.
 
 ### Deferred to Implementation
 
@@ -1123,7 +1123,7 @@ Total: ~900ms (cinematic but not slow). Scrubable for prefers-reduced-motion (di
 
 **Goal:** Foundational animation infrastructure: GSAP with global context, Lenis smooth-scroll singleton, `prefers-reduced-motion` detector, reusable timelines (page-load, tab-switch, theme-toggle, hover patterns) that all subsequent phases extend.
 
-**Requirements:** Animation Philosophy section above; advances R12 (cinematic project view), foundational for Phase 6 click-and-hold mind graph.
+**Requirements:** Animation Philosophy section above; advances R12 (cinematic project view), foundational for Phase 6 mind-graph interactions (single-click expand + click-and-hold signal animation).
 
 **Dependencies:** None — independent. Pulled in by U6, U7, U8, U9, U10.
 
@@ -1329,7 +1329,7 @@ Committed at `tests/projects/fixtures/`:
   - [Lenis smooth-scroll](https://lenis.darkroom.engineering/)
 - **Animation philosophy references:**
   - [mhdyousuf.me](https://www.mhdyousuf.me/) — GSAP-driven, terminal aesthetic, snappy micro-interactions
-  - [resn.co.nz](https://resn.co.nz/#) + [resn.co.nz/work/all](https://resn.co.nz/#!/work/all) — click-and-hold zoom mechanic, soothing transitions, atmospheric WebGL (full implementation Phase 6)
+  - [resn.co.nz](https://resn.co.nz/#) + [resn.co.nz/work/all](https://resn.co.nz/#!/work/all) — soothing transitions, easing curves, atmospheric WebGL feel (animation philosophy across all phases — not a specific mechanic)
 
 ---
 
