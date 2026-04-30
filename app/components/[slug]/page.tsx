@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import FilesShell from "@/components/files/FilesShell";
 import ComponentDetail from "@/components/ComponentDetail";
+import WhereThisBreaks from "@/components/components/WhereThisBreaks";
 import {
   componentBySlug,
   componentsWithRichData,
@@ -42,6 +43,7 @@ export default async function ComponentDetailPage({
     "appearance",
     "structure",
     "code",
+    "where-this-breaks",
   ];
   const nav: NavGroup[] = [
     {
@@ -55,6 +57,7 @@ export default async function ComponentDetailPage({
         { label: "Appearance", href: "#appearance" },
         { label: "Structure", href: "#structure" },
         { label: "Code", href: "#code" },
+        { label: "Where this breaks", href: "#where-this-breaks" },
       ],
     },
   ];
@@ -62,6 +65,7 @@ export default async function ComponentDetailPage({
   return (
     <FilesShell nav={nav} title="Component" sectionIds={sectionIds}>
       <ComponentDetail entry={entry!} />
+      <WhereThisBreaks name={entry!.name} />
     </FilesShell>
   );
 }

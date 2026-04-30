@@ -451,6 +451,13 @@ func (s *server) routes(mux *http.ServeMux) {
 	// "Load more" pagination capped at 100 rows per page.
 	mux.HandleFunc("GET /v1/inbox",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleInbox)))
+
+	// Phase 4 U7 — per-component reverse view. Cross-tenant aggregate +
+	// tenant-scoped per-flow detail for "Where this breaks". The
+	// component is identified by display name via ?name= rather than
+	// slug, since the slug→name map lives in the docs site's manifest.
+	mux.HandleFunc("GET /v1/components/violations",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleComponentViolations)))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────

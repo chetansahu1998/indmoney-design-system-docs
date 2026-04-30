@@ -1184,6 +1184,60 @@ func (s *Server) HandleBulkAcknowledge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleComponentViolations serves GET /v1/components/violations?name=Toast.
+//
+// Returns the cross-tenant aggregate (severity tally + total + flow count)
+// alongside the caller's tenant-scoped per-flow detail. The component is
+// identified by its display name (mirrors what component_governance rules
+// emit in the `observed` field). Phase 4 keeps this name-based to avoid
+// pulling the lib/icons/manifest.json into the Go service; the frontend
+// resolves slug → name from the manifest before calling.
+func (s *Server) HandleComponentViolations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_name", "?name= is required")
+		return
+	}
+
+	isEditor := claims.Role == auth.RoleSuperAdmin
+	if !isEditor {
+		role, err := s.deps.DB.GetTenantRole(r.Context(), tenantID, claims.Sub)
+		if err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "role_lookup", err.Error())
+			return
+		}
+		switch role {
+		case auth.RoleTenantAdmin, auth.RoleDesigner, auth.RoleEngineer:
+			isEditor = true
+		}
+	}
+
+	agg, flows, err := ComponentViolations(r.Context(), s.deps.DB.DB, tenantID, isEditor, claims.Sub, name)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "component_violations", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name":      name,
+		"aggregate": agg,
+		"flows":     flows,
+	})
+}
+
 // HandleInbox serves GET /v1/inbox.
 //
 // Returns the requesting user's Active violations across every flow visible
