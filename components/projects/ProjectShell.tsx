@@ -28,12 +28,16 @@
 import {
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { showToast } from "@/components/ui/Toast";
+import EmptyState from "@/components/empty-state/EmptyState";
+import RetryableError from "@/components/empty-state/RetryableError";
 import { useGSAPContext } from "@/lib/animations/hooks/useGSAPContext";
 import { projectShellOpen } from "@/lib/animations/timelines/projectShellOpen";
 import { tabSwitch } from "@/lib/animations/timelines/tabSwitch";
@@ -55,6 +59,13 @@ import {
   useProjectView,
   type ProjectTab,
 } from "@/lib/projects/view-store";
+import {
+  auditProgressFromState,
+  initialState as initialMachineState,
+  isReadOnly,
+  reducer as projectViewReducer,
+  shouldRenderShell,
+} from "@/lib/projects/view-machine";
 import ProjectToolbar from "./ProjectToolbar";
 import DRDTab from "./tabs/DRDTab";
 import DecisionsTab from "./tabs/DecisionsTab";
@@ -146,12 +157,6 @@ export default function ProjectShell({
     null,
   );
   const [previousTab, setPreviousTab] = useState<ProjectTab | null>(null);
-  // Phase 3 U6: audit-progress state from SSE. null = not running (default
-  // or post-complete); {completed, total} = a tick is in flight. Cleared
-  // by audit_complete / audit_failed.
-  const [auditProgress, setAuditProgress] = useState<
-    { completed: number; total: number } | null
-  >(null);
 
   const theme = useProjectView((s) => s.theme);
   const selectedScreenID = useProjectView((s) => s.selectedScreenID);
@@ -162,6 +167,31 @@ export default function ProjectShell({
   const tabContentRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  // Phase 3 U7: project-view state machine. Replaces Phase 1+2's ad-hoc
+  // useState-based loading flow + the U7-lite ?read_only_preview check.
+  // 9 plan states collapse into 6 top-level kinds (audit running/complete/
+  // failed all map to view_ready with an `audit` discriminator). See
+  // lib/projects/view-machine.ts for the full state diagram.
+  const initialActiveStatus =
+    initialVersions.find((v) => v.ID === initialActiveVersionID)?.Status ??
+    initialVersions[0]?.Status ??
+    "view_ready";
+  const [machineState, dispatch] = useReducer(
+    projectViewReducer,
+    {
+      initialVersions,
+      activeVersionStatus: initialActiveStatus,
+      permissionDeniedFromQuery:
+        searchParams.get("read_only_preview") === "1",
+    },
+    initialMachineState,
+  );
+
+  // Audit progress derived from the machine — replaces the standalone
+  // useState that U6 added. Threading through view-machine keeps a single
+  // source of truth for the audit's running/complete state.
+  const auditProgress = auditProgressFromState(machineState);
 
   // ─── GSAP context (shared scope for every component-scoped tween). ──────
   const ctx = useGSAPContext(scopeRef);
@@ -245,16 +275,18 @@ export default function ProjectShell({
     void fetchProject(slug, activeVersionID).then((r) => {
       if (cancelled) return;
       if (!r.ok) {
-        // Phase 3 U8: stale ?v=<id> handling. A 404 typically means the
-        // requested version was deleted (admin tool) or never existed
-        // (typo'd deeplink). Redirect to the latest available version
-        // by clearing activeVersionID — the next refresh resolves to
-        // versions[0]. We don't surface an error toast for this path
-        // since the user landed via a stale URL, not an action they
-        // initiated.
-        if (r.status === 404 && versions.length > 0) {
-          setActiveVersionID(versions[0]?.ID);
-        }
+        // Phase 3 U8 stale-version handling preserved + extended through
+        // the U7 state machine. A 404 dispatches fetch_failed with the
+        // requested version ID so the reducer lands in
+        // version_not_found; the redirect-to-latest effect below picks
+        // it up and clears activeVersionID. Other errors land in
+        // `error` for the RetryableError path.
+        dispatch({
+          type: "fetch_failed",
+          statusCode: r.status,
+          message: r.error,
+          requestedVersionID: activeVersionID,
+        });
         return;
       }
       if (r.data.versions) setVersions(r.data.versions);
@@ -262,11 +294,35 @@ export default function ProjectShell({
       if (r.data.screen_modes) setScreenModes(r.data.screen_modes);
       if (r.data.available_personas)
         setPersonas(r.data.available_personas);
+      // Pass the active version's status into the reducer so it lands in
+      // pending / view_ready / view_ready+audit_failed correctly.
+      const activeStatus =
+        r.data.versions?.find((v) => v.ID === activeVersionID)?.Status ??
+        "view_ready";
+      dispatch({
+        type: "fetch_succeeded",
+        versions: r.data.versions ?? [],
+        activeVersionStatus: activeStatus,
+        readOnly: searchParams.get("read_only_preview") === "1",
+      });
     });
     return () => {
       cancelled = true;
     };
-  }, [slug, activeVersionID, versions]);
+  }, [slug, activeVersionID, searchParams]);
+
+  // Phase 3 U7: version_not_found recovery — when the reducer lands in
+  // that state, redirect to the latest version by setting activeVersionID
+  // to versions[0]. The next refresh dispatches fetch_succeeded and the
+  // reducer transitions out of version_not_found into view_ready.
+  useEffect(() => {
+    if (machineState.kind !== "version_not_found") return;
+    if (versions.length === 0) return;
+    const latest = versions[0];
+    if (latest && latest.ID !== machineState.requestedVersionID) {
+      setActiveVersionID(latest.ID);
+    }
+  }, [machineState, versions]);
 
   // ─── SSE subscription. ──────────────────────────────────────────────────
   useEffect(() => {
@@ -283,30 +339,37 @@ export default function ProjectShell({
 
     const unsubscribe = subscribeProjectEvents(slug, traceID, (ev) => {
       if (ev.type === "audit_complete") {
-        // Phase 3 U6: clear the audit-running progress state on completion
-        // so the Violations tab swaps from progress UI to the violation list.
-        setAuditProgress(null);
+        // Phase 3 U7: dispatch into the state machine so audit-running
+        // transitions cleanly to audit_complete + the Violations tab
+        // swaps from progress UI to the populated list.
+        dispatch({ type: "audit_complete" });
         showToast({
           message: "Audit complete",
           tone: "success",
           detail: "Refresh the Violations tab for the latest run",
         });
       } else if (ev.type === "audit_failed") {
-        setAuditProgress(null);
+        const error =
+          typeof ev.data?.error === "string" ? ev.data.error : "audit failed";
+        dispatch({ type: "audit_failed", error });
         showToast({ message: "Audit failed", tone: "danger" });
       } else if (ev.type === "view_ready") {
+        // Phase 3 U7: pending → view_ready transition.
+        dispatch({ type: "view_ready" });
         showToast({ message: "View ready", tone: "info" });
       } else if (ev.type === "export_failed") {
+        const error =
+          typeof ev.data?.error === "string" ? ev.data.error : "export failed";
+        dispatch({ type: "export_failed", error });
         showToast({ message: "Export failed", tone: "danger" });
       } else if (ev.type === "audit_progress") {
-        // Phase 3 U6: per-rule progress tick. The ViolationsTab renders
-        // EmptyState variant=audit-running with this state.
+        // Phase 3 U6 + U7: per-rule progress tick → reducer.
         const completed =
           typeof ev.data?.completed === "number" ? ev.data.completed : 0;
         const total =
           typeof ev.data?.total === "number" ? ev.data.total : 0;
         if (total > 0) {
-          setAuditProgress({ completed, total });
+          dispatch({ type: "audit_progress", completed, total });
         }
       }
     });
@@ -348,6 +411,69 @@ export default function ProjectShell({
     return screens;
   }, [screens, personas, activePersonaName]);
 
+  // Phase 3 U7: top-level state-machine render branches. Five non-shell
+  // states each map to a dedicated EmptyState variant; shell-rendering
+  // states (view_ready + permission_denied) fall through to the regular
+  // toolbar + atlas + tabs layout below. The shell still respects
+  // isReadOnly(machineState) for the DRD tab's edit affordances.
+  if (!shouldRenderShell(machineState)) {
+    return (
+      <div style={fullPageStateStyle}>
+        {machineState.kind === "loading" ? (
+          <EmptyState variant="loading" title="Loading project…" />
+        ) : null}
+
+        {machineState.kind === "pending" ? (
+          <EmptyState
+            variant="loading"
+            title="Project landing…"
+            description="Backend pipeline is finishing the fast preview. Atlas + DRD render here as soon as it's ready."
+          />
+        ) : null}
+
+        {machineState.kind === "version_not_found" ? (
+          <EmptyState
+            variant="error"
+            title="Version not found"
+            description={`v${machineState.requestedVersionID.slice(
+              0,
+              8,
+            )}… doesn't exist anymore — redirecting to the latest version.`}
+          />
+        ) : null}
+
+        {machineState.kind === "error" ? (
+          <RetryableError
+            title="Couldn't load this project"
+            detail={`${machineState.message} (status ${machineState.statusCode})`}
+            onRetry={async () => {
+              dispatch({ type: "retry" });
+              const r = await fetchProject(slug, activeVersionID);
+              if (r.ok) {
+                if (r.data.versions) setVersions(r.data.versions);
+                if (r.data.screens) setScreens(r.data.screens);
+                if (r.data.screen_modes) setScreenModes(r.data.screen_modes);
+                if (r.data.available_personas)
+                  setPersonas(r.data.available_personas);
+                dispatch({
+                  type: "fetch_succeeded",
+                  versions: r.data.versions ?? [],
+                  activeVersionStatus:
+                    r.data.versions?.find((v) => v.ID === activeVersionID)
+                      ?.Status ?? "view_ready",
+                  readOnly: searchParams.get("read_only_preview") === "1",
+                });
+              } else {
+                throw new Error(`${r.error} (${r.status})`);
+              }
+            }}
+            offline={machineState.statusCode === 0}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div
       ref={scopeRef}
@@ -360,6 +486,25 @@ export default function ProjectShell({
         color: "var(--text-1)",
       }}
     >
+      {machineState.kind === "permission_denied" ? (
+        <div style={permissionDeniedBannerStyle} role="status">
+          <span aria-hidden style={{ fontSize: 14 }}>🔒</span>
+          <span style={{ flex: 1 }}>
+            You're viewing this project in read-only mode
+            {machineState.reason === "preview"
+              ? " (preview)"
+              : ""}
+            . Request edit access from the project owner.
+          </span>
+          <Link
+            href="/onboarding/pm"
+            style={permissionDeniedLinkStyle}
+          >
+            Why am I seeing this?
+          </Link>
+        </div>
+      ) : null}
+
       <ProjectToolbar
         project={project}
         versions={versions}
@@ -485,7 +630,10 @@ export default function ProjectShell({
               // before per-resource grants ship. Phase 7 will replace
               // this query-param check with an actual permission check
               // resolved server-side in fetchProject's response.
-              readOnly={searchParams.get("read_only_preview") === "1"}
+              // Phase 3 U7: read-only resolves through the machine — covers
+              // both the ?read_only_preview=1 preview path and (Phase 7) a
+              // server-resolved ACL flag without re-reading the query param.
+              readOnly={isReadOnly(machineState)}
             />
           )}
           {activeTab === "violations" && (
@@ -522,3 +670,33 @@ export default function ProjectShell({
 // AtlasPlaceholder removed in U7 — r3f `<AtlasCanvas>` (above) is the new
 // surface. The PNG-grid placeholder is preserved in git history (U6 commit)
 // for reference if anyone needs to bisect the visual regression of the swap.
+
+// ─── Phase 3 U7 — full-page state styles ────────────────────────────────────
+
+const fullPageStateStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  height: "100vh",
+  background: "var(--bg)",
+  padding: 32,
+};
+
+const permissionDeniedBannerStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 12,
+  padding: "8px 16px",
+  background:
+    "color-mix(in oklab, var(--bg-surface) 85%, var(--warning, #c80) 15%)",
+  borderBottom: "1px solid var(--border)",
+  fontSize: 12,
+  fontFamily: "var(--font-mono)",
+  color: "var(--text-1)",
+};
+
+const permissionDeniedLinkStyle: React.CSSProperties = {
+  fontSize: 11,
+  color: "var(--accent)",
+  textDecoration: "underline",
+};
