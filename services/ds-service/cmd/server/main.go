@@ -42,6 +42,7 @@ import (
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/extractor"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects/rules"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/sse"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/sync"
 )
@@ -145,16 +146,25 @@ func main() {
 	workerRepo := projects.NewWorkerRepo(dbConn.DB, nil)
 	auditCoreRunner := projects.NewAuditCoreRunner(projects.AuditCoreRunnerConfig{
 		Loader: projects.NewDBVersionScreenLoader(dbConn.DB),
-		// Phase 1 ships with empty token + candidate slices in this wiring;
-		// the audit core gracefully emits zero violations against an empty
-		// catalog. Phase 2 prod-wire registers the 5 new rule classes
-		// alongside this baseline runner via a composite RuleRunner.
+		// Phase 1 ships with empty token + candidate slices; the audit core
+		// emits zero violations against an empty catalog.
 	})
+	// Phase 2 prod-wire: wrap the audit-core runner in a tenant-aware
+	// composite that fans out to every Phase 2 rule (theme parity / cross-
+	// persona / a11y contrast / a11y touch target / flow graph / component
+	// governance). The composite reads the tenant_id from the version on each
+	// Run() call so the worker can hold a single Runner pointer at boot.
+	//
+	// Variable resolution caveat: until the Go-side resolver mirroring
+	// lib/projects/resolveTreeForMode.ts ships, theme_parity + a11y_contrast
+	// run in degraded mode (per-mode trees are identical until the resolver
+	// can apply per-mode bindings). See loaders.go header comment.
+	compositeRunner := rules.NewTenantAwareRunner(dbConn.DB, auditCoreRunner, nil)
 	workerPoolSize := workerPoolSizeFromEnv(log)
 	workerPool := &projects.WorkerPool{
 		Size:          workerPoolSize,
 		Repo:          workerRepo,
-		Runner:        auditCoreRunner,
+		Runner:        compositeRunner,
 		Broker:        broker,
 		Notifications: auditEnqueuer.Notifications(),
 		Log:           log,
