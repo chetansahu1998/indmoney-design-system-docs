@@ -34,6 +34,8 @@ import { STAGGER_MAX_MS, STAGGER_PER_FRAME_MS } from "@/lib/animations/easings";
 import EmptyTab from "./EmptyTab";
 import EmptyState from "@/components/empty-state/EmptyState";
 import { CategoryFilterChips } from "./violations/CategoryFilterChips";
+import LifecycleButtons from "./violations/LifecycleButtons";
+import FixInFigmaButton from "./violations/FixInFigmaButton";
 
 const SEVERITY_ORDER: readonly ViolationSeverity[] = [
   "critical",
@@ -107,6 +109,10 @@ export default function ViolationsTab({
   // itself in the fetch deps because that would re-fetch on every 100ms
   // throttled tick.
   const [reloadTrigger, setReloadTrigger] = useState(0);
+  // Phase 4 U6 — set of violation IDs whose lifecycle the user just
+  // resolved (Acknowledge / Dismiss). The row fades out and is filtered
+  // from the rendered list; on next reload it disappears server-side too.
+  const [resolvedSet, setResolvedSet] = useState<Set<string>>(new Set());
   const wasAuditRunning = useRef(false);
   useEffect(() => {
     const running = auditProgress != null && auditProgress.total > 0;
@@ -119,6 +125,7 @@ export default function ViolationsTab({
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
+    setResolvedSet(new Set());
     void listViolations(slug, versionID, filters).then((r) => {
       if (cancelled) return;
       if (!r.ok) {
@@ -384,7 +391,9 @@ export default function ViolationsTab({
                 flexDirection: "column",
               }}
             >
-              {rows.map((v) => (
+              {rows.map((v) => {
+                const fading = resolvedSet.has(v.ID);
+                return (
                 <li
                   key={v.ID}
                   data-violation-row
@@ -395,6 +404,10 @@ export default function ViolationsTab({
                     gridTemplateColumns: "1fr auto",
                     gap: 12,
                     padding: "10px 14px",
+                    opacity: fading ? 0 : 1,
+                    transform: fading ? "translateX(-12px)" : "none",
+                    transition: "opacity 220ms ease, transform 220ms ease",
+                    pointerEvents: fading ? "none" : "auto",
                     borderTop: "1px solid var(--border)",
                   }}
                 >
@@ -419,23 +432,21 @@ export default function ViolationsTab({
                       {v.Property} · {v.Observed}
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 6, alignSelf: "center" }}>
-                    <button
-                      type="button"
-                      disabled
-                      title="Lifecycle controls coming in Phase 4"
-                      style={lifecycleBtnStyle}
-                    >
-                      Acknowledge
-                    </button>
-                    <button
-                      type="button"
-                      disabled
-                      title="Lifecycle controls coming in Phase 4"
-                      style={lifecycleBtnStyle}
-                    >
-                      Dismiss
-                    </button>
+                  <div style={{ display: "flex", gap: 6, alignSelf: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                    <LifecycleButtons
+                      slug={slug}
+                      violationID={v.ID}
+                      onResolved={() =>
+                        setResolvedSet((prev) => {
+                          const next = new Set(prev);
+                          next.add(v.ID);
+                          return next;
+                        })
+                      }
+                    />
+                    {v.AutoFixable && (
+                      <FixInFigmaButton violationID={v.ID} />
+                    )}
                     <button
                       type="button"
                       onClick={() => onViewInJSON?.(v.ScreenID)}
@@ -445,7 +456,8 @@ export default function ViolationsTab({
                     </button>
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           </section>
         );
@@ -454,18 +466,6 @@ export default function ViolationsTab({
     </div>
   );
 }
-
-const lifecycleBtnStyle: React.CSSProperties = {
-  padding: "6px 10px",
-  fontSize: 11,
-  fontFamily: "var(--font-mono)",
-  background: "transparent",
-  border: "1px dashed var(--border)",
-  borderRadius: 6,
-  color: "var(--text-3)",
-  cursor: "not-allowed",
-  opacity: 0.55,
-};
 
 const viewJsonBtnStyle: React.CSSProperties = {
   padding: "6px 10px",
