@@ -1045,6 +1045,128 @@ func (t *TenantRepo) GetViolationForLifecycle(ctx context.Context, violationID s
 	return out, nil
 }
 
+// BulkLifecycleRow is one input element for BulkUpdateViolationStatus.
+//
+// PerRowAudit runs inside the same transaction as the UPDATE for that row;
+// caller uses it to write a per-violation audit_log entry that includes the
+// shared bulk_id so log queries can re-aggregate the bulk operation later.
+type BulkLifecycleRow struct {
+	ViolationID string
+	From        string // expected current status (used in WHERE for race safety)
+	To          string // resulting status
+	PerRowAudit func(tx *sql.Tx, violationID, fromStatus, toStatus string) error
+}
+
+// BulkLifecycleSummary reports per-id outcomes after a bulk run.
+//
+// Updated holds the violation_ids whose status flipped successfully. Skipped
+// holds ids whose row did not match the expected From (already in target
+// state, deleted, or cross-tenant); these are non-fatal — the caller surfaces
+// them to the API consumer so they can decide whether to refetch + retry.
+type BulkLifecycleSummary struct {
+	Updated []string
+	Skipped []string
+}
+
+// BulkUpdateViolationStatus applies many transitions inside a single
+// transaction. The caller is expected to have already validated each (action,
+// reason, role) tuple via ValidateTransition. Per-row audit writes happen in
+// the same transaction so the (status, log) pair is always consistent.
+//
+// Failure semantics:
+//   - A row whose UPDATE affects 0 rows (mismatched From, deleted, cross-
+//     tenant) is recorded in Skipped — no rollback.
+//   - A row whose audit-log writer returns an error rolls back the entire
+//     transaction. Bulk operations are all-or-nothing on the audit-log
+//     dimension; we never want a status flip without its log entry.
+func (t *TenantRepo) BulkUpdateViolationStatus(ctx context.Context, rows []BulkLifecycleRow) (BulkLifecycleSummary, error) {
+	if len(rows) == 0 {
+		return BulkLifecycleSummary{}, nil
+	}
+	tx, err := t.r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return BulkLifecycleSummary{}, fmt.Errorf("begin bulk tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	updateStmt, err := tx.PrepareContext(ctx,
+		`UPDATE violations SET status = ?
+		   WHERE id = ? AND tenant_id = ? AND status = ?`)
+	if err != nil {
+		return BulkLifecycleSummary{}, fmt.Errorf("prepare bulk update: %w", err)
+	}
+	defer updateStmt.Close()
+
+	summary := BulkLifecycleSummary{}
+	for _, r := range rows {
+		res, err := updateStmt.ExecContext(ctx, r.To, r.ViolationID, t.tenantID, r.From)
+		if err != nil {
+			return BulkLifecycleSummary{}, fmt.Errorf("bulk update row %s: %w", r.ViolationID, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return BulkLifecycleSummary{}, fmt.Errorf("rows affected: %w", err)
+		}
+		if n == 0 {
+			summary.Skipped = append(summary.Skipped, r.ViolationID)
+			continue
+		}
+		if r.PerRowAudit != nil {
+			if err := r.PerRowAudit(tx, r.ViolationID, r.From, r.To); err != nil {
+				return BulkLifecycleSummary{}, fmt.Errorf("audit row %s: %w", r.ViolationID, err)
+			}
+		}
+		summary.Updated = append(summary.Updated, r.ViolationID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return BulkLifecycleSummary{}, fmt.Errorf("commit bulk: %w", err)
+	}
+	return summary, nil
+}
+
+// LoadViolationsForBulk fetches the current status + version_id + project_slug
+// + trace_id for many violation IDs at once, tenant-scoped. IDs not visible
+// to the tenant are silently dropped (no existence oracle) — caller treats
+// missing IDs as "skipped".
+func (t *TenantRepo) LoadViolationsForBulk(ctx context.Context, ids []string) ([]ViolationLifecycleResult, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, 0, len(ids)+1)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	args = append(args, t.tenantID)
+
+	q := `SELECT v.id, v.version_id, v.status, p.slug,
+	             COALESCE((SELECT j.trace_id FROM audit_jobs j
+	                       WHERE j.version_id = v.version_id AND j.tenant_id = v.tenant_id
+	                       ORDER BY j.created_at DESC LIMIT 1), '')
+	        FROM violations v
+	        JOIN project_versions pv ON pv.id = v.version_id
+	        JOIN projects p ON p.id = pv.project_id
+	       WHERE v.id IN (` + placeholders + `) AND v.tenant_id = ?`
+
+	rows, err := t.r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("bulk load: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ViolationLifecycleResult
+	for rows.Next() {
+		var v ViolationLifecycleResult
+		if err := rows.Scan(&v.ViolationID, &v.VersionID, &v.From, &v.ProjectSlug, &v.TraceID); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // UpdateViolationStatus applies a validated lifecycle transition to a single
 // violation row. Caller is expected to have already run ValidateTransition on
 // the result of GetViolationForLifecycle.

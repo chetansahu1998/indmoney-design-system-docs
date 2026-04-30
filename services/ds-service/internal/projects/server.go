@@ -953,6 +953,214 @@ func (s *Server) HandlePatchViolation(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// MaxBulkLifecycleRows caps how many violation IDs a single bulk request may
+// touch. Matches the Phase 4 plan ("Cap at 100 rows per request") — protects
+// the audit_log against runaway batches.
+const MaxBulkLifecycleRows = 100
+
+// bulkLifecycleRequest is the JSON body for POST
+// /v1/projects/{slug}/violations/bulk-acknowledge.
+type bulkLifecycleRequest struct {
+	Action       string   `json:"action"` // acknowledge | dismiss | reactivate
+	Reason       string   `json:"reason,omitempty"`
+	ViolationIDs []string `json:"violation_ids"`
+}
+
+// HandleBulkAcknowledge serves POST
+// /v1/projects/{slug}/violations/bulk-acknowledge.
+//
+// All ids must belong to the slug-scoped project + the caller's tenant. Up to
+// MaxBulkLifecycleRows ids per request. Per-row audit_log entries share a
+// `bulk_id` so post-hoc analytics can re-aggregate them. SSE fan-out emits
+// one ProjectViolationLifecycleChanged per updated row, throttled by the
+// broker's per-channel buffer.
+func (s *Server) HandleBulkAcknowledge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_slug", "")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64*1024))
+	if err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "read_body", err.Error())
+		return
+	}
+	var req bulkLifecycleRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "decode", err.Error())
+		return
+	}
+	if len(req.ViolationIDs) == 0 {
+		writeJSONErr(w, http.StatusBadRequest, "empty_ids", "violation_ids required")
+		return
+	}
+	if len(req.ViolationIDs) > MaxBulkLifecycleRows {
+		writeJSONErr(w, http.StatusBadRequest, "too_many_ids", fmt.Sprintf("max %d ids", MaxBulkLifecycleRows))
+		return
+	}
+	action, err := ParseLifecycleAction(req.Action)
+	if err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_action", err.Error())
+		return
+	}
+	if action == ActionMarkFixed {
+		writeJSONErr(w, http.StatusForbidden, "system_only_action", "use /violations/{id}/fix-applied")
+		return
+	}
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	loaded, err := repo.LoadViolationsForBulk(r.Context(), req.ViolationIDs)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+		return
+	}
+
+	// Build the bulk row set. Anything missing from the DB or owned by another
+	// project slug becomes a skipped id; anything that fails ValidateTransition
+	// also lands in skipped (over-cautious for a bulk endpoint, but keeps the
+	// per-id contract uniform with U1).
+	bulkID := uuid.NewString()
+	now := time.Now().UTC()
+	loadedByID := make(map[string]ViolationLifecycleResult, len(loaded))
+	for _, v := range loaded {
+		loadedByID[v.ViolationID] = v
+	}
+
+	rows := make([]BulkLifecycleRow, 0, len(req.ViolationIDs))
+	skipped := make([]string, 0)
+	publishCandidates := make([]ViolationLifecycleResult, 0, len(loaded))
+
+	for _, id := range req.ViolationIDs {
+		v, ok := loadedByID[id]
+		if !ok || v.ProjectSlug != slug {
+			skipped = append(skipped, id)
+			continue
+		}
+		transition, terr := ValidateTransition(v.From, action, claims.Role, req.Reason, false)
+		if terr != nil {
+			skipped = append(skipped, id)
+			continue
+		}
+		// Capture in a closure so each row gets its own audit_log payload.
+		t := transition
+		row := v
+		rows = append(rows, BulkLifecycleRow{
+			ViolationID: row.ViolationID,
+			From:        t.From,
+			To:          t.To,
+			PerRowAudit: func(tx *sql.Tx, vID, from, to string) error {
+				details, _ := json.Marshal(map[string]any{
+					"violation_id": vID,
+					"version_id":   row.VersionID,
+					"project_slug": row.ProjectSlug,
+					"from":         from,
+					"to":           to,
+					"reason":       t.Reason,
+					"trace_id":     row.TraceID,
+					"bulk_id":      bulkID,
+					"schema_ver":   ProjectsSchemaVersion,
+				})
+				_, ierr := tx.ExecContext(r.Context(),
+					`INSERT INTO audit_log (id, ts, event_type, tenant_id, user_id, method, endpoint, status_code, duration_ms, ip_address, details)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					uuid.NewString(),
+					now.Format(time.RFC3339Nano),
+					t.AuditEventType(),
+					tenantID,
+					claims.Sub,
+					"POST",
+					fmt.Sprintf("/v1/projects/%s/violations/bulk-acknowledge", slug),
+					http.StatusOK,
+					0,
+					clientIP(r),
+					string(details),
+				)
+				return ierr
+			},
+		})
+		publishCandidates = append(publishCandidates, row)
+	}
+
+	summary, err := repo.BulkUpdateViolationStatus(r.Context(), rows)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "bulk_update", err.Error())
+		return
+	}
+
+	// Merge "validation skip" + "DB-side skip" sets so the API consumer sees
+	// both classes uniformly under `skipped`.
+	if len(summary.Skipped) > 0 {
+		skipped = append(skipped, summary.Skipped...)
+	}
+
+	// Best-effort SSE fan-out for actually-updated rows.
+	if s.deps.Broker != nil {
+		updatedSet := make(map[string]struct{}, len(summary.Updated))
+		for _, id := range summary.Updated {
+			updatedSet[id] = struct{}{}
+		}
+		for _, v := range publishCandidates {
+			if _, ok := updatedSet[v.ViolationID]; !ok {
+				continue
+			}
+			if v.TraceID == "" {
+				continue
+			}
+			s.deps.Broker.Publish(v.TraceID, sse.ProjectViolationLifecycleChanged{
+				ProjectSlug: v.ProjectSlug,
+				VersionID:   v.VersionID,
+				ViolationID: v.ViolationID,
+				Tenant:      tenantID,
+				From:        "active", // bulk endpoint only operates on active rows in practice; kept for the SSE shape
+				To:          targetStatusFor(action),
+				Action:      string(action),
+				ActorUserID: claims.Sub,
+			})
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"bulk_id": bulkID,
+		"updated": summary.Updated,
+		"skipped": skipped,
+		"action":  string(action),
+	})
+}
+
+// targetStatusFor returns the resulting violations.status for a given action
+// when called against a row in "active" state. Used by the bulk SSE fan-out
+// where re-running ValidateTransition per row would be wasted work — the bulk
+// endpoint only emits events for rows we successfully UPDATEd, so the From
+// is implicitly "active" (or "acknowledged"/"dismissed" for reactivate).
+func targetStatusFor(a LifecycleAction) string {
+	switch a {
+	case ActionAcknowledge:
+		return ViolationStatusAcknowledged
+	case ActionDismiss:
+		return ViolationStatusDismissed
+	case ActionReactivate:
+		return ViolationStatusActive
+	case ActionMarkFixed:
+		return ViolationStatusFixed
+	}
+	return ""
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 // ctxKey type is unexported; must match cmd/server/main.go's literal-typed

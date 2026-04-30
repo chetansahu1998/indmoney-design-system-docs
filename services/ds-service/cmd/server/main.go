@@ -439,6 +439,11 @@ func (s *server) routes(mux *http.ServeMux) {
 	// fan-out happen in the same DB transaction as the status flip.
 	mux.HandleFunc("PATCH /v1/projects/{slug}/violations/{id}",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandlePatchViolation)))
+
+	// Phase 4 U2 — bulk lifecycle endpoint. Accepts up to 100 violation_ids
+	// in a single transaction; per-row audit_log entries share a bulk_id.
+	mux.HandleFunc("POST /v1/projects/{slug}/violations/bulk-acknowledge",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleBulkAcknowledge)))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────

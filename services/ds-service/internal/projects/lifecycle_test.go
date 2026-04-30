@@ -274,6 +274,141 @@ func TestRepo_GetViolationForLifecycle_CrossTenantNotFound(t *testing.T) {
 	}
 }
 
+// ─── Phase 4 U2 — Bulk lifecycle ────────────────────────────────────────────
+
+func TestRepo_BulkUpdateViolationStatus_HappyPath(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	versionID, screens := seedFlowAndScreens(t, repo, uA)
+
+	const N = 12
+	ids := make([]string, 0, N)
+	for i := 0; i < N; i++ {
+		ids = append(ids, seedViolation(t, repo, versionID, screens[i%len(screens)], tA))
+	}
+
+	rows := make([]BulkLifecycleRow, 0, N)
+	auditCount := 0
+	for _, id := range ids {
+		rows = append(rows, BulkLifecycleRow{
+			ViolationID: id,
+			From:        "active",
+			To:          "acknowledged",
+			PerRowAudit: func(tx *sql.Tx, vID, from, to string) error {
+				auditCount++
+				return nil
+			},
+		})
+	}
+
+	summary, err := repo.BulkUpdateViolationStatus(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("bulk: %v", err)
+	}
+	if len(summary.Updated) != N {
+		t.Fatalf("expected %d updated, got %d (skipped=%d)", N, len(summary.Updated), len(summary.Skipped))
+	}
+	if auditCount != N {
+		t.Errorf("expected %d audit calls, got %d", N, auditCount)
+	}
+
+	var got int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM violations WHERE status = 'acknowledged'`).Scan(&got); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if got != N {
+		t.Errorf("expected %d acknowledged rows, got %d", N, got)
+	}
+}
+
+func TestRepo_BulkUpdateViolationStatus_SkipsAlreadyAcknowledged(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	versionID, screens := seedFlowAndScreens(t, repo, uA)
+
+	id1 := seedViolation(t, repo, versionID, screens[0], tA)
+	id2 := seedViolation(t, repo, versionID, screens[0], tA)
+	if _, err := d.DB.Exec(`UPDATE violations SET status = 'acknowledged' WHERE id = ?`, id2); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	rows := []BulkLifecycleRow{
+		{ViolationID: id1, From: "active", To: "acknowledged", PerRowAudit: func(tx *sql.Tx, _, _, _ string) error { return nil }},
+		{ViolationID: id2, From: "active", To: "acknowledged", PerRowAudit: func(tx *sql.Tx, _, _, _ string) error { return nil }},
+	}
+	summary, err := repo.BulkUpdateViolationStatus(context.Background(), rows)
+	if err != nil {
+		t.Fatalf("bulk: %v", err)
+	}
+	if len(summary.Updated) != 1 || summary.Updated[0] != id1 {
+		t.Errorf("expected only id1 updated, got %+v", summary.Updated)
+	}
+	if len(summary.Skipped) != 1 || summary.Skipped[0] != id2 {
+		t.Errorf("expected id2 skipped, got %+v", summary.Skipped)
+	}
+}
+
+func TestRepo_BulkUpdateViolationStatus_AuditFailureRollsBackEntireBatch(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	versionID, screens := seedFlowAndScreens(t, repo, uA)
+
+	id1 := seedViolation(t, repo, versionID, screens[0], tA)
+	id2 := seedViolation(t, repo, versionID, screens[0], tA)
+	id3 := seedViolation(t, repo, versionID, screens[0], tA)
+
+	wantErr := errors.New("audit fail")
+	rows := []BulkLifecycleRow{
+		{ViolationID: id1, From: "active", To: "acknowledged",
+			PerRowAudit: func(tx *sql.Tx, _, _, _ string) error { return nil }},
+		{ViolationID: id2, From: "active", To: "acknowledged",
+			PerRowAudit: func(tx *sql.Tx, _, _, _ string) error { return wantErr }},
+		{ViolationID: id3, From: "active", To: "acknowledged",
+			PerRowAudit: func(tx *sql.Tx, _, _, _ string) error { return nil }},
+	}
+	_, err := repo.BulkUpdateViolationStatus(context.Background(), rows)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected wrapped audit error, got %v", err)
+	}
+
+	// Every row must remain active because the batch rolled back.
+	for _, id := range []string{id1, id2, id3} {
+		var got string
+		if err := d.DB.QueryRow(`SELECT status FROM violations WHERE id = ?`, id).Scan(&got); err != nil {
+			t.Fatalf("readback %s: %v", id, err)
+		}
+		if got != "active" {
+			t.Errorf("row %s expected active (rollback), got %q", id, got)
+		}
+	}
+}
+
+func TestRepo_LoadViolationsForBulk_TenantScoped(t *testing.T) {
+	d, tA, tB, uA := newTestDB(t)
+	repoA := NewTenantRepo(d.DB, tA)
+	versionID, screens := seedFlowAndScreens(t, repoA, uA)
+	idA := seedViolation(t, repoA, versionID, screens[0], tA)
+
+	// tenantB asks for tenantA's id — should get empty result (no oracle).
+	repoB := NewTenantRepo(d.DB, tB)
+	got, err := repoB.LoadViolationsForBulk(context.Background(), []string{idA})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 rows for cross-tenant load, got %d", len(got))
+	}
+
+	// Same id from tenantA succeeds.
+	got, err = repoA.LoadViolationsForBulk(context.Background(), []string{idA})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(got))
+	}
+}
+
 func TestRepo_UpdateViolationStatus_StaleFromReturnsNotFound(t *testing.T) {
 	d, tA, _, uA := newTestDB(t)
 	repo := NewTenantRepo(d.DB, tA)
