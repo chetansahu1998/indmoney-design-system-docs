@@ -444,6 +444,13 @@ func (s *server) routes(mux *http.ServeMux) {
 	// in a single transaction; per-row audit_log entries share a bulk_id.
 	mux.HandleFunc("POST /v1/projects/{slug}/violations/bulk-acknowledge",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleBulkAcknowledge)))
+
+	// Phase 4 U4 — designer personal inbox. Tenant-scoped Active
+	// violations across the user's projects + flows, with filter chips
+	// (rule_id, category, persona, mode, project, severity, dates) and
+	// "Load more" pagination capped at 100 rows per page.
+	mux.HandleFunc("GET /v1/inbox",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleInbox)))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────

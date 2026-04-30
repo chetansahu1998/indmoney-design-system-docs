@@ -1184,6 +1184,126 @@ func (s *Server) HandleBulkAcknowledge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleInbox serves GET /v1/inbox.
+//
+// Returns the requesting user's Active violations across every flow visible
+// to them (Phase 4 visibility = project ownership OR designer-or-higher
+// tenant role). Supports filters via query string:
+//
+//	?rule_id=X            single rule
+//	?category=Y           single audit category
+//	?persona_id=Z         persona UUID
+//	?mode=light           mode_label exact match
+//	?project_id=W         single project
+//	?severity=critical    repeatable; OR'd
+//	?date_from=RFC3339    inclusive lower bound on created_at
+//	?date_to=RFC3339      inclusive upper bound
+//	?limit=50             max MaxInboxLimit
+//	?offset=0             pagination cursor
+//
+// Pagination is "Load more"-style — Phase 8 search replaces with a proper
+// keyset cursor.
+func (s *Server) HandleInbox(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+
+	// Resolve the caller's tenant role to decide whether they get the
+	// editor-scope (sees every active violation) or the owner-scope
+	// (only their own projects). super_admin always gets editor-scope.
+	isEditor := claims.Role == auth.RoleSuperAdmin
+	if !isEditor {
+		role, err := s.deps.DB.GetTenantRole(r.Context(), tenantID, claims.Sub)
+		if err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "role_lookup", err.Error())
+			return
+		}
+		switch role {
+		case auth.RoleTenantAdmin, auth.RoleDesigner, auth.RoleEngineer:
+			isEditor = true
+		}
+	}
+
+	q := r.URL.Query()
+	filters := InboxFilters{
+		RuleID:    strings.TrimSpace(q.Get("rule_id")),
+		Category:  strings.TrimSpace(q.Get("category")),
+		Persona:   strings.TrimSpace(q.Get("persona_id")),
+		ModeLabel: strings.TrimSpace(q.Get("mode")),
+		ProjectID: strings.TrimSpace(q.Get("project_id")),
+	}
+	if sevs, ok := q["severity"]; ok {
+		for _, s := range sevs {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				filters.Severities = append(filters.Severities, s)
+			}
+		}
+	}
+	if df := q.Get("date_from"); df != "" {
+		ts, err := time.Parse(time.RFC3339, df)
+		if err != nil {
+			writeJSONErr(w, http.StatusBadRequest, "bad_date_from", err.Error())
+			return
+		}
+		filters.DateFrom = ts
+	}
+	if dt := q.Get("date_to"); dt != "" {
+		ts, err := time.Parse(time.RFC3339, dt)
+		if err != nil {
+			writeJSONErr(w, http.StatusBadRequest, "bad_date_to", err.Error())
+			return
+		}
+		filters.DateTo = ts
+	}
+	if l := q.Get("limit"); l != "" {
+		var n int
+		_, err := fmt.Sscanf(l, "%d", &n)
+		if err != nil || n < 1 {
+			writeJSONErr(w, http.StatusBadRequest, "bad_limit", "limit must be a positive integer")
+			return
+		}
+		filters.Limit = n
+	}
+	if o := q.Get("offset"); o != "" {
+		var n int
+		_, err := fmt.Sscanf(o, "%d", &n)
+		if err != nil || n < 0 {
+			writeJSONErr(w, http.StatusBadRequest, "bad_offset", "offset must be >= 0")
+			return
+		}
+		filters.Offset = n
+	}
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	rows, total, err := repo.GetInbox(r.Context(), claims.Sub, isEditor, filters)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "inbox", err.Error())
+		return
+	}
+	limit := filters.Limit
+	if limit <= 0 || limit > MaxInboxLimit {
+		limit = DefaultInboxLimit
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rows":   rows,
+		"total":  total,
+		"limit":  limit,
+		"offset": filters.Offset,
+	})
+}
+
 // targetStatusFor returns the resulting violations.status for a given action
 // when called against a row in "active" state. Used by the bulk SSE fan-out
 // where re-running ValidateTransition per row would be wasted work — the bulk
