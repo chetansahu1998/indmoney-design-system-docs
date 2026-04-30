@@ -543,6 +543,27 @@ func (a *workerRepoAdapter) PersistRunIdempotent(ctx context.Context, jobID, ver
 		return fmt.Errorf("delete prior violations: %w", err)
 	}
 
+	// Phase 4 U3 — apply Dismissed-violation carry-forward BEFORE inserting
+	// fresh rows. Any new violation matching a (screen_logical_id, rule_id,
+	// property) marker has its Status flipped to "dismissed" so the designer
+	// doesn't re-triage already-decided rationale. Tenant is resolved from
+	// the first non-empty Violation.TenantID — every violation in a single
+	// run carries the same tenant by construction.
+	if len(violations) > 0 {
+		tenantID := ""
+		for _, v := range violations {
+			if v.TenantID != "" {
+				tenantID = v.TenantID
+				break
+			}
+		}
+		if tenantID != "" {
+			if _, err := ApplyCarryForwardInTx(ctx, tx, tenantID, violations); err != nil {
+				return fmt.Errorf("apply carry-forward: %w", err)
+			}
+		}
+	}
+
 	if len(violations) > 0 {
 		stmt, err := tx.PrepareContext(ctx,
 			`INSERT INTO violations (

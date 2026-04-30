@@ -899,8 +899,22 @@ func (s *Server) HandlePatchViolation(w http.ResponseWriter, r *http.Request) {
 		"trace_id":     traceID,
 		"schema_ver":   ProjectsSchemaVersion,
 	})
+	// Phase 4 U3 — resolve carry-forward identity (screen_logical_id +
+	// rule_id + property) outside the lifecycle tx. The tuple is effectively
+	// immutable for a given violation row, so reading it before the UPDATE
+	// is safe and keeps the lifecycle tx single-statement-light.
+	var cfLogical, cfRule, cfProp string
+	if transition.Action == ActionDismiss || transition.Action == ActionReactivate {
+		l, ru, pr, kerr := ResolveCarryForwardKey(r.Context(), s.deps.DB.DB, tenantID, violationID)
+		if kerr != nil && !errors.Is(kerr, ErrNotFound) {
+			writeJSONErr(w, http.StatusInternalServerError, "resolve_carry_forward", kerr.Error())
+			return
+		}
+		cfLogical, cfRule, cfProp = l, ru, pr
+	}
+
 	auditWrite := func(tx *sql.Tx) error {
-		_, ierr := tx.ExecContext(r.Context(),
+		if _, ierr := tx.ExecContext(r.Context(),
 			`INSERT INTO audit_log (id, ts, event_type, tenant_id, user_id, method, endpoint, status_code, duration_ms, ip_address, details)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			uuid.NewString(),
@@ -914,8 +928,36 @@ func (s *Server) HandlePatchViolation(w http.ResponseWriter, r *http.Request) {
 			0,
 			clientIP(r),
 			string(auditDetails),
-		)
-		return ierr
+		); ierr != nil {
+			return ierr
+		}
+
+		// Carry-forward marker bookkeeping. Runs in the same transaction as
+		// the status flip + audit_log row so all three are atomic.
+		if cfLogical == "" {
+			return nil
+		}
+		switch transition.Action {
+		case ActionDismiss:
+			return WriteCarryForwardMarker(r.Context(), tx, CarryForwardMarker{
+				TenantID:            tenantID,
+				ScreenLogicalID:     cfLogical,
+				RuleID:              cfRule,
+				Property:            cfProp,
+				Reason:              transition.Reason,
+				DismissedByUserID:   claims.Sub,
+				DismissedAt:         now,
+				OriginalViolationID: current.ViolationID,
+			})
+		case ActionReactivate:
+			// Only delete the marker when the prior state was Dismissed; an
+			// admin reactivating Acknowledged shouldn't touch carry-forwards.
+			if transition.From != ViolationStatusDismissed {
+				return nil
+			}
+			return DeleteCarryForwardMarker(r.Context(), tx, tenantID, cfLogical, cfRule, cfProp)
+		}
+		return nil
 	}
 
 	if err := repo.UpdateViolationStatus(r.Context(), violationID, transition, auditWrite); err != nil {
