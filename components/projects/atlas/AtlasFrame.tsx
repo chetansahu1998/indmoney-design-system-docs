@@ -22,7 +22,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Screen } from "@/lib/projects/types";
-import { getTexture } from "./textureCache";
+import { getTexture, getTextureKTX2OrPNG } from "./textureCache";
 import { lodURL, pickLOD, type LODTier } from "./lod/pickLOD";
 
 interface AtlasFrameProps {
@@ -64,17 +64,33 @@ export default function AtlasFrame({
   const resolvedURL = useMemo(() => lodURL(pngUrl, tier), [pngUrl, tier]);
 
   // Resolve the texture once per URL — the cache layer dedupes concurrent
-  // fetches and survives theme toggles.
+  // fetches and survives theme toggles. Phase 3.5 follow-up: try KTX2
+  // first via the basisu-transcoded sidecar; fall back to PNG when
+  // KTX2 is absent (basisu wasn't on PATH at persist time, or the
+  // transcode failed for this particular screen). The KTX2 path is
+  // ~70% smaller than PNG + GPU-decompressed where supported.
   useEffect(() => {
     setLoaded(false);
     setErrored(false);
-    const tex = getTexture(
+    let cancelled = false;
+    void getTextureKTX2OrPNG(
       resolvedURL,
-      () => setLoaded(true),
-      () => setErrored(true),
-    );
-    textureRef.current = tex;
-    if (tex.image) setLoaded(true);
+      (tex) => {
+        if (cancelled) return;
+        textureRef.current = tex;
+        setLoaded(true);
+      },
+      () => {
+        if (!cancelled) setErrored(true);
+      },
+    ).catch((err) => {
+      // Already routed to onError above; swallow the rejected promise
+      // so the bare-promise warning doesn't fire.
+      void err;
+    });
+    return () => {
+      cancelled = true;
+    };
     // We intentionally do NOT dispose on unmount — the cache is shared and
     // theme toggles re-enter this effect. LRU eviction is a future polish.
   }, [resolvedURL]);

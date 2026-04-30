@@ -49,7 +49,7 @@ import AtlasPostprocessing, {
   type AtlasPostprocessingState,
 } from "./AtlasPostprocessing";
 import { useAtlasViewport } from "./useAtlasViewport";
-import { totalBytes, TEXTURE_BUDGET_BYTES } from "./textureCache";
+import { attachKTX2Renderer, totalBytes, TEXTURE_BUDGET_BYTES } from "./textureCache";
 import { atlasBloomBuildUp } from "@/lib/animations/timelines/atlasBloomBuildUp";
 import { useProjectView, resolveTheme } from "@/lib/projects/view-store";
 
@@ -313,6 +313,13 @@ export default function AtlasCanvas(props: AtlasCanvasProps) {
         // Listen for pointer events on the Canvas surface, not just meshes,
         // so the OrbitControls pan handler always sees the gesture.
         eventPrefix="client"
+        // Phase 3.5 follow-up: KTX2Loader needs the live WebGLRenderer to
+        // detect GPU compression-format support (BC1 / ETC2 / ASTC). Hand
+        // it the renderer once on mount; subsequent KTX2 loads pick the
+        // optimal format. attachKTX2Renderer is idempotent.
+        onCreated={({ gl }) => {
+          attachKTX2Renderer(gl);
+        }}
       >
         <Scene {...props} applyPostprocessing={setPostState} />
         <AtlasPostprocessing state={postState} />
