@@ -172,42 +172,66 @@ export default function ProjectToolbar({
         </select>
       </label>
 
-      {/* Version selector. */}
-      <label
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
-          fontSize: 11,
-          fontFamily: "var(--font-mono)",
-          color: "var(--text-3)",
-        }}
-      >
-        Version
-        <select
-          aria-label="Version"
-          value={activeVersionID ?? ""}
-          disabled={versions.length === 0}
-          onChange={(e) => onVersionChange(e.target.value)}
+      {/* Phase 3 U8: version selector — surfaces only when >1 versions
+          exist. Single-version projects don't waste toolbar space on a
+          dropdown that can't toggle. */}
+      {versions.length > 1 ? (
+        <label
           style={{
-            padding: "5px 8px",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
             fontSize: 11,
             fontFamily: "var(--font-mono)",
-            background: "var(--bg)",
-            color: "var(--text-1)",
-            border: "1px solid var(--border)",
-            borderRadius: 6,
+            color: "var(--text-3)",
           }}
         >
-          {versions.length === 0 && <option value="">v—</option>}
-          {versions.map((v) => (
-            <option key={v.ID} value={v.ID}>
-              v{v.VersionIndex}
-              {v.Status !== "view_ready" ? ` · ${v.Status}` : ""}
-            </option>
-          ))}
-        </select>
-      </label>
+          Version
+          <select
+            aria-label="Version"
+            value={activeVersionID ?? ""}
+            onChange={(e) => onVersionChange(e.target.value)}
+            style={{
+              padding: "5px 8px",
+              fontSize: 11,
+              fontFamily: "var(--font-mono)",
+              background: "var(--bg)",
+              color: "var(--text-1)",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+            }}
+          >
+            {versions.map((v) => (
+              <option key={v.ID} value={v.ID}>
+                v{v.VersionIndex}
+                {" · "}
+                {formatVersionAge(v.CreatedAt)}
+                {v.Status !== "view_ready" ? ` · ${v.Status}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
     </div>
   );
+}
+
+/**
+ * Phase 3 U8: short-form age label for the version dropdown ("today",
+ * "2d ago", "3w ago"). Keeps the option text scannable without a date
+ * picker. Falls back to ISO date when parsing fails.
+ */
+function formatVersionAge(createdAt: string): string {
+  const created = new Date(createdAt);
+  if (Number.isNaN(created.getTime())) return createdAt.slice(0, 10);
+  const now = Date.now();
+  const diffMs = now - created.getTime();
+  const day = 24 * 60 * 60 * 1000;
+  if (diffMs < day) return "today";
+  const days = Math.round(diffMs / day);
+  if (days < 7) return `${days}d ago`;
+  const weeks = Math.round(days / 7);
+  if (weeks < 5) return `${weeks}w ago`;
+  const months = Math.round(days / 30);
+  return `${months}mo ago`;
 }

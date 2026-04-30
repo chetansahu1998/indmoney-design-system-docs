@@ -244,7 +244,19 @@ export default function ProjectShell({
     let cancelled = false;
     void fetchProject(slug, activeVersionID).then((r) => {
       if (cancelled) return;
-      if (!r.ok) return; // toolbar already shows an error path via the version selector
+      if (!r.ok) {
+        // Phase 3 U8: stale ?v=<id> handling. A 404 typically means the
+        // requested version was deleted (admin tool) or never existed
+        // (typo'd deeplink). Redirect to the latest available version
+        // by clearing activeVersionID — the next refresh resolves to
+        // versions[0]. We don't surface an error toast for this path
+        // since the user landed via a stale URL, not an action they
+        // initiated.
+        if (r.status === 404 && versions.length > 0) {
+          setActiveVersionID(versions[0]?.ID);
+        }
+        return;
+      }
       if (r.data.versions) setVersions(r.data.versions);
       if (r.data.screens) setScreens(r.data.screens);
       if (r.data.screen_modes) setScreenModes(r.data.screen_modes);
@@ -254,7 +266,7 @@ export default function ProjectShell({
     return () => {
       cancelled = true;
     };
-  }, [slug, activeVersionID]);
+  }, [slug, activeVersionID, versions]);
 
   // ─── SSE subscription. ──────────────────────────────────────────────────
   useEffect(() => {
