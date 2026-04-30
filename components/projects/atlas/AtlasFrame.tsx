@@ -24,6 +24,11 @@ import * as THREE from "three";
 import type { Screen } from "@/lib/projects/types";
 import { getTexture, getTextureKTX2OrPNG } from "./textureCache";
 import { lodURL, pickLOD, type LODTier } from "./lod/pickLOD";
+import {
+  classify as classifyViewport,
+  type FrameBounds,
+  type ViewportRingTier,
+} from "./lod/viewportRing";
 
 interface AtlasFrameProps {
   screen: Screen;
@@ -57,19 +62,26 @@ export default function AtlasFrame({
   // backend tier generation lands the URL string flips by tier without
   // touching this component. We poll camera zoom + viewport on every
   // frame and re-route the URL when the tier transition crosses a
-  // threshold; until backend tier generation, the URL stays stable
-  // (lodURL returns baseURL for every tier today).
+  // threshold.
   const { camera, gl } = useThree();
   const [tier, setTier] = useState<LODTier>("full");
   const resolvedURL = useMemo(() => lodURL(pngUrl, tier), [pngUrl, tier]);
+  // Phase 3.5 follow-up #3: HOT/WARM viewport ring. cold frames skip
+  // texture load + don't render; warm frames pre-load + render at
+  // opacity 0; hot frames render normally. Adopted from DesignBrain's
+  // ViewportCuller pattern.
+  const [ringTier, setRingTier] = useState<ViewportRingTier>("hot");
 
   // Resolve the texture once per URL — the cache layer dedupes concurrent
   // fetches and survives theme toggles. Phase 3.5 follow-up: try KTX2
   // first via the basisu-transcoded sidecar; fall back to PNG when
-  // KTX2 is absent (basisu wasn't on PATH at persist time, or the
-  // transcode failed for this particular screen). The KTX2 path is
-  // ~70% smaller than PNG + GPU-decompressed where supported.
+  // KTX2 is absent.
+  //
+  // Phase 3.5 follow-up #3: cold frames skip the fetch entirely. They
+  // re-enter the load cycle when the viewport ring promotes them back
+  // to warm/hot — re-running this effect via the ringTier dependency.
   useEffect(() => {
+    if (ringTier === "cold") return;
     setLoaded(false);
     setErrored(false);
     let cancelled = false;
@@ -84,28 +96,48 @@ export default function AtlasFrame({
         if (!cancelled) setErrored(true);
       },
     ).catch((err) => {
-      // Already routed to onError above; swallow the rejected promise
-      // so the bare-promise warning doesn't fire.
       void err;
     });
     return () => {
       cancelled = true;
     };
-    // We intentionally do NOT dispose on unmount — the cache is shared and
-    // theme toggles re-enter this effect. LRU eviction is a future polish.
-  }, [resolvedURL]);
+  }, [resolvedURL, ringTier]);
 
-  // Phase 3.5 U3: re-evaluate LOD tier on every frame. Cheap (one
-  // multiply + 2 comparisons). Setting state only when the tier
-  // crosses a threshold prevents per-frame re-renders.
+  // Phase 3.5 U3: re-evaluate LOD tier + viewport ring on every frame.
+  // Cheap (a few multiplies + comparisons). Setting state only when
+  // the tier OR ring transitions prevents per-frame re-renders.
   useFrame(() => {
     if (!(camera instanceof THREE.OrthographicCamera)) return;
-    const next = pickLOD(
+    const nextLOD = pickLOD(
       screen.Width,
       camera.zoom,
       gl.domElement.clientWidth,
     );
-    if (next !== tier) setTier(next);
+    if (nextLOD !== tier) setTier(nextLOD);
+
+    // Compute the camera's world-space viewport rect. OrthographicCamera
+    // exposes left/right/top/bottom in NDC; divide by zoom for world.
+    const halfW = (gl.domElement.clientWidth / 2) / camera.zoom;
+    const halfH = (gl.domElement.clientHeight / 2) / camera.zoom;
+    const viewport = {
+      minX: camera.position.x - halfW,
+      maxX: camera.position.x + halfW,
+      minY: camera.position.y - halfH,
+      maxY: camera.position.y + halfH,
+    };
+    const bounds: FrameBounds = {
+      id: screen.ID,
+      centerX: screen.X + screen.Width / 2,
+      // Negate Y for the ring (matches the position transform below).
+      centerY: -(screen.Y + screen.Height / 2),
+      halfWidth: screen.Width / 2,
+      halfHeight: screen.Height / 2,
+    };
+    // The selected frame is always pinned so click-to-snap doesn't
+    // accidentally cull it during the camera dolly.
+    const pinned = selected ? new Set([screen.ID]) : new Set<string>();
+    const nextRing = classifyViewport(bounds, viewport, camera.zoom, pinned);
+    if (nextRing !== ringTier) setRingTier(nextRing);
   });
 
   // Hover scale tween — runs every frame; cheap.
@@ -124,6 +156,18 @@ export default function AtlasFrame({
   const cy = screen.Y + screen.Height / 2;
   // Negate Y to convert Figma's down-positive into three.js up-positive.
   const position: [number, number, number] = [cx, -cy, 0];
+
+  // Phase 3.5 follow-up #3: cold frames render nothing. We return null
+  // instead of <mesh visible={false}/> so r3f doesn't bother allocating
+  // the BufferGeometry / Material at all — the mesh structurally
+  // doesn't exist while the frame is cold. When the ring promotes the
+  // frame back to warm/hot, this component re-mounts with the texture
+  // load effect re-firing.
+  if (ringTier === "cold") return null;
+
+  // Warm frames pre-load + render at opacity 0 (GPU slot, invisible).
+  // Hot frames render normally.
+  const ringOpacity = ringTier === "warm" ? 0 : 1;
 
   return (
     <mesh
@@ -150,7 +194,11 @@ export default function AtlasFrame({
       <planeGeometry args={[screen.Width, screen.Height]} />
       {errored ? (
         // Broken-PNG placeholder — distinct red so it's obvious in QA.
-        <meshBasicMaterial color="#ff5555" />
+        <meshBasicMaterial
+          color="#ff5555"
+          transparent={ringOpacity < 1}
+          opacity={ringOpacity}
+        />
       ) : loaded && textureRef.current ? (
         <meshBasicMaterial
           map={textureRef.current}
@@ -158,12 +206,23 @@ export default function AtlasFrame({
           // material doesn't support outlines natively; brightness shift
           // is the cheapest legible cue without a postprocess pass.
           color={selected ? "#ffffff" : hovered ? "#f4f4f4" : "#e8e8e8"}
-          transparent={false}
+          // Phase 3.5 follow-up #3: warm-ring frames render at opacity 0
+          // so they hold a GPU slot without painting pixels — instant
+          // promote when pan brings them into the hot ring. Hot frames
+          // stay opaque (transparent=false in three.js means full
+          // opacity AND opaque blending).
+          transparent={ringOpacity < 1}
+          opacity={ringOpacity}
         />
       ) : (
         // Loading placeholder — neutral wireframe-ish surface so the user
         // sees the frame slot before texture decode finishes.
-        <meshBasicMaterial color="#1a1a1a" wireframe />
+        <meshBasicMaterial
+          color="#1a1a1a"
+          wireframe
+          transparent={ringOpacity < 1}
+          opacity={ringOpacity}
+        />
       )}
     </mesh>
   );
