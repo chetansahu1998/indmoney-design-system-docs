@@ -19,13 +19,17 @@
  *   - 5xx / network → render an inline error with a retry button.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import gsap from "gsap";
 import { listViolations } from "@/lib/projects/client";
 import type {
   Violation,
   ViolationSeverity,
   ViolationsFilters,
 } from "@/lib/projects/types";
+import { useGSAPContext } from "@/lib/animations/hooks/useGSAPContext";
+import { useReducedMotion } from "@/lib/animations/context";
+import { STAGGER_MAX_MS, STAGGER_PER_FRAME_MS } from "@/lib/animations/easings";
 import EmptyTab from "./EmptyTab";
 
 const SEVERITY_ORDER: readonly ViolationSeverity[] = [
@@ -65,6 +69,9 @@ export default function ViolationsTab({
   onViewInJSON,
 }: ViolationsTabProps) {
   const [state, setState] = useState<ViolationsState>({ status: "loading" });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const ctx = useGSAPContext(rootRef);
+  const reduced = useReducedMotion();
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +109,29 @@ export default function ViolationsTab({
     };
     // Filter shape may change identity each render — stringify for a stable dep.
   }, [slug, versionID, filters?.persona_id, filters?.mode_label]);
+
+  // Stagger row reveal once rows are in the DOM. ~50ms per row, clamped to a
+  // 600ms total window so a thousand-violation flow doesn't take 50 seconds.
+  useEffect(() => {
+    if (!ctx || state.status !== "ok" || reduced) return;
+    ctx.add(() => {
+      const rows = rootRef.current?.querySelectorAll<HTMLLIElement>(
+        "[data-violation-row]",
+      );
+      if (!rows || rows.length === 0) return;
+      const perItemMs = Math.min(
+        STAGGER_PER_FRAME_MS,
+        STAGGER_MAX_MS / rows.length,
+      );
+      gsap.from(rows, {
+        opacity: 0,
+        y: 6,
+        duration: 0.32,
+        ease: "expo.out",
+        stagger: perItemMs / 1000,
+      });
+    });
+  }, [ctx, state, reduced]);
 
   if (state.status === "loading") {
     return (
@@ -144,7 +174,10 @@ export default function ViolationsTab({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+    <div
+      ref={rootRef}
+      style={{ display: "flex", flexDirection: "column", gap: 12 }}
+    >
       {SEVERITY_ORDER.map((sev) => {
         const rows = grouped[sev];
         if (!rows || rows.length === 0) return null;
@@ -160,6 +193,18 @@ export default function ViolationsTab({
             }}
           >
             <header
+              onMouseEnter={(e) => {
+                const chip = e.currentTarget.querySelector<HTMLSpanElement>(
+                  "[data-severity-chip]",
+                );
+                if (chip) chip.style.transform = "scale(1.6)";
+              }}
+              onMouseLeave={(e) => {
+                const chip = e.currentTarget.querySelector<HTMLSpanElement>(
+                  "[data-severity-chip]",
+                );
+                if (chip) chip.style.transform = "scale(1)";
+              }}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -170,12 +215,14 @@ export default function ViolationsTab({
             >
               <span
                 aria-hidden
+                data-severity-chip
                 style={{
                   width: 8,
                   height: 8,
                   borderRadius: 999,
                   background: SEVERITY_TINT[sev],
                   flexShrink: 0,
+                  transition: "transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1)",
                 }}
               />
               <strong
@@ -210,6 +257,7 @@ export default function ViolationsTab({
               {rows.map((v) => (
                 <li
                   key={v.ID}
+                  data-violation-row
                   style={{
                     display: "grid",
                     gridTemplateColumns: "1fr auto",
@@ -239,23 +287,31 @@ export default function ViolationsTab({
                       {v.Property} · {v.Observed}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onViewInJSON?.(v.ScreenID)}
-                    style={{
-                      alignSelf: "center",
-                      padding: "6px 10px",
-                      fontSize: 11,
-                      fontFamily: "var(--font-mono)",
-                      background: "transparent",
-                      border: "1px solid var(--border)",
-                      borderRadius: 6,
-                      color: "var(--text-1)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    View in JSON
-                  </button>
+                  <div style={{ display: "flex", gap: 6, alignSelf: "center" }}>
+                    <button
+                      type="button"
+                      disabled
+                      title="Lifecycle controls coming in Phase 4"
+                      style={lifecycleBtnStyle}
+                    >
+                      Acknowledge
+                    </button>
+                    <button
+                      type="button"
+                      disabled
+                      title="Lifecycle controls coming in Phase 4"
+                      style={lifecycleBtnStyle}
+                    >
+                      Dismiss
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onViewInJSON?.(v.ScreenID)}
+                      style={viewJsonBtnStyle}
+                    >
+                      View in JSON
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -265,3 +321,26 @@ export default function ViolationsTab({
     </div>
   );
 }
+
+const lifecycleBtnStyle: React.CSSProperties = {
+  padding: "6px 10px",
+  fontSize: 11,
+  fontFamily: "var(--font-mono)",
+  background: "transparent",
+  border: "1px dashed var(--border)",
+  borderRadius: 6,
+  color: "var(--text-3)",
+  cursor: "not-allowed",
+  opacity: 0.55,
+};
+
+const viewJsonBtnStyle: React.CSSProperties = {
+  padding: "6px 10px",
+  fontSize: 11,
+  fontFamily: "var(--font-mono)",
+  background: "transparent",
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  color: "var(--text-1)",
+  cursor: "pointer",
+};
