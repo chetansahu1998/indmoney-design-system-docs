@@ -1,10 +1,16 @@
 ---
 title: "feat: Projects · Flow Atlas — Phase 3 of 8 (atlas polish + cold-start UX + onboarding)"
 type: feat
-status: active
+status: completed
+completed: 2026-04-30
 date: 2026-05-01
 origin: docs/brainstorms/2026-04-29-projects-flow-atlas-requirements.md
 predecessor: docs/plans/2026-04-30-001-feat-projects-flow-atlas-phase-2-plan.md
+deferred:
+  - U2 — KTX2 / Basis Universal texture compression (Phase 3.5)
+  - U3 — InstancedMesh + LOD tiles (Phase 3.5; depends on U2)
+  - Variable resolver Go-side mirror for theme_parity / a11y_contrast
+    (Phase 4 polish)
 ---
 
 # feat: Projects · Flow Atlas — Phase 3 of 8 (atlas polish + cold-start UX + onboarding)
