@@ -118,6 +118,26 @@ async function safeJSONErr(res: Response): Promise<string> {
   }
 }
 
+/**
+ * Builds the URL for the authed PNG render route used by the U7 atlas.
+ *
+ *   GET /v1/projects/:slug/screens/:id/png
+ *
+ * The plain URL is consumed by `THREE.TextureLoader` inside r3f. The
+ * Authorization header cannot be sent from a `<img>`/Texture loader; the
+ * server therefore accepts a short-lived `?ticket=` (minted by the SSE
+ * ticket flow) when present. Phase 1 stays simple: this helper returns the
+ * canonical URL only — the texture cache layer adds the ticket if needed.
+ *
+ * Browser caches the response under `Cache-Control: private, max-age=300`
+ * (set server-side by U11), so theme-toggle round-trips don't refetch.
+ */
+export function screenPngUrl(slug: string, screenID: string): string {
+  return `${dsBaseURL()}/v1/projects/${encodeURIComponent(
+    slug,
+  )}/screens/${encodeURIComponent(screenID)}/png`;
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**

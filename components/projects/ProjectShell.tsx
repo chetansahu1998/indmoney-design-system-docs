@@ -31,6 +31,7 @@ import {
   useRef,
   useState,
 } from "react";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { showToast } from "@/components/ui/Toast";
 import { useGSAPContext } from "@/lib/animations/hooks/useGSAPContext";
@@ -58,6 +59,37 @@ import DRDTab from "./tabs/DRDTab";
 import DecisionsTab from "./tabs/DecisionsTab";
 import JSONTab from "./tabs/JSONTab";
 import ViolationsTab from "./tabs/ViolationsTab";
+
+/**
+ * Dynamic-imported r3f atlas. ssr:false keeps three.js out of the server
+ * module graph — a `next build` of `app/projects/[slug]/page.js` must not
+ * contain `three.module.js` symbols (Phase 1 plan, U7 Verification).
+ *
+ * The loader returns a placeholder div so the layout slot retains its size
+ * during the chunk fetch; once the chunk lands the Canvas paints inside it.
+ */
+const AtlasCanvas = dynamic(
+  () => import("./atlas/AtlasCanvas"),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        aria-hidden
+        data-anim="atlas-canvas-loading"
+        style={{
+          display: "grid",
+          placeItems: "center",
+          height: "100%",
+          color: "var(--text-3)",
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+        }}
+      >
+        Loading atlas…
+      </div>
+    ),
+  },
+);
 
 const TAB_DEFINITIONS: Array<{ id: ProjectTab; label: string }> = [
   { id: "drd", label: "DRD" },
@@ -110,6 +142,8 @@ export default function ProjectShell({
   const [previousTab, setPreviousTab] = useState<ProjectTab | null>(null);
 
   const theme = useProjectView((s) => s.theme);
+  const selectedScreenID = useProjectView((s) => s.selectedScreenID);
+  const setSelectedScreenID = useProjectView((s) => s.setSelectedScreenID);
 
   // ─── Refs ───────────────────────────────────────────────────────────────
   const scopeRef = useRef<HTMLDivElement>(null);
@@ -297,20 +331,45 @@ export default function ProjectShell({
         onPersonaChange={changePersona}
       />
 
-      {/* Atlas slot — top half. PNG-grid placeholder; U7 swaps in r3f. */}
+      {/* Atlas slot — top half. r3f canvas (U7) replaces the U6 PNG grid. */}
       <div
         data-anim="atlas-canvas"
         style={{
           flex: "1 1 50%",
           minHeight: 0,
-          overflow: "auto",
-          padding: 24,
+          overflow: "hidden",
           borderBottom: "1px solid var(--border)",
           background:
             "color-mix(in srgb, var(--bg) 92%, var(--text-1) 8%)",
+          position: "relative",
         }}
       >
-        <AtlasPlaceholder screens={filteredScreens} />
+        {filteredScreens.length === 0 ? (
+          <div
+            style={{
+              display: "grid",
+              placeItems: "center",
+              height: "100%",
+              color: "var(--text-3)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 12,
+            }}
+          >
+            No screens yet. Export from the Figma plugin to populate this canvas.
+          </div>
+        ) : (
+          <AtlasCanvas
+            slug={slug}
+            screens={filteredScreens}
+            versionID={activeVersionID}
+            selectedScreenID={selectedScreenID}
+            onFrameSelect={(screenID) => {
+              setSelectedScreenID(screenID);
+              // Switching to JSON tab notifies U8's tab to load this screen.
+              if (activeTab !== "json") changeTab("json");
+            }}
+          />
+        )}
       </div>
 
       {/* Bottom half: tab strip + tab content. */}
@@ -403,80 +462,6 @@ export default function ProjectShell({
   );
 }
 
-// ─── Atlas placeholder (PNG grid) ───────────────────────────────────────────
-
-/**
- * Placeholder for the U7 r3f atlas. Renders each screen as a CSS-positioned
- * tile using its preserved (x, y, width, height). Background colour stands
- * in for the texture so designers can visually place themselves before U7
- * ships real PNG rendering.
- *
- * No three.js, no @react-three packages — this is intentional per U6
- * constraints. The container is annotated with `data-anim="atlas-canvas"`
- * (on the parent) and each tile with `data-anim="atlas-frame"` so the
- * page-load timeline staggers them in.
- */
-function AtlasPlaceholder({ screens }: { screens: Screen[] }) {
-  if (screens.length === 0) {
-    return (
-      <div
-        style={{
-          display: "grid",
-          placeItems: "center",
-          height: "100%",
-          color: "var(--text-3)",
-          fontFamily: "var(--font-mono)",
-          fontSize: 12,
-        }}
-      >
-        No screens yet. Export from the Figma plugin to populate this canvas.
-      </div>
-    );
-  }
-
-  // Compute bounding box so we can normalize positions to a relative grid.
-  // Figma frame coordinates can be negative; we shift them to 0,0.
-  let minX = Number.POSITIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  for (const s of screens) {
-    if (s.X < minX) minX = s.X;
-    if (s.Y < minY) minY = s.Y;
-  }
-  if (!Number.isFinite(minX)) minX = 0;
-  if (!Number.isFinite(minY)) minY = 0;
-
-  // Scale-down so the largest section fits a sensible preview. Phase 1
-  // hardcodes a 0.1 factor (hand-tuned for INDstocks-grade frames). U7
-  // replaces this with proper viewport fitting.
-  const SCALE = 0.1;
-
-  return (
-    <div
-      style={{
-        position: "relative",
-        width: "100%",
-        height: "100%",
-        minHeight: 320,
-      }}
-    >
-      {screens.map((s) => (
-        <div
-          key={s.ID}
-          data-anim="atlas-frame"
-          data-screen-id={s.ID}
-          style={{
-            position: "absolute",
-            left: (s.X - minX) * SCALE,
-            top: (s.Y - minY) * SCALE,
-            width: Math.max(s.Width * SCALE, 12),
-            height: Math.max(s.Height * SCALE, 20),
-            background: "var(--bg-surface)",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            boxShadow: "0 2px 6px rgba(0,0,0,0.08)",
-          }}
-        />
-      ))}
-    </div>
-  );
-}
+// AtlasPlaceholder removed in U7 — r3f `<AtlasCanvas>` (above) is the new
+// surface. The PNG-grid placeholder is preserved in git history (U6 commit)
+// for reference if anyone needs to bisect the visual regression of the swap.
