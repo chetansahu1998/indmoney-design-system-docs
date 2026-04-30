@@ -477,7 +477,16 @@ export default function ProjectShell({
           }}
         >
           {activeTab === "drd" && (
-            <DRDTab slug={slug} flowID={screens[0]?.FlowID ?? null} />
+            <DRDTab
+              slug={slug}
+              flowID={screens[0]?.FlowID ?? null}
+              // Phase 3 U7-lite: ?read_only_preview=1 simulates a Phase 7
+              // ACL-denied path so designers can review the read-only UX
+              // before per-resource grants ship. Phase 7 will replace
+              // this query-param check with an actual permission check
+              // resolved server-side in fetchProject's response.
+              readOnly={searchParams.get("read_only_preview") === "1"}
+            />
           )}
           {activeTab === "violations" && (
             <ViolationsTab

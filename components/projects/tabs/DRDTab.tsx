@@ -45,9 +45,14 @@ type SaveStatus =
 interface DRDTabProps {
   slug: string;
   flowID: string | null;
+  /** Phase 3 U7-lite: when true, render a read-only banner + disable
+   *  the editor's edit affordances. Today triggered by the
+   *  ?read_only_preview=1 query param so designers can review the UX
+   *  before Phase 7 wires real per-resource ACL grants. */
+  readOnly?: boolean;
 }
 
-export default function DRDTab({ slug, flowID }: DRDTabProps) {
+export default function DRDTab({ slug, flowID, readOnly = false }: DRDTabProps) {
   const [revision, setRevision] = useState<number>(0);
   const [status, setStatus] = useState<SaveStatus>({ kind: "idle" });
   const [loaded, setLoaded] = useState(false);
@@ -178,6 +183,26 @@ export default function DRDTab({ slug, flowID }: DRDTabProps) {
 
   return (
     <div data-anim="tab-content" style={containerStyle}>
+      {readOnly ? (
+        <div role="status" style={readOnlyBannerStyle}>
+          <span aria-hidden style={readOnlyIconStyle}>🔒</span>
+          <div style={readOnlyTextStyle}>
+            <strong style={readOnlyTitleStyle}>Read-only access</strong>
+            <span style={readOnlySubtitleStyle}>
+              You're viewing this in read-only mode. Request edit access from the
+              project owner.
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled
+            title="Phase 7 wires the grant-request flow"
+            style={readOnlyCtaStyle}
+          >
+            Request access
+          </button>
+        </div>
+      ) : null}
       <header style={headerStyle}>
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-3)" }}>
           DRD · revision {revision}
@@ -186,11 +211,57 @@ export default function DRDTab({ slug, flowID }: DRDTabProps) {
         <SaveStatusBadge status={status} onReload={reloadOnConflict} />
       </header>
       <div style={editorWrapperStyle} aria-busy={!loaded}>
-        <BlockNoteView editor={editor} editable={loaded} />
+        <BlockNoteView editor={editor} editable={loaded && !readOnly} />
       </div>
     </div>
   );
 }
+
+const readOnlyBannerStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 12,
+  padding: "10px 14px",
+  background: "color-mix(in oklab, var(--bg-surface) 85%, var(--warning, #c80) 15%)",
+  borderBottom: "1px solid var(--border)",
+};
+
+const readOnlyIconStyle: React.CSSProperties = {
+  fontSize: 16,
+  flexShrink: 0,
+};
+
+const readOnlyTextStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 2,
+  flex: 1,
+  minWidth: 0,
+};
+
+const readOnlyTitleStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: "var(--text-1)",
+};
+
+const readOnlySubtitleStyle: React.CSSProperties = {
+  fontSize: 11,
+  color: "var(--text-3)",
+  fontFamily: "var(--font-mono)",
+};
+
+const readOnlyCtaStyle: React.CSSProperties = {
+  padding: "5px 12px",
+  fontSize: 11,
+  fontFamily: "var(--font-mono)",
+  background: "transparent",
+  border: "1px dashed var(--border)",
+  borderRadius: 6,
+  color: "var(--text-3)",
+  cursor: "not-allowed",
+  opacity: 0.6,
+  flexShrink: 0,
+};
 
 function SaveStatusBadge({
   status,
