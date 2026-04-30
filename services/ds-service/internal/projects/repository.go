@@ -526,6 +526,130 @@ func (t *TenantRepo) HeartbeatVersion(ctx context.Context, versionID string) err
 	return err
 }
 
+// ─── DRD (U9) ────────────────────────────────────────────────────────────────
+//
+// One DRD per flow, monotonic revision counter for ETag-style optimistic
+// concurrency. The plan flags this explicitly (DI C2): SQLite CURRENT_TIMESTAMP
+// has 1-second resolution and silently overwrites within the window when used
+// as an ETag, so a `revision INTEGER` counter is mandatory.
+
+// ErrRevisionConflict is returned by UpsertDRD when the expected revision
+// doesn't match the current row's revision. The handler turns this into 409.
+var ErrRevisionConflict = errors.New("projects: drd revision conflict")
+
+// DRDRecord is what the GET endpoint returns.
+type DRDRecord struct {
+	FlowID        string
+	ContentJSON   []byte // raw BlockNote document (or `{}` for empty)
+	Revision      int
+	UpdatedAt     time.Time
+	UpdatedByUser string
+}
+
+// GetDRD looks up a DRD for a flow, scoped by tenant. Returns ErrNotFound when
+// the flow doesn't exist OR isn't visible to this tenant. Returns an empty
+// record (revision=0, content=`{}`) when the flow exists but no DRD has been
+// written yet — this lets the editor start blank without a separate "create".
+func (t *TenantRepo) GetDRD(ctx context.Context, projectSlug, flowID string) (*DRDRecord, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	if err := t.assertFlowVisible(ctx, projectSlug, flowID); err != nil {
+		return nil, err
+	}
+	rec := &DRDRecord{FlowID: flowID, Revision: 0, ContentJSON: []byte("{}")}
+	var content []byte
+	var rev int
+	var updatedAt sql.NullString
+	var updatedBy sql.NullString
+	err := t.r.db.QueryRowContext(ctx,
+		`SELECT content_json, revision, updated_at, updated_by_user_id
+		 FROM flow_drd WHERE flow_id = ? AND tenant_id = ?`,
+		flowID, t.tenantID,
+	).Scan(&content, &rev, &updatedAt, &updatedBy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return rec, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("drd select: %w", err)
+	}
+	rec.ContentJSON = content
+	rec.Revision = rev
+	if updatedAt.Valid {
+		rec.UpdatedAt = parseTime(updatedAt.String)
+	}
+	if updatedBy.Valid {
+		rec.UpdatedByUser = updatedBy.String
+	}
+	return rec, nil
+}
+
+// UpsertDRD writes a DRD with an expected-revision check. Returns the new
+// revision on success. Returns ErrRevisionConflict when expectedRevision
+// doesn't match the current row's revision (handler returns 409).
+func (t *TenantRepo) UpsertDRD(ctx context.Context, projectSlug, flowID string, content []byte, expectedRevision int, updatedByUserID string) (int, error) {
+	if t.tenantID == "" {
+		return 0, errors.New("projects: tenant_id required")
+	}
+	if err := t.assertFlowVisible(ctx, projectSlug, flowID); err != nil {
+		return 0, err
+	}
+	now := rfc3339(t.now().UTC())
+
+	if expectedRevision == 0 {
+		// First-write path. ON CONFLICT means a parallel writer beat us;
+		// surface as ErrRevisionConflict so the client refreshes.
+		_, err := t.r.db.ExecContext(ctx,
+			`INSERT INTO flow_drd (flow_id, tenant_id, content_json, revision, schema_version, updated_at, updated_by_user_id)
+			 VALUES (?, ?, ?, 1, '1.0', ?, ?)`,
+			flowID, t.tenantID, content, now, updatedByUserID,
+		)
+		if err != nil {
+			low := strings.ToLower(err.Error())
+			if strings.Contains(low, "unique") || strings.Contains(low, "constraint") {
+				return 0, ErrRevisionConflict
+			}
+			return 0, fmt.Errorf("drd insert: %w", err)
+		}
+		return 1, nil
+	}
+
+	res, err := t.r.db.ExecContext(ctx,
+		`UPDATE flow_drd SET content_json = ?, revision = revision + 1, updated_at = ?, updated_by_user_id = ?
+		 WHERE flow_id = ? AND tenant_id = ? AND revision = ?`,
+		content, now, updatedByUserID, flowID, t.tenantID, expectedRevision,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("drd update: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected: %w", err)
+	}
+	if rows != 1 {
+		return 0, ErrRevisionConflict
+	}
+	return expectedRevision + 1, nil
+}
+
+// assertFlowVisible returns ErrNotFound when the flow doesn't exist OR
+// belongs to a project this tenant cannot see. Same 404 semantics as
+// GetScreenForServe / GetCanonicalTree (no existence oracle).
+func (t *TenantRepo) assertFlowVisible(ctx context.Context, projectSlug, flowID string) error {
+	var ok int
+	err := t.r.db.QueryRowContext(ctx,
+		`SELECT 1 FROM flows f
+		 JOIN projects p ON p.id = f.project_id
+		 WHERE f.id = ? AND p.slug = ? AND p.tenant_id = ?
+		   AND f.deleted_at IS NULL AND p.deleted_at IS NULL`,
+		flowID, projectSlug, t.tenantID,
+	).Scan(&ok)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
+}
+
 // GetCanonicalTree looks up the lazy canonical_tree blob for a screen, joined
 // to its project so the tenant_id check applies. Returns ErrNotFound when the
 // screen doesn't exist OR the project's tenant_id doesn't match the caller's

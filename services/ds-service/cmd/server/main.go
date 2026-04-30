@@ -350,6 +350,14 @@ func (s *server) routes(mux *http.ServeMux) {
 	// from screen_canonical_trees with a 60s private cache.
 	mux.HandleFunc("GET /v1/projects/{slug}/screens/{id}/canonical-tree",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleScreenCanonicalTree)))
+
+	// DRD per-flow content (U9). GET returns the BlockNote document +
+	// monotonic revision counter; PUT updates with optimistic concurrency
+	// (409 on stale revision). Body capped at 1MB.
+	mux.HandleFunc("GET /v1/projects/{slug}/flows/{flow_id}/drd",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleGetDRD)))
+	mux.HandleFunc("PUT /v1/projects/{slug}/flows/{flow_id}/drd",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandlePutDRD)))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────

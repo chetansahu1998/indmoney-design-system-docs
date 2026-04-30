@@ -166,6 +166,89 @@ export async function fetchProject(
 }
 
 /**
+ * GET /v1/projects/:slug/flows/:flow_id/drd — fetch DRD with revision counter.
+ * Returns `{revision: 0, content: {}}` when no DRD has been written yet.
+ */
+export interface DRDFetchResponse {
+  flow_id: string;
+  content: unknown;
+  revision: number;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+export async function fetchDRD(
+  slug: string,
+  flowID: string,
+): Promise<ApiResult<DRDFetchResponse>> {
+  return getJSON<DRDFetchResponse>(
+    `/v1/projects/${encodeURIComponent(slug)}/flows/${encodeURIComponent(flowID)}/drd`,
+  );
+}
+
+/**
+ * PUT /v1/projects/:slug/flows/:flow_id/drd — optimistic write with revision
+ * counter. 409 returns the current revision so the client can show "someone
+ * else edited" UX.
+ */
+export interface DRDPutResponse {
+  revision: number;
+  updated_at: string;
+}
+
+export type DRDPutResult =
+  | ApiOk<DRDPutResponse>
+  | ApiErr
+  | { ok: false; status: 409; conflict: { current_revision: number } };
+
+export async function putDRD(
+  slug: string,
+  flowID: string,
+  content: unknown,
+  expectedRevision: number,
+): Promise<DRDPutResult> {
+  try {
+    const res = await fetch(
+      `${dsBaseURL()}/v1/projects/${encodeURIComponent(
+        slug,
+      )}/flows/${encodeURIComponent(flowID)}/drd`,
+      {
+        method: "PUT",
+        headers: authedHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          content,
+          expected_revision: expectedRevision,
+        }),
+      },
+    );
+    if (res.status === 409) {
+      const body = (await res.json().catch(() => ({}))) as {
+        current_revision?: number;
+      };
+      return {
+        ok: false,
+        status: 409,
+        conflict: { current_revision: body.current_revision ?? 0 },
+      };
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: await safeJSONErr(res),
+      };
+    }
+    return { ok: true, data: (await res.json()) as DRDPutResponse };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
  * GET /v1/projects/:slug/screens/:id/canonical-tree — lazy fetch of the
  * canonical tree blob for the JSON tab. U6 declares the wrapper but does not
  * call it; the JSON tab (U8) is the only consumer.

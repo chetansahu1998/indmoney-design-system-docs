@@ -432,6 +432,162 @@ func (s *Server) HandleProjectList(w http.ResponseWriter, r *http.Request) {
 
 // HandleEventsTicket serves POST /v1/projects/{slug}/events/ticket.
 //
+// MaxDRDBodyBytes caps PUT body size for DRD content (per Phase 1 plan H4).
+// 1MB is enough for a 50-paragraph document with light embeds; oversize
+// uploads should go through asset CDN in Phase 5.
+const MaxDRDBodyBytes = 1 << 20
+
+// HandleGetDRD serves GET /v1/projects/:slug/flows/:flow_id/drd.
+// First-fetch returns `{revision:0, content:"{}"}` when no row exists yet —
+// the editor starts blank without a separate "create" step.
+func (s *Server) HandleGetDRD(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	flowID := r.PathValue("flow_id")
+	if slug == "" || flowID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
+		return
+	}
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	rec, err := repo.GetDRD(r.Context(), slug, flowID)
+	if errors.Is(err, ErrNotFound) {
+		writeJSONErr(w, http.StatusNotFound, "not_found", "")
+		return
+	}
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "drd_lookup", err.Error())
+		return
+	}
+
+	// Embed content_json verbatim so the BlockNote document doesn't get
+	// double-escaped through json.Marshal of a []byte.
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+	w.WriteHeader(http.StatusOK)
+	flowJSON, _ := json.Marshal(rec.FlowID)
+	w.Write([]byte(`{"flow_id":`))
+	w.Write(flowJSON)
+	w.Write([]byte(`,"content":`))
+	if len(rec.ContentJSON) == 0 {
+		w.Write([]byte("{}"))
+	} else {
+		w.Write(rec.ContentJSON)
+	}
+	w.Write([]byte(fmt.Sprintf(`,"revision":%d`, rec.Revision)))
+	w.Write([]byte(`,"updated_at":`))
+	if rec.UpdatedAt.IsZero() {
+		w.Write([]byte("null"))
+	} else {
+		ts, _ := json.Marshal(rec.UpdatedAt.UTC().Format(time.RFC3339))
+		w.Write(ts)
+	}
+	w.Write([]byte(`,"updated_by":`))
+	if rec.UpdatedByUser == "" {
+		w.Write([]byte("null"))
+	} else {
+		ub, _ := json.Marshal(rec.UpdatedByUser)
+		w.Write(ub)
+	}
+	w.Write([]byte("}"))
+}
+
+// HandlePutDRD serves PUT /v1/projects/:slug/flows/:flow_id/drd.
+// Body shape: { "content": <BlockNote JSON>, "expected_revision": <int> }.
+// Conflict (409): { "error": "revision_conflict", "current_revision": <int> }.
+// Success (200): { "revision": <new int>, "updated_at": "..." }.
+// Body capped at MaxDRDBodyBytes (1MB); oversize → 413.
+func (s *Server) HandlePutDRD(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "PUT only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	flowID := r.PathValue("flow_id")
+	if slug == "" || flowID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, MaxDRDBodyBytes)
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "too large") {
+			writeJSONErr(w, http.StatusRequestEntityTooLarge, "body_too_large",
+				fmt.Sprintf("DRD body exceeds %d bytes; oversize images belong in asset CDN (Phase 5)", MaxDRDBodyBytes))
+			return
+		}
+		writeJSONErr(w, http.StatusBadRequest, "read_body", err.Error())
+		return
+	}
+
+	var req struct {
+		Content          json.RawMessage `json:"content"`
+		ExpectedRevision int             `json:"expected_revision"`
+	}
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if len(req.Content) == 0 {
+		req.Content = []byte("{}")
+	}
+	if req.ExpectedRevision < 0 {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_revision", "expected_revision must be >= 0")
+		return
+	}
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	newRev, err := repo.UpsertDRD(r.Context(), slug, flowID, []byte(req.Content), req.ExpectedRevision, claims.Sub)
+	if errors.Is(err, ErrNotFound) {
+		writeJSONErr(w, http.StatusNotFound, "not_found", "")
+		return
+	}
+	if errors.Is(err, ErrRevisionConflict) {
+		rec, _ := repo.GetDRD(r.Context(), slug, flowID)
+		current := 0
+		if rec != nil {
+			current = rec.Revision
+		}
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":            "revision_conflict",
+			"current_revision": current,
+		})
+		return
+	}
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "drd_upsert", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"revision":   newRev,
+		"updated_at": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
 // HandleScreenCanonicalTree serves the lazy canonical_tree JSON for a single
 // screen. Called by the U8 JSON tab on click. Tenant-scoped via TenantRepo;
 // cross-tenant returns 404.

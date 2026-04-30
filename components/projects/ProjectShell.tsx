@@ -444,7 +444,9 @@ export default function ProjectShell({
             padding: 16,
           }}
         >
-          {activeTab === "drd" && <DRDTab />}
+          {activeTab === "drd" && (
+            <DRDTab slug={slug} flowID={screens[0]?.FlowID ?? null} />
+          )}
           {activeTab === "violations" && (
             <ViolationsTab
               slug={slug}
