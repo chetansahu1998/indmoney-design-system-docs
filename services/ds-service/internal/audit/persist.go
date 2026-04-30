@@ -41,6 +41,14 @@ func PersistResult(auditOutDir, manifestPath, dsRev string, result AuditResult, 
 	persistMu.Lock()
 	defer persistMu.Unlock()
 
+	// Phase 2 U8 — sidecar-writer deprecation. Default OFF in Phase 2; the
+	// audit pipeline writes to SQLite via the projects worker instead. Set
+	// DS_AUDIT_LEGACY_SIDECARS=1 to re-enable JSON sidecar writes for one-
+	// release rollback. Phase 3 removes this flag entirely.
+	if os.Getenv("DS_AUDIT_LEGACY_SIDECARS") != "1" {
+		return "", false, nil
+	}
+
 	perFilePath, err := WritePerFile(auditOutDir, result)
 	if err != nil {
 		return "", false, fmt.Errorf("write per-file: %w", err)

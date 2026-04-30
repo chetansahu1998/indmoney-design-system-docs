@@ -184,6 +184,7 @@ func main() {
 		orch:           orch,
 		log:            log,
 		projectsServer: projectsServer,
+		broker:         broker,
 	}
 
 	mux := http.NewServeMux()
@@ -350,6 +351,7 @@ type server struct {
 	orch           *sync.Orchestrator
 	log            *slog.Logger
 	projectsServer *projects.Server
+	broker         projects.SSEPublisher // shared SSE publisher; used by Phase 2 fan-out + audit-job runs
 }
 
 func (s *server) routes(mux *http.ServeMux) {
@@ -401,6 +403,13 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleGetDRD)))
 	mux.HandleFunc("PUT /v1/projects/{slug}/flows/{flow_id}/drd",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandlePutDRD)))
+
+	// Phase 2 U8 — Audit fan-out trigger. Super-admin only. Enqueues
+	// audit_jobs at priority=10 for every active flow's latest version when
+	// DS lead publishes a token catalog change or curates a rule. CLI at
+	// services/ds-service/cmd/admin wraps this endpoint.
+	fanoutHandler := &projects.FanoutHandler{DB: s.db.DB, Broker: s.broker}
+	mux.HandleFunc("POST /v1/admin/audit/fanout", s.requireSuperAdmin(fanoutHandler.HandleAdminFanout))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────
