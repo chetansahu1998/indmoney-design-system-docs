@@ -2,6 +2,7 @@ package projects
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -780,6 +781,176 @@ func (s *Server) HandleProjectEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// ─── Phase 4: violation lifecycle ────────────────────────────────────────────
+
+// patchViolationRequest is the JSON body for PATCH
+// /v1/projects/{slug}/violations/{id}.
+//
+// Action is required ("acknowledge" | "dismiss" | "reactivate"); the
+// system-only "mark_fixed" action is not exposed on this endpoint — the
+// plugin's POST /v1/projects/{slug}/violations/{id}/fix-applied (Phase 4 U12)
+// is the only legal entry point for that transition.
+type patchViolationRequest struct {
+	Action string `json:"action"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// HandlePatchViolation serves PATCH /v1/projects/{slug}/violations/{id}.
+//
+// Lifecycle (per Phase 4 U1):
+//   1. Auth + tenant resolution.
+//   2. Decode + validate body (action enum, reason length).
+//   3. Load current violation (cross-tenant 404).
+//   4. Validate transition against actor role.
+//   5. UPDATE violations + audit_log row in a single transaction.
+//   6. SSE publish on the version's trace_id (best-effort; failure logged).
+//   7. 200 with the new status.
+func (s *Server) HandlePatchViolation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "PATCH only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+
+	slug := r.PathValue("slug")
+	violationID := r.PathValue("id")
+	if slug == "" || violationID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+	if err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "read_body", err.Error())
+		return
+	}
+	var req patchViolationRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "decode", err.Error())
+		return
+	}
+	action, err := ParseLifecycleAction(req.Action)
+	if err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_action", err.Error())
+		return
+	}
+	// mark_fixed is reserved for the plugin auto-fix endpoint.
+	if action == ActionMarkFixed {
+		writeJSONErr(w, http.StatusForbidden, "system_only_action", "use /violations/{id}/fix-applied")
+		return
+	}
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	current, err := repo.GetViolationForLifecycle(r.Context(), violationID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+		return
+	}
+
+	// Defense in depth: caller-supplied slug must match the project the
+	// violation actually belongs to. Prevents an admin in tenant A from acting
+	// on tenant A's violation through tenant B's project URL.
+	if current.ProjectSlug != slug {
+		writeJSONErr(w, http.StatusNotFound, "not_found", "")
+		return
+	}
+
+	transition, err := ValidateTransition(current.From, action, claims.Role, req.Reason, false)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrForbiddenRole):
+			writeJSONErr(w, http.StatusForbidden, "forbidden", err.Error())
+		case errors.Is(err, ErrReasonRequired), errors.Is(err, ErrReasonTooLong),
+			errors.Is(err, ErrInvalidAction), errors.Is(err, ErrInvalidTransition):
+			writeJSONErr(w, http.StatusBadRequest, "invalid_transition", err.Error())
+		default:
+			writeJSONErr(w, http.StatusBadRequest, "invalid_transition", err.Error())
+		}
+		return
+	}
+
+	// Build the audit_log writer that runs inside the same transaction. The
+	// details JSON intentionally mirrors the Phase 0 audit shape so audit_log
+	// queries don't need to special-case violation rows.
+	now := time.Now().UTC()
+	traceID := current.TraceID
+	auditDetails, _ := json.Marshal(map[string]any{
+		"violation_id": current.ViolationID,
+		"version_id":   current.VersionID,
+		"project_slug": current.ProjectSlug,
+		"from":         transition.From,
+		"to":           transition.To,
+		"reason":       transition.Reason,
+		"trace_id":     traceID,
+		"schema_ver":   ProjectsSchemaVersion,
+	})
+	auditWrite := func(tx *sql.Tx) error {
+		_, ierr := tx.ExecContext(r.Context(),
+			`INSERT INTO audit_log (id, ts, event_type, tenant_id, user_id, method, endpoint, status_code, duration_ms, ip_address, details)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			uuid.NewString(),
+			now.Format(time.RFC3339Nano),
+			transition.AuditEventType(),
+			tenantID,
+			claims.Sub,
+			"PATCH",
+			fmt.Sprintf("/v1/projects/%s/violations/%s", slug, violationID),
+			http.StatusOK,
+			0,
+			clientIP(r),
+			string(auditDetails),
+		)
+		return ierr
+	}
+
+	if err := repo.UpdateViolationStatus(r.Context(), violationID, transition, auditWrite); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			// Race window: the row was modified between GET and UPDATE.
+			// Surface as 409 so the client can refetch and retry.
+			writeJSONErr(w, http.StatusConflict, "race", "violation status changed concurrently")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "update_violation", err.Error())
+		return
+	}
+
+	// Best-effort SSE fan-out. Subscribers (Violations tab + Inbox) reconcile
+	// row state; a missed publish only means the client's next poll/refetch
+	// will catch up — never blocks the lifecycle write.
+	if s.deps.Broker != nil && traceID != "" {
+		s.deps.Broker.Publish(traceID, sse.ProjectViolationLifecycleChanged{
+			ProjectSlug: current.ProjectSlug,
+			VersionID:   current.VersionID,
+			ViolationID: current.ViolationID,
+			Tenant:      tenantID,
+			From:        transition.From,
+			To:          transition.To,
+			Action:      string(transition.Action),
+			ActorUserID: claims.Sub,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"violation_id": current.ViolationID,
+		"from":         transition.From,
+		"to":           transition.To,
+		"action":       string(transition.Action),
+	})
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

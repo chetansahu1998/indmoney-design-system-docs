@@ -433,6 +433,12 @@ func (s *server) routes(mux *http.ServeMux) {
 	// services/ds-service/cmd/admin wraps this endpoint.
 	fanoutHandler := &projects.FanoutHandler{DB: s.db.DB, Broker: s.broker}
 	mux.HandleFunc("POST /v1/admin/audit/fanout", s.requireSuperAdmin(fanoutHandler.HandleAdminFanout))
+
+	// Phase 4 U1 — violation lifecycle. Acknowledge / Dismiss /
+	// Reactivate (admin override) on a single violation. Audit-log + SSE
+	// fan-out happen in the same DB transaction as the status flip.
+	mux.HandleFunc("PATCH /v1/projects/{slug}/violations/{id}",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandlePatchViolation)))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────

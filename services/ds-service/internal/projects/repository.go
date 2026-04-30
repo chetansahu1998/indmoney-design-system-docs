@@ -1000,3 +1000,92 @@ func (t *TenantRepo) UpsertPrototypeLinks(ctx context.Context, links []Prototype
 	}
 	return tx.Commit()
 }
+
+// ─── Phase 4: violation lifecycle ────────────────────────────────────────────
+
+// ViolationLifecycleResult is what UpdateViolationStatus returns so the HTTP
+// handler can build an SSE event without a second round-trip to the DB.
+type ViolationLifecycleResult struct {
+	ViolationID string
+	VersionID   string
+	ProjectSlug string
+	TraceID     string // most recent audit_jobs.trace_id for the version (may be "" if none)
+	From        string
+	To          string
+}
+
+// GetViolationForLifecycle loads the minimum fields the lifecycle handler
+// needs: the current status (for transition validation) plus version_id and
+// project_slug + trace_id (for the SSE fan-out). Tenant-scoped: a row owned
+// by another tenant returns ErrNotFound (no existence oracle).
+//
+// The trace_id comes from the latest audit_jobs row for the version. If no
+// audit job has been recorded yet (theoretically impossible — violations are
+// only ever inserted by the audit worker which writes the audit_jobs row
+// first), the field is left empty and the SSE publish becomes a no-op.
+func (t *TenantRepo) GetViolationForLifecycle(ctx context.Context, violationID string) (ViolationLifecycleResult, error) {
+	row := t.r.db.QueryRowContext(ctx,
+		`SELECT v.id, v.version_id, v.status, p.slug,
+		        COALESCE((SELECT j.trace_id FROM audit_jobs j
+		                  WHERE j.version_id = v.version_id AND j.tenant_id = v.tenant_id
+		                  ORDER BY j.created_at DESC LIMIT 1), '')
+		   FROM violations v
+		   JOIN project_versions pv ON pv.id = v.version_id
+		   JOIN projects p ON p.id = pv.project_id
+		  WHERE v.id = ? AND v.tenant_id = ?`,
+		violationID, t.tenantID,
+	)
+	var out ViolationLifecycleResult
+	if err := row.Scan(&out.ViolationID, &out.VersionID, &out.From, &out.ProjectSlug, &out.TraceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ViolationLifecycleResult{}, ErrNotFound
+		}
+		return ViolationLifecycleResult{}, fmt.Errorf("load violation: %w", err)
+	}
+	return out, nil
+}
+
+// UpdateViolationStatus applies a validated lifecycle transition to a single
+// violation row. Caller is expected to have already run ValidateTransition on
+// the result of GetViolationForLifecycle.
+//
+// The repository updates the row inside a transaction; the audit_log write
+// happens in the same transaction so a row that flips status without a log
+// entry is impossible. The caller (server.go) supplies the audit_log payload.
+//
+// Returns ErrNotFound if the row was deleted between the GET and the UPDATE
+// (race window the recovery sweeper can introduce).
+func (t *TenantRepo) UpdateViolationStatus(ctx context.Context, violationID string, transition LifecycleTransition, auditEntry func(tx *sql.Tx) error) error {
+	tx, err := t.r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin lifecycle tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx,
+		`UPDATE violations SET status = ?
+		   WHERE id = ? AND tenant_id = ? AND status = ?`,
+		transition.To, violationID, t.tenantID, transition.From,
+	)
+	if err != nil {
+		return fmt.Errorf("update violation status: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected: %w", err)
+	}
+	if n == 0 {
+		// Either the row vanished, the tenant boundary rejected it, or another
+		// transition raced ours and the From no longer matches. All three map
+		// to 404 from the API's perspective (no existence oracle).
+		return ErrNotFound
+	}
+
+	if auditEntry != nil {
+		if err := auditEntry(tx); err != nil {
+			return fmt.Errorf("write audit log: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}

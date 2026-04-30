@@ -120,3 +120,32 @@ func (e ProjectAuditProgress) Type() string { return "project.audit_progress" }
 
 // Payload implements Event.
 func (e ProjectAuditProgress) Payload() any { return e }
+
+// ProjectViolationLifecycleChanged (Phase 4 U1) — emitted whenever a
+// violation transitions between active / acknowledged / dismissed / fixed.
+// Subscribers (Violations tab + Inbox + dashboard) reconcile their cached
+// row state without re-polling the list endpoint.
+//
+// Action carries the verb the user invoked ("acknowledge", "dismiss",
+// "reactivate", "mark_fixed") so the UI can choose the right animation
+// (slide-out for acknowledge/dismiss vs. checkmark-pulse for fixed) without
+// inferring it from the (from, to) pair.
+type ProjectViolationLifecycleChanged struct {
+	ProjectSlug string `json:"project_slug"`
+	VersionID   string `json:"version_id"`
+	ViolationID string `json:"violation_id"`
+	Tenant      string `json:"tenant_id"`
+	From        string `json:"from"`
+	To          string `json:"to"`
+	Action      string `json:"action"`
+	ActorUserID string `json:"actor_user_id"`
+}
+
+// TenantID implements Event.
+func (e ProjectViolationLifecycleChanged) TenantID() string { return e.Tenant }
+
+// Type implements Event.
+func (e ProjectViolationLifecycleChanged) Type() string { return "project.violation_lifecycle_changed" }
+
+// Payload implements Event.
+func (e ProjectViolationLifecycleChanged) Payload() any { return e }
