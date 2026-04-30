@@ -243,7 +243,11 @@ export type ProjectEventType =
   | "view_ready"
   | "audit_complete"
   | "audit_failed"
-  | "export_failed";
+  | "export_failed"
+  /** Phase 3 U6: per-rule audit progress tick. Emitted by the worker
+   *  after each rule in the composite registry completes; throttled at
+   *  100ms per channel server-side. */
+  | "audit_progress";
 
 export interface ProjectEvent {
   type: ProjectEventType;

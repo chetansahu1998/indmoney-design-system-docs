@@ -259,6 +259,37 @@ func (p *WorkerPool) claimAndProcess(ctx context.Context, workerID string) (bool
 		}
 	}()
 
+	// Phase 3 U6: lookup project slug ahead of the run so we can attach a
+	// progress emitter to the context. The composite runner (in
+	// internal/projects/rules) reads the emitter and ticks once per
+	// completed rule. Token-bucket throttle at 100ms keeps the SSE
+	// channel from saturating on fast runs (typical: 7 rules × ~50ms
+	// each). LookupSlug failures are non-fatal — we publish progress
+	// events with the slug omitted, which the frontend tolerates.
+	progressSlug, _ := p.Repo.LoadProjectSlug(ctx, claim.TenantID, claim.VersionID)
+	progressLast := time.Time{}
+	emit := func(completed, total int) {
+		if p.Broker == nil {
+			return
+		}
+		now := p.now()
+		// Always emit the LAST tick (completed == total) so the UI sees
+		// 100% before the audit_complete event lands; throttle the
+		// intermediate ticks at 100ms.
+		if completed < total && now.Sub(progressLast) < 100*time.Millisecond {
+			return
+		}
+		progressLast = now
+		p.Broker.Publish(claim.TraceID, sse.ProjectAuditProgress{
+			ProjectSlug: progressSlug,
+			VersionID:   claim.VersionID,
+			Tenant:      claim.TenantID,
+			Completed:   completed,
+			Total:       total,
+		})
+	}
+	ctx = WithProgress(ctx, emit)
+
 	// Run the rule pipeline. Wrapped in defer/recover so a panicking RuleRunner
 	// can't bring the pool down — we mark the job failed and continue.
 	violations, runErr := p.runWithRecovery(ctx, claim)

@@ -82,6 +82,17 @@ type compositeRunner struct {
 }
 
 func (c *compositeRunner) Run(ctx context.Context, v *projects.ProjectVersion) ([]projects.Violation, error) {
+	emit := projects.ProgressFromContext(ctx)
+	// Total = non-nil runner count, computed once so the UI's denominator is
+	// stable across the run even if a runner short-circuits with an error
+	// (the error path skips emission for that slot, but Total stays the same).
+	total := 0
+	for _, r := range c.runners {
+		if r != nil {
+			total++
+		}
+	}
+	completed := 0
 	var all []projects.Violation
 	for i, r := range c.runners {
 		if r == nil {
@@ -92,6 +103,10 @@ func (c *compositeRunner) Run(ctx context.Context, v *projects.ProjectVersion) (
 			return nil, fmt.Errorf("rule[%d]: %w", i, err)
 		}
 		all = append(all, viols...)
+		completed++
+		if emit != nil {
+			emit(completed, total)
+		}
 	}
 	return all, nil
 }

@@ -367,6 +367,7 @@ export function subscribeProjectEvents(
       "audit_complete",
       "audit_failed",
       "export_failed",
+      "audit_progress",
     ];
     for (const t of types) {
       es.addEventListener(t, (raw) => {

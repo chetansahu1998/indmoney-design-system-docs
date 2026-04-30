@@ -57,6 +57,9 @@ interface ViolationsTabProps {
   filters?: ViolationsFilters;
   /** Switch to the JSON tab and focus a specific screen (U8 deeplink). */
   onViewInJSON?: (screenID: string) => void;
+  /** Phase 3 U6: per-rule audit-progress tick from SSE. Non-null while
+   *  the audit is in flight; cleared on audit_complete / audit_failed. */
+  auditProgress?: { completed: number; total: number } | null;
 }
 
 type ViolationsState =
@@ -70,6 +73,7 @@ export default function ViolationsTab({
   versionID,
   filters,
   onViewInJSON,
+  auditProgress,
 }: ViolationsTabProps) {
   const [state, setState] = useState<ViolationsState>({ status: "loading" });
   // Phase 2 U11 — category filter chips. Selected = empty set means "all"
@@ -96,6 +100,21 @@ export default function ViolationsTab({
   const clearCategories = useCallback(() => {
     setSelectedCategories(new Set());
   }, []);
+
+  // Phase 3 U6: re-fetch violations when an audit transitions from
+  // "running" to "complete". The fetch effect below depends on
+  // `reloadTrigger` so a bump here re-runs it. We DON'T put auditProgress
+  // itself in the fetch deps because that would re-fetch on every 100ms
+  // throttled tick.
+  const [reloadTrigger, setReloadTrigger] = useState(0);
+  const wasAuditRunning = useRef(false);
+  useEffect(() => {
+    const running = auditProgress != null && auditProgress.total > 0;
+    if (wasAuditRunning.current && !running) {
+      setReloadTrigger((t) => t + 1);
+    }
+    wasAuditRunning.current = running;
+  }, [auditProgress]);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,7 +164,8 @@ export default function ViolationsTab({
       cancelled = true;
     };
     // Filter shape may change identity each render — stringify for a stable dep.
-  }, [slug, versionID, filters?.persona_id, filters?.mode_label]);
+    // reloadTrigger forces a re-fetch on audit_complete (Phase 3 U6).
+  }, [slug, versionID, filters?.persona_id, filters?.mode_label, reloadTrigger]);
 
   // Stagger row reveal once rows are in the DOM. ~50ms per row, clamped to a
   // 600ms total window so a thousand-violation flow doesn't take 50 seconds.
@@ -193,12 +213,38 @@ export default function ViolationsTab({
   }, [ctx, state, reduced]);
 
   if (state.status === "loading") {
+    // Phase 3 U6: when an audit is actively running AND we have no
+    // violations to show yet, surface the audit-running variant instead
+    // of a plain "Loading…". The progress bar updates as SSE ticks
+    // arrive; on audit_complete the parent re-fetches and we transition
+    // to either the zero-violations celebration or the populated list.
+    if (auditProgress && auditProgress.total > 0) {
+      return (
+        <EmptyState
+          variant="audit-running"
+          progress={auditProgress}
+          description="Findings appear here as workers complete each rule."
+        />
+      );
+    }
     return <EmptyState variant="loading" title="Loading violations…" />;
   }
 
   if (state.status === "empty") {
-    // Distinguish "audit ran and produced nothing" (zero-violations: positive
-    // state, celebrate) from other empty reasons (use the supplied copy).
+    // Audit running but the worker hasn't produced any violations yet
+    // (or the version legitimately has none and we just got the
+    // complete tick). Distinguish via auditProgress: if a tick is in
+    // flight, show the running variant; otherwise the zero-violations
+    // celebration.
+    if (auditProgress && auditProgress.total > 0 && auditProgress.completed < auditProgress.total) {
+      return (
+        <EmptyState
+          variant="audit-running"
+          progress={auditProgress}
+          description="Findings appear here as workers complete each rule."
+        />
+      );
+    }
     if (state.reason.startsWith("No violations found")) {
       return <EmptyState variant="zero-violations" />;
     }

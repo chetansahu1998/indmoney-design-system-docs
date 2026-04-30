@@ -146,6 +146,12 @@ export default function ProjectShell({
     null,
   );
   const [previousTab, setPreviousTab] = useState<ProjectTab | null>(null);
+  // Phase 3 U6: audit-progress state from SSE. null = not running (default
+  // or post-complete); {completed, total} = a tick is in flight. Cleared
+  // by audit_complete / audit_failed.
+  const [auditProgress, setAuditProgress] = useState<
+    { completed: number; total: number } | null
+  >(null);
 
   const theme = useProjectView((s) => s.theme);
   const selectedScreenID = useProjectView((s) => s.selectedScreenID);
@@ -265,17 +271,31 @@ export default function ProjectShell({
 
     const unsubscribe = subscribeProjectEvents(slug, traceID, (ev) => {
       if (ev.type === "audit_complete") {
+        // Phase 3 U6: clear the audit-running progress state on completion
+        // so the Violations tab swaps from progress UI to the violation list.
+        setAuditProgress(null);
         showToast({
           message: "Audit complete",
           tone: "success",
           detail: "Refresh the Violations tab for the latest run",
         });
       } else if (ev.type === "audit_failed") {
+        setAuditProgress(null);
         showToast({ message: "Audit failed", tone: "danger" });
       } else if (ev.type === "view_ready") {
         showToast({ message: "View ready", tone: "info" });
       } else if (ev.type === "export_failed") {
         showToast({ message: "Export failed", tone: "danger" });
+      } else if (ev.type === "audit_progress") {
+        // Phase 3 U6: per-rule progress tick. The ViolationsTab renders
+        // EmptyState variant=audit-running with this state.
+        const completed =
+          typeof ev.data?.completed === "number" ? ev.data.completed : 0;
+        const total =
+          typeof ev.data?.total === "number" ? ev.data.total : 0;
+        if (total > 0) {
+          setAuditProgress({ completed, total });
+        }
       }
     });
     return unsubscribe;
@@ -461,6 +481,7 @@ export default function ProjectShell({
                   : undefined
               }
               onViewInJSON={() => changeTab("json")}
+              auditProgress={auditProgress}
             />
           )}
           {activeTab === "decisions" && <DecisionsTab />}

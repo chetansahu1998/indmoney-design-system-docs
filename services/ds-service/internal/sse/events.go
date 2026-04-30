@@ -88,3 +88,35 @@ func (e ProjectExportFailed) Type() string { return "project.export_failed" }
 
 // Payload implements Event.
 func (e ProjectExportFailed) Payload() any { return e }
+
+// ProjectAuditProgress (Phase 3 U6) — emitted by the worker as each rule
+// in the composite registry completes. Lets the Violations tab render
+// progress UI ("Audit running… 3 of 7 rules complete") without waiting
+// for the final ProjectAuditComplete event.
+//
+// Granularity is per-rule rather than per-(screen, rule) — the
+// RuleRunner interface doesn't expose per-screen iteration to the
+// worker, so the worker can only observe rule-level boundaries cheaply.
+// Per-screen progress is a future polish unit that requires extending
+// the RuleRunner interface with a screen-completion callback.
+//
+// RuleID is the just-completed rule's identifier (e.g.
+// "theme_parity_break"). The UI typically doesn't display it; it's
+// useful for debugging + Phase 7 admin telemetry.
+type ProjectAuditProgress struct {
+	ProjectSlug string `json:"project_slug"`
+	VersionID   string `json:"version_id"`
+	Tenant      string `json:"tenant_id"`
+	Completed   int    `json:"completed"`
+	Total       int    `json:"total"`
+	RuleID      string `json:"rule_id"`
+}
+
+// TenantID implements Event.
+func (e ProjectAuditProgress) TenantID() string { return e.Tenant }
+
+// Type implements Event.
+func (e ProjectAuditProgress) Type() string { return "project.audit_progress" }
+
+// Payload implements Event.
+func (e ProjectAuditProgress) Payload() any { return e }
