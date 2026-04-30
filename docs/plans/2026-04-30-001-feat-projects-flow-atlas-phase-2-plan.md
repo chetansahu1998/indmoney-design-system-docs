@@ -1,7 +1,8 @@
 ---
 title: "feat: Projects · Flow Atlas — Phase 2 of 8 (audit engine extensions + fan-out + sidecar migration)"
 type: feat
-status: active
+status: completed
+completed: 2026-04-30
 date: 2026-04-30
 origin: docs/brainstorms/2026-04-29-projects-flow-atlas-requirements.md
 predecessor: docs/plans/2026-04-29-001-feat-projects-flow-atlas-phase-1-plan.md
