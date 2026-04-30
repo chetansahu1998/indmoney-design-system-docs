@@ -112,6 +112,15 @@ export interface ScreenMode {
 
 export type AuditJobStatus = "queued" | "running" | "done" | "failed";
 
+/**
+ * What kicked off an audit job. Phase 1 only ever emitted "export"; Phase 2's
+ * fan-out endpoint and DS-lead admin actions add the other two.
+ */
+export type AuditJobTrigger =
+  | "export"
+  | "rule_change"
+  | "tokens_published";
+
 export interface AuditJob {
   ID: string;
   VersionID: string;
@@ -125,6 +134,13 @@ export interface AuditJob {
   StartedAt?: string | null;
   CompletedAt?: string | null;
   Error: string;
+  /** Phase 2 (migration 0002): default 50 (routine), 100 = recently-edited
+   *  flow, 10 = fan-out re-audit. */
+  Priority?: number;
+  /** Phase 2 (migration 0002). */
+  TriggeredBy?: AuditJobTrigger;
+  /** Phase 2: JSON metadata (e.g. {fanout_id, trigger, reason, rule_id}). */
+  Metadata?: string | null;
 }
 
 export type ViolationSeverity =
@@ -140,6 +156,24 @@ export type ViolationStatus =
   | "dismissed"
   | "fixed";
 
+/**
+ * Phase 2 (migration 0002) added Category to violations. Used by U11 filter
+ * chips on the Violations tab. Backfilled via migration UPDATE statements;
+ * new rows set explicitly by Phase 2 RuleRunners.
+ */
+export type ViolationCategory =
+  | "theme_parity"
+  | "cross_persona"
+  | "a11y_contrast"
+  | "a11y_touch_target"
+  | "flow_graph"
+  | "component_governance"
+  | "token_drift"
+  | "text_style_drift"
+  | "spacing_drift"
+  | "radius_drift"
+  | "component_match";
+
 export interface Violation {
   ID: string;
   VersionID: string;
@@ -147,12 +181,16 @@ export interface Violation {
   TenantID: string;
   RuleID: string;
   Severity: ViolationSeverity;
+  /** Phase 2: filter chip key. Default 'token_drift' on legacy rows. */
+  Category: ViolationCategory;
   Property: string;
   Observed: string;
   Suggestion: string;
   PersonaID?: string | null;
   ModeLabel?: string | null;
   Status: ViolationStatus;
+  /** Phase 2: drives the Phase 4 Fix-in-Figma CTA. */
+  AutoFixable?: boolean;
   CreatedAt: string;
 }
 
@@ -217,9 +255,12 @@ export interface ProjectEvent {
 
 /**
  * Filters for listViolations(). Phase 1 supports persona + mode_label only;
- * U10 expands to severity + rule_id slicers.
+ * Phase 2 U11 adds the `category` filter for the new chip row.
  */
 export interface ViolationsFilters {
   persona_id?: string;
   mode_label?: string;
+  /** Phase 2 U11: comma-joined list of ViolationCategory values, or omit
+   *  for "all categories". */
+  category?: ViolationCategory[];
 }

@@ -19,11 +19,12 @@
  *   - 5xx / network → render an inline error with a retry button.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { listViolations } from "@/lib/projects/client";
 import type {
   Violation,
+  ViolationCategory,
   ViolationSeverity,
   ViolationsFilters,
 } from "@/lib/projects/types";
@@ -31,6 +32,7 @@ import { useGSAPContext } from "@/lib/animations/hooks/useGSAPContext";
 import { useReducedMotion } from "@/lib/animations/context";
 import { STAGGER_MAX_MS, STAGGER_PER_FRAME_MS } from "@/lib/animations/easings";
 import EmptyTab from "./EmptyTab";
+import { CategoryFilterChips } from "./violations/CategoryFilterChips";
 
 const SEVERITY_ORDER: readonly ViolationSeverity[] = [
   "critical",
@@ -69,9 +71,30 @@ export default function ViolationsTab({
   onViewInJSON,
 }: ViolationsTabProps) {
   const [state, setState] = useState<ViolationsState>({ status: "loading" });
+  // Phase 2 U11 — category filter chips. Selected = empty set means "all"
+  // (default). Toggling adds/removes from the set; "Clear" empties it.
+  const [selectedCategories, setSelectedCategories] = useState<
+    Set<ViolationCategory>
+  >(() => new Set());
+  // Track which violation IDs we've already rendered so SSE-driven re-fetches
+  // can identify "new" rows for the arrival-flash animation.
+  const seenIDs = useRef<Set<string>>(new Set());
+  const newIDs = useRef<Set<string>>(new Set());
   const rootRef = useRef<HTMLDivElement>(null);
   const ctx = useGSAPContext(rootRef);
   const reduced = useReducedMotion();
+
+  const toggleCategory = useCallback((cat: ViolationCategory) => {
+    setSelectedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  }, []);
+  const clearCategories = useCallback(() => {
+    setSelectedCategories(new Set());
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,6 +125,19 @@ export default function ViolationsTab({
         });
         return;
       }
+      // Track new IDs for arrival-flash. On the first load, the entire set
+      // is "seen" without flashing (the existing stagger handles that
+      // mount); on subsequent loads driven by SSE re-fetch, only previously-
+      // unseen IDs flash.
+      const fresh = new Set<string>();
+      const isFirstLoad = seenIDs.current.size === 0;
+      if (!isFirstLoad) {
+        for (const v of r.data.violations) {
+          if (!seenIDs.current.has(v.ID)) fresh.add(v.ID);
+        }
+      }
+      newIDs.current = fresh;
+      seenIDs.current = new Set(r.data.violations.map((v) => v.ID));
       setState({ status: "ok", violations: r.data.violations });
     });
     return () => {
@@ -112,6 +148,8 @@ export default function ViolationsTab({
 
   // Stagger row reveal once rows are in the DOM. ~50ms per row, clamped to a
   // 600ms total window so a thousand-violation flow doesn't take 50 seconds.
+  // On SSE-driven re-fetch, ALSO flash newly-arrived rows (newIDs.current)
+  // briefly to draw attention without re-staggering the whole list.
   useEffect(() => {
     if (!ctx || state.status !== "ok" || reduced) return;
     ctx.add(() => {
@@ -130,6 +168,26 @@ export default function ViolationsTab({
         ease: "expo.out",
         stagger: perItemMs / 1000,
       });
+      // Phase 2 U11: new-arrival flash. Only fires on subsequent re-fetches;
+      // the first mount has empty newIDs and skips this branch.
+      if (newIDs.current.size > 0) {
+        const newRows: HTMLLIElement[] = [];
+        rows.forEach((row) => {
+          const id = row.getAttribute("data-violation-id");
+          if (id && newIDs.current.has(id)) newRows.push(row);
+        });
+        if (newRows.length > 0) {
+          gsap.fromTo(
+            newRows,
+            { backgroundColor: "color-mix(in oklab, var(--bg-surface) 70%, var(--accent) 30%)" },
+            {
+              backgroundColor: "rgba(0,0,0,0)",
+              duration: 0.6,
+              ease: "cubic.out",
+            },
+          );
+        }
+      }
     });
   }, [ctx, state, reduced]);
 
@@ -161,6 +219,22 @@ export default function ViolationsTab({
     );
   }
 
+  // Phase 2 U11: derive category-axis bookkeeping BEFORE applying the
+  // category filter so chip counts reflect the dataset, not the filtered
+  // view. Then apply the filter and group by severity for rendering.
+  const categoryCounts = new Map<ViolationCategory, number>();
+  const availableCategories = new Set<ViolationCategory>();
+  for (const v of state.violations) {
+    if (!v.Category) continue;
+    availableCategories.add(v.Category);
+    categoryCounts.set(v.Category, (categoryCounts.get(v.Category) ?? 0) + 1);
+  }
+
+  const filteredViolations =
+    selectedCategories.size === 0
+      ? state.violations
+      : state.violations.filter((v) => selectedCategories.has(v.Category));
+
   // Group by severity, preserving the canonical order (critical → info).
   const grouped: Record<ViolationSeverity, Violation[]> = {
     critical: [],
@@ -169,15 +243,29 @@ export default function ViolationsTab({
     low: [],
     info: [],
   };
-  for (const v of state.violations) {
+  for (const v of filteredViolations) {
     grouped[v.Severity]?.push(v);
   }
 
   return (
     <div
       ref={rootRef}
-      style={{ display: "flex", flexDirection: "column", gap: 12 }}
+      style={{ display: "flex", flexDirection: "column", gap: 0 }}
     >
+      <CategoryFilterChips
+        available={availableCategories}
+        counts={categoryCounts}
+        selected={selectedCategories}
+        onToggle={toggleCategory}
+        onClear={clearCategories}
+      />
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "12px 0" }}>
+      {filteredViolations.length === 0 ? (
+        <EmptyTab
+          title="No violations match the selected filters"
+          description="Clear the chips or pick different categories to see more results."
+        />
+      ) : null}
       {SEVERITY_ORDER.map((sev) => {
         const rows = grouped[sev];
         if (!rows || rows.length === 0) return null;
@@ -258,6 +346,8 @@ export default function ViolationsTab({
                 <li
                   key={v.ID}
                   data-violation-row
+                  data-violation-id={v.ID}
+                  data-category={v.Category}
                   style={{
                     display: "grid",
                     gridTemplateColumns: "1fr auto",
@@ -318,6 +408,7 @@ export default function ViolationsTab({
           </section>
         );
       })}
+      </div>
     </div>
   );
 }

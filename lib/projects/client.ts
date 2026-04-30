@@ -286,6 +286,11 @@ export async function listViolations(
   if (versionID) params.set("v", versionID);
   if (filters?.persona_id) params.set("persona_id", filters.persona_id);
   if (filters?.mode_label) params.set("mode_label", filters.mode_label);
+  // Phase 2 U11: category filter — multi-select chips serialize as
+  // comma-joined values. Empty array = no filter (default = show all).
+  if (filters?.category && filters.category.length > 0) {
+    params.set("category", filters.category.join(","));
+  }
   const qs = params.toString() ? `?${params.toString()}` : "";
   return getJSON<{ violations: Violation[]; count: number }>(
     `/v1/projects/${encodeURIComponent(slug)}/violations${qs}`,
