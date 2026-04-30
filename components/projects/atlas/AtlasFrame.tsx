@@ -18,11 +18,12 @@
  *     decodes PNGs in image-space (top-left origin); we don't flip the UV.
  */
 
-import { useFrame } from "@react-three/fiber";
-import { useEffect, useRef, useState } from "react";
+import { useFrame, useThree } from "@react-three/fiber";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { Screen } from "@/lib/projects/types";
 import { getTexture } from "./textureCache";
+import { lodURL, pickLOD, type LODTier } from "./lod/pickLOD";
 
 interface AtlasFrameProps {
   screen: Screen;
@@ -52,6 +53,15 @@ export default function AtlasFrame({
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
   const textureRef = useRef<THREE.Texture | null>(null);
+  // Phase 3.5 U3: tier currently routes to baseURL via lodURL — when
+  // backend tier generation lands the URL string flips by tier without
+  // touching this component. We poll camera zoom + viewport on every
+  // frame and re-route the URL when the tier transition crosses a
+  // threshold; until backend tier generation, the URL stays stable
+  // (lodURL returns baseURL for every tier today).
+  const { camera, gl } = useThree();
+  const [tier, setTier] = useState<LODTier>("full");
+  const resolvedURL = useMemo(() => lodURL(pngUrl, tier), [pngUrl, tier]);
 
   // Resolve the texture once per URL — the cache layer dedupes concurrent
   // fetches and survives theme toggles.
@@ -59,15 +69,28 @@ export default function AtlasFrame({
     setLoaded(false);
     setErrored(false);
     const tex = getTexture(
-      pngUrl,
+      resolvedURL,
       () => setLoaded(true),
       () => setErrored(true),
     );
     textureRef.current = tex;
     if (tex.image) setLoaded(true);
     // We intentionally do NOT dispose on unmount — the cache is shared and
-    // theme toggles re-enter this effect. Phase 3 ships LRU eviction.
-  }, [pngUrl]);
+    // theme toggles re-enter this effect. LRU eviction is a future polish.
+  }, [resolvedURL]);
+
+  // Phase 3.5 U3: re-evaluate LOD tier on every frame. Cheap (one
+  // multiply + 2 comparisons). Setting state only when the tier
+  // crosses a threshold prevents per-frame re-renders.
+  useFrame(() => {
+    if (!(camera instanceof THREE.OrthographicCamera)) return;
+    const next = pickLOD(
+      screen.Width,
+      camera.zoom,
+      gl.domElement.clientWidth,
+    );
+    if (next !== tier) setTier(next);
+  });
 
   // Hover scale tween — runs every frame; cheap.
   useFrame(() => {
