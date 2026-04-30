@@ -98,6 +98,7 @@ export default function ProjectToolbar({
       <div
         role="radiogroup"
         aria-label="Theme"
+        data-tour="theme-toggle"
         style={{
           display: "inline-flex",
           border: "1px solid var(--border)",
@@ -135,6 +136,7 @@ export default function ProjectToolbar({
 
       {/* Persona dropdown. Empty list → disabled w/ helper label. */}
       <label
+        data-tour="persona-toggle"
         style={{
           display: "inline-flex",
           alignItems: "center",

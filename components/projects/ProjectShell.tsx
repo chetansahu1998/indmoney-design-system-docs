@@ -72,6 +72,13 @@ import DecisionsTab from "./tabs/DecisionsTab";
 import JSONTab from "./tabs/JSONTab";
 import ViolationsTab from "./tabs/ViolationsTab";
 
+// Phase 3 U11: Shepherd.js tour. Lazy-loaded so its ~30KB chunk only
+// ships when the tour actually mounts (first-time visitors only).
+const ProductTour = dynamic(
+  () => import("./../onboarding/ProductTour"),
+  { ssr: false },
+);
+
 /**
  * Dynamic-imported r3f atlas. ssr:false keeps three.js out of the server
  * module graph — a `next build` of `app/projects/[slug]/page.js` must not
@@ -515,6 +522,12 @@ export default function ProjectShell({
         onPersonaChange={changePersona}
       />
 
+      {/* Phase 3 U11: 4-step Shepherd.js tour. Mounts only for
+          first-time visitors (or when ?reset-tour=1 is in the URL).
+          The component lazy-loads Shepherd + its CSS so we pay zero
+          bundle cost on subsequent visits. */}
+      <ProductTour searchParams={searchParams} />
+
       {/* Atlas slot — top half. r3f canvas (U7) replaces the U6 PNG grid. */}
       <div
         data-anim="atlas-canvas"
@@ -585,6 +598,7 @@ export default function ProjectShell({
                 type="button"
                 role="tab"
                 id={`tab-${tab.id}`}
+                data-tour={`tab-${tab.id}`}
                 aria-selected={active}
                 aria-controls={`tabpanel-${tab.id}`}
                 onClick={() => changeTab(tab.id)}
