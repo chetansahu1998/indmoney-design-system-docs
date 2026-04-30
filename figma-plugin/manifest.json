@@ -10,10 +10,12 @@
     "allowedDomains": [
       "https://api.figma.com",
       "https://indmoney-design-system-docs.vercel.app",
+      "https://ds-service.indmoney.com",
       "http://localhost:3001",
-      "http://localhost:7474"
+      "http://localhost:7474",
+      "http://localhost:7475"
     ],
-    "reasoning": "Talks to the docs site / ds-service to push selections, fetch tokens, and inject the latest extracted components and icons."
+    "reasoning": "Talks to the docs site / ds-service to push selections, fetch tokens, inject extracted components and icons, and export Projects (Flow Atlas) flows."
   },
   "permissions": ["currentuser", "teamlibrary"],
   "menu": [
@@ -21,6 +23,8 @@
     { "separator": true },
     { "name": "Audit selection",         "command": "auditSelection" },
     { "name": "Audit file",              "command": "auditFile" },
+    { "separator": true },
+    { "name": "Open Projects mode",      "command": "openProjects" },
     { "separator": true },
     { "name": "Open docs site",          "command": "openDocsSite" }
   ]

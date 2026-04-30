@@ -262,11 +262,139 @@
     left: 14px;
     bottom: 0;
     height: 2px;
-    width: calc((100% - 28px) / 3);
+    width: calc((100% - 28px) / 4);
     background: var(--accent);
     border-radius: 2px 2px 0 0;
     transition: transform var(--d-base) var(--ease-out);
     pointer-events: none;
+  }
+
+  /* ── Projects mode (U3) — group cards + editable fields ────────── */
+  .projects-empty {
+    padding: 24px 16px;
+    text-align: center;
+    color: var(--text-3);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .projects-warnings {
+    padding: 8px 12px;
+    background: var(--warning-soft, #fff8e1);
+    border: 1px solid var(--warning, #f5b400);
+    border-radius: var(--r-md);
+    font-size: 11.5px;
+    color: var(--text-2);
+    margin: 0 0 12px 0;
+    line-height: 1.5;
+  }
+  .projects-warnings ul { margin: 4px 0 0 16px; padding: 0; }
+  .group-card {
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    background: var(--bg-surface-1);
+    padding: 12px;
+    margin-bottom: 10px;
+  }
+  .group-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    gap: 8px;
+  }
+  .group-card-title {
+    font-weight: 600;
+    color: var(--text-1);
+    font-size: 12.5px;
+  }
+  .group-card-meta {
+    color: var(--text-3);
+    font-size: 10.5px;
+    font-family: "SF Mono", monospace;
+  }
+  .group-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 10px;
+    margin-bottom: 8px;
+  }
+  .group-fields .field-full { grid-column: 1 / -1; }
+  .group-fields label {
+    display: block;
+    font-size: 10.5px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 3px;
+  }
+  .group-fields input,
+  .group-fields select {
+    width: 100%;
+    padding: 5px 7px;
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-sm, 4px);
+    color: var(--text-1);
+    font-size: 11.5px;
+    font-family: inherit;
+    box-sizing: border-box;
+  }
+  .group-fields input:focus,
+  .group-fields select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .group-fields input.invalid {
+    border-color: var(--danger, #d33);
+  }
+  .group-pairs {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border-subtle);
+  }
+  .group-pairs-summary {
+    font-size: 11px;
+    color: var(--text-2);
+    cursor: pointer;
+    user-select: none;
+  }
+  .group-pairs-summary::-webkit-details-marker { display: none; }
+  .group-pairs-summary::before {
+    content: "▸";
+    display: inline-block;
+    margin-right: 5px;
+    transition: transform var(--d-quick) var(--ease);
+  }
+  details[open] > .group-pairs-summary::before { transform: rotate(90deg); }
+  .pair-row {
+    padding: 5px 0;
+    font-size: 11px;
+    color: var(--text-2);
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .pair-row .pair-modes {
+    font-family: "SF Mono", monospace;
+    font-size: 10px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 1px 6px;
+    border-radius: 999px;
+  }
+  .pair-row .pair-warning {
+    background: var(--warning-soft, #fff8e1);
+    color: var(--warning, #b97d00);
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 999px;
+  }
+  .field-error {
+    color: var(--danger, #d33);
+    font-size: 10.5px;
+    margin-top: 3px;
+    line-height: 1.4;
   }
 
   /* ── Disconnect / staleness banner ──────────────────────────────── */
@@ -943,7 +1071,7 @@
 </div>
 
 <!-- ────────────────────────────────────────────────────────────────
-     Mode picker — Publish · Audit · Library
+     Mode picker — Publish · Audit · Library · Projects
      ──────────────────────────────────────────────────────────────── -->
 <div class="modes" role="tablist" aria-label="Plugin mode">
   <button class="mode" id="mode-publish" role="tab" aria-selected="true" aria-controls="view-publish">
@@ -956,6 +1084,10 @@
   </button>
   <button class="mode" id="mode-library" role="tab" aria-selected="false" aria-controls="view-library">
     <span>Library</span>
+  </button>
+  <button class="mode" id="mode-projects" role="tab" aria-selected="false" aria-controls="view-projects">
+    <span>Projects</span>
+    <span class="badge" id="mode-projects-badge" hidden>0</span>
   </button>
   <span class="mode-underline" id="mode-underline" style="transform: translateX(0)"></span>
 </div>
@@ -1137,6 +1269,111 @@
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════════════
+       VIEW: Projects (U3)
+       ═══════════════════════════════════════════════════════════════ -->
+  <div class="view" id="view-projects" role="tabpanel" aria-labelledby="mode-projects">
+
+    <div class="card elevated">
+      <div class="card-header">
+        <span class="card-title">Projects</span>
+        <span class="card-meta" id="projects-meta"></span>
+      </div>
+      <div class="card-body">
+        <div class="card-meta" style="line-height: 1.55;">
+          Select frames in your file. The plugin smart-groups them by section,
+          detects light/dark mode pairs, and previews the export below.
+        </div>
+        <div class="actions">
+          <button id="btn-projects-refresh">Refresh detection</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="projects-warnings-host"></div>
+    <div id="projects-groups-host"></div>
+
+    <div class="card" id="projects-empty">
+      <div class="card-body">
+        <div class="projects-empty">
+          Select frames inside one or more sections to see grouping +
+          mode-pair detection. <br/>
+          Adjacency threshold for pairs: |Δx|&lt;10px, different y, shared
+          variable collection, different mode.
+        </div>
+      </div>
+    </div>
+
+    <div class="actions" id="projects-send-row" style="display:none">
+      <button class="primary flex-2" id="btn-projects-send">Send to Projects</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- ────────────────────────────────────────────────────────────────
+     Phase 3 U9 — Projects mode first-run modal.
+     Shown exactly once per Figma profile, gated by figma.clientStorage
+     (the code side ships projects.firstrun-status on boot). Hidden by
+     default — the message handler unsets [hidden] when seen=false.
+     ──────────────────────────────────────────────────────────────── -->
+<div
+  id="projects-firstrun-modal"
+  hidden
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="firstrun-title"
+  style="
+    position:fixed; inset:0; z-index:9999;
+    display:flex; align-items:center; justify-content:center;
+    background: rgba(0,0,0,0.62); padding: 20px;
+  "
+>
+  <div
+    style="
+      background: var(--bg, #fff); color: var(--text-1, #111);
+      border: 1px solid rgba(0,0,0,0.12); border-radius: 12px;
+      max-width: 380px; width: 100%; padding: 24px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.24);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    "
+  >
+    <h2
+      id="firstrun-title"
+      style="
+        margin: 0 0 12px;
+        font-size: 16px; font-weight: 700;
+        color: var(--text-1, #111);
+      "
+    >
+      Welcome to Projects mode
+    </h2>
+    <p style="margin: 0 0 12px; font-size: 12px; line-height: 1.55; color: var(--text-2, #444);">
+      Select frames in your file, and Projects mode auto-groups them by
+      enclosing SECTION + auto-detects light/dark mode pairs. When you
+      hit Send, the docs site renders the atlas + audit + DRD for the
+      flow at <code style="font-family:monospace; font-size:11px;">/projects/&lt;slug&gt;</code>.
+    </p>
+    <p style="margin: 0 0 16px; font-size: 12px; line-height: 1.55; color: var(--text-2, #444);">
+      For a per-role walkthrough, open
+      <code style="font-family:monospace; font-size:11px;">/onboarding</code>
+      on the docs site.
+    </p>
+    <div style="display:flex; justify-content:flex-end; gap: 8px;">
+      <button
+        id="btn-firstrun-dismiss"
+        class="primary"
+        style="
+          padding: 8px 16px; font-size: 12px; font-weight: 600;
+          border: 1px solid var(--border, rgba(0,0,0,0.12));
+          border-radius: 6px; cursor: pointer;
+          background: var(--accent, #0a84ff); color: #fff;
+        "
+      >
+        Got it
+      </button>
+    </div>
+  </div>
 </div>
 
 <!-- ────────────────────────────────────────────────────────────────
@@ -1205,21 +1442,48 @@ const state = {
 /* ════════════════════════════════════════════════════════════════════
    Mode switching — tabs + animated underline
    ════════════════════════════════════════════════════════════════════ */
+const MODES = ["publish", "audit", "library", "projects"];
 function setMode(next) {
+  const prev = state.mode;
   state.mode = next;
-  for (const m of ["publish", "audit", "library"]) {
+  for (const m of MODES) {
     const btn = $(`mode-${m}`);
     const view = $(`view-${m}`);
+    if (!btn || !view) continue;
     btn.setAttribute("aria-selected", m === next ? "true" : "false");
     view.classList.toggle("active", m === next);
   }
-  // Animate underline to selected mode index
-  const idx = ["publish", "audit", "library"].indexOf(next);
+  // Animate underline to selected mode index. Underline width is
+  // calc((100% - 28px) / 4) so each step translates one underline-width.
+  const idx = Math.max(0, MODES.indexOf(next));
   $("mode-underline").style.transform = `translateX(calc(${idx} * 100%))`;
+
+  // Notify the plugin main thread when Projects tab is (de)activated so it
+  // can run detection on selectionchange. Fire only on transitions to avoid
+  // chatty churn.
+  if (next === "projects" && prev !== "projects") {
+    post("projects.set-active", { active: true });
+  } else if (prev === "projects" && next !== "projects") {
+    post("projects.set-active", { active: false });
+  }
 }
 $("mode-publish").addEventListener("click", () => setMode("publish"));
 $("mode-audit").addEventListener("click", () => setMode("audit"));
 $("mode-library").addEventListener("click", () => setMode("library"));
+$("mode-projects").addEventListener("click", () => setMode("projects"));
+
+// Phase 3 U9: first-run modal dismiss handler. Hides the modal client-side
+// + posts to code so figma.clientStorage records the durable flag.
+{
+  const dismissBtn = $("btn-firstrun-dismiss");
+  if (dismissBtn) {
+    dismissBtn.addEventListener("click", () => {
+      const modal = $("projects-firstrun-modal");
+      if (modal) modal.hidden = true;
+      post("projects.firstrun-dismiss");
+    });
+  }
+}
 
 /* ════════════════════════════════════════════════════════════════════
    Status bar / connection
@@ -1740,6 +2004,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "1") { e.preventDefault(); setMode("publish"); }
   if (e.key === "2") { e.preventDefault(); setMode("audit"); }
   if (e.key === "3") { e.preventDefault(); setMode("library"); }
+  if (e.key === "4") { e.preventDefault(); setMode("projects"); }
 });
 
 /* ════════════════════════════════════════════════════════════════════
@@ -1816,6 +2081,351 @@ function formatUptime(isoStr) {
     return "";
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   Projects mode (U3) — smart-grouping preview + send placeholder
+   ════════════════════════════════════════════════════════════════════ */
+
+// 9 curated products (per plan)
+const PROJECTS_PRODUCTS = [
+  "Plutus", "Tax", "Indian Stocks", "US Stocks", "Mutual Funds",
+  "Social", "Dashboard", "Search & Watchlist", "Notifications",
+];
+// Curated personas (per plan) + free-text "Other"
+const PROJECTS_PERSONAS = [
+  "Default", "New User", "Logged-out", "KYC-pending", "KYC-verified",
+  "F&O-activated", "MTF-enabled", "Plutus", "Returning",
+];
+// Path autocomplete dataset — minimal seed; expanded later via DS taxonomy.
+const PROJECTS_PATH_AUTOCOMPLETE = [
+  "/learn", "/learn/touchpoints", "/dashboard", "/portfolio",
+  "/stocks", "/stocks/details", "/mutual-funds", "/mutual-funds/details",
+  "/us-stocks", "/notifications", "/watchlist", "/search",
+  "/onboarding", "/kyc", "/profile",
+];
+
+// Validation: name ≤256, path ≤256, persona ≤128. Allowlist [\w \-_/&·]+,
+// reject CR/LF/NUL.
+const ALLOWLIST_RE = /^[\w \-_/&·]+$/;
+function validateField(name, value, max) {
+  if (value == null || value.length === 0) return `${name} is required`;
+  if (value.length > max) return `${name} too long (max ${max})`;
+  if (/[\r\n\0]/.test(value)) return `${name} contains forbidden characters (CR/LF/NUL)`;
+  if (!ALLOWLIST_RE.test(value)) return `${name} has disallowed characters (allow: letters, digits, space, - _ / & ·)`;
+  return null;
+}
+
+// Latest detected payload from main thread; UI-side editable overlay map
+// keyed by group_key with the designer's edits.
+const projectsState = {
+  detected: null,        // ProjectsDetectedGroupsPayload
+  edits: {},              // { [group_key]: { name, platform, product, path, persona, persona_other } }
+  sendInFlight: false,
+};
+
+function renderProjectsGroups() {
+  const host = $("projects-groups-host");
+  const warnHost = $("projects-warnings-host");
+  const empty = $("projects-empty");
+  const sendRow = $("projects-send-row");
+  const meta = $("projects-meta");
+  const badge = $("mode-projects-badge");
+
+  const d = projectsState.detected;
+  warnHost.innerHTML = "";
+  host.innerHTML = "";
+
+  if (!d || d.groups.length === 0) {
+    empty.style.display = "";
+    sendRow.style.display = "none";
+    meta.textContent = "";
+    badge.hidden = true;
+    if (d && d.warnings && d.warnings.length) {
+      const w = document.createElement("div");
+      w.className = "projects-warnings";
+      w.innerHTML = `<strong>Heads up</strong><ul>${d.warnings.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`;
+      warnHost.appendChild(w);
+    }
+    return;
+  }
+  empty.style.display = "none";
+  sendRow.style.display = "";
+  badge.hidden = false;
+  badge.textContent = String(d.groups.length);
+  meta.textContent = `${d.total_frames} frame${d.total_frames === 1 ? "" : "s"} · ${d.groups.length} group${d.groups.length === 1 ? "" : "s"}`;
+
+  if (d.warnings && d.warnings.length) {
+    const w = document.createElement("div");
+    w.className = "projects-warnings";
+    w.innerHTML = `<strong>Heads up</strong><ul>${d.warnings.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`;
+    warnHost.appendChild(w);
+  }
+
+  // Path datalist for autocomplete (declared once).
+  if (!$("projects-path-list")) {
+    const dl = document.createElement("datalist");
+    dl.id = "projects-path-list";
+    dl.innerHTML = PROJECTS_PATH_AUTOCOMPLETE.map((p) => `<option value="${escapeHtml(p)}"></option>`).join("");
+    document.body.appendChild(dl);
+  }
+
+  for (const g of d.groups) {
+    host.appendChild(renderGroupCard(g));
+  }
+}
+
+function getOrInitEdits(g) {
+  let e = projectsState.edits[g.group_key];
+  if (!e) {
+    e = {
+      name: g.default_name,
+      platform: g.platform_default || "",
+      product: PROJECTS_PRODUCTS[0],
+      path: "",
+      persona: PROJECTS_PERSONAS[0],
+      persona_other: "",
+    };
+    projectsState.edits[g.group_key] = e;
+  }
+  return e;
+}
+
+function renderGroupCard(g) {
+  const e = getOrInitEdits(g);
+  const card = document.createElement("div");
+  card.className = "group-card";
+  card.dataset.groupKey = g.group_key;
+
+  const subtitle = g.section_name
+    ? `${g.frames.length} frames · ${g.pairs.length} mode-pair${g.pairs.length === 1 ? "" : "s"}`
+    : `Freeform · ${g.frames.length} frame${g.frames.length === 1 ? "" : "s"} · ${g.pairs.length} pair${g.pairs.length === 1 ? "" : "s"}`;
+
+  card.innerHTML = `
+    <div class="group-card-head">
+      <div>
+        <div class="group-card-title">${escapeHtml(g.default_name)}</div>
+        <div class="group-card-meta">${escapeHtml(subtitle)}</div>
+      </div>
+      <div class="group-card-meta">${escapeHtml(g.group_key)}</div>
+    </div>
+    <div class="group-fields">
+      <div class="field-full">
+        <label>Name</label>
+        <input data-k="name" type="text" maxlength="256" value="${escapeHtml(e.name)}" />
+        <div class="field-error" data-err="name" hidden></div>
+      </div>
+      <div>
+        <label>Platform</label>
+        <select data-k="platform">
+          <option value="" ${e.platform === "" ? "selected" : ""}>—</option>
+          <option value="mobile" ${e.platform === "mobile" ? "selected" : ""}>Mobile</option>
+          <option value="web" ${e.platform === "web" ? "selected" : ""}>Web</option>
+        </select>
+      </div>
+      <div>
+        <label>Product</label>
+        <select data-k="product">
+          ${PROJECTS_PRODUCTS.map((p) => `<option ${p === e.product ? "selected" : ""}>${escapeHtml(p)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field-full">
+        <label>Path</label>
+        <input data-k="path" type="text" maxlength="256" list="projects-path-list" placeholder="e.g. /learn/touchpoints" value="${escapeHtml(e.path)}" />
+        <div class="field-error" data-err="path" hidden></div>
+      </div>
+      <div>
+        <label>Persona</label>
+        <select data-k="persona">
+          ${PROJECTS_PERSONAS.map((p) => `<option ${p === e.persona ? "selected" : ""}>${escapeHtml(p)}</option>`).join("")}
+          <option value="Other" ${e.persona === "Other" ? "selected" : ""}>Other…</option>
+        </select>
+      </div>
+      <div data-persona-other-wrap ${e.persona === "Other" ? "" : "style=\"display:none\""}>
+        <label>Custom persona</label>
+        <input data-k="persona_other" type="text" maxlength="128" value="${escapeHtml(e.persona_other)}" />
+        <div class="field-error" data-err="persona_other" hidden></div>
+      </div>
+    </div>
+    ${g.pairs.length || g.unpaired_frame_ids.length ? `
+      <details class="group-pairs">
+        <summary class="group-pairs-summary">Mode pairs (${g.pairs.length}) · Unpaired (${g.unpaired_frame_ids.length})</summary>
+        <div>
+          ${g.pairs.map((p) => {
+            const primary = g.frames.find((f) => f.id === p.primary_frame_id);
+            const paired = p.paired_frame_ids.map((id) => g.frames.find((f) => f.id === id)).filter(Boolean);
+            return `<div class="pair-row">
+              <span class="pair-modes">${escapeHtml(p.modes.join(" ⇄ "))}</span>
+              <span>${escapeHtml(primary ? primary.name : p.primary_frame_id)}</span>
+              <span class="dim">→</span>
+              <span>${escapeHtml(paired.map((f) => f.name).join(", "))}</span>
+              ${p.theme_parity_warning ? `<span class="pair-warning" title="Skeleton diff outside variable modes">⚠ parity</span>` : ""}
+            </div>`;
+          }).join("")}
+          ${g.unpaired_frame_ids.map((id) => {
+            const f = g.frames.find((x) => x.id === id);
+            return `<div class="pair-row"><span class="pair-modes" style="background:var(--bg-surface-3);color:var(--text-3)">single</span><span>${escapeHtml(f ? f.name : id)}</span></div>`;
+          }).join("")}
+        </div>
+      </details>
+    ` : ""}
+  `;
+
+  // Wire field listeners.
+  card.querySelectorAll("input[data-k], select[data-k]").forEach((el) => {
+    el.addEventListener("input", () => onFieldChange(g, el, card));
+    el.addEventListener("change", () => onFieldChange(g, el, card));
+  });
+
+  return card;
+}
+
+function onFieldChange(g, el, card) {
+  const k = el.dataset.k;
+  const e = getOrInitEdits(g);
+  e[k] = el.value;
+
+  // Persona "Other" toggles the custom-persona text field.
+  if (k === "persona") {
+    const wrap = card.querySelector("[data-persona-other-wrap]");
+    if (wrap) wrap.style.display = el.value === "Other" ? "" : "none";
+  }
+
+  // Inline validation for length-capped fields.
+  const caps = { name: 256, path: 256, persona_other: 128 };
+  if (caps[k] != null && k !== "persona_other") {
+    const err = validateField(k, el.value, caps[k]);
+    showFieldError(card, k, err);
+  }
+  if (k === "persona_other" && e.persona === "Other") {
+    const err = validateField("persona_name", el.value, 128);
+    showFieldError(card, "persona_other", err);
+  }
+}
+
+function showFieldError(card, key, err) {
+  const errEl = card.querySelector(`[data-err="${key}"]`);
+  const inputEl = card.querySelector(`[data-k="${key}"]`);
+  if (!errEl) return;
+  if (err) {
+    errEl.hidden = false;
+    errEl.textContent = err;
+    if (inputEl) inputEl.classList.add("invalid");
+  } else {
+    errEl.hidden = true;
+    errEl.textContent = "";
+    if (inputEl) inputEl.classList.remove("invalid");
+  }
+}
+
+function buildProjectsSendPayload() {
+  const d = projectsState.detected;
+  if (!d) return null;
+  // crypto.randomUUID is required (per plan); fall back via getRandomValues
+  // if for some reason crypto.randomUUID isn't exposed (older sandboxes).
+  const idempotency_key = (typeof crypto !== "undefined" && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : fallbackUUID();
+
+  const flows = [];
+  const errors = [];
+  for (const g of d.groups) {
+    const e = getOrInitEdits(g);
+    const personaName = e.persona === "Other" ? e.persona_other : e.persona;
+
+    const nameErr = validateField("name", e.name, 256);
+    const pathErr = validateField("path", e.path, 256);
+    const personaErr = validateField("persona_name", personaName, 128);
+
+    if (nameErr) errors.push(`${g.default_name}: ${nameErr}`);
+    if (pathErr) errors.push(`${g.default_name}: ${pathErr}`);
+    if (personaErr) errors.push(`${g.default_name}: ${personaErr}`);
+    if (!e.platform) errors.push(`${g.default_name}: platform required`);
+    if (!e.product) errors.push(`${g.default_name}: product required`);
+
+    flows.push({
+      section_id: g.section_id,
+      frame_ids: g.frames.map((f) => f.id),
+      platform: e.platform,
+      product: e.product,
+      path: e.path,
+      persona_name: personaName,
+      name: e.name,
+      mode_groups: g.pairs.map((p) => ({
+        primary_frame_id: p.primary_frame_id,
+        paired_frame_ids: p.paired_frame_ids,
+        modes: p.modes,
+        theme_parity_warning_at_export: p.theme_parity_warning,
+      })),
+      unpaired_frame_ids: g.unpaired_frame_ids,
+    });
+  }
+  return {
+    payload: {
+      idempotency_key,
+      file_id: d.file_key,
+      file_name: d.file_name,
+      flows,
+    },
+    errors,
+  };
+}
+
+function fallbackUUID() {
+  // RFC4122-v4 via getRandomValues. crypto.randomUUID is available in
+  // recent Figma sandboxes, but this guard avoids hard-failing.
+  const buf = new Uint8Array(16);
+  crypto.getRandomValues(buf);
+  buf[6] = (buf[6] & 0x0f) | 0x40;
+  buf[8] = (buf[8] & 0x3f) | 0x80;
+  const h = [...buf].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+$("btn-projects-refresh").addEventListener("click", () => {
+  post("projects.refresh-detection");
+  pushToast({ message: "Re-detecting groups…", level: "info" });
+});
+
+$("btn-projects-send").addEventListener("click", () => {
+  if (projectsState.sendInFlight) return;
+  const built = buildProjectsSendPayload();
+  if (!built) {
+    pushToast({ message: "Nothing to send — select frames first.", level: "error" });
+    return;
+  }
+  if (built.errors.length > 0) {
+    pushToast({
+      message: "Fix validation errors before sending",
+      sub: built.errors[0],
+      level: "error",
+    });
+    return;
+  }
+  // U3 placeholder — backend wiring lands in U4.
+  // eslint-disable-next-line no-console
+  console.log("payload:", built.payload);
+
+  // Disable for 2s to prevent rapid double-submits (per plan).
+  projectsState.sendInFlight = true;
+  const btn = $("btn-projects-send");
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.innerHTML = `<span class="spin"></span>Sending…`;
+  setTimeout(() => {
+    projectsState.sendInFlight = false;
+    btn.disabled = false;
+    btn.textContent = orig;
+  }, 2000);
+
+  // Tell main thread (no-op in U3 beyond logging back).
+  post("projects.send", built.payload);
+
+  pushToast({
+    message: `Payload built (${built.payload.flows.length} flow${built.payload.flows.length === 1 ? "" : "s"})`,
+    sub: "U3 placeholder — see console; backend in U4.",
+    level: "success",
+  });
+});
 
 /* ════════════════════════════════════════════════════════════════════
    Inbound message handler (protocol unchanged from previous build)
@@ -1899,6 +2509,37 @@ window.onmessage = (event) => {
         level: msg.payload.level,
       });
       break;
+    case "projects.detected-groups": {
+      projectsState.detected = msg.payload;
+      // Drop edits for groups that no longer exist; keep edits for surviving keys.
+      const liveKeys = new Set(msg.payload.groups.map((g) => g.group_key));
+      for (const k of Object.keys(projectsState.edits)) {
+        if (!liveKeys.has(k)) delete projectsState.edits[k];
+      }
+      renderProjectsGroups();
+      break;
+    }
+    case "projects.send-result": {
+      // Placeholder ack for U3; U4 will surface real progress + result.
+      break;
+    }
+    case "projects.send-progress": {
+      // Allow the Open-Projects-from-menu command to deep-link the user.
+      if (msg.payload && msg.payload.phase === "open-via-command") {
+        setMode("projects");
+      }
+      break;
+    }
+    case "projects.firstrun-status": {
+      // Phase 3 U9: show the welcome modal exactly once per Figma profile.
+      // The code side reads figma.clientStorage and ships {seen: bool}; we
+      // only render when seen is false. Dismissal posts back to the code.
+      const firstrunModal = $("projects-firstrun-modal");
+      if (firstrunModal && msg.payload && msg.payload.seen === false) {
+        firstrunModal.hidden = false;
+      }
+      break;
+    }
   }
 };
 

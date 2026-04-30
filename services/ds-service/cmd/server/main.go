@@ -31,15 +31,20 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/auditbyslug"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/auth"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/db"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/extractor"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects/rules"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/sse"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/sync"
 )
 
@@ -80,13 +85,112 @@ func main() {
 		GitPush: cfg.SyncGitPush,
 	}
 
+	// ─── Projects (U4) wiring ────────────────────────────────────────────
+	// Build the SSE broker, ticket store, rate limiter, idempotency cache,
+	// and audit-job enqueuer once at process boot — all are in-memory and
+	// outlive any single request.
+	broker := sse.NewMemoryBroker(sse.BrokerOptions{Logger: log})
+	tickets := sse.NewMemoryTicketStore(sse.DefaultTicketGCInterval)
+	rateLimiter := projects.NewRateLimiter()
+	idempotencyCache := projects.NewIdempotencyCache()
+	auditEnqueuer := projects.NewAuditEnqueuer()
+	projectsAuditLogger := &projects.AuditLogger{DB: dbConn}
+
+	dataDir := filepath.Join(cfg.RepoDir, "services/ds-service/data")
+	// Phase 3.5 U2: KTX2 transcoder. Probes basisu on PATH at boot;
+	// when missing, the transcoder is Available=false and every
+	// Transcode call short-circuits gracefully.
+	ktx2 := projects.NewKTX2Transcoder(log)
+	pipelineFactory := func(ctx context.Context, tenantID string, repo *projects.TenantRepo) (*projects.Pipeline, error) {
+		// Decrypt per-tenant Figma PAT.
+		rec, err := dbConn.GetFigmaToken(ctx, tenantID)
+		if err != nil {
+			return nil, fmt.Errorf("get figma token: %w", err)
+		}
+		pat, err := cfg.EncryptionKey.Decrypt(rec.EncryptedToken)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt figma token: %w", err)
+		}
+		fc := client.New(string(pat))
+		renderer := projects.NewHTTPFigmaRenderer(string(pat))
+		return &projects.Pipeline{
+			Repo:          repo,
+			Renderer:      renderer,
+			NodeFetcher:   fc,
+			SSE:           broker,
+			AuditEnqueuer: auditEnqueuer,
+			AuditLogger:   projectsAuditLogger,
+			DataDir:       dataDir,
+			Log:           log,
+			KTX2:          ktx2,
+		}, nil
+	}
+
+	projectsServer := projects.NewServer(projects.ServerDeps{
+		DB:              dbConn,
+		Broker:          broker,
+		Tickets:         tickets,
+		RateLimiter:     rateLimiter,
+		Idempotency:     idempotencyCache,
+		AuditLogger:     projectsAuditLogger,
+		AuditEnqueuer:   auditEnqueuer,
+		DataDir:         dataDir,
+		PipelineFactory: pipelineFactory,
+		Log:             log,
+	})
+
+	// Recovery sweeper — startup sweep + 60s loop. Background goroutine.
+	recoveryCtx, recoveryCancel := context.WithCancel(context.Background())
+	defer recoveryCancel()
+	go projects.RunRecoveryLoop(recoveryCtx, dbConn.DB, log)
+
+	// ─── Audit-job worker pool (Phase 1 U5; Phase 2 U7 scaling) ──────────
+	// Phase 1 shipped size=1. Phase 2 scales to 6 (env-tunable via
+	// DS_AUDIT_WORKERS) so AE-7's 47-flow fan-out can land within the 5-min
+	// budget. Heartbeat goroutine + ResetStaleRunningJobs + ClaimNextJob's
+	// stale-lease takeover already shipped in Phase 1.
+	workerRepo := projects.NewWorkerRepo(dbConn.DB, nil)
+	auditCoreRunner := projects.NewAuditCoreRunner(projects.AuditCoreRunnerConfig{
+		Loader: projects.NewDBVersionScreenLoader(dbConn.DB),
+		// Phase 1 ships with empty token + candidate slices; the audit core
+		// emits zero violations against an empty catalog.
+	})
+	// Phase 2 prod-wire: wrap the audit-core runner in a tenant-aware
+	// composite that fans out to every Phase 2 rule (theme parity / cross-
+	// persona / a11y contrast / a11y touch target / flow graph / component
+	// governance). The composite reads the tenant_id from the version on each
+	// Run() call so the worker can hold a single Runner pointer at boot.
+	//
+	// Variable resolution caveat: until the Go-side resolver mirroring
+	// lib/projects/resolveTreeForMode.ts ships, theme_parity + a11y_contrast
+	// run in degraded mode (per-mode trees are identical until the resolver
+	// can apply per-mode bindings). See loaders.go header comment.
+	compositeRunner := rules.NewTenantAwareRunner(dbConn.DB, auditCoreRunner, nil)
+	workerPoolSize := workerPoolSizeFromEnv(log)
+	workerPool := &projects.WorkerPool{
+		Size:          workerPoolSize,
+		Repo:          workerRepo,
+		Runner:        compositeRunner,
+		Broker:        broker,
+		Notifications: auditEnqueuer.Notifications(),
+		Log:           log,
+	}
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	if err := workerPool.Start(workerCtx); err != nil {
+		log.Error("worker pool start", "err", err)
+		os.Exit(1)
+	}
+
 	srv := &server{
-		cfg:  cfg,
-		db:   dbConn,
-		jwt:  cfg.JWTKey,
-		enc:  cfg.EncryptionKey,
-		orch: orch,
-		log:  log,
+		cfg:            cfg,
+		db:             dbConn,
+		jwt:            cfg.JWTKey,
+		enc:            cfg.EncryptionKey,
+		orch:           orch,
+		log:            log,
+		projectsServer: projectsServer,
+		broker:         broker,
 	}
 
 	mux := http.NewServeMux()
@@ -187,6 +291,35 @@ func getenv(k, def string) string {
 	return def
 }
 
+// workerPoolSizeFromEnv reads DS_AUDIT_WORKERS and returns a clamped pool size.
+// Defaults to 6 (Phase 2 target — AE-7 47-flow fan-out under 5min). Clamped to
+// [1, 32]: 0/negative → 1 (single worker still serves), >32 → 32 (avoid
+// runaway parallelism on shared SQLite which serializes writes anyway). Logs
+// the resolved size + reason at boot for ops visibility.
+func workerPoolSizeFromEnv(log *slog.Logger) int {
+	const defaultSize = 6
+	const maxSize = 32
+	raw := os.Getenv("DS_AUDIT_WORKERS")
+	if raw == "" {
+		return defaultSize
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Warn("worker_pool: DS_AUDIT_WORKERS not an integer; using default",
+			"raw", raw, "default", defaultSize, "err", err.Error())
+		return defaultSize
+	}
+	if n <= 0 {
+		log.Warn("worker_pool: DS_AUDIT_WORKERS clamped to 1", "raw", n)
+		return 1
+	}
+	if n > maxSize {
+		log.Warn("worker_pool: DS_AUDIT_WORKERS clamped to max", "raw", n, "max", maxSize)
+		return maxSize
+	}
+	return n
+}
+
 // loadDotEnv reads .env.local from cwd or any ancestor.
 func loadDotEnv() {
 	for _, path := range []string{".env.local", "../.env.local", "../../.env.local", "../../../.env.local"} {
@@ -217,12 +350,14 @@ func loadDotEnv() {
 // ─── Server ─────────────────────────────────────────────────────────────────
 
 type server struct {
-	cfg  *config
-	db   *db.DB
-	jwt  *auth.SigningKey
-	enc  *auth.EncryptionKey
-	orch *sync.Orchestrator
-	log  *slog.Logger
+	cfg            *config
+	db             *db.DB
+	jwt            *auth.SigningKey
+	enc            *auth.EncryptionKey
+	orch           *sync.Orchestrator
+	log            *slog.Logger
+	projectsServer *projects.Server
+	broker         projects.SSEPublisher // shared SSE publisher; used by Phase 2 fan-out + audit-job runs
 }
 
 func (s *server) routes(mux *http.ServeMux) {
@@ -233,6 +368,71 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/sync/{tenant}", s.requireAuth(s.handleSync))
 	mux.HandleFunc("GET /v1/audit/{tenant}", s.requireAuth(s.handleAudit))
 	mux.HandleFunc("GET /v1/me", s.requireAuth(s.handleMe))
+
+	// ─── Projects (U4) ───────────────────────────────────────────────────
+	// Auth shape is identical to the existing /v1/audit and /v1/sync routes:
+	// JWT bearer token verified by requireAuth, claims placed in r.Context()
+	// under the cmd/server key. The projects package re-reads them via the
+	// AdaptAuthMiddleware shim to keep its handlers stdlib-portable.
+	claimsReader := func(r *http.Request) *auth.Claims { return claimsFrom(r) }
+	mux.HandleFunc("POST /v1/projects/export",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleExport)))
+	mux.HandleFunc("GET /v1/projects",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectList)))
+	mux.HandleFunc("GET /v1/projects/{slug}",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectGet)))
+	mux.HandleFunc("POST /v1/projects/{slug}/events/ticket",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleEventsTicket)))
+	// SSE events endpoint is ticket-authed (NOT JWT) — EventSource cannot send
+	// Authorization headers. Ticket is single-use, scoped to user/tenant/trace,
+	// 60s TTL.
+	mux.HandleFunc("GET /v1/projects/{slug}/events", s.projectsServer.HandleProjectEvents)
+
+	// PNG screenshot route (U11). Auth-gated, tenant-scoped via repo. Files
+	// live under services/ds-service/data/screens/ (NOT public/) — the
+	// route streams them with Cache-Control: private and tenant-isolation
+	// returning 404 (no existence oracle). Phase 8 swaps to S3 signed URLs
+	// without changing the route shape.
+	mux.HandleFunc("GET /v1/projects/{slug}/screens/{id}/png",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleScreenPNG())))
+	// Phase 3.5 U2 — KTX2 sidecar route. Returns 404 when basisu wasn't
+	// on PATH at persist time; frontend falls back to .png.
+	mux.HandleFunc("GET /v1/projects/{slug}/screens/{id}/ktx2",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleScreenKTX2())))
+
+	// Canonical-tree lazy-fetch (U8). The JSON tab calls this on screen
+	// click. Auth-gated, tenant-scoped, returns the raw canonical_tree JSON
+	// from screen_canonical_trees with a 60s private cache.
+	mux.HandleFunc("GET /v1/projects/{slug}/screens/{id}/canonical-tree",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleScreenCanonicalTree)))
+
+	// DRD per-flow content (U9). GET returns the BlockNote document +
+	// monotonic revision counter; PUT updates with optimistic concurrency
+	// (409 on stale revision). Body capped at 1MB.
+	mux.HandleFunc("GET /v1/projects/{slug}/flows/{flow_id}/drd",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleGetDRD)))
+	mux.HandleFunc("PUT /v1/projects/{slug}/flows/{flow_id}/drd",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandlePutDRD)))
+
+	// Phase 2 U10 — Audit-by-slug read path. /files/[slug] in the docs site
+	// reads from this endpoint instead of importing the JSON sidecar at build
+	// time. Returns the same lib/audit/types.ts AuditResult shape so the
+	// frontend doesn't change types. System-tenant fallback gated by env
+	// DS_AUDIT_BY_SLUG_INCLUDE_SYSTEM (default on) — backfilled sidecar rows
+	// live under the system tenant and cross-tenant query is a 404 by default.
+	mux.HandleFunc("GET /v1/audit/by-slug/{slug}",
+		s.requireAuth(auditbyslug.Handler(auditbyslug.Deps{
+			DB:           s.db.DB,
+			ClaimsReader: claimsReader,
+			Log:          s.log,
+		})))
+
+	// Phase 2 U8 — Audit fan-out trigger. Super-admin only. Enqueues
+	// audit_jobs at priority=10 for every active flow's latest version when
+	// DS lead publishes a token catalog change or curates a rule. CLI at
+	// services/ds-service/cmd/admin wraps this endpoint.
+	fanoutHandler := &projects.FanoutHandler{DB: s.db.DB, Broker: s.broker}
+	mux.HandleFunc("POST /v1/admin/audit/fanout", s.requireSuperAdmin(fanoutHandler.HandleAdminFanout))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────

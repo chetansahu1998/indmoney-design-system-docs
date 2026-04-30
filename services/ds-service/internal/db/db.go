@@ -47,12 +47,16 @@ func Open(path string) (*DB, error) {
 }
 
 func (d *DB) migrate(ctx context.Context) error {
+	// Phase A — legacy inline migrations (Phase 0 schema: users, tenants, …).
+	// Idempotent CREATE TABLE IF NOT EXISTS; safe to run on every startup.
 	for i, stmt := range migrations {
 		if _, err := d.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migration %d: %w", i+1, err)
 		}
 	}
-	return nil
+	// Phase B — versioned migrations from services/ds-service/migrations/.
+	// Tracked in schema_migrations table; each file runs once.
+	return d.applyVersionedMigrations(ctx)
 }
 
 var migrations = []string{

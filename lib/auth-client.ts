@@ -51,6 +51,17 @@ export async function login(email: string, password: string): Promise<{ ok: true
   }
 }
 
+/**
+ * Synchronous accessor for the persisted JWT. Returns `null` on the server
+ * (zustand persist hydrates from localStorage on first client read) and when
+ * the user is logged out. Used by `lib/projects/client.ts` to attach the
+ * Authorization header to ds-service requests without forcing every caller
+ * to re-subscribe to the store.
+ */
+export function getToken(): string | null {
+  return useAuth.getState().token;
+}
+
 /** Trigger sync via /api/sync proxy. */
 export async function triggerSync(brand: string): Promise<{ ok: true; traceId: string; status: string } | { ok: false; error: string }> {
   const token = useAuth.getState().token;
