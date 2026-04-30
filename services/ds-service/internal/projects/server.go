@@ -1184,6 +1184,32 @@ func (s *Server) HandleBulkAcknowledge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleDashboardSummary serves GET /v1/atlas/admin/summary.
+//
+// Super-admin only — gated upstream by main.go's requireSuperAdmin
+// middleware. Returns the five aggregations required for the DS-lead
+// dashboard. ?weeks=4|8|12|24 controls the trend window.
+func (s *Server) HandleDashboardSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	weeks := 8
+	if w := r.URL.Query().Get("weeks"); w != "" {
+		var n int
+		_, _ = fmt.Sscanf(w, "%d", &n)
+		if n > 0 {
+			weeks = n
+		}
+	}
+	summary, err := BuildDashboardSummary(r.Context(), s.deps.DB.DB, weeks)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "dashboard", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}
+
 // HandleComponentViolations serves GET /v1/components/violations?name=Toast.
 //
 // Returns the cross-tenant aggregate (severity tally + total + flow count)

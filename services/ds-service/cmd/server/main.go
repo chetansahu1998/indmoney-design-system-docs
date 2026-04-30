@@ -458,6 +458,12 @@ func (s *server) routes(mux *http.ServeMux) {
 	// slug, since the slug→name map lives in the docs site's manifest.
 	mux.HandleFunc("GET /v1/components/violations",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleComponentViolations)))
+
+	// Phase 4 U9 — DS-lead dashboard summary (5 aggregations: by_product,
+	// by_severity, trend, top_violators, recent_decisions). Super-admin
+	// only; wraps every aggregation in a parallel goroutine.
+	mux.HandleFunc("GET /v1/atlas/admin/summary",
+		s.requireSuperAdmin(s.projectsServer.HandleDashboardSummary))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────
