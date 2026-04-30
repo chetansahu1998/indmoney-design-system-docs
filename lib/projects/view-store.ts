@@ -28,10 +28,10 @@ interface ProjectViewState {
   theme: ThemeMode;
   setTheme: (theme: ThemeMode) => void;
   /**
-   * The screen the JSON tab should focus. Wired by U7's atlas click handler:
-   * AtlasCanvas calls `setSelectedScreenID(id)` and ProjectShell switches the
-   * active tab to `json`; U8's JSONTab subscribes to this slice and lazy-fetches
-   * the canonical_tree for the selected screen. Session-only — not persisted.
+   * Selected screen ID — session-only. Click a frame in the atlas (U7) and
+   * the JSON tab (U8) both read this. NOT persisted because it doesn't
+   * survive page navigation meaningfully — the URL hash represents the
+   * canonical deeplink instead.
    */
   selectedScreenID: string | null;
   setSelectedScreenID: (id: string | null) => void;

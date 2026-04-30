@@ -432,6 +432,64 @@ func (s *Server) HandleProjectList(w http.ResponseWriter, r *http.Request) {
 
 // HandleEventsTicket serves POST /v1/projects/{slug}/events/ticket.
 //
+// HandleScreenCanonicalTree serves the lazy canonical_tree JSON for a single
+// screen. Called by the U8 JSON tab on click. Tenant-scoped via TenantRepo;
+// cross-tenant returns 404.
+//
+// The canonical_tree is stored as raw JSON text (`screen_canonical_trees.canonical_tree`),
+// and we pass it through unparsed — the client treats it as `unknown` and the
+// tree-viewer in U8 walks it generically.
+func (s *Server) HandleScreenCanonicalTree(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	screenID := r.PathValue("id")
+	if slug == "" || screenID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
+		return
+	}
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	res, err := repo.GetCanonicalTree(r.Context(), slug, screenID)
+	if errors.Is(err, ErrNotFound) {
+		writeJSONErr(w, http.StatusNotFound, "not_found", "")
+		return
+	}
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "canonical_tree_lookup", err.Error())
+		return
+	}
+
+	// Pass canonical_tree through verbatim — it's stored as JSON text, so we
+	// embed it directly rather than re-parsing/re-serializing.
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	w.WriteHeader(http.StatusOK)
+	// Hand-crafted response so the canonical_tree blob isn't double-escaped.
+	w.Write([]byte(`{"canonical_tree":`))
+	w.Write([]byte(res.Tree))
+	w.Write([]byte(`,"hash":`))
+	if res.Hash == "" {
+		w.Write([]byte("null"))
+	} else {
+		hashJSON, _ := json.Marshal(res.Hash)
+		w.Write(hashJSON)
+	}
+	w.Write([]byte("}"))
+}
+
 // JWT-authed. Issues a single-use ticket bound to (user, tenant, trace). The
 // trace_id is supplied by the client via the X-Trace-ID header — typically the
 // trace_id from the export response.

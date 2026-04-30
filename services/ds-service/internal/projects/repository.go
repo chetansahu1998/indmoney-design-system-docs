@@ -526,6 +526,45 @@ func (t *TenantRepo) HeartbeatVersion(ctx context.Context, versionID string) err
 	return err
 }
 
+// GetCanonicalTree looks up the lazy canonical_tree blob for a screen, joined
+// to its project so the tenant_id check applies. Returns ErrNotFound when the
+// screen doesn't exist OR the project's tenant_id doesn't match the caller's
+// claim — same 404 either way (no existence oracle).
+//
+// Used by the U8 JSON tab via GET /v1/projects/:slug/screens/:id/canonical-tree.
+type CanonicalTreeResult struct {
+	ScreenID string
+	Tree     string // raw JSON; caller passes through unparsed
+	Hash     string
+}
+
+func (t *TenantRepo) GetCanonicalTree(ctx context.Context, projectSlug, screenID string) (*CanonicalTreeResult, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	var res CanonicalTreeResult
+	var hash sql.NullString
+	err := t.r.db.QueryRowContext(ctx,
+		`SELECT s.id, sct.canonical_tree, sct.hash
+		 FROM screens s
+		 JOIN project_versions v ON v.id = s.version_id
+		 JOIN projects p ON p.id = v.project_id
+		 JOIN screen_canonical_trees sct ON sct.screen_id = s.id
+		 WHERE p.slug = ? AND p.tenant_id = ? AND p.deleted_at IS NULL AND s.id = ?`,
+		projectSlug, t.tenantID, screenID,
+	).Scan(&res.ScreenID, &res.Tree, &hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if hash.Valid {
+		res.Hash = hash.String
+	}
+	return &res, nil
+}
+
 // GetScreenForServe looks up a screen joined to its project + version for the
 // authed PNG route handler (U11). Returns ErrNotFound when the screen doesn't
 // exist OR the project's tenant_id doesn't match the caller's claim — same

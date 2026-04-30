@@ -26,6 +26,7 @@ import type {
   Project,
   ProjectVersion,
   Screen,
+  ScreenMode,
 } from "@/lib/projects/types";
 
 interface ProjectShellLoaderProps {
@@ -41,6 +42,7 @@ type LoadState =
       project: Project;
       versions: ProjectVersion[];
       screens: Screen[];
+      screenModes: ScreenMode[];
       personas: Persona[];
       activeVersionID?: string;
     }
@@ -81,6 +83,7 @@ export default function ProjectShellLoader({
         project: r.data.project,
         versions: r.data.versions ?? [],
         screens: r.data.screens ?? [],
+        screenModes: r.data.screen_modes ?? [],
         personas: r.data.available_personas ?? [],
         activeVersionID:
           initialVersionID ??
@@ -147,6 +150,7 @@ export default function ProjectShellLoader({
       initialActiveVersionID={state.activeVersionID}
       initialScreens={state.screens}
       initialPersonas={state.personas}
+      initialScreenModes={state.screenModes}
       initialTraceID={initialTraceID}
     />
   );

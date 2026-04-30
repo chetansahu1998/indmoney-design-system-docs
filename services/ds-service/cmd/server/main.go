@@ -344,6 +344,12 @@ func (s *server) routes(mux *http.ServeMux) {
 	// without changing the route shape.
 	mux.HandleFunc("GET /v1/projects/{slug}/screens/{id}/png",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleScreenPNG())))
+
+	// Canonical-tree lazy-fetch (U8). The JSON tab calls this on screen
+	// click. Auth-gated, tenant-scoped, returns the raw canonical_tree JSON
+	// from screen_canonical_trees with a 60s private cache.
+	mux.HandleFunc("GET /v1/projects/{slug}/screens/{id}/canonical-tree",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleScreenCanonicalTree)))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────

@@ -46,6 +46,7 @@ import type {
   Project,
   ProjectVersion,
   Screen,
+  ScreenMode,
 } from "@/lib/projects/types";
 import {
   buildHash,
@@ -112,6 +113,9 @@ interface ProjectShellProps {
   initialScreens: Screen[];
   /** Initial persona library scoped to the active version. */
   initialPersonas: Persona[];
+  /** Initial screen modes (one row per (screen, mode_label) pair). U8 JSON
+   *  tab consumes this for mode resolution; pre-fetched at SSR. */
+  initialScreenModes: ScreenMode[];
   /** Optional trace ID to bind SSE to a fresh-export pipeline. */
   initialTraceID?: string;
 }
@@ -123,6 +127,7 @@ export default function ProjectShell({
   initialActiveVersionID,
   initialScreens,
   initialPersonas,
+  initialScreenModes,
   initialTraceID,
 }: ProjectShellProps) {
   // ─── State ──────────────────────────────────────────────────────────────
@@ -130,6 +135,7 @@ export default function ProjectShell({
   const [versions, setVersions] = useState<ProjectVersion[]>(initialVersions);
   const [screens, setScreens] = useState<Screen[]>(initialScreens);
   const [personas, setPersonas] = useState<Persona[]>(initialPersonas);
+  const [screenModes, setScreenModes] = useState<ScreenMode[]>(initialScreenModes);
   const [activeVersionID, setActiveVersionID] = useState<string | undefined>(
     initialActiveVersionID ?? initialVersions[0]?.ID,
   );
@@ -235,6 +241,7 @@ export default function ProjectShell({
       if (!r.ok) return; // toolbar already shows an error path via the version selector
       if (r.data.versions) setVersions(r.data.versions);
       if (r.data.screens) setScreens(r.data.screens);
+      if (r.data.screen_modes) setScreenModes(r.data.screen_modes);
       if (r.data.available_personas)
         setPersonas(r.data.available_personas);
     });
@@ -455,7 +462,13 @@ export default function ProjectShell({
             />
           )}
           {activeTab === "decisions" && <DecisionsTab />}
-          {activeTab === "json" && <JSONTab />}
+          {activeTab === "json" && (
+            <JSONTab
+              slug={project.Slug}
+              screens={screens}
+              screenModes={screenModes}
+            />
+          )}
         </div>
       </div>
     </div>
