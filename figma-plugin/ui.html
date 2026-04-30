@@ -1312,6 +1312,71 @@
 </div>
 
 <!-- ────────────────────────────────────────────────────────────────
+     Phase 3 U9 — Projects mode first-run modal.
+     Shown exactly once per Figma profile, gated by figma.clientStorage
+     (the code side ships projects.firstrun-status on boot). Hidden by
+     default — the message handler unsets [hidden] when seen=false.
+     ──────────────────────────────────────────────────────────────── -->
+<div
+  id="projects-firstrun-modal"
+  hidden
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="firstrun-title"
+  style="
+    position:fixed; inset:0; z-index:9999;
+    display:flex; align-items:center; justify-content:center;
+    background: rgba(0,0,0,0.62); padding: 20px;
+  "
+>
+  <div
+    style="
+      background: var(--bg, #fff); color: var(--text-1, #111);
+      border: 1px solid rgba(0,0,0,0.12); border-radius: 12px;
+      max-width: 380px; width: 100%; padding: 24px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.24);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    "
+  >
+    <h2
+      id="firstrun-title"
+      style="
+        margin: 0 0 12px;
+        font-size: 16px; font-weight: 700;
+        color: var(--text-1, #111);
+      "
+    >
+      Welcome to Projects mode
+    </h2>
+    <p style="margin: 0 0 12px; font-size: 12px; line-height: 1.55; color: var(--text-2, #444);">
+      Select frames in your file, and Projects mode auto-groups them by
+      enclosing SECTION + auto-detects light/dark mode pairs. When you
+      hit Send, the docs site renders the atlas + audit + DRD for the
+      flow at <code style="font-family:monospace; font-size:11px;">/projects/&lt;slug&gt;</code>.
+    </p>
+    <p style="margin: 0 0 16px; font-size: 12px; line-height: 1.55; color: var(--text-2, #444);">
+      For a per-role walkthrough, open
+      <code style="font-family:monospace; font-size:11px;">/onboarding</code>
+      on the docs site.
+    </p>
+    <div style="display:flex; justify-content:flex-end; gap: 8px;">
+      <button
+        id="btn-firstrun-dismiss"
+        class="primary"
+        style="
+          padding: 8px 16px; font-size: 12px; font-weight: 600;
+          border: 1px solid var(--border, rgba(0,0,0,0.12));
+          border-radius: 6px; cursor: pointer;
+          background: var(--accent, #0a84ff); color: #fff;
+        "
+      >
+        Got it
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────────
      Settings panel — slides in from right
      ──────────────────────────────────────────────────────────────── -->
 <div class="settings-overlay" id="settings-overlay">
@@ -1406,6 +1471,19 @@ $("mode-publish").addEventListener("click", () => setMode("publish"));
 $("mode-audit").addEventListener("click", () => setMode("audit"));
 $("mode-library").addEventListener("click", () => setMode("library"));
 $("mode-projects").addEventListener("click", () => setMode("projects"));
+
+// Phase 3 U9: first-run modal dismiss handler. Hides the modal client-side
+// + posts to code so figma.clientStorage records the durable flag.
+{
+  const dismissBtn = $("btn-firstrun-dismiss");
+  if (dismissBtn) {
+    dismissBtn.addEventListener("click", () => {
+      const modal = $("projects-firstrun-modal");
+      if (modal) modal.hidden = true;
+      post("projects.firstrun-dismiss");
+    });
+  }
+}
 
 /* ════════════════════════════════════════════════════════════════════
    Status bar / connection
@@ -2449,6 +2527,16 @@ window.onmessage = (event) => {
       // Allow the Open-Projects-from-menu command to deep-link the user.
       if (msg.payload && msg.payload.phase === "open-via-command") {
         setMode("projects");
+      }
+      break;
+    }
+    case "projects.firstrun-status": {
+      // Phase 3 U9: show the welcome modal exactly once per Figma profile.
+      // The code side reads figma.clientStorage and ships {seen: bool}; we
+      // only render when seen is false. Dismissal posts back to the code.
+      const firstrunModal = $("projects-firstrun-modal");
+      if (firstrunModal && msg.payload && msg.payload.seen === false) {
+        firstrunModal.hidden = false;
       }
       break;
     }

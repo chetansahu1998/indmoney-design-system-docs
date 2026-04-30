@@ -40,7 +40,11 @@ interface MessageFromUI {
     | "request-selection-summary"
     | "projects.set-active"
     | "projects.refresh-detection"
-    | "projects.send";
+    | "projects.send"
+    /** Phase 3 U9 — UI signals user dismissed the first-run modal.
+     *  Code sets the durable clientStorage flag so the modal stays
+     *  hidden across future plugin runs. */
+    | "projects.firstrun-dismiss";
   payload?: unknown;
 }
 
@@ -60,7 +64,11 @@ interface MessageToUI {
     | "projects.detected-groups"
     | "projects.send"
     | "projects.send-result"
-    | "projects.send-progress";
+    | "projects.send-progress"
+    /** Phase 3 U9 — Code reports first-run state to the UI on boot
+     *  ({ seen: boolean }). UI shows the welcome modal only when seen
+     *  is false. */
+    | "projects.firstrun-status";
   payload?: unknown;
 }
 
@@ -92,6 +100,21 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
       case "ready":
         startHealthPolling();
         emitSelectionSummary();
+        // Phase 3 U9: first-run check. Read the durable flag from
+        // clientStorage and emit the result so the UI can show its
+        // welcome modal exactly once per Figma profile. New profiles
+        // (or clientStorage cleared) → seen: false → modal renders.
+        {
+          const seen =
+            (await figma.clientStorage.getAsync("projects.firstrun-seen")) === true;
+          send({ type: "projects.firstrun-status", payload: { seen } });
+        }
+        return;
+      case "projects.firstrun-dismiss":
+        // Persists across plugin re-runs. Cleared via Figma's clientStorage
+        // reset (Plugins → Manage plugins → reinstall) or by deleting the
+        // key manually for QA.
+        await figma.clientStorage.setAsync("projects.firstrun-seen", true);
         return;
       case "set-server-url":
         if (typeof msg.payload === "string" && msg.payload.startsWith("http")) {
