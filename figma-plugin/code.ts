@@ -86,7 +86,12 @@ interface MessageToUI {
     /** Phase 4.1 — code echoes the violation context fetched from
      *  ds-service so the UI can render a meaningful preview before
      *  the user picks a target token. */
-    | "projects.autofix-violation";
+    | "projects.autofix-violation"
+    /** Phase 7.8 — code reports whether a docs-site JWT is present in
+     *  clientStorage. UI uses this to show/hide an attention dot on
+     *  the Settings entry-point so first-time users can find where
+     *  to paste the token without hunting for the cog icon. */
+    | "docs-token-state";
   payload?: unknown;
 }
 
@@ -152,6 +157,7 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
             type: "projects.send-result",
             payload: { ok: true, info: "Token cleared." },
           });
+          send({ type: "docs-token-state", payload: { hasToken: false } });
           return;
         }
         // Minimal sanity check — JWTs are three base64url segments
@@ -173,6 +179,7 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
           type: "projects.send-result",
           payload: { ok: true, info: "Token saved." },
         });
+        send({ type: "docs-token-state", payload: { hasToken: true } });
         return;
       }
       case "set-server-url":
@@ -233,7 +240,11 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
               detail: "Set your docs-site token in plugin Settings first (paste the JWT from localStorage['indmoney-ds-auth']).",
             },
           });
-          toast("Set your docs-site token in plugin Settings first.", "error");
+          // Don't double-fire a figma.notify here — the UI's
+          // projects.send-result handler now opens Settings + focuses
+          // the JWT input, which is far more discoverable than a
+          // floating string mentioning "plugin Settings" while the
+          // operator is busy hunting for the cog icon.
           return;
         }
         try {
@@ -325,6 +336,9 @@ figma.on("selectionchange", () => {
   if (stored) auditServerURL = stored;
   const tok = (await figma.clientStorage.getAsync("docs_auth_token")) as string | undefined;
   if (tok) docsAuthToken = tok;
+  // Tell the UI whether we've already restored a token, so the
+  // Settings entry-point dot reflects reality on first paint.
+  send({ type: "docs-token-state", payload: { hasToken: !!docsAuthToken } });
 })();
 
 // Direct menu commands.

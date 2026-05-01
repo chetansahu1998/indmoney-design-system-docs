@@ -81,6 +81,7 @@ figma.ui.onmessage = async (msg) => {
                         type: "projects.send-result",
                         payload: { ok: true, info: "Token cleared." },
                     });
+                    send({ type: "docs-token-state", payload: { hasToken: false } });
                     return;
                 }
                 // Minimal sanity check — JWTs are three base64url segments
@@ -102,6 +103,7 @@ figma.ui.onmessage = async (msg) => {
                     type: "projects.send-result",
                     payload: { ok: true, info: "Token saved." },
                 });
+                send({ type: "docs-token-state", payload: { hasToken: true } });
                 return;
             }
             case "set-server-url":
@@ -162,7 +164,11 @@ figma.ui.onmessage = async (msg) => {
                             detail: "Set your docs-site token in plugin Settings first (paste the JWT from localStorage['indmoney-ds-auth']).",
                         },
                     });
-                    toast("Set your docs-site token in plugin Settings first.", "error");
+                    // Don't double-fire a figma.notify here — the UI's
+                    // projects.send-result handler now opens Settings + focuses
+                    // the JWT input, which is far more discoverable than a
+                    // floating string mentioning "plugin Settings" while the
+                    // operator is busy hunting for the cog icon.
                     return;
                 }
                 try {
@@ -251,6 +257,9 @@ figma.on("selectionchange", () => {
     const tok = (await figma.clientStorage.getAsync("docs_auth_token"));
     if (tok)
         docsAuthToken = tok;
+    // Tell the UI whether we've already restored a token, so the
+    // Settings entry-point dot reflects reality on first paint.
+    send({ type: "docs-token-state", payload: { hasToken: !!docsAuthToken } });
 })();
 // Direct menu commands.
 if (figma.command === "auditFile")

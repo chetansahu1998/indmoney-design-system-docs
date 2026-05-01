@@ -221,17 +221,39 @@
     cursor: pointer;
     transition: background var(--d-snap) var(--ease), color var(--d-snap) var(--ease);
     flex-shrink: 0;
+    position: relative;
   }
   .icon-btn:hover { background: var(--bg-surface-2); color: var(--text-1); }
   .icon-btn:active { background: var(--bg-surface-3); }
+
+  /* Attention dot — overlay on the Settings cog when the docs-site
+     JWT is missing. Positioned at the top-right of the cog so it
+     reads like a notification badge. Animates a subtle pulse so the
+     eye is drawn to it on first paint. */
+  .icon-btn-dot {
+    position: absolute;
+    top: 3px; right: 3px;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #ff7a59;
+    box-shadow: 0 0 0 2px var(--bg-surface-1);
+    animation: settings-dot-pulse 1.6s ease-in-out infinite;
+  }
+  .icon-btn-dot[hidden] { display: none !important; }
+  @keyframes settings-dot-pulse {
+    0%, 100% { box-shadow: 0 0 0 2px var(--bg-surface-1), 0 0 0 0 rgba(255,122,89,0.55); }
+    50%      { box-shadow: 0 0 0 2px var(--bg-surface-1), 0 0 0 4px rgba(255,122,89,0.0); }
+  }
 
   /* ── Mode picker (segmented control, replaces tabs) ─────────────── */
   .modes {
     flex-shrink: 0;
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    /* 4 tabs — Publish · Audit · Library · Projects. Was 3fr which
+       wrapped Projects onto a second row. */
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0;
-    padding: 8px 14px 0;
+    padding: 8px 12px 0;
     background: var(--bg-canvas);
     border-bottom: 1px solid var(--border-subtle);
     position: relative;
@@ -239,9 +261,11 @@
   .mode {
     background: transparent;
     border: none;
-    padding: 8px 4px 12px;
+    /* Tighter horizontal padding so 4 labels fit in the ~340px window
+       without truncating. Vertical rhythm unchanged. */
+    padding: 8px 2px 12px;
     font: inherit;
-    font-size: 12px;
+    font-size: 11.5px;
     font-weight: 500;
     color: var(--text-3);
     cursor: pointer;
@@ -251,7 +275,14 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 4px;
+    min-width: 0;
+    white-space: nowrap;
+  }
+  .mode > span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
   }
   .mode:hover { color: var(--text-2); }
   .mode[aria-selected="true"] { color: var(--text-1); font-weight: 600; }
@@ -980,6 +1011,19 @@
     to   { opacity: 1; transform: translateY(0) scale(1); }
   }
 
+  /* Flash-highlight a target input when we auto-open Settings to point
+     the user at it — the cog icon at the top is small enough that the
+     transition alone doesn't tell the user where to look. */
+  .flash-target {
+    animation: flash-target-pulse 0.55s ease-in-out 0s 3;
+    box-shadow: 0 0 0 3px rgba(255, 184, 0, 0.45);
+    border-color: rgba(255, 184, 0, 0.95) !important;
+  }
+  @keyframes flash-target-pulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(255, 184, 0, 0.45); }
+    50%      { box-shadow: 0 0 0 6px rgba(255, 184, 0, 0.20); }
+  }
+
   /* ════════════════════════════════════════════════════════════════════
      Settings panel — overlay, slides in from right
      ════════════════════════════════════════════════════════════════════ */
@@ -1070,11 +1114,12 @@
       <path d="M7 3H4a1 1 0 00-1 1v8a1 1 0 001 1h8a1 1 0 001-1V9"/>
     </svg>
   </button>
-  <button class="icon-btn" id="open-settings" aria-label="Settings" title="Settings">
+  <button class="icon-btn" id="open-settings" aria-label="Settings" title="Settings — token, audit-server URL, advanced">
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="8" cy="8" r="2.5"/>
       <path d="M8 1v2M8 13v2M3 8H1M15 8h-2M3.5 3.5l1.5 1.5M11 11l1.5 1.5M3.5 12.5L5 11M11 5l1.5-1.5"/>
     </svg>
+    <span class="icon-btn-dot" id="settings-attention-dot" hidden></span>
   </button>
 </div>
 
@@ -2114,6 +2159,25 @@ $("server-url").addEventListener("change", (e) => post("set-server-url", e.targe
 $("open-settings").addEventListener("click", () => {
   $("settings-overlay").classList.add("open");
 });
+
+// Open the Settings overlay AND scroll/focus the docs-token input.
+// Used when the operator hits Send without a JWT — the toast handler
+// calls this so users don't have to hunt for the cog icon.
+function openDocsTokenSettings() {
+  const overlay = $("settings-overlay");
+  if (overlay) overlay.classList.add("open");
+  const input = $("docs-token");
+  if (input) {
+    // RAF + tiny timeout to let the slide-in transition settle before
+    // we scroll/focus, otherwise the panel hasn't laid out yet.
+    setTimeout(() => {
+      try { input.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
+      try { input.focus(); } catch (_) {}
+      input.classList.add("flash-target");
+      setTimeout(() => input.classList.remove("flash-target"), 1600);
+    }, 200);
+  }
+}
 $("close-settings").addEventListener("click", () => {
   $("settings-overlay").classList.remove("open");
 });
@@ -2136,7 +2200,7 @@ document.addEventListener("keydown", (e) => {
 /* ════════════════════════════════════════════════════════════════════
    Toasts — bottom-right, dismissible, queued
    ════════════════════════════════════════════════════════════════════ */
-function pushToast({ message, sub, level }) {
+function pushToast({ message, sub, level, onClick, actionText }) {
   level = level || "info";
   const t = document.createElement("div");
   t.className = `toast ${level}`;
@@ -2155,6 +2219,26 @@ function pushToast({ message, sub, level }) {
   body.innerHTML = `<strong>${escapeHtml(message)}</strong>` + (sub ? `<div class="sub">${escapeHtml(sub)}</div>` : "");
 
   t.append(ico, body);
+
+  if (onClick) {
+    // Whole-toast click is the cheapest hit-target. Add a visible
+    // action label so users know it's interactive — without it the
+    // toast looks identical to the passive ones.
+    t.style.cursor = "pointer";
+    t.title = actionText || "Open";
+    if (actionText) {
+      const action = document.createElement("span");
+      action.className = "toast-action";
+      action.textContent = actionText + " →";
+      action.style.cssText = "margin-left:auto;font-weight:600;text-decoration:underline;white-space:nowrap;";
+      t.appendChild(action);
+    }
+    t.addEventListener("click", () => {
+      try { onClick(); } catch (_) { /* swallow */ }
+      t.remove();
+    });
+  }
+
   $("toaster").appendChild(t);
 
   state.activity.unshift(`[${new Date().toLocaleTimeString()}] [${level}] ${message}${sub ? " · " + sub : ""}`);
@@ -2454,19 +2538,57 @@ function buildProjectsSendPayload() {
 
   const flows = [];
   const errors = [];
+  // Phase 7.8 — surface inline field errors at Send time too, not just
+  // on type. Without this, a never-touched empty field shows no red
+  // outline; the user only sees a top-level toast that names the flow
+  // but not which field. We also focus + scroll to the first invalid
+  // field so the eye lands on the exact input to fill.
+  let firstInvalid = null;
   for (const g of d.groups) {
     const e = getOrInitEdits(g);
     const personaName = e.persona === "Other" ? e.persona_other : e.persona;
+    const card = document.querySelector(`.group-card[data-group-key="${g.group_key}"]`);
 
     const nameErr = validateField("name", e.name, 256);
     const pathErr = validateField("path", e.path, 256);
-    const personaErr = validateField("persona_name", personaName, 128);
+    const personaErr = e.persona === "Other"
+      ? validateField("persona_name", personaName, 128)
+      : null;
+
+    // Stamp inline errors on the card so the input gets a red ring +
+    // a small message right beneath it. Stays visible until the user
+    // types something valid (onFieldChange clears it).
+    if (card) {
+      showFieldError(card, "name", nameErr);
+      showFieldError(card, "path", pathErr);
+      if (e.persona === "Other") {
+        showFieldError(card, "persona_other", personaErr);
+      }
+    }
 
     if (nameErr) errors.push(`${g.default_name}: ${nameErr}`);
     if (pathErr) errors.push(`${g.default_name}: ${pathErr}`);
     if (personaErr) errors.push(`${g.default_name}: ${personaErr}`);
     if (!e.platform) errors.push(`${g.default_name}: platform required`);
     if (!e.product) errors.push(`${g.default_name}: product required`);
+
+    // Track the first invalid input across all rows so we can scroll
+    // + focus it when Send fails validation.
+    if (!firstInvalid && card) {
+      const order = ["name", "path", "persona_other", "platform", "product"];
+      for (const k of order) {
+        const errFor = k === "name" ? nameErr
+          : k === "path" ? pathErr
+          : k === "persona_other" ? personaErr
+          : (k === "platform" && !e.platform) ? "platform required"
+          : (k === "product" && !e.product) ? "product required"
+          : null;
+        if (errFor) {
+          firstInvalid = card.querySelector(`[data-k="${k}"]`);
+          break;
+        }
+      }
+    }
 
     flows.push({
       section_id: g.section_id,
@@ -2493,6 +2615,7 @@ function buildProjectsSendPayload() {
       flows,
     },
     errors,
+    firstInvalid,
   };
 }
 
@@ -2520,9 +2643,18 @@ $("btn-projects-send").addEventListener("click", () => {
     return;
   }
   if (built.errors.length > 0) {
+    // Phase 7.8 — also scroll the first invalid field into view +
+    // focus it. The inline red-ring marker on the input came from
+    // buildProjectsSendPayload's call to showFieldError; this just
+    // makes sure the user's eye actually lands on it instead of
+    // staring at a top-bar toast.
+    if (built.firstInvalid && typeof built.firstInvalid.scrollIntoView === "function") {
+      built.firstInvalid.scrollIntoView({ behavior: "smooth", block: "center" });
+      try { built.firstInvalid.focus(); } catch (_) { /* readonly inputs throw */ }
+    }
     pushToast({
       message: "Fix validation errors before sending",
-      sub: built.errors[0],
+      sub: built.errors[0] + (built.errors.length > 1 ? ` (+${built.errors.length - 1} more)` : ""),
       level: "error",
     });
     return;
@@ -2655,6 +2787,11 @@ window.onmessage = (event) => {
         // Clear the input on a successful save so the JWT isn't visible
         // sitting in the field after the user has confirmed.
         if (p.ok && p.info === "Token saved." && tokenInput) tokenInput.value = "";
+        // Mirror token state on the Settings dot — code.ts also broadcasts
+        // a docs-token-state event but mirroring locally avoids a one-frame
+        // flicker between save and the broadcast.
+        const dot = $("settings-attention-dot");
+        if (dot) dot.hidden = p.info === "Token saved.";
         break;
       }
       // Send POST result — also re-enables the disabled Send button.
@@ -2676,13 +2813,28 @@ window.onmessage = (event) => {
           onClick: () => post("open-docs"),
         });
       } else if (!p.ok) {
-        pushToast({
-          message: p.error === "auth_required"
-            ? "Set your docs-site token in Settings"
-            : "Export failed",
-          sub: p.detail || p.error || "unknown",
-          level: "error",
-        });
+        if (p.error === "auth_required") {
+          // The cog icon at top-right is small and unlabeled — users
+          // staring at the Projects panel often can't find it. Just
+          // open the Settings overlay for them and flash the JWT input
+          // so the next action is unambiguous.
+          const dot = $("settings-attention-dot");
+          if (dot) dot.hidden = false;
+          openDocsTokenSettings();
+          pushToast({
+            message: "Paste your docs-site token to send",
+            sub: "Settings is open — paste the JWT and click Save token",
+            level: "error",
+            actionText: "Open Settings",
+            onClick: openDocsTokenSettings,
+          });
+        } else {
+          pushToast({
+            message: "Export failed",
+            sub: p.detail || p.error || "unknown",
+            level: "error",
+          });
+        }
       }
       break;
     }
@@ -2691,6 +2843,13 @@ window.onmessage = (event) => {
       if (msg.payload && msg.payload.phase === "open-via-command") {
         setMode("projects");
       }
+      break;
+    }
+    case "docs-token-state": {
+      // Phase 7.8 — code reports whether a JWT is in clientStorage.
+      // We use it to gate the orange attention dot on the Settings cog.
+      const dot = $("settings-attention-dot");
+      if (dot) dot.hidden = !!(msg.payload && msg.payload.hasToken);
       break;
     }
     case "projects.firstrun-status": {
