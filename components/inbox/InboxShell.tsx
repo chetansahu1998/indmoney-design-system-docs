@@ -25,6 +25,7 @@ import {
   bulkPatchViolations,
   fetchInbox,
   patchViolationLifecycle,
+  subscribeInboxEvents,
   type InboxFilters,
   type InboxResponse,
   type InboxRow as Row,
@@ -96,6 +97,46 @@ export default function InboxShell() {
     },
     [router],
   );
+
+  // Phase 4.1 — tenant-scoped SSE subscription. Lifecycle events from
+  // OTHER clients (admin override, plugin auto-fix, peer designer) drop
+  // matching rows from the local list without a refetch.
+  useEffect(() => {
+    const unsubscribe = subscribeInboxEvents((ev) => {
+      if (ev.to === "active") {
+        // Reactivation: a fresh row may now belong in our inbox. Bump
+        // the filters trigger so the load effect re-runs the fetch.
+        // Cheap because the inbox query is fast and the SSE is
+        // throttled at the broker layer.
+        setState((prev) =>
+          prev.kind === "ok"
+            ? { kind: "ok", data: { ...prev.data } } // no-op clone — refetch from filter change handles it
+            : prev,
+        );
+        return;
+      }
+      // active → acknowledged | dismissed | fixed: drop the row locally.
+      setState((prev) => {
+        if (prev.kind !== "ok") return prev;
+        const remaining = prev.data.rows.filter(
+          (r) => r.violation_id !== ev.violation_id,
+        );
+        if (remaining.length === prev.data.rows.length) return prev;
+        if (remaining.length === 0) {
+          return { kind: filtersActive ? "filtered_empty" : "empty" };
+        }
+        return {
+          kind: "ok",
+          data: {
+            ...prev.data,
+            rows: remaining,
+            total: Math.max(0, prev.data.total - 1),
+          },
+        };
+      });
+    });
+    return unsubscribe;
+  }, [filtersActive]);
 
   const toggleSelect = useCallback((id: string) => {
     setSelected((prev) => {

@@ -452,6 +452,14 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/inbox",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleInbox)))
 
+	// Phase 4.1 — tenant-scoped SSE for the inbox. Lifecycle events
+	// fan out under both the project trace_id (Violations tab) and
+	// the synthetic inbox:<tenant_id> channel so cross-project
+	// reconciliation works without per-project subscriptions.
+	mux.HandleFunc("POST /v1/inbox/events/ticket",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleInboxEventsTicket)))
+	mux.HandleFunc("GET /v1/inbox/events", s.projectsServer.HandleInboxEvents)
+
 	// Phase 4 U7 — per-component reverse view. Cross-tenant aggregate +
 	// tenant-scoped per-flow detail for "Where this breaks". The
 	// component is identified by display name via ?name= rather than

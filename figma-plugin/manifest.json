@@ -25,6 +25,15 @@
     { "name": "Audit file",              "command": "auditFile" },
     { "separator": true },
     { "name": "Open Projects mode",      "command": "openProjects" },
+    {
+      "name":       "Apply auto-fix from docs",
+      "command":    "autofix",
+      "parameters": [
+        { "name": "Project slug",  "key": "slug",         "description": "From the docs URL — e.g. tax-fno-learn" },
+        { "name": "Violation id",  "key": "violation_id", "description": "Violation UUID from the Fix-in-Figma button" }
+      ],
+      "parameterOnly": false
+    },
     { "separator": true },
     { "name": "Open docs site",          "command": "openDocsSite" }
   ]

@@ -1377,6 +1377,72 @@
 </div>
 
 <!-- ────────────────────────────────────────────────────────────────
+     Phase 4.1 — Auto-fix confirm modal.
+     Shown when the plugin is launched via the deeplink
+     (figma://plugin/<id>/audit?violation_id=<id>) — the code side
+     posts projects.autofix-prompt then projects.autofix-violation.
+     User clicks Apply → posts back projects.autofix with target.
+     ──────────────────────────────────────────────────────────────── -->
+<div
+  id="projects-autofix-modal"
+  hidden
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="autofix-title"
+  style="
+    position:fixed; inset:0; z-index:9998;
+    display:flex; align-items:center; justify-content:center;
+    background: rgba(0,0,0,0.62); padding: 20px;
+  "
+>
+  <div
+    style="
+      background: var(--bg, #fff); color: var(--text-1, #111);
+      border: 1px solid rgba(0,0,0,0.12); border-radius: 12px;
+      max-width: 420px; width: 100%; padding: 24px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.24);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    "
+  >
+    <h2 id="autofix-title" style="margin: 0 0 8px; font-size: 16px; font-weight: 700;">
+      Apply auto-fix?
+    </h2>
+    <div id="autofix-rule" class="mono" style="font-size: 11px; color: var(--text-3, #888); margin-bottom: 12px;">—</div>
+    <div id="autofix-preview" style="font-size: 12px; line-height: 1.55; color: var(--text-2, #444); margin-bottom: 16px; padding: 10px 12px; background: rgba(0,0,0,0.04); border-radius: 6px;">
+      Loading violation…
+    </div>
+    <div id="autofix-target" style="font-size: 11px; color: var(--text-3, #888); margin-bottom: 16px;"></div>
+    <div style="display:flex; justify-content:flex-end; gap: 8px;">
+      <button
+        id="btn-autofix-cancel"
+        style="
+          padding: 8px 16px; font-size: 12px; font-weight: 500;
+          border: 1px solid var(--border, rgba(0,0,0,0.12));
+          border-radius: 6px; cursor: pointer;
+          background: transparent; color: var(--text-1, #111);
+        "
+      >
+        Cancel
+      </button>
+      <button
+        id="btn-autofix-apply"
+        class="primary"
+        disabled
+        style="
+          padding: 8px 16px; font-size: 12px; font-weight: 600;
+          border: 1px solid var(--accent, #0a84ff);
+          border-radius: 6px; cursor: pointer;
+          background: var(--accent, #0a84ff); color: #fff;
+          opacity: 0.5;
+        "
+      >
+        Apply
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────────
      Settings panel — slides in from right
      ──────────────────────────────────────────────────────────────── -->
 <div class="settings-overlay" id="settings-overlay">
@@ -2540,8 +2606,82 @@ window.onmessage = (event) => {
       }
       break;
     }
+    case "projects.autofix-prompt": {
+      // Phase 4.1 — deeplink launched the plugin with a violation_id.
+      // Show the modal, then ask code.ts to fetch the violation context
+      // (target=undefined → fetch-only mode).
+      const modal = $("projects-autofix-modal");
+      if (modal) modal.hidden = false;
+      autofixState = {
+        slug: msg.payload.slug,
+        violation_id: msg.payload.violation_id,
+        violation: null,
+      };
+      $("autofix-rule").textContent = "loading…";
+      $("autofix-preview").textContent = "Fetching violation from ds-service…";
+      $("autofix-target").textContent = "";
+      $("btn-autofix-apply").disabled = true;
+      $("btn-autofix-apply").style.opacity = "0.5";
+      post("projects.autofix", {
+        slug: msg.payload.slug,
+        violation_id: msg.payload.violation_id,
+      });
+      break;
+    }
+    case "projects.autofix-violation": {
+      // Phase 4.1 — code returned the fetched violation + (best-effort)
+      // resolved target. Enable Apply when both are present.
+      if (!autofixState) break;
+      autofixState.violation = msg.payload.violation;
+      autofixState.resolved = msg.payload.resolved || null;
+      const v = msg.payload.violation;
+      $("autofix-rule").textContent = v.rule_id + " · " + (v.severity || "");
+      $("autofix-preview").innerHTML =
+        '<strong>' + (v.project_name || v.project_slug) + '</strong> · ' +
+        (v.flow_name || '') +
+        '<br/><span style="color:var(--text-3);font-size:11px;">' +
+        (v.suggestion || v.observed || '') +
+        '</span>';
+      const applyBtn = $("btn-autofix-apply");
+      if (autofixState.resolved && v.auto_fixable) {
+        $("autofix-target").innerHTML =
+          'Will bind to <code style="font-family:monospace;">' +
+          autofixState.resolved.token_path + '</code>.';
+        applyBtn.disabled = false;
+        applyBtn.style.opacity = "1";
+      } else if (v.auto_fixable) {
+        $("autofix-target").textContent =
+          "Couldn't resolve the suggested token in your team library. Open the docs site to pick a target manually.";
+        applyBtn.disabled = true;
+        applyBtn.style.opacity = "0.5";
+      } else {
+        $("autofix-target").textContent = "This rule needs a manual fix.";
+        applyBtn.disabled = true;
+        applyBtn.style.opacity = "0.5";
+      }
+      break;
+    }
   }
 };
+
+let autofixState = null;
+$("btn-autofix-cancel")?.addEventListener("click", () => {
+  $("projects-autofix-modal").hidden = true;
+  autofixState = null;
+});
+$("btn-autofix-apply")?.addEventListener("click", () => {
+  if (!autofixState || !autofixState.violation || !autofixState.resolved) return;
+  post("projects.autofix", {
+    slug: autofixState.slug,
+    violation_id: autofixState.violation_id,
+    target: {
+      variable_id: autofixState.resolved.variable_id,
+      token_path: autofixState.resolved.token_path,
+    },
+  });
+  $("projects-autofix-modal").hidden = true;
+  autofixState = null;
+});
 
 /* Initial sync */
 post("ready");

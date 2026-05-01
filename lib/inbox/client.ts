@@ -182,6 +182,99 @@ export interface BulkLifecycleResponse {
   action: string;
 }
 
+// ─── Phase 4.1 — tenant-scoped SSE subscription ──────────────────────────
+
+export interface InboxLifecycleEvent {
+  project_slug: string;
+  version_id: string;
+  violation_id: string;
+  tenant_id: string;
+  from: string;
+  to: string;
+  action: string;
+  actor_user_id: string;
+}
+
+interface TicketResponse {
+  ticket: string;
+  trace_id: string;
+  expires_in: number;
+}
+
+/**
+ * Subscribes to /v1/inbox/events for cross-project lifecycle updates.
+ * Mirrors lib/projects/client.ts:subscribeProjectEvents — single-use
+ * ticket auth + reconnect with exponential backoff.
+ */
+export function subscribeInboxEvents(
+  onEvent: (event: InboxLifecycleEvent) => void,
+): () => void {
+  let cancelled = false;
+  let es: EventSource | null = null;
+  let backoffMs = 1000;
+  const BACKOFF_MAX_MS = 15_000;
+
+  async function mintAndOpen(): Promise<void> {
+    if (cancelled) return;
+    const token = getToken();
+    if (!token) return;
+    let ticketRes: Response;
+    try {
+      ticketRes = await fetch(`${dsBaseURL()}/v1/inbox/events/ticket`, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: "{}",
+      });
+    } catch {
+      scheduleReconnect();
+      return;
+    }
+    if (cancelled) return;
+    if (!ticketRes.ok) {
+      scheduleReconnect();
+      return;
+    }
+    const t = (await ticketRes.json()) as TicketResponse;
+    es = new EventSource(
+      `${dsBaseURL()}/v1/inbox/events?ticket=${encodeURIComponent(t.ticket)}`,
+    );
+    es.onopen = () => {
+      backoffMs = 1000;
+    };
+    es.addEventListener("project.violation_lifecycle_changed", (raw) => {
+      try {
+        const data = JSON.parse((raw as MessageEvent<string>).data) as InboxLifecycleEvent;
+        onEvent(data);
+      } catch {
+        // ignore malformed event
+      }
+    });
+    es.onerror = () => {
+      es?.close();
+      es = null;
+      if (!cancelled) scheduleReconnect();
+    };
+  }
+
+  function scheduleReconnect(): void {
+    if (cancelled) return;
+    const delay = backoffMs;
+    backoffMs = Math.min(BACKOFF_MAX_MS, backoffMs * 2);
+    setTimeout(() => void mintAndOpen(), delay);
+  }
+
+  void mintAndOpen();
+  return () => {
+    cancelled = true;
+    es?.close();
+    es = null;
+  };
+}
+
 /**
  * POST /v1/projects/:slug/violations/bulk-acknowledge — N-at-a-time
  * lifecycle transition. Caps at 100 ids per request server-side; caller

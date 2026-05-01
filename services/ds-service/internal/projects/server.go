@@ -974,8 +974,8 @@ func (s *Server) HandlePatchViolation(w http.ResponseWriter, r *http.Request) {
 	// Best-effort SSE fan-out. Subscribers (Violations tab + Inbox) reconcile
 	// row state; a missed publish only means the client's next poll/refetch
 	// will catch up — never blocks the lifecycle write.
-	if s.deps.Broker != nil && traceID != "" {
-		s.deps.Broker.Publish(traceID, sse.ProjectViolationLifecycleChanged{
+	if s.deps.Broker != nil {
+		ev := sse.ProjectViolationLifecycleChanged{
 			ProjectSlug: current.ProjectSlug,
 			VersionID:   current.VersionID,
 			ViolationID: current.ViolationID,
@@ -984,7 +984,13 @@ func (s *Server) HandlePatchViolation(w http.ResponseWriter, r *http.Request) {
 			To:          transition.To,
 			Action:      string(transition.Action),
 			ActorUserID: claims.Sub,
-		})
+		}
+		if traceID != "" {
+			s.deps.Broker.Publish(traceID, ev)
+		}
+		// Phase 4.1 — also broadcast to the tenant inbox channel so
+		// /inbox subscribers reconcile across projects.
+		s.deps.Broker.Publish(inboxBroadcastChannel(tenantID), ev)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1156,23 +1162,25 @@ func (s *Server) HandleBulkAcknowledge(w http.ResponseWriter, r *http.Request) {
 		for _, id := range summary.Updated {
 			updatedSet[id] = struct{}{}
 		}
+		inboxChannel := inboxBroadcastChannel(tenantID)
 		for _, v := range publishCandidates {
 			if _, ok := updatedSet[v.ViolationID]; !ok {
 				continue
 			}
-			if v.TraceID == "" {
-				continue
-			}
-			s.deps.Broker.Publish(v.TraceID, sse.ProjectViolationLifecycleChanged{
+			ev := sse.ProjectViolationLifecycleChanged{
 				ProjectSlug: v.ProjectSlug,
 				VersionID:   v.VersionID,
 				ViolationID: v.ViolationID,
 				Tenant:      tenantID,
-				From:        "active", // bulk endpoint only operates on active rows in practice; kept for the SSE shape
+				From:        "active",
 				To:          targetStatusFor(action),
 				Action:      string(action),
 				ActorUserID: claims.Sub,
-			})
+			}
+			if v.TraceID != "" {
+				s.deps.Broker.Publish(v.TraceID, ev)
+			}
+			s.deps.Broker.Publish(inboxChannel, ev)
 		}
 	}
 
@@ -1182,6 +1190,123 @@ func (s *Server) HandleBulkAcknowledge(w http.ResponseWriter, r *http.Request) {
 		"skipped": skipped,
 		"action":  string(action),
 	})
+}
+
+// inboxBroadcastChannel returns the synthetic SSE channel used for
+// tenant-scoped inbox broadcasts. Phase 4.1 — lifecycle events publish
+// under both the project's trace_id (existing project Violations tab
+// subscribers) AND this tenant channel (the /inbox cross-project view).
+//
+// The trace_id namespace is intentionally distinct from any real
+// audit_jobs.trace_id so collisions are impossible.
+func inboxBroadcastChannel(tenantID string) string {
+	return "inbox:" + tenantID
+}
+
+// HandleInboxEventsTicket serves POST /v1/inbox/events/ticket.
+//
+// Mirrors HandleEventsTicket but binds the ticket to the synthetic
+// inbox:<tenant_id> traceID instead of a project-specific one. The
+// /inbox shell calls this on mount, redeems the ticket via
+// EventSource(?ticket=…), and reconciles violation_lifecycle_changed
+// events in place.
+func (s *Server) HandleInboxEventsTicket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	if s.deps.Tickets == nil {
+		writeJSONErr(w, http.StatusInternalServerError, "tickets_not_configured", "")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	traceID := inboxBroadcastChannel(tenantID)
+	ticket := s.deps.Tickets.IssueTicket(claims.Sub, tenantID, traceID, sse.DefaultTicketTTL)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ticket":     ticket,
+		"trace_id":   traceID,
+		"expires_in": int(sse.DefaultTicketTTL.Seconds()),
+	})
+}
+
+// HandleInboxEvents serves GET /v1/inbox/events?ticket=...
+// EventSource subscribes here for cross-project lifecycle updates. The
+// stream stays open until the client disconnects; heartbeats keep the
+// connection alive across proxies.
+func (s *Server) HandleInboxEvents(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Tickets == nil || s.deps.Broker == nil {
+		writeJSONErr(w, http.StatusInternalServerError, "sse_not_configured", "")
+		return
+	}
+	if r.URL.Query().Get("token") != "" || r.URL.Query().Get("authorization") != "" {
+		writeJSONErr(w, http.StatusBadRequest, "no_jwt_in_query", "use ?ticket=... not ?token=...")
+		return
+	}
+	ticket := r.URL.Query().Get("ticket")
+	if ticket == "" {
+		writeJSONErr(w, http.StatusUnauthorized, "missing_ticket", "")
+		return
+	}
+	userID, tenantID, traceID, ok := s.deps.Tickets.RedeemTicket(ticket)
+	if !ok {
+		writeJSONErr(w, http.StatusUnauthorized, "invalid_ticket", "")
+		return
+	}
+	if traceID != inboxBroadcastChannel(tenantID) {
+		writeJSONErr(w, http.StatusForbidden, "wrong_channel", "ticket bound to a non-inbox channel")
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSONErr(w, http.StatusInternalServerError, "no_streaming", "")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	ch, unsub, err := s.deps.Broker.Subscribe(traceID, tenantID, userID)
+	if err != nil {
+		if errors.Is(err, sse.ErrSubscriberCapReached) {
+			writeJSONErr(w, http.StatusServiceUnavailable, "subscribers_full", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "subscribe", err.Error())
+		return
+	}
+	defer unsub()
+
+	clientGone := r.Context().Done()
+	for {
+		select {
+		case <-clientGone:
+			return
+		case ev, alive := <-ch:
+			if !alive {
+				return
+			}
+			if sse.IsHeartbeat(ev) {
+				_, _ = w.Write([]byte(": keepalive\n\n"))
+				flusher.Flush()
+				continue
+			}
+			payload, _ := json.Marshal(ev.Payload())
+			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Type(), payload)
+			flusher.Flush()
+		}
+	}
 }
 
 // HandleViolationGet serves GET /v1/projects/{slug}/violations/{id}.
@@ -1333,8 +1458,8 @@ func (s *Server) HandleViolationFixApplied(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if s.deps.Broker != nil && current.TraceID != "" {
-		s.deps.Broker.Publish(current.TraceID, sse.ProjectViolationLifecycleChanged{
+	if s.deps.Broker != nil {
+		ev := sse.ProjectViolationLifecycleChanged{
 			ProjectSlug: current.ProjectSlug,
 			VersionID:   current.VersionID,
 			ViolationID: current.ViolationID,
@@ -1343,7 +1468,11 @@ func (s *Server) HandleViolationFixApplied(w http.ResponseWriter, r *http.Reques
 			To:          transition.To,
 			Action:      string(transition.Action),
 			ActorUserID: claims.Sub,
-		})
+		}
+		if current.TraceID != "" {
+			s.deps.Broker.Publish(current.TraceID, ev)
+		}
+		s.deps.Broker.Publish(inboxBroadcastChannel(tenantID), ev)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{

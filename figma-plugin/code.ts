@@ -74,7 +74,15 @@ interface MessageToUI {
     /** Phase 3 U9 — Code reports first-run state to the UI on boot
      *  ({ seen: boolean }). UI shows the welcome modal only when seen
      *  is false. */
-    | "projects.firstrun-status";
+    | "projects.firstrun-status"
+    /** Phase 4.1 — deeplink launched the plugin with a violation_id
+     *  parameter. UI shows the auto-fix confirm panel; on Apply it
+     *  posts back projects.autofix with the resolved target. */
+    | "projects.autofix-prompt"
+    /** Phase 4.1 — code echoes the violation context fetched from
+     *  ds-service so the UI can render a meaningful preview before
+     *  the user picks a target token. */
+    | "projects.autofix-violation";
   payload?: unknown;
 }
 
@@ -214,6 +222,28 @@ if (figma.command === "openProjects") {
   setTimeout(() => {
     send({ type: "projects.send-progress", payload: { phase: "open-via-command" } });
   }, 100);
+}
+if (figma.command === "autofix") {
+  // Phase 4.1 — deeplink → UI handoff. Figma resolved the parameters
+  // declared in manifest.json (?slug=…&violation_id=…) and exposes them
+  // on figma.parameters. We pump them into the UI which renders the
+  // confirm-step panel; the UI then echoes back projects.autofix once
+  // the user clicks Apply.
+  const params = (figma as any).parameters?.values as
+    | { slug?: string; violation_id?: string }
+    | undefined;
+  const slug = params?.slug;
+  const violationID = params?.violation_id;
+  if (!slug || !violationID) {
+    toast("Auto-fix: missing slug or violation_id parameter.", "error");
+  } else {
+    setTimeout(() => {
+      send({
+        type: "projects.autofix-prompt",
+        payload: { slug, violation_id: violationID },
+      });
+    }, 100);
+  }
 }
 if (figma.command === "openDocsSite") {
   figma.openExternal(docsURL);
@@ -1424,8 +1454,7 @@ async function runAutoFix(payload: AutoFixPayload): Promise<void> {
   // Plugin doesn't carry the JWT for the docs site (different host); the
   // /v1/projects/.../violations/:id endpoint is auth-gated, so the user
   // must have configured the plugin's auth token via Figma plugin
-  // settings. Phase 4 reuses the existing auditServerURL pattern;
-  // tokenisation is a Phase 4.1 polish item.
+  // settings. Tokenisation polish lands separately.
   let v: ViolationFromServer;
   try {
     const res = await fetch(
@@ -1439,6 +1468,43 @@ async function runAutoFix(payload: AutoFixPayload): Promise<void> {
     v = (await res.json()) as ViolationFromServer;
   } catch (err) {
     toast(`Auto-fix: ${(err as Error).message ?? "network"}.`, "error");
+    return;
+  }
+
+  // Phase 4.1 — fetch-only mode: hand the violation back to the UI so
+  // it can render the confirm panel. We also try to pre-resolve the
+  // target variable from the violation's `suggestion` field — most rule
+  // runners pre-fill that with the token path the auditor recommended.
+  // When resolved, the UI receives a ready-to-apply payload; otherwise
+  // the panel shows "manual target needed" and Phase 4.2's picker takes
+  // over.
+  if (!payload.target) {
+    let resolvedVarID: string | null = null;
+    let resolvedTokenPath: string | null = null;
+    if (v.suggestion) {
+      try {
+        const variable = await resolveVariable({
+          token_path: v.suggestion,
+          figma_name: v.suggestion,
+        });
+        if (variable) {
+          resolvedVarID = variable.id;
+          resolvedTokenPath = v.suggestion;
+        }
+      } catch {
+        // resolution best-effort — UI will surface the unresolved state.
+      }
+    }
+    send({
+      type: "projects.autofix-violation",
+      payload: {
+        slug: payload.slug,
+        violation: v,
+        resolved: resolvedVarID
+          ? { variable_id: resolvedVarID, token_path: resolvedTokenPath }
+          : null,
+      },
+    });
     return;
   }
 
