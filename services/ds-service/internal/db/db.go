@@ -234,6 +234,31 @@ func (d *DB) AddTenantUser(ctx context.Context, tenantID, userID, role string) e
 	return err
 }
 
+// GetUserTenantIDs returns the active tenant_ids the user belongs to.
+// Used by the login handler so the JWT carries real tenant UUIDs (which
+// downstream FK constraints reference) rather than slugs. Pre-fix, login
+// hardcoded `tenants: ["indmoney"]` and projects.send hit FOREIGN KEY
+// errors trying to insert with tenant_id = "indmoney".
+func (d *DB) GetUserTenantIDs(ctx context.Context, userID string) ([]string, error) {
+	rows, err := d.QueryContext(ctx,
+		`SELECT tenant_id FROM tenant_users WHERE user_id = ? AND status = 'active' ORDER BY created_at`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // GetTenantRole returns the user's role on the tenant, or "" if no membership.
 func (d *DB) GetTenantRole(ctx context.Context, tenantID, userID string) (string, error) {
 	var role string

@@ -812,7 +812,31 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.db.UpdateUserLastLogin(r.Context(), u.ID)
 
-	tenants := []string{"indmoney"} // v1: hardcoded; resolve from tenant_users in v1.1
+	// Resolve real tenant UUIDs from tenant_users — projects.HandleExport
+	// uses claims.Tenants[0] verbatim as the tenant_id in INSERTs, so a
+	// slug here triggers a FOREIGN KEY violation on the tenants(id) ref.
+	tenants, err := s.db.GetUserTenantIDs(r.Context(), u.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "tenant lookup: " + err.Error()})
+		return
+	}
+	if len(tenants) == 0 {
+		// Super-admins without an explicit membership still need to land
+		// somewhere — fall back to the bootstrap tenant (the first row
+		// created by migrations or the bootstrap-token flow). Regular users
+		// without a membership are rejected.
+		if u.Role == auth.RoleSuperAdmin {
+			var fallback string
+			if err := s.db.QueryRowContext(r.Context(),
+				`SELECT id FROM tenants WHERE id != 'system' ORDER BY created_at LIMIT 1`).Scan(&fallback); err == nil && fallback != "" {
+				tenants = []string{fallback}
+			}
+		}
+		if len(tenants) == 0 {
+			writeJSON(w, http.StatusForbidden, map[string]any{"error": "no tenant membership"})
+			return
+		}
+	}
 	tok, err := s.jwt.MintAccessToken(u.ID, u.Email, u.Role, tenants, 7*24*time.Hour)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
