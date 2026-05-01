@@ -28,7 +28,27 @@ localhost:8080                            (ds-service binary on operator laptop)
         │
         ▼
 services/ds-service/data/ds.db            (SQLite — the production DB)
+
+
+Figma plugin (in-Figma sandbox, designer's machine)
+        │
+        ├─▶ HTTP localhost:7474   (audit-server: publish + audit endpoints,
+        │                          plugin polls /__health every 5s)
+        │
+        └─▶ HTTPS Vercel /api/projects/export   (Phase 7.8 proxy → ds-service
+                                                  via the same tunnel above,
+                                                  uses the user's docs-site JWT
+                                                  pasted into plugin Settings)
 ```
+
+## The two backend processes — what each does
+
+| Process | Port | Started by | What the plugin uses it for |
+|---|---|---|---|
+| **ds-service** (cmd/server) | 8080 | `/tmp/ds-service` binary, manual launch with env vars | Project storage, audit results, mind graph, search, decisions, /api/projects/export proxy target |
+| **audit-server** (cmd/audit-server) | 7474 | `npm run audit:serve` | Phase 0/2 plugin pair — receives publish + audit menu calls; the green dot in the plugin status bar polls its `/__health` |
+
+Both must be running for the plugin to work end-to-end. The plugin shows "Audit server unreachable" when 7474 is down even if 8080 is fine — the dot is hard-wired to 7474.
 
 ## Why the tunnel
 
@@ -52,10 +72,16 @@ GRAPH_INDEX_TOKENS_DIR=$(pwd)/lib/tokens/indmoney \
 CORS_ALLOW_ORIGIN="http://localhost:3001,https://indmoney-design-system-docs.vercel.app" \
 /tmp/ds-service > /tmp/ds-service.log 2>&1 &
 
-# 2. Cloudflare quick tunnel — gives a fresh trycloudflare.com URL each run.
+# 2. audit-server — required for the Figma plugin's status banner +
+#    publish/audit menu commands. Polled at /__health every 5s by the
+#    plugin; the "Audit server unreachable" toast in the plugin means
+#    this process is down.
+npm run audit:serve > /tmp/audit-serve.log 2>&1 &
+
+# 3. Cloudflare quick tunnel — gives a fresh trycloudflare.com URL each run.
 cloudflared tunnel --url http://localhost:8080 > /tmp/tunnel.log 2>&1 &
 
-# 3. Read the public URL out of the tunnel log:
+# 4. Read the public URL out of the tunnel log:
 grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" /tmp/tunnel.log | head -1
 ```
 
@@ -131,3 +157,65 @@ curl -sS -D - -o /dev/null --max-time 5 \
 ```
 
 Both should pass before the Vercel page works.
+
+## Figma plugin — first-time setup
+
+The plugin lives at `figma-plugin/manifest.json`. To install in Figma:
+
+1. Figma desktop → menu bar → Plugins → Development → Import plugin from manifest…
+2. Select `figma-plugin/manifest.json`. The plugin appears under Plugins → Development → "INDmoney DS Sync".
+3. Run the plugin from any file. The bottom-right status dot polls `localhost:7474/__health`; if it's red, run `npm run audit:serve` and wait 5s.
+4. Open Settings (cog icon top-right of the plugin) → "Docs site auth" section.
+5. In a separate browser tab, log into the docs site (`indmoney-design-system-docs.vercel.app`). Open DevTools → Console. Run:
+   ```js
+   JSON.parse(localStorage['indmoney-ds-auth']).state.token
+   ```
+   Copy the result string.
+6. Paste it into the plugin's "JWT token" input. Click **Save token**. The status line shows "Token saved." in green and the input clears.
+
+The token is stored in `figma.clientStorage` and persists across plugin reloads. It expires in 7 days (Phase 0 JWT lifetime); when it does, the plugin's Send button will start returning 401 and you re-paste a fresh one.
+
+## End-to-end test — exporting a real flow
+
+After plugin setup is complete, the canonical happy-path test:
+
+1. Open the target Figma file (e.g. *INDstocks V5*).
+2. Select frames inside a SECTION node — the smart-grouping detection groups them by enclosing section + auto-detects light/dark mode pairs.
+3. Switch the plugin to **Projects** mode (the third tab).
+4. The plugin shows a preview: one row per detected flow, with editable Product / Path / Persona / Platform fields. Set Product = "Indian Stocks", Path = "research" (no slash prefix — the path is a hierarchical string, not a URL), persona stays "Default" or whatever fits.
+5. Click **Send to Projects**. The button spins; within ~1-2 seconds you should see a green toast: *"Exported successfully — Project xxxxxxxx… — click to open"*. Click it.
+6. Browser opens to `https://indmoney-design-system-docs.vercel.app/projects/<slug>`. The atlas surface shows your screens at preserved (x, y) coordinates within ~10–15s; the audit count ticks up over the next ~30–60s as rule classes finish.
+
+What to verify on the project view:
+- **Top half**: a pannable, zoomable canvas with each frame rendered as a textured plane.
+- **Bottom half tabs**: DRD (empty document, ready to type), Violations (filled in once audit completes), Decisions (empty), JSON (raw canonical tree of the most recently selected screen).
+- **Theme toggle** in the canvas chrome flips light↔dark; the plugin auto-detected mode pairs render correctly.
+
+If the export fails, the toast shows the upstream error. Common causes:
+- *401 unauthorized* — JWT expired or wrong; re-paste in plugin Settings.
+- *upstream_unreachable* — ds-service or the tunnel is down. Check `/tmp/ds-service.log` and `/tmp/tunnel.log`.
+- *no Figma PAT for tenant* — the rendering pipeline can't fetch PNGs from Figma. Set the tenant's PAT via `POST /v1/admin/figma-token` with the bootstrap token.
+
+## Smoke checks the operator should run after every deploy
+
+```bash
+# 1. ds-service responds (expect 401)
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "$(grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" /tmp/tunnel.log | head -1)/v1/projects/graph?platform=mobile"
+
+# 2. audit-server responds (expect 200)
+curl -sS -o /dev/null -w "%{http_code}\n" http://localhost:7474/__health
+
+# 3. Vercel proxy reaches ds-service (expect 401 — proxy passed; auth missing)
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  -X POST https://indmoney-design-system-docs.vercel.app/api/projects/export \
+  -H "Content-Type: application/json" -d '{}'
+
+# 4. Login round-trip (expect 200 + a JWT)
+curl -sS -X POST -H "Content-Type: application/json" \
+  --data-binary @<(printf '{"email":"chetan@indmoney.com","password":"<your-password>"}') \
+  "$(grep -oE "https://[a-z0-9-]+\.trycloudflare\.com" /tmp/tunnel.log | head -1)/v1/auth/login" \
+  | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).keys())"
+```
+
+All four passing means the stack is end-to-end live; any failure narrows the bug down to a specific layer.

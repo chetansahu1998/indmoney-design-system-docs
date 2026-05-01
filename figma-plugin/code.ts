@@ -213,6 +213,17 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
         // /api/projects/export which forwards to ds-service's HandleExport.
         // The plugin's manifest already allowlists the Vercel origin so
         // we don't need to add the ephemeral tunnel URL here.
+        //
+        // The boot-time clientStorage read happens in a parallel async
+        // IIFE — if the user clicks Send before that resolves,
+        // docsAuthToken is null even though a saved token exists. Lazy
+        // re-read here closes that race.
+        if (!docsAuthToken) {
+          const tok = (await figma.clientStorage.getAsync("docs_auth_token")) as
+            | string
+            | undefined;
+          if (tok) docsAuthToken = tok;
+        }
         if (!docsAuthToken) {
           send({
             type: "projects.send-result",

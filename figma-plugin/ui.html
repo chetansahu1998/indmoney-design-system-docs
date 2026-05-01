@@ -2527,30 +2527,24 @@ $("btn-projects-send").addEventListener("click", () => {
     });
     return;
   }
-  // U3 placeholder — backend wiring lands in U4.
-  // eslint-disable-next-line no-console
-  console.log("payload:", built.payload);
-
-  // Disable for 2s to prevent rapid double-submits (per plan).
+  // Phase 7.8 — payload now POSTs to /api/projects/export through the
+  // docs-site proxy. The button stays disabled until projects.send-result
+  // arrives (success or failure) so the user never sees "Sending…" stick.
   projectsState.sendInFlight = true;
   const btn = $("btn-projects-send");
   btn.disabled = true;
   const orig = btn.textContent;
   btn.innerHTML = `<span class="spin"></span>Sending…`;
-  setTimeout(() => {
+  // Safety unlock — if no result arrives within 90s the button still
+  // re-enables so the UI doesn't lock forever on a network drop.
+  projectsState._sendUnlock = setTimeout(() => {
     projectsState.sendInFlight = false;
     btn.disabled = false;
     btn.textContent = orig;
-  }, 2000);
+  }, 90_000);
+  projectsState._sendOrigText = orig;
 
-  // Tell main thread (no-op in U3 beyond logging back).
   post("projects.send", built.payload);
-
-  pushToast({
-    message: `Payload built (${built.payload.flows.length} flow${built.payload.flows.length === 1 ? "" : "s"})`,
-    sub: "U3 placeholder — see console; backend in U4.",
-    level: "success",
-  });
 });
 
 /* ════════════════════════════════════════════════════════════════════
@@ -2653,18 +2647,31 @@ window.onmessage = (event) => {
       //       deeplink, no project_id).
       const p = msg.payload || {};
       const status = $("docs-token-status");
+      const tokenInput = $("docs-token");
       // Token-set ack: payload.info is set, no deeplink → status line.
       if (p.info && status) {
         status.textContent = p.info;
-        if (p.ok) status.style.color = "#34c759";
-        else status.style.color = "";
+        status.style.color = p.ok ? "#34c759" : "";
+        // Clear the input on a successful save so the JWT isn't visible
+        // sitting in the field after the user has confirmed.
+        if (p.ok && p.info === "Token saved." && tokenInput) tokenInput.value = "";
         break;
       }
-      // Send POST result.
+      // Send POST result — also re-enables the disabled Send button.
+      if (projectsState._sendUnlock) {
+        clearTimeout(projectsState._sendUnlock);
+        projectsState._sendUnlock = null;
+      }
+      projectsState.sendInFlight = false;
+      const sendBtn = $("btn-projects-send");
+      if (sendBtn) {
+        sendBtn.disabled = false;
+        if (projectsState._sendOrigText) sendBtn.textContent = projectsState._sendOrigText;
+      }
       if (p.ok && p.deeplink) {
         pushToast({
           message: "Exported successfully",
-          sub: "Click toast to open in docs site",
+          sub: `Project ${p.project_id ? p.project_id.slice(0, 8) + "…" : "?"} — click to open`,
           level: "success",
           onClick: () => post("open-docs"),
         });
