@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-
-	"github.com/indmoney/design-system-docs/services/ds-service/internal/auth"
 )
 
 // Phase 7 U2 — rule catalog editor at /atlas/admin/rules.
@@ -112,9 +110,7 @@ func (s *Server) HandleAdminListRules(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
 		return
 	}
-	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if !isAdmin(claims) {
-		writeJSONErr(w, http.StatusForbidden, "admin_required", "")
+	if _, ok := s.requireAdminTenant(w, r); !ok {
 		return
 	}
 	rules, err := listAuditRules(r.Context(), s.deps.DB.DB)
@@ -132,9 +128,7 @@ func (s *Server) HandleAdminPatchRule(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "PATCH only")
 		return
 	}
-	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if !isAdmin(claims) {
-		writeJSONErr(w, http.StatusForbidden, "admin_required", "")
+	if _, ok := s.requireAdminTenant(w, r); !ok {
 		return
 	}
 	ruleID := r.PathValue("rule_id")

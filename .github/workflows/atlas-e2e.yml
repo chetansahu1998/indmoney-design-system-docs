@@ -1,0 +1,135 @@
+name: atlas-e2e
+
+# Phase 6 + 7 + 8 e2e — boots ds-service + Next.js, runs Playwright against
+# /atlas, /atlas/admin/{rules,personas,taxonomy}, /settings/notifications,
+# and the search palette. Separate from the build workflow because it
+# requires both servers running concurrently.
+#
+# Triggers: PRs touching the atlas/admin/search surfaces + manual dispatch.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/atlas/**"
+      - "app/settings/**"
+      - "components/search/**"
+      - "components/SearchModal.tsx"
+      - "services/ds-service/internal/projects/**"
+      - "services/ds-service/migrations/**"
+      - "tests/atlas-mind-graph.spec.ts"
+      - "tests/admin/**"
+      - "tests/search/**"
+      - "tests/flow-grants/**"
+      - ".github/workflows/atlas-e2e.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/atlas/**"
+      - "app/settings/**"
+      - "components/search/**"
+      - "components/SearchModal.tsx"
+      - "services/ds-service/**"
+      - "tests/**"
+      - ".github/workflows/atlas-e2e.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: atlas-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      # Ephemeral JWT key + bootstrap token so the test DB doesn't depend
+      # on operator-supplied secrets. The ds-service generates one on
+      # boot if absent; we inject a fixed test value for determinism.
+      JWT_SIGNING_KEY: ""
+      ENCRYPTION_KEY: "dGVzdC1lbmNyeXB0aW9uLWtleS1iNjQtMzItYnl0ZXMtZXg="
+      BOOTSTRAP_TOKEN: "atlas-e2e-bootstrap"
+      SQLITE_PATH: "/tmp/ds-e2e.db"
+      PORT: "8080"
+      NEXT_PUBLIC_DS_SERVICE_URL: "http://localhost:8080"
+      PLAYWRIGHT_BASE_URL: "http://localhost:3001"
+      # Worker pool size of 1 keeps log output tractable in CI.
+      GRAPH_INDEX_REBUILD_WORKERS: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: services/ds-service/go.sum
+
+      - name: Install Node deps
+        run: npm ci
+
+      - name: Build ds-service
+        working-directory: services/ds-service
+        run: go build -o /tmp/ds-service ./cmd/server
+
+      - name: Build Next.js (production)
+        run: |
+          npm run tokens:build
+          npm run build
+        env:
+          NEXT_PUBLIC_BRAND: indmoney
+
+      - name: Start ds-service
+        run: |
+          /tmp/ds-service > /tmp/ds-service.log 2>&1 &
+          # Wait up to 30s for the port to bind.
+          for i in {1..30}; do
+            if curl -sSf -o /dev/null http://localhost:8080/v1/projects/graph 2>/dev/null \
+               || curl -sS -o /dev/null -w "%{http_code}" http://localhost:8080/v1/projects/graph | grep -q "401"; then
+              echo "ds-service ready"; exit 0
+            fi
+            sleep 1
+          done
+          echo "ds-service failed to start"
+          cat /tmp/ds-service.log
+          exit 1
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ hashFiles('package-lock.json') }}
+
+      - run: npx playwright install --with-deps chromium
+
+      - name: Run atlas-e2e Playwright specs
+        # Only run the specs explicitly tagged for the atlas + admin
+        # surfaces. The token-parity job already runs every other spec.
+        run: |
+          npx playwright test \
+            --project=indmoney-light \
+            tests/atlas-mind-graph.spec.ts \
+            tests/admin/ \
+            tests/search/ \
+            tests/flow-grants/ \
+            tests/notification-prefs/ \
+            || EXIT=$?
+          if [ -n "${EXIT:-}" ] && [ "${EXIT}" -ne 0 ]; then
+            echo "=== ds-service log ===" && cat /tmp/ds-service.log
+            exit "$EXIT"
+          fi
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-atlas-report
+          path: playwright-report/
+          retention-days: 7
+
+      - name: Stop ds-service
+        if: always()
+        run: pkill -f /tmp/ds-service || true

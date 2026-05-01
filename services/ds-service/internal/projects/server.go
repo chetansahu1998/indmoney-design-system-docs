@@ -123,6 +123,32 @@ func (s *Server) resolveTenantID(claims *auth.Claims) string {
 	return ""
 }
 
+// requireAdminTenant is the shared guard for admin-gated handlers. It
+// extracts claims from the request context, checks super-admin, resolves
+// the single tenant — and writes the appropriate JSON error envelope on
+// failure. Handlers call it at the top:
+//
+//	tenantID, ok := s.requireAdminTenant(w, r)
+//	if !ok { return }
+//
+// Replaces the inline isAdmin + resolveTenantID pattern that was copied
+// across 9 admin handlers in Phase 7+. New admin handlers should adopt
+// this helper. Phase 7.7 polish; tracked in
+// docs/solutions/2026-05-01-003-phase-7-8-closure.md.
+func (s *Server) requireAdminTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if !isAdmin(claims) {
+		writeJSONErr(w, http.StatusForbidden, "admin_required", "")
+		return "", false
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return "", false
+	}
+	return tenantID, true
+}
+
 // HandleExport serves POST /v1/projects/export.
 //
 // Lifecycle (per U4):

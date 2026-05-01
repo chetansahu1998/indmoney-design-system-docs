@@ -105,9 +105,7 @@ func (s *Server) HandleAdminListPendingPersonas(w http.ResponseWriter, r *http.R
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
 		return
 	}
-	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if !isAdmin(claims) {
-		writeJSONErr(w, http.StatusForbidden, "admin_required", "")
+	if _, ok := s.requireAdminTenant(w, r); !ok {
 		return
 	}
 	rows, err := listPendingPersonas(r.Context(), s.deps.DB.DB)
@@ -125,8 +123,7 @@ func (s *Server) HandleAdminApprovePersona(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if !isAdmin(claims) {
-		writeJSONErr(w, http.StatusForbidden, "admin_required", "")
+	if _, ok := s.requireAdminTenant(w, r); !ok {
 		return
 	}
 	id := r.PathValue("id")
@@ -151,9 +148,7 @@ func (s *Server) HandleAdminRejectPersona(w http.ResponseWriter, r *http.Request
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
 		return
 	}
-	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if !isAdmin(claims) {
-		writeJSONErr(w, http.StatusForbidden, "admin_required", "")
+	if _, ok := s.requireAdminTenant(w, r); !ok {
 		return
 	}
 	id := r.PathValue("id")

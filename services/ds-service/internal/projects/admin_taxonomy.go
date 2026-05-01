@@ -149,14 +149,8 @@ func (s *Server) HandleAdminListTaxonomy(w http.ResponseWriter, r *http.Request)
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
 		return
 	}
-	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if !isAdmin(claims) {
-		writeJSONErr(w, http.StatusForbidden, "admin_required", "")
-		return
-	}
-	tenantID := s.resolveTenantID(claims)
-	if tenantID == "" {
-		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+	tenantID, ok := s.requireAdminTenant(w, r)
+	if !ok {
 		return
 	}
 	entries, err := listTaxonomy(r.Context(), s.deps.DB.DB, tenantID)
@@ -174,16 +168,12 @@ func (s *Server) HandleAdminPromoteTaxonomy(w http.ResponseWriter, r *http.Reque
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
 		return
 	}
+	tenantID, ok := s.requireAdminTenant(w, r)
+	if !ok {
+		return
+	}
+	// claims is still needed below for promoter audit (claims.Sub).
 	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if !isAdmin(claims) {
-		writeJSONErr(w, http.StatusForbidden, "admin_required", "")
-		return
-	}
-	tenantID := s.resolveTenantID(claims)
-	if tenantID == "" {
-		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
-		return
-	}
 	var body struct {
 		Product string `json:"product"`
 		Path    string `json:"path"`
@@ -260,14 +250,8 @@ func (s *Server) HandleAdminReorderTaxonomy(w http.ResponseWriter, r *http.Reque
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
 		return
 	}
-	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if !isAdmin(claims) {
-		writeJSONErr(w, http.StatusForbidden, "admin_required", "")
-		return
-	}
-	tenantID := s.resolveTenantID(claims)
-	if tenantID == "" {
-		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+	tenantID, ok := s.requireAdminTenant(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -294,14 +278,8 @@ func (s *Server) HandleAdminArchiveTaxonomy(w http.ResponseWriter, r *http.Reque
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
 		return
 	}
-	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if !isAdmin(claims) {
-		writeJSONErr(w, http.StatusForbidden, "admin_required", "")
-		return
-	}
-	tenantID := s.resolveTenantID(claims)
-	if tenantID == "" {
-		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+	tenantID, ok := s.requireAdminTenant(w, r)
+	if !ok {
 		return
 	}
 	var body struct {

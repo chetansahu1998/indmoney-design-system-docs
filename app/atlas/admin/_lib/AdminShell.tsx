@@ -42,7 +42,11 @@ export function AdminShell({ title, description, children }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const [hydrated, setHydrated] = useState(false);
-  const [pendingPersonaCount, setPendingPersonaCount] = useState(0);
+  // Internal raw count — incremented on every persona.pending event.
+  // The DISPLAYED count subtracts the user's "seen marker" stored in
+  // localStorage so dismissals survive reload.
+  const [rawCount, setRawCount] = useState(0);
+  const [seenMarker, setSeenMarker] = useState(0);
 
   useEffect(() => {
     setHydrated(true);
@@ -67,12 +71,21 @@ export function AdminShell({ title, description, children }: Props) {
         const body = await adminFetchJSON<{ personas: { id: string }[] }>(
           "/v1/atlas/admin/personas/pending",
         );
-        if (!cancelled) setPendingPersonaCount(body.personas?.length ?? 0);
+        if (!cancelled) setRawCount(body.personas?.length ?? 0);
       } catch {
         // Non-admins will get 403 — fine, badge stays at 0.
       }
     }
     void loadInitialCount();
+    // Hydrate the dismissal marker from localStorage. The marker is the
+    // rawCount value at the time the user clicked "mark all seen"; while
+    // rawCount > marker, the badge shows the delta. Reload-safe.
+    try {
+      const raw = window.localStorage.getItem("admin-personas-seen-marker");
+      if (raw !== null) setSeenMarker(parseInt(raw, 10) || 0);
+    } catch {
+      /* localStorage may be blocked; badge degrades to no-persistence */
+    }
 
     async function subscribe() {
       try {
@@ -92,7 +105,7 @@ export function AdminShell({ title, description, children }: Props) {
           `${dsBaseURL()}/v1/inbox/events?ticket=${encodeURIComponent(t.ticket)}`,
         );
         es.addEventListener("persona.pending", () => {
-          setPendingPersonaCount((c) => c + 1);
+          setRawCount((c) => c + 1);
         });
       } catch {
         // ignore — bell just doesn't update live
@@ -106,13 +119,26 @@ export function AdminShell({ title, description, children }: Props) {
     };
   }, [hydrated, token]);
 
-  // Reset the badge when the user lands on the personas page — they're
-  // about to read the queue, so unseen count drops to 0.
+  // Mark-all-seen persists across reloads via localStorage. Triggered
+  // either by landing on /atlas/admin/personas (the user is now reading
+  // the queue) or via an explicit "mark seen" button click.
+  function markAllSeen() {
+    setSeenMarker(rawCount);
+    try {
+      window.localStorage.setItem("admin-personas-seen-marker", String(rawCount));
+    } catch {
+      /* localStorage may be blocked; badge degrades to no-persistence */
+    }
+  }
   useEffect(() => {
     if (pathname === "/atlas/admin/personas") {
-      setPendingPersonaCount(0);
+      markAllSeen();
     }
-  }, [pathname]);
+    // markAllSeen reads rawCount each call; deps intentionally narrow.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname, rawCount]);
+
+  const pendingPersonaCount = Math.max(0, rawCount - seenMarker);
 
   if (!hydrated || !token) {
     return <div aria-hidden style={{ minHeight: "100vh", background: "var(--bg)" }} />;
@@ -133,12 +159,27 @@ export function AdminShell({ title, description, children }: Props) {
               {l.label}
               {showBadge && (
                 <span
+                  role="button"
+                  tabIndex={0}
                   className="badge"
-                  aria-label={`${pendingPersonaCount} pending`}
+                  aria-label={`${pendingPersonaCount} pending — click to dismiss`}
+                  title="Mark all as seen"
+                  onClick={(e) => {
+                    e.preventDefault(); // don't navigate; just dismiss
+                    e.stopPropagation();
+                    markAllSeen();
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      markAllSeen();
+                    }
+                  }}
                 >
                   {/* Cap display at "9+" so the pill stays compact under
-                      bursts. The aria-label still carries the full count
-                      for screen-reader users. */}
+                      bursts. The aria-label carries the real count + an
+                      affordance hint for screen-reader users. */}
                   {pendingPersonaCount > 9 ? "9+" : pendingPersonaCount}
                 </span>
               )}
@@ -200,7 +241,17 @@ export function AdminShell({ title, description, children }: Props) {
           font-size: 9px;
           font-weight: 700;
           font-variant-numeric: tabular-nums;
+          cursor: pointer;
+          user-select: none;
           animation: bellPulse 2s ease-in-out infinite;
+        }
+        .admin-nav :global(.badge:hover) {
+          background: #ffc875;
+          animation-play-state: paused;
+        }
+        .admin-nav :global(.badge:focus-visible) {
+          outline: 2px solid #7b9fff;
+          outline-offset: 2px;
         }
         @keyframes bellPulse {
           0%, 100% {
