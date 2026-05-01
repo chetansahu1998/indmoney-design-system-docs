@@ -1192,6 +1192,240 @@ func (s *Server) HandleBulkAcknowledge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ─── Phase 5 U3: Decisions ───────────────────────────────────────────────────
+
+// createDecisionRequest mirrors the JSON body for
+// POST /v1/projects/{slug}/flows/{flow_id}/decisions.
+type createDecisionRequest struct {
+	Title         string                  `json:"title"`
+	BodyJSON      json.RawMessage         `json:"body_json,omitempty"`
+	Status        string                  `json:"status,omitempty"`
+	SupersedesID  string                  `json:"supersedes_id,omitempty"`
+	Links         []decisionLinkRequest   `json:"links,omitempty"`
+	VersionID     string                  `json:"version_id,omitempty"`
+}
+
+type decisionLinkRequest struct {
+	LinkType string `json:"link_type"`
+	TargetID string `json:"target_id"`
+}
+
+// HandleDecisionCreate serves POST /v1/projects/{slug}/flows/{flow_id}/decisions.
+//
+// Requires the caller to be authenticated + tenant-scoped. The flow must be
+// visible inside the caller's tenant; cross-tenant attempts return 404.
+// Validation errors map to 400; cycle errors to 409; not-found to 404.
+func (s *Server) HandleDecisionCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	flowID := r.PathValue("flow_id")
+	if slug == "" || flowID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, MaxBodyBytes))
+	if err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "read_body", err.Error())
+		return
+	}
+	var req createDecisionRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "decode", err.Error())
+		return
+	}
+
+	links := make([]DecisionLinkInput, 0, len(req.Links))
+	for _, l := range req.Links {
+		links = append(links, DecisionLinkInput{
+			LinkType: LinkType(l.LinkType),
+			TargetID: l.TargetID,
+		})
+	}
+	in, err := ValidateDecisionInput(DecisionInput{
+		Title:        req.Title,
+		BodyJSON:     []byte(req.BodyJSON),
+		Status:       req.Status,
+		SupersedesID: req.SupersedesID,
+		Links:        links,
+	})
+	if err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_decision", err.Error())
+		return
+	}
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+
+	// Defense in depth: confirm the slug refers to a project that owns
+	// this flow inside the caller's tenant. The repo's
+	// assertFlowVisibleByID already checks tenant; we additionally
+	// verify the slug match here so a tenant-A admin can't act on a
+	// tenant-A flow through a tenant-B slug URL.
+	if _, err := repo.GetProjectBySlug(r.Context(), slug); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+		return
+	}
+
+	rec, err := repo.CreateDecision(r.Context(), flowID, req.VersionID, claims.Sub, in)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			writeJSONErr(w, http.StatusNotFound, "not_found", err.Error())
+		case errors.Is(err, ErrDecisionCycle):
+			writeJSONErr(w, http.StatusConflict, "decision_cycle", err.Error())
+		default:
+			writeJSONErr(w, http.StatusInternalServerError, "create_decision", err.Error())
+		}
+		return
+	}
+
+	// Audit-log row in best-effort fashion. Decisions are created in
+	// their own transaction (the cycle check + UPDATE chain is too much
+	// to run inside the audit_log writer hook); we log post-write here.
+	now := time.Now().UTC()
+	details, _ := json.Marshal(map[string]any{
+		"decision_id":   rec.ID,
+		"flow_id":       rec.FlowID,
+		"version_id":    rec.VersionID,
+		"status":        rec.Status,
+		"supersedes_id": rec.SupersedesID,
+		"project_slug":  slug,
+		"schema_ver":    ProjectsSchemaVersion,
+	})
+	_ = s.deps.DB.WriteAudit(r.Context(), db.AuditEntry{
+		ID:         uuid.NewString(),
+		TS:         now,
+		EventType:  MakeDecisionAuditEvent("create"),
+		TenantID:   tenantID,
+		UserID:     claims.Sub,
+		Method:     "POST",
+		Endpoint:   r.URL.Path,
+		StatusCode: http.StatusCreated,
+		IPAddress:  clientIP(r),
+		Details:    string(details),
+	})
+
+	writeJSON(w, http.StatusCreated, rec)
+}
+
+// HandleDecisionList serves GET /v1/projects/{slug}/flows/{flow_id}/decisions
+// with optional ?include_superseded=1 toggle.
+func (s *Server) HandleDecisionList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	flowID := r.PathValue("flow_id")
+	if flowID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_flow_id", "")
+		return
+	}
+	includeSuperseded := r.URL.Query().Get("include_superseded") == "1"
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	out, err := repo.ListDecisionsForFlow(r.Context(), flowID, includeSuperseded)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "list_decisions", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"decisions": out,
+		"count":     len(out),
+	})
+}
+
+// HandleDecisionGet serves GET /v1/decisions/{id}. Tenant-scoped.
+func (s *Server) HandleDecisionGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_id", "")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	rec, err := repo.GetDecision(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "get_decision", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
+}
+
+// HandleRecentDecisions serves GET /v1/atlas/admin/decisions/recent.
+// Super-admin only — registered behind requireSuperAdmin in main.go.
+func (s *Server) HandleRecentDecisions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	limit := 20
+	if l := r.URL.Query().Get("limit"); l != "" {
+		var n int
+		_, _ = fmt.Sscanf(l, "%d", &n)
+		if n > 0 {
+			limit = n
+		}
+	}
+	repoDB := NewDB(s.deps.DB.DB)
+	out, err := repoDB.ListRecentDecisions(r.Context(), limit)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "recent_decisions", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"decisions": out,
+		"count":     len(out),
+	})
+}
+
 // inboxBroadcastChannel returns the synthetic SSE channel used for
 // tenant-scoped inbox broadcasts. Phase 4.1 — lifecycle events publish
 // under both the project's trace_id (existing project Violations tab

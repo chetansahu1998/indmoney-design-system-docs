@@ -481,6 +481,18 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleViolationGet)))
 	mux.HandleFunc("POST /v1/projects/{slug}/violations/{id}/fix-applied",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleViolationFixApplied)))
+
+	// Phase 5 U3 — Decisions as a first-class entity. Per-flow create +
+	// list, single-decision get, and a super-admin recent-decisions
+	// feed that powers /atlas/admin's panel.
+	mux.HandleFunc("POST /v1/projects/{slug}/flows/{flow_id}/decisions",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleDecisionCreate)))
+	mux.HandleFunc("GET /v1/projects/{slug}/flows/{flow_id}/decisions",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleDecisionList)))
+	mux.HandleFunc("GET /v1/decisions/{id}",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleDecisionGet)))
+	mux.HandleFunc("GET /v1/atlas/admin/decisions/recent",
+		s.requireSuperAdmin(s.projectsServer.HandleRecentDecisions))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────

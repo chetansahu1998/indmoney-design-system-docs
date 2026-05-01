@@ -1280,3 +1280,408 @@ func (t *TenantRepo) UpdateViolationStatus(ctx context.Context, violationID stri
 
 	return tx.Commit()
 }
+
+// ─── Phase 5 U3: decisions ──────────────────────────────────────────────────
+
+// resolveLatestVersionID returns the most recent project_versions.id for a
+// flow inside the caller's tenant. Used by CreateDecision when the caller
+// doesn't pin a version explicitly — Phase 5 anchors decisions to whatever
+// version is current at decision time.
+func (t *TenantRepo) resolveLatestVersionID(ctx context.Context, flowID string) (string, error) {
+	var versionID string
+	err := t.r.db.QueryRowContext(ctx,
+		`SELECT pv.id
+		   FROM project_versions pv
+		   JOIN flows f ON f.project_id = pv.project_id
+		  WHERE f.id = ? AND f.tenant_id = ?
+		  ORDER BY pv.version_index DESC
+		  LIMIT 1`,
+		flowID, t.tenantID,
+	).Scan(&versionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("latest version: %w", err)
+	}
+	return versionID, nil
+}
+
+// loadFlowSupersessionChain pre-loads every (id, supersedes_id) pair for a
+// flow so DetectSupersessionCycle can walk the chain in-memory. One query
+// per CreateDecision is acceptable — flows have <100 decisions in practice
+// and the index on (tenant_id, flow_id, made_at DESC) covers the scan.
+func (t *TenantRepo) loadFlowSupersessionChain(ctx context.Context, flowID string) (map[string]CycleCheckHop, error) {
+	rows, err := t.r.db.QueryContext(ctx,
+		`SELECT id, COALESCE(supersedes_id, '') FROM decisions
+		  WHERE tenant_id = ? AND flow_id = ? AND deleted_at IS NULL`,
+		t.tenantID, flowID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("chain: %w", err)
+	}
+	defer rows.Close()
+	chain := make(map[string]CycleCheckHop)
+	for rows.Next() {
+		var hop CycleCheckHop
+		if err := rows.Scan(&hop.ID, &hop.SupersedesID); err != nil {
+			return nil, err
+		}
+		chain[hop.ID] = hop
+	}
+	return chain, rows.Err()
+}
+
+// assertFlowVisibleAndScoped checks the flow exists in the caller's tenant +
+// returns its project_id (used by Phase 1's flow read paths). Reused here
+// to fail fast on cross-tenant create attempts.
+func (t *TenantRepo) assertFlowVisibleByID(ctx context.Context, flowID string) error {
+	var dummy string
+	err := t.r.db.QueryRowContext(ctx,
+		`SELECT id FROM flows WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`,
+		flowID, t.tenantID,
+	).Scan(&dummy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	return err
+}
+
+// CreateDecision writes a decisions row + decision_links rows in one
+// transaction. The supersession-cycle check happens in-process with the
+// pre-loaded chain so the SQL stays simple. When supersedes_id is non-empty,
+// the predecessor's status flips to 'superseded' + its superseded_by_id
+// updates inside the same tx — the chain is always self-consistent on read.
+//
+// Caller is expected to have already run ValidateDecisionInput. versionID
+// may be empty; when empty, the repo resolves the flow's latest version.
+func (t *TenantRepo) CreateDecision(ctx context.Context, flowID, versionID, madeByUserID string, in DecisionInput) (*DecisionRecord, error) {
+	if err := t.assertFlowVisibleByID(ctx, flowID); err != nil {
+		return nil, err
+	}
+	if versionID == "" {
+		v, err := t.resolveLatestVersionID(ctx, flowID)
+		if err != nil {
+			return nil, err
+		}
+		versionID = v
+	}
+
+	// Cycle prevention. Empty supersedes_id ⇒ no cycle possible.
+	if in.SupersedesID != "" {
+		chain, err := t.loadFlowSupersessionChain(ctx, flowID)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := chain[in.SupersedesID]; !ok {
+			return nil, fmt.Errorf("%w: predecessor not found in flow", ErrNotFound)
+		}
+		// We're proposing a NEW id, so its successor chain is empty —
+		// the only way it cycles is if startID transitively points to a
+		// future "us". The detector treats proposedID as the would-be
+		// new id; we use a placeholder until we have one (so the check
+		// just verifies the chain itself isn't cyclic — which the schema
+		// permits but our writes never produce).
+		if DetectSupersessionCycle("__proposed__", in.SupersedesID, chain) {
+			return nil, ErrDecisionCycle
+		}
+	}
+
+	now := t.now()
+	id := uuid.NewString()
+	tx, err := t.r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO decisions
+		 (id, tenant_id, flow_id, version_id, title, body_json, status,
+		  made_by_user_id, made_at, supersedes_id,
+		  created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, t.tenantID, flowID, versionID, in.Title, in.BodyJSON, in.Status,
+		madeByUserID, rfc3339(now),
+		nullIfEmpty(in.SupersedesID),
+		rfc3339(now), rfc3339(now),
+	); err != nil {
+		return nil, fmt.Errorf("insert decision: %w", err)
+	}
+
+	// Flip the predecessor to superseded in the same tx so chain reads
+	// are consistent. When the predecessor was already superseded
+	// (multiple chains converging), we still mark `superseded_by_id`
+	// to the most recent — admins can read the historical chain via
+	// audit_log.
+	if in.SupersedesID != "" {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE decisions
+			    SET status = 'superseded',
+			        superseded_by_id = ?,
+			        updated_at = ?
+			  WHERE id = ? AND tenant_id = ?`,
+			id, rfc3339(now), in.SupersedesID, t.tenantID,
+		); err != nil {
+			return nil, fmt.Errorf("supersede predecessor: %w", err)
+		}
+	}
+
+	for _, l := range in.Links {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO decision_links
+			 (decision_id, link_type, target_id, tenant_id, created_at)
+			 VALUES (?, ?, ?, ?, ?)`,
+			id, string(l.LinkType), l.TargetID, t.tenantID, rfc3339(now),
+		); err != nil {
+			return nil, fmt.Errorf("insert decision_link: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+
+	return t.GetDecision(ctx, id)
+}
+
+// GetDecision returns one decision with its links pre-joined. Tenant-scoped.
+func (t *TenantRepo) GetDecision(ctx context.Context, decisionID string) (*DecisionRecord, error) {
+	row := t.r.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, flow_id, version_id, title, COALESCE(body_json, X''),
+		        status, made_by_user_id, made_at,
+		        superseded_by_id, supersedes_id,
+		        created_at, updated_at
+		   FROM decisions
+		  WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`,
+		decisionID, t.tenantID,
+	)
+	rec := &DecisionRecord{}
+	var madeAt, createdAt, updatedAt string
+	var supersededBy, supersedes sql.NullString
+	if err := row.Scan(
+		&rec.ID, &rec.TenantID, &rec.FlowID, &rec.VersionID, &rec.Title, &rec.BodyJSON,
+		&rec.Status, &rec.MadeByUserID, &madeAt,
+		&supersededBy, &supersedes,
+		&createdAt, &updatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("scan decision: %w", err)
+	}
+	rec.MadeAt = parseTime(madeAt)
+	rec.CreatedAt = parseTime(createdAt)
+	rec.UpdatedAt = parseTime(updatedAt)
+	if supersededBy.Valid {
+		s := supersededBy.String
+		rec.SupersededByID = &s
+	}
+	if supersedes.Valid {
+		s := supersedes.String
+		rec.SupersedesID = &s
+	}
+	if len(rec.BodyJSON) == 0 {
+		rec.BodyJSON = nil
+	}
+
+	// Side-load links.
+	links, err := t.r.db.QueryContext(ctx,
+		`SELECT decision_id, link_type, target_id, created_at FROM decision_links
+		  WHERE decision_id = ? AND tenant_id = ?
+		  ORDER BY created_at ASC`,
+		decisionID, t.tenantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("links: %w", err)
+	}
+	defer links.Close()
+	for links.Next() {
+		var l DecisionLink
+		var ts string
+		var lt string
+		if err := links.Scan(&l.DecisionID, &lt, &l.TargetID, &ts); err != nil {
+			return nil, err
+		}
+		l.LinkType = LinkType(lt)
+		l.CreatedAt = parseTime(ts)
+		rec.Links = append(rec.Links, l)
+	}
+	return rec, links.Err()
+}
+
+// ListDecisionsForFlow returns decisions for a flow, ordered by made_at DESC.
+// includeSuperseded toggles whether the chain's predecessors are returned.
+func (t *TenantRepo) ListDecisionsForFlow(ctx context.Context, flowID string, includeSuperseded bool) ([]DecisionRecord, error) {
+	if err := t.assertFlowVisibleByID(ctx, flowID); err != nil {
+		return nil, err
+	}
+
+	var statusClause string
+	args := []any{t.tenantID, flowID}
+	if !includeSuperseded {
+		statusClause = " AND status IN ('proposed', 'accepted')"
+	}
+
+	rows, err := t.r.db.QueryContext(ctx,
+		`SELECT id, tenant_id, flow_id, version_id, title, COALESCE(body_json, X''),
+		        status, made_by_user_id, made_at,
+		        superseded_by_id, supersedes_id,
+		        created_at, updated_at
+		   FROM decisions
+		  WHERE tenant_id = ? AND flow_id = ? AND deleted_at IS NULL`+statusClause+`
+		  ORDER BY made_at DESC`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list decisions: %w", err)
+	}
+	defer rows.Close()
+
+	var out []DecisionRecord
+	ids := make([]string, 0)
+	idIdx := make(map[string]int)
+	for rows.Next() {
+		var rec DecisionRecord
+		var madeAt, createdAt, updatedAt string
+		var supersededBy, supersedes sql.NullString
+		if err := rows.Scan(
+			&rec.ID, &rec.TenantID, &rec.FlowID, &rec.VersionID, &rec.Title, &rec.BodyJSON,
+			&rec.Status, &rec.MadeByUserID, &madeAt,
+			&supersededBy, &supersedes,
+			&createdAt, &updatedAt,
+		); err != nil {
+			return nil, err
+		}
+		rec.MadeAt = parseTime(madeAt)
+		rec.CreatedAt = parseTime(createdAt)
+		rec.UpdatedAt = parseTime(updatedAt)
+		if supersededBy.Valid {
+			s := supersededBy.String
+			rec.SupersededByID = &s
+		}
+		if supersedes.Valid {
+			s := supersedes.String
+			rec.SupersedesID = &s
+		}
+		if len(rec.BodyJSON) == 0 {
+			rec.BodyJSON = nil
+		}
+		idIdx[rec.ID] = len(out)
+		ids = append(ids, rec.ID)
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	// Side-load all links for the listed decisions in one query.
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	linkArgs := make([]any, 0, len(ids)+1)
+	for _, id := range ids {
+		linkArgs = append(linkArgs, id)
+	}
+	linkArgs = append(linkArgs, t.tenantID)
+	linkRows, err := t.r.db.QueryContext(ctx,
+		`SELECT decision_id, link_type, target_id, created_at FROM decision_links
+		  WHERE decision_id IN (`+placeholders+`) AND tenant_id = ?`,
+		linkArgs...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("links bulk: %w", err)
+	}
+	defer linkRows.Close()
+	for linkRows.Next() {
+		var l DecisionLink
+		var ts, lt string
+		if err := linkRows.Scan(&l.DecisionID, &lt, &l.TargetID, &ts); err != nil {
+			return nil, err
+		}
+		l.LinkType = LinkType(lt)
+		l.CreatedAt = parseTime(ts)
+		if idx, ok := idIdx[l.DecisionID]; ok {
+			out[idx].Links = append(out[idx].Links, l)
+		}
+	}
+	return out, linkRows.Err()
+}
+
+// ListRecentDecisions returns the most recent decisions across the entire
+// database — used by /atlas/admin's Recent Decisions feed. Super-admin
+// scope; the handler guards the call.
+func (db *DB) ListRecentDecisions(ctx context.Context, limit int) ([]DecisionRecord, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	rows, err := db.db.QueryContext(ctx,
+		`SELECT id, tenant_id, flow_id, version_id, title, COALESCE(body_json, X''),
+		        status, made_by_user_id, made_at,
+		        superseded_by_id, supersedes_id,
+		        created_at, updated_at
+		   FROM decisions
+		  WHERE deleted_at IS NULL AND status IN ('proposed', 'accepted')
+		  ORDER BY made_at DESC
+		  LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("recent decisions: %w", err)
+	}
+	defer rows.Close()
+	var out []DecisionRecord
+	for rows.Next() {
+		var rec DecisionRecord
+		var madeAt, createdAt, updatedAt string
+		var supersededBy, supersedes sql.NullString
+		if err := rows.Scan(
+			&rec.ID, &rec.TenantID, &rec.FlowID, &rec.VersionID, &rec.Title, &rec.BodyJSON,
+			&rec.Status, &rec.MadeByUserID, &madeAt,
+			&supersededBy, &supersedes,
+			&createdAt, &updatedAt,
+		); err != nil {
+			return nil, err
+		}
+		rec.MadeAt = parseTime(madeAt)
+		rec.CreatedAt = parseTime(createdAt)
+		rec.UpdatedAt = parseTime(updatedAt)
+		if supersededBy.Valid {
+			s := supersededBy.String
+			rec.SupersededByID = &s
+		}
+		if supersedes.Valid {
+			s := supersedes.String
+			rec.SupersedesID = &s
+		}
+		if len(rec.BodyJSON) == 0 {
+			rec.BodyJSON = nil
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+// DB is the unexported repo handle wrapper exposed for cross-tenant queries
+// (currently just ListRecentDecisions). Uses the same *sql.DB the
+// TenantRepo wraps; Phase 7 admin work may reuse this pattern.
+type DB struct {
+	db *sql.DB
+}
+
+// NewDB returns a DB-scoped handle. Caller is responsible for super-admin
+// gating before invoking any cross-tenant method.
+func NewDB(db *sql.DB) *DB {
+	return &DB{db: db}
+}
+
+// nullIfEmpty returns nil for SQL when the string is empty (driver writes
+// SQL NULL), else the string itself. Match the pattern in nullString().
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
