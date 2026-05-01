@@ -387,3 +387,87 @@ export const drdBlockSpecs = {
   figmaLink: FigmaLinkBlock(),
   violationRef: ViolationRefBlock(),
 };
+
+// ─── Slash-menu items (Phase 5.2 P2) ────────────────────────────────────────
+
+/**
+ * Custom slash items for the three DRD blocks. Surfaced by
+ * SuggestionMenuController in DRDTabCollab. Each item inserts an empty
+ * block of the matching type — designers fill in the props (decisionID,
+ * URL, violationID) via the rendered card or a small follow-up form.
+ *
+ * Friendly verbs ("/decision", "/figma-link", "/violation-ref") are the
+ * primary `title`; `aliases` cover the schema names so power-users typing
+ * "/decisionRef" still hit the same item.
+ *
+ * The shape is `DefaultReactSuggestionItem` (DefaultSuggestionItem with
+ * `key` omitted) — the wider type lets our items live alongside the
+ * built-in defaults in the same dropdown.
+ */
+export interface DRDSlashItem {
+  title: string;
+  subtext?: string;
+  badge?: string;
+  aliases?: string[];
+  group?: string;
+  onItemClick: () => void;
+}
+
+// Editor's insertBlocks/getTextCursorPosition signatures are heavily
+// generic over the schema. We use `any` here because the schema we
+// pass through DRDTabCollab uses a typed BlockNoteSchema; the slash
+// items themselves don't depend on the schema's typing — they just
+// hand BlockNote a literal shape it knows about because we registered
+// the block specs in drdBlockSpecs.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function buildDRDSlashItems(editor: any): DRDSlashItem[] {
+  const insert = (type: string, props: Record<string, unknown>) => () => {
+    const cursorBlock = editor.getTextCursorPosition().block;
+    editor.insertBlocks([{ type, props }], cursorBlock.id, "after");
+  };
+  return [
+    {
+      title: "Decision",
+      subtext: "Embed a decision card by id",
+      aliases: ["decision", "decisionRef", "/decision"],
+      group: "DRD",
+      badge: "DRD",
+      onItemClick: insert("decisionRef", { decisionID: "" }),
+    },
+    {
+      title: "Figma link",
+      subtext: "Paste a Figma URL → render as a card",
+      aliases: ["figma", "figmaLink", "/figma-link", "figma-link"],
+      group: "DRD",
+      badge: "DRD",
+      onItemClick: insert("figmaLink", { url: "", label: "" }),
+    },
+    {
+      title: "Violation ref",
+      subtext: "Embed a live violation card by id",
+      aliases: ["violation", "violationRef", "/violation-ref", "violation-ref"],
+      group: "DRD",
+      badge: "DRD",
+      onItemClick: insert("violationRef", { violationID: "", slug: "" }),
+    },
+  ];
+}
+
+/**
+ * filterSlashItems is the predicate SuggestionMenuController hands a
+ * query string to. Custom items match on title or aliases (case-
+ * insensitive substring). Returning the items the controller already
+ * knows means the default items also pass through.
+ */
+export function filterDRDSlashItems<T extends { title: string; aliases?: string[] }>(
+  query: string,
+  items: T[],
+): T[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return items;
+  return items.filter((it) => {
+    if (it.title.toLowerCase().includes(q)) return true;
+    if (it.aliases?.some((a) => a.toLowerCase().includes(q))) return true;
+    return false;
+  });
+}

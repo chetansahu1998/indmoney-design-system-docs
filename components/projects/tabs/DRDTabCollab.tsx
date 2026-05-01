@@ -25,7 +25,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BlockNoteSchema } from "@blocknote/core";
-import { useCreateBlockNote } from "@blocknote/react";
+import {
+  useCreateBlockNote,
+  SuggestionMenuController,
+  getDefaultReactSlashMenuItems,
+} from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
@@ -36,7 +40,11 @@ import {
   userColor,
   type DRDCollabBundle,
 } from "@/lib/drd/collab";
-import { drdBlockSpecs } from "@/lib/drd/customBlocks";
+import {
+  buildDRDSlashItems,
+  drdBlockSpecs,
+  filterDRDSlashItems,
+} from "@/lib/drd/customBlocks";
 import { useReducedMotion } from "@/lib/animations/context";
 import EmptyTab from "./EmptyTab";
 import ActivityRail from "@/components/drd/ActivityRail";
@@ -198,7 +206,19 @@ function CollabEditor({ slug, flowID, readOnly, bundle, user }: CollabEditorProp
       </header>
       <div style={drdRowStyle}>
         <div style={editorWrapperStyle}>
-          <BlockNoteView editor={editor} editable={!readOnly} />
+          <BlockNoteView editor={editor} editable={!readOnly} slashMenu={false}>
+            <SuggestionMenuController
+              triggerCharacter="/"
+              getItems={async (query) => {
+                // Phase 5.2 P2 — merge BlockNote's defaults with the
+                // DRD verbs so /decision /figma-link /violation-ref
+                // surface alongside paragraph, heading, etc.
+                const defaults = getDefaultReactSlashMenuItems(editor);
+                const drdItems = buildDRDSlashItems(editor);
+                return filterDRDSlashItems(query, [...drdItems, ...defaults]);
+              }}
+            />
+          </BlockNoteView>
         </div>
         <ActivityRail slug={slug} flowID={flowID} />
       </div>
