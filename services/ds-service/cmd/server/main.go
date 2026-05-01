@@ -735,6 +735,17 @@ func (sr *statusRecorder) WriteHeader(code int) {
 	sr.ResponseWriter.WriteHeader(code)
 }
 
+// Flush passes through to the underlying writer so SSE handlers can
+// stream. Without this, w.(http.Flusher) returns false on the wrapper
+// and HandleGraphEvents / HandleProjectEvents 500 with "no_streaming"
+// every connect — exactly the failure the /atlas mind-graph mount
+// reported when each ticket-redeem turned into a 500.
+func (sr *statusRecorder) Flush() {
+	if f, ok := sr.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 type ctxKey string
 
 const ctxClaims ctxKey = "claims"
