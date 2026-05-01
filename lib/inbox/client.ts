@@ -147,14 +147,17 @@ export async function patchViolationLifecycle(
   violationID: string,
   action: LifecycleAction,
   reason: string,
+  linkDecisionID?: string,
 ): Promise<ApiResult<LifecycleResponse>> {
   try {
+    const body: Record<string, string> = { action, reason };
+    if (linkDecisionID) body.link_decision_id = linkDecisionID;
     const res = await fetch(
       `${dsBaseURL()}/v1/projects/${encodeURIComponent(slug)}/violations/${encodeURIComponent(violationID)}`,
       {
         method: "PATCH",
         headers: authedHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ action, reason }),
+        body: JSON.stringify(body),
       },
     );
     if (!res.ok) {

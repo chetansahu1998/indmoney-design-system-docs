@@ -793,8 +793,12 @@ func (s *Server) HandleProjectEvents(w http.ResponseWriter, r *http.Request) {
 // plugin's POST /v1/projects/{slug}/violations/{id}/fix-applied (Phase 4 U12)
 // is the only legal entry point for that transition.
 type patchViolationRequest struct {
-	Action string `json:"action"`
-	Reason string `json:"reason,omitempty"`
+	Action          string `json:"action"`
+	Reason          string `json:"reason,omitempty"`
+	// Phase 5 U11 — when present, the lifecycle write also inserts a
+	// decision_links row with link_type='violation' inside the same
+	// transaction. Empty string ⇒ no link.
+	LinkDecisionID  string `json:"link_decision_id,omitempty"`
 }
 
 // HandlePatchViolation serves PATCH /v1/projects/{slug}/violations/{id}.
@@ -930,6 +934,31 @@ func (s *Server) HandlePatchViolation(w http.ResponseWriter, r *http.Request) {
 			string(auditDetails),
 		); ierr != nil {
 			return ierr
+		}
+
+		// Phase 5 U11 — link to a decision when the caller provided one.
+		// Validate the decision exists in this tenant before linking;
+		// silently drop unknown ids (defense in depth — caller might be
+		// passing a stale id from an old decisions list).
+		if req.LinkDecisionID != "" {
+			var exists string
+			lookupErr := tx.QueryRowContext(r.Context(),
+				`SELECT id FROM decisions WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`,
+				req.LinkDecisionID, tenantID,
+			).Scan(&exists)
+			if lookupErr == nil {
+				if _, ierr := tx.ExecContext(r.Context(),
+					`INSERT OR IGNORE INTO decision_links
+					 (decision_id, link_type, target_id, tenant_id, created_at)
+					 VALUES (?, ?, ?, ?, ?)`,
+					req.LinkDecisionID, string(LinkTypeViolation), violationID, tenantID,
+					now.Format(time.RFC3339),
+				); ierr != nil {
+					return fmt.Errorf("link decision: %w", ierr)
+				}
+			} else if !errors.Is(lookupErr, sql.ErrNoRows) {
+				return fmt.Errorf("decision lookup: %w", lookupErr)
+			}
 		}
 
 		// Carry-forward marker bookkeeping. Runs in the same transaction as

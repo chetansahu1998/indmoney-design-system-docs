@@ -654,6 +654,7 @@ export default function ProjectShell({
             <ViolationsTab
               slug={slug}
               versionID={activeVersionID}
+              flowID={screens[0]?.FlowID ?? null}
               filters={
                 activePersonaName
                   ? {

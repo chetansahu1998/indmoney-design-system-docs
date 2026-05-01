@@ -18,10 +18,13 @@ import {
   patchViolationLifecycle,
   type LifecycleAction,
 } from "@/lib/inbox/client";
+import DecisionLinkAutocomplete from "./DecisionLinkAutocomplete";
 
 interface Props {
   slug: string;
   violationID: string;
+  /** Phase 5 U11 — when present, the form surfaces a Decision picker. */
+  flowID?: string | null;
   /** Called after a successful PATCH so the parent can collapse the row. */
   onResolved: (action: LifecycleAction) => void;
 }
@@ -34,9 +37,11 @@ type FormState =
 export default function LifecycleButtons({
   slug,
   violationID,
+  flowID,
   onResolved,
 }: Props) {
   const [state, setState] = useState<FormState>({ kind: "idle" });
+  const [linkDecisionID, setLinkDecisionID] = useState("");
 
   const open = (action: LifecycleAction) =>
     setState({ kind: "open", action, reason: "", submitting: false });
@@ -51,6 +56,7 @@ export default function LifecycleButtons({
       violationID,
       state.action,
       reason,
+      linkDecisionID || undefined,
     );
     if (!res.ok) {
       setState({
@@ -129,6 +135,14 @@ export default function LifecycleButtons({
           resize: "vertical",
         }}
       />
+      {flowID && (
+        <DecisionLinkAutocomplete
+          slug={slug}
+          flowID={flowID}
+          value={linkDecisionID}
+          onChange={setLinkDecisionID}
+        />
+      )}
       <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
         <button
           type="button"

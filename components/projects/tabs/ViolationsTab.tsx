@@ -62,6 +62,9 @@ interface ViolationsTabProps {
   /** Phase 3 U6: per-rule audit-progress tick from SSE. Non-null while
    *  the audit is in flight; cleared on audit_complete / audit_failed. */
   auditProgress?: { completed: number; total: number } | null;
+  /** Phase 5 U11 — when present, lifecycle buttons surface the
+   *  "Link to decision" autocomplete sourced from this flow. */
+  flowID?: string | null;
 }
 
 type ViolationsState =
@@ -76,6 +79,7 @@ export default function ViolationsTab({
   filters,
   onViewInJSON,
   auditProgress,
+  flowID,
 }: ViolationsTabProps) {
   const [state, setState] = useState<ViolationsState>({ status: "loading" });
   // Phase 2 U11 — category filter chips. Selected = empty set means "all"
@@ -436,6 +440,7 @@ export default function ViolationsTab({
                     <LifecycleButtons
                       slug={slug}
                       violationID={v.ID}
+                      flowID={flowID ?? null}
                       onResolved={() =>
                         setResolvedSet((prev) => {
                           const next = new Set(prev);

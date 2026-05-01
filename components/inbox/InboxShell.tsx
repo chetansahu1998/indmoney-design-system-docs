@@ -32,12 +32,20 @@ import {
   type LifecycleAction,
 } from "@/lib/inbox/client";
 import {
+  listNotifications,
+  markNotificationsRead,
+  type NotificationRecord,
+} from "@/lib/notifications/client";
+import {
   inboxFiltersToSearchParams,
   parseInboxFiltersFromSearchParams,
 } from "@/lib/inbox/filters";
 import InboxFiltersBar from "./InboxFilters";
 import InboxRowComponent from "./InboxRow";
 import BulkActionBar from "./BulkActionBar";
+import NotificationRow from "./NotificationRow";
+
+type InboxMode = "violations" | "mentions";
 
 type ViewState =
   | { kind: "loading" }
@@ -275,6 +283,42 @@ export default function InboxShell() {
     state.data.rows.length > 0 &&
     state.data.rows.every((r) => selected.has(r.violation_id));
 
+  // ─── Phase 5 U7 — Mentions mode ──────────────────────────────────────
+  const [mode, setMode] = useState<InboxMode>("violations");
+  const [notifs, setNotifs] = useState<NotificationRecord[] | null>(null);
+  const [notifsLoading, setNotifsLoading] = useState(false);
+
+  useEffect(() => {
+    if (mode !== "mentions") return;
+    let cancelled = false;
+    setNotifsLoading(true);
+    void listNotifications({ limit: 100 }).then((r) => {
+      if (cancelled) return;
+      setNotifsLoading(false);
+      if (!r.ok) {
+        setNotifs([]);
+        return;
+      }
+      setNotifs(r.data.notifications ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
+
+  const onMarkRead = useCallback((id: string) => {
+    void markNotificationsRead([id]).then((r) => {
+      if (!r.ok) return;
+      setNotifs((prev) =>
+        prev
+          ? prev.map((n) =>
+              n.id === id ? { ...n, read_at: new Date().toISOString() } : n,
+            )
+          : prev,
+      );
+    });
+  }, []);
+
   return (
     <main
       style={{
@@ -299,6 +343,72 @@ export default function InboxShell() {
         </p>
       </header>
 
+      <div
+        role="tablist"
+        aria-label="Inbox mode"
+        style={{
+          display: "flex",
+          gap: 6,
+          padding: "8px 0",
+          borderBottom: "1px solid var(--border)",
+          marginBottom: 8,
+        }}
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "violations"}
+          onClick={() => setMode("violations")}
+          style={modeTabStyle(mode === "violations")}
+        >
+          Violations
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={mode === "mentions"}
+          onClick={() => setMode("mentions")}
+          style={modeTabStyle(mode === "mentions")}
+        >
+          Mentions
+        </button>
+      </div>
+
+      {mode === "mentions" && (
+        <>
+          {notifsLoading && <EmptyState variant="loading" />}
+          {!notifsLoading && notifs && notifs.length === 0 && (
+            <EmptyState
+              variant="welcome"
+              title="No mentions"
+              description="When teammates @mention you in a comment or decision, the notifications land here."
+            />
+          )}
+          {!notifsLoading && notifs && notifs.length > 0 && (
+            <ul
+              data-testid="notifications-list"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                margin: 0,
+                padding: 0,
+              }}
+            >
+              {notifs.map((n) => (
+                <NotificationRow
+                  key={n.id}
+                  notification={n}
+                  onClick={onMarkRead}
+                />
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+
+      {mode === "violations" && (
+        <>
       <InboxFiltersBar
         filters={filters}
         onChange={updateFilters}
@@ -430,6 +540,21 @@ export default function InboxShell() {
         }}
         onClear={() => setSelected(new Set())}
       />
+        </>
+      )}
     </main>
   );
+}
+
+function modeTabStyle(active: boolean): React.CSSProperties {
+  return {
+    padding: "6px 14px",
+    fontSize: 12,
+    fontFamily: "var(--font-mono)",
+    background: active ? "var(--accent)" : "transparent",
+    color: active ? "var(--bg-base, #fff)" : "var(--text-2)",
+    border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+    borderRadius: 999,
+    cursor: "pointer",
+  };
 }
