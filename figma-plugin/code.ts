@@ -347,19 +347,35 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
         } catch (err) {
           // "Failed to fetch" is browser-speak for "request never made
           // it onto the wire" — could be CORS, manifest-domain gate,
-          // DNS, or the tunnel being down. Probe a known-good Vercel
-          // path to disambiguate before reporting back.
+          // DNS, or the tunnel being down. Probe both a simple GET and
+          // a simple POST to the actual route to disambiguate. The
+          // PLUGIN_BUILD stamp lets us verify the running code matches
+          // the latest commit when the user reports it still failing.
+          const PLUGIN_BUILD = "2026-05-02-textplain-bodyauth";
           const e = err as Error & { name?: string; cause?: unknown };
-          let probe = "skipped";
+          let probeGet = "skipped";
+          let probePost = "skipped";
           try {
             const p = await fetch(`${docsURL}/favicon.ico`, { method: "GET" });
-            probe = `favicon=${p.status}`;
+            probeGet = `get=${p.status}`;
           } catch (probeErr) {
-            probe = `favicon-failed: ${(probeErr as Error).message}`;
+            probeGet = `get-failed:${(probeErr as Error).message}`;
+          }
+          try {
+            const p = await fetch(`${docsURL}/api/projects/export`, {
+              method: "POST",
+              headers: { "Content-Type": "text/plain;charset=UTF-8" },
+              body: '{"ping":1}',
+            });
+            probePost = `post=${p.status}`;
+          } catch (probeErr) {
+            probePost = `post-failed:${(probeErr as Error).message}`;
           }
           const detail = [
+            `[${PLUGIN_BUILD}]`,
             `${e.name || "Error"}: ${e.message}`,
-            `probe(${probe})`,
+            probeGet,
+            probePost,
             e.cause ? `cause=${JSON.stringify(e.cause).slice(0, 120)}` : null,
           ].filter(Boolean).join(" · ");
           send({
@@ -371,9 +387,7 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
             },
           });
           toast(`Couldn't reach ${docsURL}: ${detail}`, "error");
-          // Mirror to plugin console so the user can grab a fuller
-          // stack from Figma's plugin DevTools if needed.
-          console.error("[projects.send] fetch failed", { url: `${docsURL}/api/projects/export`, err, probe });
+          console.error("[projects.send] fetch failed", { build: PLUGIN_BUILD, url: `${docsURL}/api/projects/export`, err, probeGet, probePost });
         }
         return;
       case "projects.autofix":
