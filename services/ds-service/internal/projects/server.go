@@ -26,7 +26,11 @@ import (
 const (
 	MaxBodyBytes      = 10 << 20 // 10 MB
 	MaxFlowsPerExport = 20
-	MaxFramesPerFlow  = 50
+	// 50 was a Phase 1 placeholder — real Figma sections from the
+	// INDstocks file have 70+ frames in a single mode (e.g. "Filters
+	// for Stock Screener" light = 70). 200 leaves headroom for a
+	// large mobile flow without making the audit pipeline pathological.
+	MaxFramesPerFlow  = 200
 
 	MaxStringLen      = 256
 	MaxPersonaLen     = 128

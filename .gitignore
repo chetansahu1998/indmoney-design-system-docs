@@ -22,6 +22,9 @@ lib/tokens-generated/
 **/services/ds-service/data/*.db-shm
 **/data/ds.db
 **/data/ds.db-*
+# Rendered screen assets — tenant data, not code.
+**/services/ds-service/data/screens/
+**/services/ds-service/data/canonical_trees/
 
 # Go build artifacts
 services/ds-service/bin/
