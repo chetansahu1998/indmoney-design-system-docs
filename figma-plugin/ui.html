@@ -2593,6 +2593,26 @@ function buildProjectsSendPayload() {
     flows.push({
       section_id: g.section_id,
       frame_ids: g.frames.map((f) => f.id),
+      // Full frame payload — ds-service validateExport requires
+      // flows[].frames to be non-empty and each entry to carry frame_id
+      // plus geometry. ProjectsFrameInfo from code.ts already has all
+      // the fields we need; just rename id→frame_id and stringify the
+      // explicit_variable_modes map (ds-service stores it as a JSON
+      // string column).
+      frames: g.frames.map((f) => ({
+        frame_id: f.id,
+        x: f.x,
+        y: f.y,
+        width: f.width,
+        height: f.height,
+        name: f.name,
+        variable_collection_id: f.variable_collection_id || "",
+        mode_id: f.variable_mode_id || "",
+        mode_label: f.mode_label || "",
+        explicit_variable_modes_json: f.explicit_variable_modes
+          ? JSON.stringify(f.explicit_variable_modes)
+          : "",
+      })),
       platform: e.platform,
       product: e.product,
       path: e.path,
