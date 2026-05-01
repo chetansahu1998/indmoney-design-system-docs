@@ -1455,6 +1455,106 @@ func (s *Server) HandleRecentDecisions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ─── Phase 5 U12: activity rail ────────────────────────────────────────────
+
+// FlowActivityEntry is one timeline row served by HandleFlowActivity. The
+// shape mirrors db.AuditEntry but adds a parsed-out summary so the UI can
+// render without a follow-up fetch.
+type FlowActivityEntry struct {
+	ID         string `json:"id"`
+	TS         string `json:"ts"`
+	EventType  string `json:"event_type"`
+	UserID     string `json:"user_id"`
+	Endpoint   string `json:"endpoint"`
+	StatusCode int    `json:"status_code"`
+	Details    string `json:"details,omitempty"`
+}
+
+// HandleFlowActivity serves GET /v1/projects/{slug}/flows/{flow_id}/activity.
+// Returns a chronological timeline (newest first) of audit_log events
+// scoped to this flow + the caller's tenant. Uses SQLite's json_extract to
+// filter by flow_id inside the details column.
+func (s *Server) HandleFlowActivity(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	flowID := r.PathValue("flow_id")
+	if slug == "" || flowID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
+		return
+	}
+
+	// Defense in depth: confirm the slug exists in the caller's tenant +
+	// the flow lives inside that project. Wrong slug → 404 (no oracle).
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	if _, err := repo.GetProjectBySlug(r.Context(), slug); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+		return
+	}
+	if err := repo.assertFlowVisibleByID(r.Context(), flowID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "flow_lookup", err.Error())
+		return
+	}
+
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		var n int
+		_, _ = fmt.Sscanf(l, "%d", &n)
+		if n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+
+	rows, err := s.deps.DB.DB.QueryContext(r.Context(),
+		`SELECT id, ts, event_type, user_id, endpoint, status_code, details
+		   FROM audit_log
+		  WHERE tenant_id = ?
+		    AND json_valid(details)
+		    AND json_extract(details, '$.flow_id') = ?
+		  ORDER BY ts DESC
+		  LIMIT ?`,
+		tenantID, flowID, limit,
+	)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "activity", err.Error())
+		return
+	}
+	defer rows.Close()
+	out := make([]FlowActivityEntry, 0, limit)
+	for rows.Next() {
+		var e FlowActivityEntry
+		if err := rows.Scan(&e.ID, &e.TS, &e.EventType, &e.UserID, &e.Endpoint, &e.StatusCode, &e.Details); err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "scan", err.Error())
+			return
+		}
+		out = append(out, e)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"activity": out,
+		"count":    len(out),
+	})
+}
+
 // ─── Phase 5 U6+U7: comments + notifications ─────────────────────────────────
 
 // createCommentRequest mirrors the JSON body for

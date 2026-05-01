@@ -32,6 +32,7 @@ import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import { fetchDRD, putDRD } from "@/lib/projects/client";
 import EmptyTab from "./EmptyTab";
+import ActivityRail from "@/components/drd/ActivityRail";
 
 const AUTOSAVE_DEBOUNCE_MS = 1500;
 
@@ -210,12 +211,23 @@ export default function DRDTab({ slug, flowID, readOnly = false }: DRDTabProps) 
         <span style={{ flex: 1 }} />
         <SaveStatusBadge status={status} onReload={reloadOnConflict} />
       </header>
-      <div style={editorWrapperStyle} aria-busy={!loaded}>
-        <BlockNoteView editor={editor} editable={loaded && !readOnly} />
+      <div style={drdRowStyle}>
+        <div style={editorWrapperStyle} aria-busy={!loaded}>
+          <BlockNoteView editor={editor} editable={loaded && !readOnly} />
+        </div>
+        <ActivityRail slug={slug} flowID={flowID} />
       </div>
     </div>
   );
 }
+
+const drdRowStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 16,
+  alignItems: "flex-start",
+  flex: 1,
+  minHeight: 0,
+};
 
 const readOnlyBannerStyle: React.CSSProperties = {
   display: "flex",

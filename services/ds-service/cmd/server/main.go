@@ -512,6 +512,11 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleNotificationsList)))
 	mux.HandleFunc("POST /v1/notifications/mark-read",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleNotificationsMarkRead)))
+
+	// Phase 5 U12 — activity rail timeline. Reads audit_log scoped by
+	// tenant + (json_extract details.flow_id == flow_id) ordered DESC.
+	mux.HandleFunc("GET /v1/projects/{slug}/flows/{flow_id}/activity",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFlowActivity)))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────
