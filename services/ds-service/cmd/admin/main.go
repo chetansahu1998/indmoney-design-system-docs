@@ -25,6 +25,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -33,6 +34,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/db"
 )
 
 func main() {
@@ -43,6 +46,8 @@ func main() {
 	switch os.Args[1] {
 	case "fanout":
 		os.Exit(runFanout(os.Args[2:]))
+	case "retention":
+		os.Exit(runRetention(os.Args[2:]))
 	case "migrate-sidecars":
 		fmt.Fprintln(os.Stderr, "admin: migrate-sidecars subcommand reserved; ships in Phase 2 U9.")
 		fmt.Fprintln(os.Stderr, "       (Run go run ./cmd/migrate-sidecars when that lands.)")
@@ -62,11 +67,13 @@ func usage() {
 
 subcommands:
   fanout            Re-audit every active flow's latest version (POST /v1/admin/audit/fanout)
+  retention         Delete audit_log rows older than --days (Phase 4 U13)
   migrate-sidecars  Backfill lib/audit/*.json into SQLite (Phase 2 U9; reserved)
 
 env:
   DS_ADMIN_URL     Server base URL (default http://localhost:7475)
-  DS_ADMIN_TOKEN   Super-admin JWT (overridable via --token flag on each subcommand)`)
+  DS_ADMIN_TOKEN   Super-admin JWT (overridable via --token flag on each subcommand)
+  DS_DB_PATH       Path to ds.db for direct-DB subcommands (default services/ds-service/data/ds.db)`)
 }
 
 // ─── fanout ─────────────────────────────────────────────────────────────────
@@ -148,5 +155,64 @@ func runFanout(args []string) int {
 	}
 	pretty, _ := json.MarshalIndent(out, "", "  ")
 	fmt.Println(string(pretty))
+	return 0
+}
+
+// ─── retention ──────────────────────────────────────────────────────────────
+
+// runRetention deletes audit_log rows older than --days. Phase 4 U13 — the
+// Phase 0 audit_log table has no built-in retention policy; ops runs this
+// weekly via cron to keep the DB bounded.
+//
+// Direct DB connection (no HTTP). Uses db.Open which applies migrations on
+// startup; running this against a fresh / empty DB is safe (zero rows
+// deleted). Always reports the row count + cutoff so cron logs the impact.
+func runRetention(args []string) int {
+	fs := flag.NewFlagSet("retention", flag.ExitOnError)
+	days := fs.Int("days", 90, "Delete audit_log rows older than this many days")
+	dbPath := fs.String("db", os.Getenv("DS_DB_PATH"), "Path to ds.db (env DS_DB_PATH)")
+	dryRun := fs.Bool("dry-run", false, "Print what would be deleted without writing")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *days <= 0 {
+		fmt.Fprintln(os.Stderr, "admin retention: --days must be > 0")
+		return 2
+	}
+	if *dbPath == "" {
+		*dbPath = "services/ds-service/data/ds.db"
+	}
+
+	d, err := db.Open(*dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "admin retention: open db %q: %v\n", *dbPath, err)
+		return 1
+	}
+	defer d.Close()
+
+	cutoff := time.Now().UTC().AddDate(0, 0, -*days).Format(time.RFC3339)
+	ctx := context.Background()
+
+	var preCount int
+	if err := d.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE ts < ?`, cutoff).Scan(&preCount); err != nil {
+		fmt.Fprintf(os.Stderr, "admin retention: count: %v\n", err)
+		return 1
+	}
+	if *dryRun {
+		fmt.Printf("[dry-run] would delete %d audit_log rows older than %s (cutoff %s)\n",
+			preCount, fmt.Sprintf("%d days", *days), cutoff)
+		return 0
+	}
+
+	res, err := d.ExecContext(ctx,
+		`DELETE FROM audit_log WHERE ts < ?`, cutoff)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "admin retention: delete: %v\n", err)
+		return 1
+	}
+	n, _ := res.RowsAffected()
+	fmt.Printf("admin retention: deleted %d audit_log rows older than %d days (cutoff %s)\n",
+		n, *days, cutoff)
 	return 0
 }
