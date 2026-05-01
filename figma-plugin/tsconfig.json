@@ -10,6 +10,6 @@
     "isolatedModules": false,
     "skipLibCheck": true
   },
-  "include": ["code.ts"],
+  "include": ["code.ts", "auto-fix/*.ts"],
   "exclude": []
 }

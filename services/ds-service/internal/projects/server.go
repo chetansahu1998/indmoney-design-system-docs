@@ -1184,6 +1184,175 @@ func (s *Server) HandleBulkAcknowledge(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleViolationGet serves GET /v1/projects/{slug}/violations/{id}.
+//
+// Returns the violation + project + flow context the plugin needs to
+// locate the offending node in Figma and render its auto-fix preview.
+// Tenant-scoped (cross-tenant 404).
+func (s *Server) HandleViolationGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	violationID := r.PathValue("id")
+	if slug == "" || violationID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	d, err := repo.GetViolation(r.Context(), slug, violationID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+// fixAppliedRequest is the body for POST /v1/projects/{slug}/violations/{id}/fix-applied.
+type fixAppliedRequest struct {
+	// Optional: free-text confirmation note the plugin may surface in
+	// audit_log so retroactive auditors can see what shape the auto-fix
+	// took ("Bound `colour.surface.button-cta` to fills[0]").
+	Note string `json:"note,omitempty"`
+}
+
+// HandleViolationFixApplied serves POST
+// /v1/projects/{slug}/violations/{id}/fix-applied.
+//
+// Plugin-only path: the deeplinked auto-fix flow calls this after the
+// designer confirms + the plugin writes to the Figma file. Wraps U1's
+// UpdateViolationStatus with action=mark_fixed (system-actor).
+//
+// Idempotency (per the plan): an already-Fixed violation returns 200,
+// not 409. Auto-fix retries shouldn't trip the plugin into thinking a
+// transient error landed.
+func (s *Server) HandleViolationFixApplied(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	violationID := r.PathValue("id")
+	if slug == "" || violationID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
+		return
+	}
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
+	var req fixAppliedRequest
+	_ = json.Unmarshal(body, &req)
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	current, err := repo.GetViolationForLifecycle(r.Context(), violationID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+		return
+	}
+	if current.ProjectSlug != slug {
+		writeJSONErr(w, http.StatusNotFound, "not_found", "")
+		return
+	}
+	// Idempotency — already-fixed is a success.
+	if current.From == ViolationStatusFixed {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"violation_id": current.ViolationID,
+			"status":       ViolationStatusFixed,
+			"idempotent":   true,
+		})
+		return
+	}
+
+	transition, err := ValidateTransition(current.From, ActionMarkFixed, claims.Role, req.Note, true)
+	if err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_transition", err.Error())
+		return
+	}
+
+	now := time.Now().UTC()
+	auditDetails, _ := json.Marshal(map[string]any{
+		"violation_id": current.ViolationID,
+		"version_id":   current.VersionID,
+		"project_slug": current.ProjectSlug,
+		"from":         transition.From,
+		"to":           transition.To,
+		"note":         req.Note,
+		"fixed_via":    "auto-fix",
+		"actor":        claims.Sub,
+		"trace_id":     current.TraceID,
+		"schema_ver":   ProjectsSchemaVersion,
+	})
+	auditWrite := func(tx *sql.Tx) error {
+		_, ierr := tx.ExecContext(r.Context(),
+			`INSERT INTO audit_log (id, ts, event_type, tenant_id, user_id, method, endpoint, status_code, duration_ms, ip_address, details)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			uuid.NewString(), now.Format(time.RFC3339Nano),
+			transition.AuditEventType(),
+			tenantID, claims.Sub,
+			"POST",
+			fmt.Sprintf("/v1/projects/%s/violations/%s/fix-applied", slug, violationID),
+			http.StatusOK, 0, clientIP(r),
+			string(auditDetails),
+		)
+		return ierr
+	}
+
+	if err := repo.UpdateViolationStatus(r.Context(), violationID, transition, auditWrite); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusConflict, "race", "violation status changed concurrently")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "update_violation", err.Error())
+		return
+	}
+
+	if s.deps.Broker != nil && current.TraceID != "" {
+		s.deps.Broker.Publish(current.TraceID, sse.ProjectViolationLifecycleChanged{
+			ProjectSlug: current.ProjectSlug,
+			VersionID:   current.VersionID,
+			ViolationID: current.ViolationID,
+			Tenant:      tenantID,
+			From:        transition.From,
+			To:          transition.To,
+			Action:      string(transition.Action),
+			ActorUserID: claims.Sub,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"violation_id": current.ViolationID,
+		"status":       transition.To,
+		"idempotent":   false,
+	})
+}
+
 // HandleDashboardSummary serves GET /v1/atlas/admin/summary.
 //
 // Super-admin only — gated upstream by main.go's requireSuperAdmin

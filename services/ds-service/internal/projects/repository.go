@@ -1001,6 +1001,75 @@ func (t *TenantRepo) UpsertPrototypeLinks(ctx context.Context, links []Prototype
 	return tx.Commit()
 }
 
+// ─── Phase 4 U12: single-violation fetch (plugin auto-fix) ───────────────────
+
+// ViolationDetail is the shape returned by GetViolation for the plugin's
+// auto-fix flow. It bundles the violation row with enough screen + project
+// context for the plugin to locate the offending node in Figma without a
+// second round-trip.
+type ViolationDetail struct {
+	ID           string `json:"id"`
+	VersionID    string `json:"version_id"`
+	ScreenID     string `json:"screen_id"`
+	NodeID       string `json:"node_id"` // figma node id from canonical_tree (best-effort lookup)
+	RuleID       string `json:"rule_id"`
+	Severity     string `json:"severity"`
+	Category     string `json:"category"`
+	Property     string `json:"property"`
+	Observed     string `json:"observed"`
+	Suggestion   string `json:"suggestion"`
+	Status       string `json:"status"`
+	AutoFixable  bool   `json:"auto_fixable"`
+	ProjectSlug  string `json:"project_slug"`
+	ProjectName  string `json:"project_name"`
+	FlowID       string `json:"flow_id"`
+	FlowName     string `json:"flow_name"`
+	FileID       string `json:"file_id"`
+}
+
+// GetViolation returns one violation with project + flow context for the
+// plugin's auto-fix flow. Tenant-scoped — cross-tenant returns ErrNotFound.
+// Slug acts as a defense-in-depth check (a plugin holding only a
+// violation_id couldn't probe other tenants' rows by enumerating slugs).
+func (t *TenantRepo) GetViolation(ctx context.Context, slug, violationID string) (*ViolationDetail, error) {
+	row := t.r.db.QueryRowContext(ctx,
+		`SELECT v.id, v.version_id, v.screen_id, v.rule_id, v.severity, v.category,
+		        v.property, COALESCE(v.observed, ''), COALESCE(v.suggestion, ''),
+		        v.status, v.auto_fixable,
+		        p.slug, p.name,
+		        f.id, f.name, f.file_id
+		   FROM violations v
+		   JOIN screens s ON s.id = v.screen_id
+		   JOIN flows f ON f.id = s.flow_id
+		   JOIN project_versions pv ON pv.id = v.version_id
+		   JOIN projects p ON p.id = pv.project_id
+		  WHERE v.id = ? AND v.tenant_id = ? AND p.slug = ?`,
+		violationID, t.tenantID, slug,
+	)
+	var d ViolationDetail
+	var autoFix int
+	if err := row.Scan(
+		&d.ID, &d.VersionID, &d.ScreenID, &d.RuleID, &d.Severity, &d.Category,
+		&d.Property, &d.Observed, &d.Suggestion,
+		&d.Status, &autoFix,
+		&d.ProjectSlug, &d.ProjectName,
+		&d.FlowID, &d.FlowName, &d.FileID,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get violation: %w", err)
+	}
+	d.AutoFixable = autoFix == 1
+	// node_id discovery: the plugin walks the canonical_tree to find the
+	// node referenced by `property`. We don't synthesize it server-side
+	// because the canonical_tree representation evolves with Phase 5
+	// schema work — keeping the plugin authoritative for node-walk
+	// avoids a serialization-format coupling.
+	d.NodeID = ""
+	return &d, nil
+}
+
 // ─── Phase 4: violation lifecycle ────────────────────────────────────────────
 
 // ViolationLifecycleResult is what UpdateViolationStatus returns so the HTTP

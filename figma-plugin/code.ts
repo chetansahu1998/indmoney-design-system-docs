@@ -44,7 +44,13 @@ interface MessageFromUI {
     /** Phase 3 U9 — UI signals user dismissed the first-run modal.
      *  Code sets the durable clientStorage flag so the modal stays
      *  hidden across future plugin runs. */
-    | "projects.firstrun-dismiss";
+    | "projects.firstrun-dismiss"
+    /** Phase 4 U11 — UI requests the auto-fix flow for a violation_id.
+     *  Payload: { slug, violation_id, target?: { token_path?: string;
+     *  text_style_id?: string; observed_number?: number } }. Plugin
+     *  fetches the violation, builds the fix preview, applies on the
+     *  Figma node, then POSTs /fix-applied. */
+    | "projects.autofix";
   payload?: unknown;
 }
 
@@ -164,6 +170,8 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
         });
         toast("Projects payload logged to console (U3 placeholder).", "info");
         return;
+      case "projects.autofix":
+        return runAutoFix(msg.payload as AutoFixPayload);
     }
   } catch (e: unknown) {
     toast(`Error: ${(e as Error).message ?? "unknown"}`, "error");
@@ -1371,4 +1379,159 @@ function depth2Skeleton(node: SceneNode): string {
 
 function toast(message: string, level: "info" | "success" | "error" = "info") {
   send({ type: "toast", payload: { message, level, ts: Date.now() } });
+}
+
+/* ── Phase 4 U11 — auto-fix flow ───────────────────────────────────── */
+
+interface AutoFixPayload {
+  /** Project slug from the deeplink. */
+  slug: string;
+  /** Violation id from the deeplink (?violation_id=<id>). */
+  violation_id: string;
+  /** Optional pre-resolved targets — UI may pass these after the user
+   *  picks a token from the suggestion list. When absent, plugin can
+   *  only render the preview (Phase 4 ships the dispatch shell; the
+   *  variable-resolution UI lands as Phase 4.1 polish). */
+  target?: {
+    token_path?: string;
+    variable_id?: string;
+    text_style_id?: string;
+    observed_number?: number;
+  };
+}
+
+interface ViolationFromServer {
+  id: string;
+  rule_id: string;
+  property: string;
+  observed: string;
+  suggestion: string;
+  status: string;
+  auto_fixable: boolean;
+  project_slug: string;
+  flow_id: string;
+  flow_name: string;
+  file_id: string;
+  node_id: string;
+}
+
+async function runAutoFix(payload: AutoFixPayload): Promise<void> {
+  if (!payload || !payload.slug || !payload.violation_id) {
+    toast("Auto-fix: missing slug or violation_id.", "error");
+    return;
+  }
+  const headers: Record<string, string> = { Accept: "application/json" };
+  // Plugin doesn't carry the JWT for the docs site (different host); the
+  // /v1/projects/.../violations/:id endpoint is auth-gated, so the user
+  // must have configured the plugin's auth token via Figma plugin
+  // settings. Phase 4 reuses the existing auditServerURL pattern;
+  // tokenisation is a Phase 4.1 polish item.
+  let v: ViolationFromServer;
+  try {
+    const res = await fetch(
+      `${auditServerURL}/v1/projects/${encodeURIComponent(payload.slug)}/violations/${encodeURIComponent(payload.violation_id)}`,
+      { headers },
+    );
+    if (!res.ok) {
+      toast(`Auto-fix: GET violation failed (${res.status}).`, "error");
+      return;
+    }
+    v = (await res.json()) as ViolationFromServer;
+  } catch (err) {
+    toast(`Auto-fix: ${(err as Error).message ?? "network"}.`, "error");
+    return;
+  }
+
+  if (!AutoFix.isAutoFixable(v.rule_id)) {
+    toast(`Auto-fix: ${v.rule_id} requires a manual fix.`, "info");
+    return;
+  }
+
+  // Build the preview. UI shows it then the user clicks Apply (a follow-up
+  // message). For now, this implementation auto-applies on receipt — the
+  // confirm-step UI is Phase 4.1 polish; the preview-only path keeps the
+  // designer in the loop via the explicit menu invocation.
+  const preview = AutoFix.previewFix({
+    ruleID: v.rule_id,
+    property: v.property,
+    observed: v.observed,
+    targetTokenPath: payload.target?.token_path,
+    targetTextStyleId: payload.target?.text_style_id,
+    observedNumber: payload.target?.observed_number,
+  });
+  if (!preview) {
+    toast(`Auto-fix: insufficient target for ${v.rule_id}.`, "info");
+    return;
+  }
+
+  // Dispatch.
+  let result: AutoFix.ApplyResult;
+  switch (v.rule_id) {
+    case "drift.fill":
+    case "unbound.fill":
+    case "deprecated.fill":
+      if (!payload.target?.variable_id || !v.node_id) {
+        toast("Auto-fix: missing variable_id or node_id.", "info");
+        return;
+      }
+      result = await AutoFix.applyFillBinding(v.node_id, payload.target.variable_id);
+      break;
+    case "drift.text":
+    case "unbound.text":
+      if (!payload.target?.text_style_id || !v.node_id) {
+        toast("Auto-fix: missing text_style_id or node_id.", "info");
+        return;
+      }
+      result = await AutoFix.applyTextStyle(v.node_id, payload.target.text_style_id);
+      break;
+    case "drift.padding":
+    case "drift.gap": {
+      const obs = payload.target?.observed_number;
+      const prop = (v.property as
+        | "paddingLeft"
+        | "paddingRight"
+        | "paddingTop"
+        | "paddingBottom"
+        | "itemSpacing");
+      if (typeof obs !== "number" || !v.node_id) {
+        toast("Auto-fix: missing observed_number or node_id.", "info");
+        return;
+      }
+      result = await AutoFix.applySnapPadding(v.node_id, prop, obs);
+      break;
+    }
+    case "drift.radius": {
+      const obs = payload.target?.observed_number;
+      if (typeof obs !== "number" || !v.node_id) {
+        toast("Auto-fix: missing observed_number or node_id.", "info");
+        return;
+      }
+      result = await AutoFix.applySnapRadius(v.node_id, obs);
+      break;
+    }
+    default:
+      return;
+  }
+
+  if (result.ok !== true) {
+    toast(`Auto-fix failed: ${(result as { ok: false; error: string }).error}`, "error");
+    return;
+  }
+
+  // Success ping. Best-effort — even if this fails the Figma file is
+  // already updated; the next re-audit will re-classify the violation
+  // status correctly.
+  try {
+    await fetch(
+      `${auditServerURL}/v1/projects/${encodeURIComponent(payload.slug)}/violations/${encodeURIComponent(payload.violation_id)}/fix-applied`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ note: preview.hint }),
+      },
+    );
+  } catch {
+    // swallow — file is already fixed
+  }
+  toast(`Auto-fix applied: ${preview.hint}`, "success");
 }

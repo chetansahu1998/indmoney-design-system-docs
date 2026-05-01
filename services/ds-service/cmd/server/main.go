@@ -464,6 +464,15 @@ func (s *server) routes(mux *http.ServeMux) {
 	// only; wraps every aggregation in a parallel goroutine.
 	mux.HandleFunc("GET /v1/atlas/admin/summary",
 		s.requireSuperAdmin(s.projectsServer.HandleDashboardSummary))
+
+	// Phase 4 U12 — single-violation fetch + fix-applied success ping.
+	// Used by the plugin's auto-fix deeplink flow: GET resolves the
+	// violation context, POST flips status to fixed via the system
+	// transition (idempotent on already-fixed rows).
+	mux.HandleFunc("GET /v1/projects/{slug}/violations/{id}",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleViolationGet)))
+	mux.HandleFunc("POST /v1/projects/{slug}/violations/{id}/fix-applied",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleViolationFixApplied)))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────
