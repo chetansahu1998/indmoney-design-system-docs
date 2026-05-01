@@ -207,24 +207,23 @@ figma.ui.onmessage = async (msg) => {
                     // operator is busy hunting for the cog icon.
                     return;
                 }
-                // Avoid CORS preflight entirely. Figma plugin sandbox (esp. desktop,
-                // Origin: null) returns generic "Failed to fetch" on preflighted
-                // requests even when the preflight succeeds against curl —
-                // confirmed by the favicon=404 probe (origin reachable, POST
-                // not). To make this a "simple" request and skip preflight:
-                //   1. Content-Type: text/plain  (instead of application/json)
-                //   2. No Authorization header   (token moves into the body)
-                //   3. No custom headers
-                // The Vercel proxy parses the body as JSON regardless of
-                // Content-Type and reads auth from body._auth as a fallback.
+                // Phase 7.8 → audit-server forwarding. Figma plugin sandbox runs
+                // in a sandboxed iframe with Origin: null. Browsers treat null-
+                // origin POSTs to HTTPS as opaque even when CORS responses echo
+                // ACAO: null — confirmed by the diagnostic probe (GET works,
+                // POST to Vercel returns "Failed to fetch" with no preflight or
+                // network logs). POST to localhost (audit-server) works because
+                // it's same-host or a plain HTTP target with permissive CORS.
+                // So we route projects.send through audit-server, which forwards
+                // to ds-service with the JWT in a proper Authorization header.
                 const traceId = (typeof crypto !== "undefined" && crypto.randomUUID)
                     ? crypto.randomUUID() : String(Date.now());
                 const bodyWithAuth = Object.assign(Object.assign({}, msg.payload), { trace_id: traceId, _auth: docsAuthToken });
                 try {
-                    const res = await fetch(`${docsURL}/api/projects/export`, {
+                    const res = await fetch(`${auditServerURL}/v1/projects/export`, {
                         method: "POST",
                         headers: {
-                            "Content-Type": "text/plain;charset=UTF-8",
+                            "Content-Type": "application/json",
                         },
                         body: JSON.stringify(bodyWithAuth),
                     });
@@ -266,33 +265,20 @@ figma.ui.onmessage = async (msg) => {
                     // a simple POST to the actual route to disambiguate. The
                     // PLUGIN_BUILD stamp lets us verify the running code matches
                     // the latest commit when the user reports it still failing.
-                    const PLUGIN_BUILD = "2026-05-02-textplain-bodyauth";
+                    const PLUGIN_BUILD = "2026-05-02-via-audit-server";
                     const e = err;
-                    let probeGet = "skipped";
-                    let probePost = "skipped";
+                    let probeHealth = "skipped";
                     try {
-                        const p = await fetch(`${docsURL}/favicon.ico`, { method: "GET" });
-                        probeGet = `get=${p.status}`;
+                        const p = await fetch(`${auditServerURL}/__health`, { method: "GET" });
+                        probeHealth = `audit-health=${p.status}`;
                     }
                     catch (probeErr) {
-                        probeGet = `get-failed:${probeErr.message}`;
-                    }
-                    try {
-                        const p = await fetch(`${docsURL}/api/projects/export`, {
-                            method: "POST",
-                            headers: { "Content-Type": "text/plain;charset=UTF-8" },
-                            body: '{"ping":1}',
-                        });
-                        probePost = `post=${p.status}`;
-                    }
-                    catch (probeErr) {
-                        probePost = `post-failed:${probeErr.message}`;
+                        probeHealth = `audit-down:${probeErr.message}`;
                     }
                     const detail = [
                         `[${PLUGIN_BUILD}]`,
                         `${e.name || "Error"}: ${e.message}`,
-                        probeGet,
-                        probePost,
+                        probeHealth,
                         e.cause ? `cause=${JSON.stringify(e.cause).slice(0, 120)}` : null,
                     ].filter(Boolean).join(" · ");
                     send({
@@ -303,8 +289,8 @@ figma.ui.onmessage = async (msg) => {
                             detail,
                         },
                     });
-                    toast(`Couldn't reach ${docsURL}: ${detail}`, "error");
-                    console.error("[projects.send] fetch failed", { build: PLUGIN_BUILD, url: `${docsURL}/api/projects/export`, err, probeGet, probePost });
+                    toast(`Couldn't reach audit-server: ${detail}`, "error");
+                    console.error("[projects.send] fetch failed", { build: PLUGIN_BUILD, url: `${auditServerURL}/v1/projects/export`, err, probeHealth });
                 }
                 return;
             case "projects.autofix":
