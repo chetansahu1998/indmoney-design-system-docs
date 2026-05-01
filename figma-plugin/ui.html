@@ -4,6 +4,14 @@
 <meta charset="utf-8" />
 <title>INDmoney DS</title>
 <style>
+  /* Force the [hidden] HTML attribute to actually hide elements even
+     when they carry an inline display:flex / display:grid style. The
+     UA stylesheet's [hidden] { display: none } is NOT marked
+     !important, so inline display rules win on specificity. Without
+     this rule the welcome modal + autofix modal stay visible
+     regardless of their hidden attribute — fixed Phase 7.8. */
+  [hidden] { display: none !important; }
+
   /* ════════════════════════════════════════════════════════════════════
      INDmoney Design System Plugin — UI tokens
      ────────────────────────────────────────────────────────────────────
@@ -1470,6 +1478,32 @@
       </div>
 
       <div class="setting-section">
+        <h3>Docs site auth</h3>
+        <div class="field">
+          <label>JWT token</label>
+          <input
+            id="docs-token"
+            type="password"
+            placeholder="eyJhbGciOiJFZERTQSI..."
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="actions" style="display:flex; gap:6px; margin-top:6px;">
+            <button class="primary" id="btn-set-docs-token">Save token</button>
+            <button id="btn-clear-docs-token">Clear</button>
+          </div>
+          <div class="help">
+            Required for <strong>Send to Projects</strong>. Open the docs site
+            in your browser, log in, then run this in DevTools to copy your
+            JWT:
+            <pre style="margin:4px 0; padding:6px 8px; background:rgba(0,0,0,0.18); border-radius:4px; overflow:auto;">JSON.parse(localStorage['indmoney-ds-auth']).state.token</pre>
+            Paste here and click Save. Stored in plugin clientStorage.
+          </div>
+          <div id="docs-token-status" class="help" style="margin-top:6px;"></div>
+        </div>
+      </div>
+
+      <div class="setting-section">
         <h3>This file</h3>
         <div class="card-meta mono" id="diag-file" style="word-break: break-all; line-height: 1.55;">—</div>
       </div>
@@ -2035,6 +2069,32 @@ $("btn-audit-file").addEventListener("click",
   () => spinAudit(["btn-audit-file"], "file"));
 
 /* ════════════════════════════════════════════════════════════════════
+   Phase 7.8 — docs-site JWT setting (required for projects.send POST).
+   ════════════════════════════════════════════════════════════════════ */
+{
+  const saveBtn = $("btn-set-docs-token");
+  const clearBtn = $("btn-clear-docs-token");
+  const input = $("docs-token");
+  if (saveBtn && input) {
+    saveBtn.addEventListener("click", () => {
+      const v = input.value.trim();
+      if (!v) {
+        const status = $("docs-token-status");
+        if (status) status.textContent = "Paste a token first.";
+        return;
+      }
+      post("set-docs-token", v);
+    });
+  }
+  if (clearBtn && input) {
+    clearBtn.addEventListener("click", () => {
+      input.value = "";
+      post("set-docs-token", "");
+    });
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════
    Publish + library actions
    ════════════════════════════════════════════════════════════════════ */
 $("btn-publish").addEventListener("click", () => {
@@ -2586,7 +2646,37 @@ window.onmessage = (event) => {
       break;
     }
     case "projects.send-result": {
-      // Placeholder ack for U3; U4 will surface real progress + result.
+      // Phase 7.8 — surfaces both:
+      //   (a) projects.send POST results (deeplink + project_id on ok=true,
+      //       error / detail on ok=false), and
+      //   (b) set-docs-token confirmations (ok with `info` field — no
+      //       deeplink, no project_id).
+      const p = msg.payload || {};
+      const status = $("docs-token-status");
+      // Token-set ack: payload.info is set, no deeplink → status line.
+      if (p.info && status) {
+        status.textContent = p.info;
+        if (p.ok) status.style.color = "#34c759";
+        else status.style.color = "";
+        break;
+      }
+      // Send POST result.
+      if (p.ok && p.deeplink) {
+        pushToast({
+          message: "Exported successfully",
+          sub: "Click toast to open in docs site",
+          level: "success",
+          onClick: () => post("open-docs"),
+        });
+      } else if (!p.ok) {
+        pushToast({
+          message: p.error === "auth_required"
+            ? "Set your docs-site token in Settings"
+            : "Export failed",
+          sub: p.detail || p.error || "unknown",
+          level: "error",
+        });
+      }
       break;
     }
     case "projects.send-progress": {

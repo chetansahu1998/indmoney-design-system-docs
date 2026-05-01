@@ -23,10 +23,16 @@
  *   - On user action (publish / audit / inject): show progress, POST,
  *     surface result via toast queue.
  */
+var _a;
 const send = (msg) => figma.ui.postMessage(msg);
 /* ── State ──────────────────────────────────────────────────────────── */
 let auditServerURL = "http://localhost:7474";
 let docsURL = "https://indmoney-design-system-docs.vercel.app";
+// Phase 7.8 — docs-site auth token used by the projects.send POST. The
+// user pastes their JWT into the plugin's "Settings" once; we persist
+// it via figma.clientStorage so it survives plugin reloads. Stays null
+// until set; projects.send rejects with a clear error in that case.
+let docsAuthToken = null;
 let healthTimer = null;
 let knownVariables = {};
 // Projects mode (U3) — when the UI is on the Projects tab, selectionchange
@@ -41,13 +47,63 @@ let allPagesLoaded = false;
 // size, and the plugin is still narrow enough to dock alongside the canvas.
 figma.showUI(__html__, { width: 440, height: 720, themeColors: true });
 figma.ui.onmessage = async (msg) => {
-    var _a;
+    var _a, _b, _c, _d;
     try {
         switch (msg.type) {
             case "ready":
                 startHealthPolling();
                 emitSelectionSummary();
+                // Phase 3 U9: first-run check. Read the durable flag from
+                // clientStorage and emit the result so the UI can show its
+                // welcome modal exactly once per Figma profile. New profiles
+                // (or clientStorage cleared) → seen: false → modal renders.
+                {
+                    const seen = (await figma.clientStorage.getAsync("projects.firstrun-seen")) === true;
+                    send({ type: "projects.firstrun-status", payload: { seen } });
+                }
                 return;
+            case "projects.firstrun-dismiss":
+                // Persists across plugin re-runs. Cleared via Figma's clientStorage
+                // reset (Plugins → Manage plugins → reinstall) or by deleting the
+                // key manually for QA.
+                await figma.clientStorage.setAsync("projects.firstrun-seen", true);
+                return;
+            case "set-docs-token": {
+                // Phase 7.8 — paste-once docs-site JWT for the projects.send POST.
+                // Empty string clears the stored token (logout flow). The token
+                // never leaves the plugin's clientStorage; it's only sent as the
+                // Authorization header on /api/projects/export calls.
+                const v = (_a = msg.payload) !== null && _a !== void 0 ? _a : "";
+                if (v === "") {
+                    docsAuthToken = null;
+                    await figma.clientStorage.deleteAsync("docs_auth_token");
+                    send({
+                        type: "projects.send-result",
+                        payload: { ok: true, info: "Token cleared." },
+                    });
+                    return;
+                }
+                // Minimal sanity check — JWTs are three base64url segments
+                // separated by dots. Bcrypt hashes / passwords don't match.
+                if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(v)) {
+                    send({
+                        type: "projects.send-result",
+                        payload: {
+                            ok: false,
+                            error: "invalid_token_format",
+                            detail: "Expected a JWT (three base64url segments separated by dots).",
+                        },
+                    });
+                    return;
+                }
+                docsAuthToken = v;
+                await figma.clientStorage.setAsync("docs_auth_token", v);
+                send({
+                    type: "projects.send-result",
+                    payload: { ok: true, info: "Token saved." },
+                });
+                return;
+            }
             case "set-server-url":
                 if (typeof msg.payload === "string" && msg.payload.startsWith("http")) {
                     const v = msg.payload.replace(/\/$/, "");
@@ -83,24 +139,85 @@ figma.ui.onmessage = async (msg) => {
             case "projects.refresh-detection":
                 return runProjectsDetection();
             case "projects.send":
-                // U3: backend wiring lands in U4. For now we only echo a "result" so
-                // the UI re-enables its Send button cleanly. Plugin code never
-                // serializes the payload here — UI logs it to the JS console as a
-                // placeholder. We just confirm receipt.
-                send({
-                    type: "projects.send-result",
-                    payload: {
-                        ok: true,
-                        phase: "u3-placeholder",
-                        note: "Send wired to console.log only; backend lands in U4.",
-                    },
-                });
-                toast("Projects payload logged to console (U3 placeholder).", "info");
+                // Phase 7.8 — real export wiring. POSTs to the docs-site proxy at
+                // /api/projects/export which forwards to ds-service's HandleExport.
+                // The plugin's manifest already allowlists the Vercel origin so
+                // we don't need to add the ephemeral tunnel URL here.
+                if (!docsAuthToken) {
+                    send({
+                        type: "projects.send-result",
+                        payload: {
+                            ok: false,
+                            error: "auth_required",
+                            detail: "Set your docs-site token in plugin Settings first (paste the JWT from localStorage['indmoney-ds-auth']).",
+                        },
+                    });
+                    toast("Set your docs-site token in plugin Settings first.", "error");
+                    return;
+                }
+                try {
+                    const res = await fetch(`${docsURL}/api/projects/export`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "Authorization": `Bearer ${docsAuthToken}`,
+                            // Lets the operator correlate plugin → docs → ds-service
+                            // logs when something goes wrong; ds-service threads this
+                            // ID through SSE events too.
+                            "X-Trace-ID": (typeof crypto !== "undefined" && crypto.randomUUID)
+                                ? crypto.randomUUID() : String(Date.now()),
+                        },
+                        body: JSON.stringify(msg.payload),
+                    });
+                    const bodyText = await res.text();
+                    let body = {};
+                    try {
+                        body = JSON.parse(bodyText);
+                    }
+                    catch ( /* keep text */_e) { /* keep text */ }
+                    if (!res.ok) {
+                        send({
+                            type: "projects.send-result",
+                            payload: {
+                                ok: false,
+                                status: res.status,
+                                error: body.error || "http_error",
+                                detail: body.detail || bodyText.slice(0, 200),
+                            },
+                        });
+                        toast(`Export failed (HTTP ${res.status}): ${body.detail || body.error || "unknown"}`, "error");
+                        return;
+                    }
+                    send({
+                        type: "projects.send-result",
+                        payload: {
+                            ok: true,
+                            project_id: body.project_id,
+                            version_id: body.version_id,
+                            deeplink: body.deeplink,
+                            trace_id: body.trace_id,
+                        },
+                    });
+                    toast(`Exported — project ${(_c = (_b = body.project_id) === null || _b === void 0 ? void 0 : _b.slice(0, 8)) !== null && _c !== void 0 ? _c : "?"}…`, "success");
+                }
+                catch (err) {
+                    send({
+                        type: "projects.send-result",
+                        payload: {
+                            ok: false,
+                            error: "network",
+                            detail: err.message,
+                        },
+                    });
+                    toast(`Couldn't reach ${docsURL}: ${err.message}`, "error");
+                }
                 return;
+            case "projects.autofix":
+                return runAutoFix(msg.payload);
         }
     }
     catch (e) {
-        toast(`Error: ${(_a = e.message) !== null && _a !== void 0 ? _a : "unknown"}`, "error");
+        toast(`Error: ${(_d = e.message) !== null && _d !== void 0 ? _d : "unknown"}`, "error");
     }
 };
 // Selection-change watcher — emits a live summary so the UI can update without
@@ -116,11 +233,14 @@ figma.on("selectionchange", () => {
         }, 150);
     }
 });
-// Restore stored URL on boot.
+// Restore stored URL + token on boot.
 (async () => {
     const stored = (await figma.clientStorage.getAsync("audit_server_url"));
     if (stored)
         auditServerURL = stored;
+    const tok = (await figma.clientStorage.getAsync("docs_auth_token"));
+    if (tok)
+        docsAuthToken = tok;
 })();
 // Direct menu commands.
 if (figma.command === "auditFile")
@@ -142,6 +262,27 @@ if (figma.command === "openProjects") {
     setTimeout(() => {
         send({ type: "projects.send-progress", payload: { phase: "open-via-command" } });
     }, 100);
+}
+if (figma.command === "autofix") {
+    // Phase 4.1 — deeplink → UI handoff. Figma resolved the parameters
+    // declared in manifest.json (?slug=…&violation_id=…) and exposes them
+    // on figma.parameters. We pump them into the UI which renders the
+    // confirm-step panel; the UI then echoes back projects.autofix once
+    // the user clicks Apply.
+    const params = (_a = figma.parameters) === null || _a === void 0 ? void 0 : _a.values;
+    const slug = params === null || params === void 0 ? void 0 : params.slug;
+    const violationID = params === null || params === void 0 ? void 0 : params.violation_id;
+    if (!slug || !violationID) {
+        toast("Auto-fix: missing slug or violation_id parameter.", "error");
+    }
+    else {
+        setTimeout(() => {
+            send({
+                type: "projects.autofix-prompt",
+                payload: { slug, violation_id: violationID },
+            });
+        }, 100);
+    }
 }
 if (figma.command === "openDocsSite") {
     figma.openExternal(docsURL);
@@ -1120,4 +1261,147 @@ function depth2Skeleton(node) {
 /* ── Toast ──────────────────────────────────────────────────────────── */
 function toast(message, level = "info") {
     send({ type: "toast", payload: { message, level, ts: Date.now() } });
+}
+async function runAutoFix(payload) {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
+    if (!payload || !payload.slug || !payload.violation_id) {
+        toast("Auto-fix: missing slug or violation_id.", "error");
+        return;
+    }
+    const headers = { Accept: "application/json" };
+    // Plugin doesn't carry the JWT for the docs site (different host); the
+    // /v1/projects/.../violations/:id endpoint is auth-gated, so the user
+    // must have configured the plugin's auth token via Figma plugin
+    // settings. Tokenisation polish lands separately.
+    let v;
+    try {
+        const res = await fetch(`${auditServerURL}/v1/projects/${encodeURIComponent(payload.slug)}/violations/${encodeURIComponent(payload.violation_id)}`, { headers });
+        if (!res.ok) {
+            toast(`Auto-fix: GET violation failed (${res.status}).`, "error");
+            return;
+        }
+        v = (await res.json());
+    }
+    catch (err) {
+        toast(`Auto-fix: ${(_a = err.message) !== null && _a !== void 0 ? _a : "network"}.`, "error");
+        return;
+    }
+    // Phase 4.1 — fetch-only mode: hand the violation back to the UI so
+    // it can render the confirm panel. We also try to pre-resolve the
+    // target variable from the violation's `suggestion` field — most rule
+    // runners pre-fill that with the token path the auditor recommended.
+    // When resolved, the UI receives a ready-to-apply payload; otherwise
+    // the panel shows "manual target needed" and Phase 4.2's picker takes
+    // over.
+    if (!payload.target) {
+        let resolvedVarID = null;
+        let resolvedTokenPath = null;
+        if (v.suggestion) {
+            try {
+                const variable = await resolveVariable({
+                    token_path: v.suggestion,
+                    figma_name: v.suggestion,
+                });
+                if (variable) {
+                    resolvedVarID = variable.id;
+                    resolvedTokenPath = v.suggestion;
+                }
+            }
+            catch (_j) {
+                // resolution best-effort — UI will surface the unresolved state.
+            }
+        }
+        send({
+            type: "projects.autofix-violation",
+            payload: {
+                slug: payload.slug,
+                violation: v,
+                resolved: resolvedVarID
+                    ? { variable_id: resolvedVarID, token_path: resolvedTokenPath }
+                    : null,
+            },
+        });
+        return;
+    }
+    if (!AutoFix.isAutoFixable(v.rule_id)) {
+        toast(`Auto-fix: ${v.rule_id} requires a manual fix.`, "info");
+        return;
+    }
+    // Build the preview. UI shows it then the user clicks Apply (a follow-up
+    // message). For now, this implementation auto-applies on receipt — the
+    // confirm-step UI is Phase 4.1 polish; the preview-only path keeps the
+    // designer in the loop via the explicit menu invocation.
+    const preview = AutoFix.previewFix({
+        ruleID: v.rule_id,
+        property: v.property,
+        observed: v.observed,
+        targetTokenPath: (_b = payload.target) === null || _b === void 0 ? void 0 : _b.token_path,
+        targetTextStyleId: (_c = payload.target) === null || _c === void 0 ? void 0 : _c.text_style_id,
+        observedNumber: (_d = payload.target) === null || _d === void 0 ? void 0 : _d.observed_number,
+    });
+    if (!preview) {
+        toast(`Auto-fix: insufficient target for ${v.rule_id}.`, "info");
+        return;
+    }
+    // Dispatch.
+    let result;
+    switch (v.rule_id) {
+        case "drift.fill":
+        case "unbound.fill":
+        case "deprecated.fill":
+            if (!((_e = payload.target) === null || _e === void 0 ? void 0 : _e.variable_id) || !v.node_id) {
+                toast("Auto-fix: missing variable_id or node_id.", "info");
+                return;
+            }
+            result = await AutoFix.applyFillBinding(v.node_id, payload.target.variable_id);
+            break;
+        case "drift.text":
+        case "unbound.text":
+            if (!((_f = payload.target) === null || _f === void 0 ? void 0 : _f.text_style_id) || !v.node_id) {
+                toast("Auto-fix: missing text_style_id or node_id.", "info");
+                return;
+            }
+            result = await AutoFix.applyTextStyle(v.node_id, payload.target.text_style_id);
+            break;
+        case "drift.padding":
+        case "drift.gap": {
+            const obs = (_g = payload.target) === null || _g === void 0 ? void 0 : _g.observed_number;
+            const prop = v.property;
+            if (typeof obs !== "number" || !v.node_id) {
+                toast("Auto-fix: missing observed_number or node_id.", "info");
+                return;
+            }
+            result = await AutoFix.applySnapPadding(v.node_id, prop, obs);
+            break;
+        }
+        case "drift.radius": {
+            const obs = (_h = payload.target) === null || _h === void 0 ? void 0 : _h.observed_number;
+            if (typeof obs !== "number" || !v.node_id) {
+                toast("Auto-fix: missing observed_number or node_id.", "info");
+                return;
+            }
+            result = await AutoFix.applySnapRadius(v.node_id, obs);
+            break;
+        }
+        default:
+            return;
+    }
+    if (result.ok !== true) {
+        toast(`Auto-fix failed: ${result.error}`, "error");
+        return;
+    }
+    // Success ping. Best-effort — even if this fails the Figma file is
+    // already updated; the next re-audit will re-classify the violation
+    // status correctly.
+    try {
+        await fetch(`${auditServerURL}/v1/projects/${encodeURIComponent(payload.slug)}/violations/${encodeURIComponent(payload.violation_id)}/fix-applied`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ note: preview.hint }),
+        });
+    }
+    catch (_k) {
+        // swallow — file is already fixed
+    }
+    toast(`Auto-fix applied: ${preview.hint}`, "success");
 }

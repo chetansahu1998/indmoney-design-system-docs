@@ -30,6 +30,10 @@ interface MessageFromUI {
   type:
     | "ready"
     | "set-server-url"
+    /** Phase 7.8 — paste-once docs-site JWT for the projects.send POST.
+     *  Payload is the raw token string; empty clears it. Stored in
+     *  figma.clientStorage so it survives plugin reloads. */
+    | "set-docs-token"
     | "publish"
     | "audit"
     | "apply-fix"
@@ -92,6 +96,11 @@ const send = (msg: MessageToUI) => figma.ui.postMessage(msg);
 
 let auditServerURL = "http://localhost:7474";
 let docsURL = "https://indmoney-design-system-docs.vercel.app";
+// Phase 7.8 — docs-site auth token used by the projects.send POST. The
+// user pastes their JWT into the plugin's "Settings" once; we persist
+// it via figma.clientStorage so it survives plugin reloads. Stays null
+// until set; projects.send rejects with a clear error in that case.
+let docsAuthToken: string | null = null;
 let healthTimer: ReturnType<typeof setInterval> | null = null;
 let knownVariables: Record<string, Variable> = {};
 
@@ -130,6 +139,42 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
         // key manually for QA.
         await figma.clientStorage.setAsync("projects.firstrun-seen", true);
         return;
+      case "set-docs-token": {
+        // Phase 7.8 — paste-once docs-site JWT for the projects.send POST.
+        // Empty string clears the stored token (logout flow). The token
+        // never leaves the plugin's clientStorage; it's only sent as the
+        // Authorization header on /api/projects/export calls.
+        const v = (msg.payload as string | undefined) ?? "";
+        if (v === "") {
+          docsAuthToken = null;
+          await figma.clientStorage.deleteAsync("docs_auth_token");
+          send({
+            type: "projects.send-result",
+            payload: { ok: true, info: "Token cleared." },
+          });
+          return;
+        }
+        // Minimal sanity check — JWTs are three base64url segments
+        // separated by dots. Bcrypt hashes / passwords don't match.
+        if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(v)) {
+          send({
+            type: "projects.send-result",
+            payload: {
+              ok: false,
+              error: "invalid_token_format",
+              detail: "Expected a JWT (three base64url segments separated by dots).",
+            },
+          });
+          return;
+        }
+        docsAuthToken = v;
+        await figma.clientStorage.setAsync("docs_auth_token", v);
+        send({
+          type: "projects.send-result",
+          payload: { ok: true, info: "Token saved." },
+        });
+        return;
+      }
       case "set-server-url":
         if (typeof msg.payload === "string" && msg.payload.startsWith("http")) {
           const v = msg.payload.replace(/\/$/, "");
@@ -164,19 +209,83 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
       case "projects.refresh-detection":
         return runProjectsDetection();
       case "projects.send":
-        // U3: backend wiring lands in U4. For now we only echo a "result" so
-        // the UI re-enables its Send button cleanly. Plugin code never
-        // serializes the payload here — UI logs it to the JS console as a
-        // placeholder. We just confirm receipt.
-        send({
-          type: "projects.send-result",
-          payload: {
-            ok: true,
-            phase: "u3-placeholder",
-            note: "Send wired to console.log only; backend lands in U4.",
-          },
-        });
-        toast("Projects payload logged to console (U3 placeholder).", "info");
+        // Phase 7.8 — real export wiring. POSTs to the docs-site proxy at
+        // /api/projects/export which forwards to ds-service's HandleExport.
+        // The plugin's manifest already allowlists the Vercel origin so
+        // we don't need to add the ephemeral tunnel URL here.
+        if (!docsAuthToken) {
+          send({
+            type: "projects.send-result",
+            payload: {
+              ok: false,
+              error: "auth_required",
+              detail: "Set your docs-site token in plugin Settings first (paste the JWT from localStorage['indmoney-ds-auth']).",
+            },
+          });
+          toast("Set your docs-site token in plugin Settings first.", "error");
+          return;
+        }
+        try {
+          const res = await fetch(`${docsURL}/api/projects/export`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${docsAuthToken}`,
+              // Lets the operator correlate plugin → docs → ds-service
+              // logs when something goes wrong; ds-service threads this
+              // ID through SSE events too.
+              "X-Trace-ID": (typeof crypto !== "undefined" && crypto.randomUUID)
+                ? crypto.randomUUID() : String(Date.now()),
+            },
+            body: JSON.stringify(msg.payload),
+          });
+          const bodyText = await res.text();
+          let body: any = {};
+          try { body = JSON.parse(bodyText); } catch { /* keep text */ }
+          if (!res.ok) {
+            send({
+              type: "projects.send-result",
+              payload: {
+                ok: false,
+                status: res.status,
+                error: body.error || "http_error",
+                detail: body.detail || bodyText.slice(0, 200),
+              },
+            });
+            toast(
+              `Export failed (HTTP ${res.status}): ${body.detail || body.error || "unknown"}`,
+              "error",
+            );
+            return;
+          }
+          send({
+            type: "projects.send-result",
+            payload: {
+              ok: true,
+              project_id: body.project_id,
+              version_id: body.version_id,
+              deeplink: body.deeplink,
+              trace_id: body.trace_id,
+            },
+          });
+          toast(
+            `Exported — project ${body.project_id?.slice(0, 8) ?? "?"}…`,
+            "success",
+          );
+        } catch (err) {
+          send({
+            type: "projects.send-result",
+            payload: {
+              ok: false,
+              error: "network",
+              detail: (err as Error).message,
+            },
+          });
+          toast(
+            `Couldn't reach ${docsURL}: ${(err as Error).message}`,
+            "error",
+          );
+        }
         return;
       case "projects.autofix":
         return runAutoFix(msg.payload as AutoFixPayload);
@@ -199,10 +308,12 @@ figma.on("selectionchange", () => {
   }
 });
 
-// Restore stored URL on boot.
+// Restore stored URL + token on boot.
 (async () => {
   const stored = (await figma.clientStorage.getAsync("audit_server_url")) as string | undefined;
   if (stored) auditServerURL = stored;
+  const tok = (await figma.clientStorage.getAsync("docs_auth_token")) as string | undefined;
+  if (tok) docsAuthToken = tok;
 })();
 
 // Direct menu commands.
