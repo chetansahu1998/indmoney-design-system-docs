@@ -121,6 +121,28 @@ func (e ProjectAuditProgress) Type() string { return "project.audit_progress" }
 // Payload implements Event.
 func (e ProjectAuditProgress) Payload() any { return e }
 
+// NotificationCreated (Phase 5 U7) — emitted on the tenant inbox channel
+// (inbox:<tenant_id>) when a comment with @mention is written or a
+// decision is made on a flow the recipient follows. The Inbox UI's
+// Mentions chip subscribes and reconciles its badge count.
+//
+// RecipientUserID is included so the client can client-side filter
+// (the broker ships everything on the channel; the client matches its
+// own user_id). Tenant scoping happens at the broker level.
+type NotificationCreated struct {
+	Tenant          string `json:"tenant_id"`
+	RecipientUserID string `json:"recipient_user_id"`
+	Kind            string `json:"kind"`
+	TargetKind      string `json:"target_kind,omitempty"`
+	TargetID        string `json:"target_id,omitempty"`
+	FlowID          string `json:"flow_id,omitempty"`
+	ActorUserID     string `json:"actor_user_id,omitempty"`
+}
+
+func (e NotificationCreated) TenantID() string { return e.Tenant }
+func (e NotificationCreated) Type() string     { return "notification.created" }
+func (e NotificationCreated) Payload() any     { return e }
+
 // ProjectViolationLifecycleChanged (Phase 4 U1) — emitted whenever a
 // violation transitions between active / acknowledged / dismissed / fixed.
 // Subscribers (Violations tab + Inbox + dashboard) reconcile their cached

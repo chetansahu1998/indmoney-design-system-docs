@@ -1426,6 +1426,257 @@ func (s *Server) HandleRecentDecisions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ─── Phase 5 U6+U7: comments + notifications ─────────────────────────────────
+
+// createCommentRequest mirrors the JSON body for
+// POST /v1/projects/{slug}/comments. The slug is required so we can
+// confirm the flow belongs to this project before writing; target_kind +
+// target_id discriminate which entity the comment hangs off.
+type createCommentRequest struct {
+	TargetKind      string `json:"target_kind"`
+	TargetID        string `json:"target_id"`
+	FlowID          string `json:"flow_id"`
+	Body            string `json:"body"`
+	ParentCommentID string `json:"parent_comment_id,omitempty"`
+}
+
+// HandleCommentCreate serves POST /v1/projects/{slug}/comments.
+// Tenant-scoped; writes the comment + emits notification rows for each
+// resolved @mention; broadcasts notification.created on the inbox SSE
+// channel post-commit.
+func (s *Server) HandleCommentCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_slug", "")
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, MaxBodyBytes))
+	if err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "read_body", err.Error())
+		return
+	}
+	var req createCommentRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "decode", err.Error())
+		return
+	}
+
+	in, err := ValidateCommentInput(CommentInput{
+		TargetKind:      CommentTargetKind(req.TargetKind),
+		TargetID:        req.TargetID,
+		FlowID:          req.FlowID,
+		Body:            req.Body,
+		ParentCommentID: req.ParentCommentID,
+	})
+	if err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_comment", err.Error())
+		return
+	}
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	if _, err := repo.GetProjectBySlug(r.Context(), slug); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+		return
+	}
+
+	rec, mentioned, err := repo.CreateComment(r.Context(), claims.Sub, in)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "create_comment", err.Error())
+		return
+	}
+
+	// Best-effort SSE fan-out. Each mentioned user gets a notification
+	// event on the tenant inbox channel — same channel Phase 4.1 ships.
+	if s.deps.Broker != nil && len(mentioned) > 0 {
+		ch := inboxBroadcastChannel(tenantID)
+		for _, uid := range mentioned {
+			s.deps.Broker.Publish(ch, sse.NotificationCreated{
+				Tenant:          tenantID,
+				RecipientUserID: uid,
+				Kind:            string(NotifMention),
+				TargetKind:      string(NotifTargetComment),
+				TargetID:        rec.ID,
+				FlowID:          rec.FlowID,
+				ActorUserID:     claims.Sub,
+			})
+		}
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"comment":           rec,
+		"notified_user_ids": mentioned,
+	})
+}
+
+// HandleCommentList serves GET /v1/projects/{slug}/comments?target_kind=&target_id=.
+// Tenant-scoped; oldest first.
+func (s *Server) HandleCommentList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	q := r.URL.Query()
+	kind := q.Get("target_kind")
+	target := q.Get("target_id")
+	if kind == "" || target == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_target", "target_kind and target_id required")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	out, err := repo.ListCommentsForTarget(r.Context(), CommentTargetKind(kind), target)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "list_comments", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"comments": out,
+		"count":    len(out),
+	})
+}
+
+// HandleCommentResolve serves POST /v1/comments/{id}/resolve.
+func (s *Server) HandleCommentResolve(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_id", "")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	if err := repo.ResolveComment(r.Context(), id, claims.Sub); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "resolve_comment", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"resolved": true})
+}
+
+// HandleNotificationsList serves GET /v1/notifications?unread=1&limit=50.
+func (s *Server) HandleNotificationsList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	q := r.URL.Query()
+	unread := q.Get("unread") == "1"
+	limit := 50
+	if l := q.Get("limit"); l != "" {
+		var n int
+		_, _ = fmt.Sscanf(l, "%d", &n)
+		if n > 0 {
+			limit = n
+		}
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	out, err := repo.ListNotificationsForUser(r.Context(), claims.Sub, unread, limit)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "list_notifications", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"notifications": out,
+		"count":         len(out),
+	})
+}
+
+// HandleNotificationsMarkRead serves POST /v1/notifications/mark-read with
+// body `{ "ids": [...] }`. Caller-scoped; cross-recipient ids are silently
+// ignored.
+func (s *Server) HandleNotificationsMarkRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 32*1024))
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "decode", err.Error())
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeJSONErr(w, http.StatusBadRequest, "empty_ids", "")
+		return
+	}
+	if len(req.IDs) > 200 {
+		writeJSONErr(w, http.StatusBadRequest, "too_many_ids", "max 200")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	n, err := repo.MarkNotificationsRead(r.Context(), claims.Sub, req.IDs)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "mark_read", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"updated": n})
+}
+
 // inboxBroadcastChannel returns the synthetic SSE channel used for
 // tenant-scoped inbox broadcasts. Phase 4.1 — lifecycle events publish
 // under both the project's trace_id (existing project Violations tab

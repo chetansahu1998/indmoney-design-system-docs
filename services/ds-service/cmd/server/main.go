@@ -493,6 +493,25 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleDecisionGet)))
 	mux.HandleFunc("GET /v1/atlas/admin/decisions/recent",
 		s.requireSuperAdmin(s.projectsServer.HandleRecentDecisions))
+
+	// Phase 5 U6 — universal comments with @mention parsing. Comments
+	// can target a DRD block, a decision, or a violation; the server
+	// parses @mentions inside the body and emits notification rows in
+	// the same DB tx as the comment insert. Resolution is per-comment.
+	mux.HandleFunc("POST /v1/projects/{slug}/comments",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleCommentCreate)))
+	mux.HandleFunc("GET /v1/projects/{slug}/comments",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleCommentList)))
+	mux.HandleFunc("POST /v1/comments/{id}/resolve",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleCommentResolve)))
+
+	// Phase 5 U7 — notifications inbox API. The SSE channel for new
+	// notifications is the existing tenant inbox channel (Phase 4.1
+	// U2); these endpoints back the Mentions filter chip on /inbox.
+	mux.HandleFunc("GET /v1/notifications",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleNotificationsList)))
+	mux.HandleFunc("POST /v1/notifications/mark-read",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleNotificationsMarkRead)))
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────

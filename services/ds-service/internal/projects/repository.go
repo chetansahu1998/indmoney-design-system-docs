@@ -3,6 +3,7 @@ package projects
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -1684,4 +1685,344 @@ func nullIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+// ─── Phase 5 U6: comments + mention resolution ──────────────────────────────
+
+// resolveMentionEmails takes a slice of @names parsed from comment bodies
+// and looks up their user_ids inside the caller's tenant. Names that
+// don't match any tenant user are silently dropped — typo'd @mentions
+// shouldn't reject the comment. Email is the username today: the part
+// before "@" in the user's email maps to the @name. Phase 7 admin can
+// configure a display-name field; until then, email-prefix is the
+// pragmatic default.
+func (t *TenantRepo) resolveMentionEmails(ctx context.Context, names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	// Build LIKE patterns: lower(SUBSTR(email, 1, INSTR(email,'@')-1)) = ?.
+	// SQLite supports a parameter-driven IN clause; we go with one query
+	// per call (small N, < MaxMentionsPerComment).
+	args := make([]any, 0, len(names)+1)
+	placeholders := make([]string, 0, len(names))
+	for _, n := range names {
+		placeholders = append(placeholders, "?")
+		args = append(args, n)
+	}
+	args = append(args, t.tenantID)
+
+	q := `SELECT u.id
+	        FROM users u
+	        JOIN tenant_users tu ON tu.user_id = u.id
+	       WHERE LOWER(SUBSTR(u.email, 1, INSTR(u.email, '@') - 1)) IN (` +
+		strings.Join(placeholders, ",") + `)
+	         AND tu.tenant_id = ?
+	         AND tu.status = 'active'`
+	rows, err := t.r.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("resolve mentions: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// CreateComment writes a comment row + emits notification rows for each
+// resolved mention, all inside one transaction. Caller is expected to
+// have already run ValidateCommentInput.
+//
+// Returns the persisted record + the recipient user_ids who got mention
+// notifications (caller fans them out via SSE post-commit).
+func (t *TenantRepo) CreateComment(ctx context.Context, authorUserID string, in CommentInput) (*CommentRecord, []string, error) {
+	mentionUserIDs, err := t.resolveMentionEmails(ctx, in.MentionedNames)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Drop self-mentions — the author getting their own notification is noise.
+	filtered := mentionUserIDs[:0]
+	for _, id := range mentionUserIDs {
+		if id != authorUserID {
+			filtered = append(filtered, id)
+		}
+	}
+	mentionUserIDs = filtered
+
+	mentionsJSON := []byte("null")
+	if len(mentionUserIDs) > 0 {
+		bs, err := json.Marshal(mentionUserIDs)
+		if err != nil {
+			return nil, nil, fmt.Errorf("marshal mentions: %w", err)
+		}
+		mentionsJSON = bs
+	}
+
+	now := t.now()
+	id := uuid.NewString()
+	tx, err := t.r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO drd_comments
+		 (id, tenant_id, target_kind, target_id, flow_id, author_user_id,
+		  body, parent_comment_id, mentions_user_ids, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, t.tenantID, string(in.TargetKind), in.TargetID, in.FlowID, authorUserID,
+		in.Body, nullIfEmpty(in.ParentCommentID), nullIfNullJSON(mentionsJSON),
+		rfc3339(now), rfc3339(now),
+	); err != nil {
+		return nil, nil, fmt.Errorf("insert comment: %w", err)
+	}
+
+	for _, recipient := range mentionUserIDs {
+		payload, _ := json.Marshal(map[string]any{
+			"flow_id":      in.FlowID,
+			"target_kind":  string(in.TargetKind),
+			"target_id":    in.TargetID,
+			"comment_id":   id,
+			"body_snippet": snippet(in.Body, 140),
+			"author_user_id": authorUserID,
+		})
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO notifications
+			 (id, tenant_id, recipient_user_id, kind, target_kind, target_id,
+			  flow_id, actor_user_id, payload_json, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			uuid.NewString(), t.tenantID, recipient,
+			string(NotifMention), string(NotifTargetComment), id,
+			nullIfEmpty(in.FlowID), authorUserID, string(payload), rfc3339(now),
+		); err != nil {
+			return nil, nil, fmt.Errorf("insert notification: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("commit: %w", err)
+	}
+
+	rec, err := t.GetComment(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	return rec, mentionUserIDs, nil
+}
+
+// nullIfNullJSON returns nil for SQL when the JSON literal is "null"
+// (driver writes SQL NULL into mentions_user_ids), else the bytes.
+func nullIfNullJSON(b []byte) any {
+	if len(b) == 0 || string(b) == "null" {
+		return nil
+	}
+	return string(b)
+}
+
+// snippet returns the first n runes of body for the notification preview.
+func snippet(body string, n int) string {
+	if len(body) <= n {
+		return body
+	}
+	if n <= 1 {
+		return body[:n]
+	}
+	return body[:n-1] + "…"
+}
+
+// GetComment returns one comment by id; tenant-scoped.
+func (t *TenantRepo) GetComment(ctx context.Context, commentID string) (*CommentRecord, error) {
+	row := t.r.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, target_kind, target_id, flow_id, author_user_id,
+		        body, parent_comment_id, COALESCE(mentions_user_ids, ''),
+		        COALESCE(resolved_at, ''), COALESCE(resolved_by, ''),
+		        created_at, updated_at
+		   FROM drd_comments
+		  WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`,
+		commentID, t.tenantID,
+	)
+	rec := &CommentRecord{}
+	var parent sql.NullString
+	var mentions string
+	if err := row.Scan(
+		&rec.ID, &rec.TenantID, &rec.TargetKind, &rec.TargetID, &rec.FlowID,
+		&rec.AuthorUserID, &rec.Body, &parent, &mentions,
+		&rec.ResolvedAt, &rec.ResolvedBy, &rec.CreatedAt, &rec.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get comment: %w", err)
+	}
+	if parent.Valid {
+		s := parent.String
+		rec.ParentCommentID = &s
+	}
+	if mentions != "" {
+		_ = json.Unmarshal([]byte(mentions), &rec.MentionsUserIDs)
+	}
+	return rec, nil
+}
+
+// ListCommentsForTarget returns every (non-deleted) comment for a target,
+// oldest first, with linear depth=1 thread structure (replies are siblings
+// of the root comment ordered by created_at ASC).
+func (t *TenantRepo) ListCommentsForTarget(ctx context.Context, kind CommentTargetKind, targetID string) ([]CommentRecord, error) {
+	rows, err := t.r.db.QueryContext(ctx,
+		`SELECT id, tenant_id, target_kind, target_id, flow_id, author_user_id,
+		        body, parent_comment_id, COALESCE(mentions_user_ids, ''),
+		        COALESCE(resolved_at, ''), COALESCE(resolved_by, ''),
+		        created_at, updated_at
+		   FROM drd_comments
+		  WHERE tenant_id = ? AND target_kind = ? AND target_id = ?
+		    AND deleted_at IS NULL
+		  ORDER BY created_at ASC`,
+		t.tenantID, string(kind), targetID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list comments: %w", err)
+	}
+	defer rows.Close()
+	var out []CommentRecord
+	for rows.Next() {
+		var rec CommentRecord
+		var parent sql.NullString
+		var mentions string
+		if err := rows.Scan(
+			&rec.ID, &rec.TenantID, &rec.TargetKind, &rec.TargetID, &rec.FlowID,
+			&rec.AuthorUserID, &rec.Body, &parent, &mentions,
+			&rec.ResolvedAt, &rec.ResolvedBy, &rec.CreatedAt, &rec.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if parent.Valid {
+			s := parent.String
+			rec.ParentCommentID = &s
+		}
+		if mentions != "" {
+			_ = json.Unmarshal([]byte(mentions), &rec.MentionsUserIDs)
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+// ResolveComment marks a comment as resolved by the given user. Idempotent:
+// already-resolved comments return without error (caller can re-run).
+func (t *TenantRepo) ResolveComment(ctx context.Context, commentID, userID string) error {
+	now := t.now()
+	res, err := t.r.db.ExecContext(ctx,
+		`UPDATE drd_comments
+		    SET resolved_at = ?, resolved_by = ?, updated_at = ?
+		  WHERE id = ? AND tenant_id = ? AND resolved_at IS NULL AND deleted_at IS NULL`,
+		rfc3339(now), userID, rfc3339(now),
+		commentID, t.tenantID,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve comment: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		// Either the row vanished, was already resolved, or cross-tenant.
+		// Confirm-existence query distinguishes ErrNotFound from idempotent.
+		var dummy string
+		err := t.r.db.QueryRowContext(ctx,
+			`SELECT id FROM drd_comments WHERE id = ? AND tenant_id = ? AND deleted_at IS NULL`,
+			commentID, t.tenantID,
+		).Scan(&dummy)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		// already resolved — idempotent no-op
+	}
+	return nil
+}
+
+// ─── Phase 5 U7: notifications ──────────────────────────────────────────────
+
+// ListNotificationsForUser returns the requesting user's notifications,
+// scoped to their tenant. unreadOnly limits to read_at IS NULL.
+func (t *TenantRepo) ListNotificationsForUser(ctx context.Context, userID string, unreadOnly bool, limit int) ([]NotificationRecord, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	q := `SELECT id, tenant_id, recipient_user_id, kind,
+	             COALESCE(target_kind, ''), COALESCE(target_id, ''),
+	             COALESCE(flow_id, ''), COALESCE(actor_user_id, ''),
+	             COALESCE(payload_json, ''), COALESCE(delivered_via, ''),
+	             COALESCE(read_at, ''), created_at
+	        FROM notifications
+	       WHERE tenant_id = ? AND recipient_user_id = ?`
+	if unreadOnly {
+		q += ` AND read_at IS NULL`
+	}
+	q += ` ORDER BY created_at DESC LIMIT ?`
+
+	rows, err := t.r.db.QueryContext(ctx, q, t.tenantID, userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list notifications: %w", err)
+	}
+	defer rows.Close()
+	var out []NotificationRecord
+	for rows.Next() {
+		var rec NotificationRecord
+		var payload, deliveredVia string
+		if err := rows.Scan(
+			&rec.ID, &rec.TenantID, &rec.RecipientUserID, &rec.Kind,
+			&rec.TargetKind, &rec.TargetID, &rec.FlowID, &rec.ActorUserID,
+			&payload, &deliveredVia, &rec.ReadAt, &rec.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if payload != "" {
+			rec.PayloadJSON = []byte(payload)
+		}
+		if deliveredVia != "" {
+			_ = json.Unmarshal([]byte(deliveredVia), &rec.DeliveredVia)
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+// MarkNotificationsRead bulks set read_at on a set of ids, scoped to the
+// caller's user. Returns the count of rows actually flipped (0 if all were
+// already read).
+func (t *TenantRepo) MarkNotificationsRead(ctx context.Context, userID string, ids []string) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	now := rfc3339(t.now())
+
+	// Args order matches the query: SET read_at = ?, then IDs (IN clause),
+	// then tenant_id, then recipient_user_id.
+	args := make([]any, 0, len(ids)+3)
+	args = append(args, now)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	args = append(args, t.tenantID, userID)
+
+	res, err := t.r.db.ExecContext(ctx,
+		`UPDATE notifications
+		    SET read_at = ?
+		  WHERE id IN (`+placeholders+`)
+		    AND tenant_id = ?
+		    AND recipient_user_id = ?
+		    AND read_at IS NULL`,
+		args...,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("mark read: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
