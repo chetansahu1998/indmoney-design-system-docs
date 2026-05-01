@@ -68,6 +68,14 @@ import {
 } from "@/lib/projects/view-machine";
 import ProjectToolbar from "./ProjectToolbar";
 import DRDTab from "./tabs/DRDTab";
+import DRDTabCollab from "./tabs/DRDTabCollab";
+
+// Phase 5.1 P1 — feature-flag dispatch. When NEXT_PUBLIC_DRD_COLLAB === "1"
+// the collab-aware editor (Yjs + Hocuspocus) replaces the single-author
+// REST flow. Read at module scope so the choice is stable per
+// deployment. The cutover is per-deploy so production can flip the flag
+// once the sidecar is healthy without a code change.
+const DRD_COLLAB_ENABLED = process.env.NEXT_PUBLIC_DRD_COLLAB === "1";
 import DecisionsTab from "./tabs/DecisionsTab";
 import JSONTab from "./tabs/JSONTab";
 import ViolationsTab from "./tabs/ViolationsTab";
@@ -636,19 +644,27 @@ export default function ProjectShell({
           }}
         >
           {activeTab === "drd" && (
-            <DRDTab
-              slug={slug}
-              flowID={screens[0]?.FlowID ?? null}
-              // Phase 3 U7-lite: ?read_only_preview=1 simulates a Phase 7
-              // ACL-denied path so designers can review the read-only UX
-              // before per-resource grants ship. Phase 7 will replace
-              // this query-param check with an actual permission check
-              // resolved server-side in fetchProject's response.
-              // Phase 3 U7: read-only resolves through the machine — covers
-              // both the ?read_only_preview=1 preview path and (Phase 7) a
-              // server-resolved ACL flag without re-reading the query param.
-              readOnly={isReadOnly(machineState)}
-            />
+            DRD_COLLAB_ENABLED && screens[0]?.FlowID ? (
+              <DRDTabCollab
+                slug={slug}
+                flowID={screens[0].FlowID}
+                readOnly={isReadOnly(machineState)}
+              />
+            ) : (
+              <DRDTab
+                slug={slug}
+                flowID={screens[0]?.FlowID ?? null}
+                // Phase 3 U7-lite: ?read_only_preview=1 simulates a Phase 7
+                // ACL-denied path so designers can review the read-only UX
+                // before per-resource grants ship. Phase 7 will replace
+                // this query-param check with an actual permission check
+                // resolved server-side in fetchProject's response.
+                // Phase 3 U7: read-only resolves through the machine — covers
+                // both the ?read_only_preview=1 preview path and (Phase 7) a
+                // server-resolved ACL flag without re-reading the query param.
+                readOnly={isReadOnly(machineState)}
+              />
+            )
           )}
           {activeTab === "violations" && (
             <ViolationsTab
