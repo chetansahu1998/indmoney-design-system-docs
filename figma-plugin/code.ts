@@ -149,7 +149,40 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
         // Empty string clears the stored token (logout flow). The token
         // never leaves the plugin's clientStorage; it's only sent as the
         // Authorization header on /api/projects/export calls.
-        const v = (msg.payload as string | undefined) ?? "";
+        const raw = (msg.payload as string | undefined) ?? "";
+        // Be forgiving about how the user pasted the token. Common
+        // mistakes (observed during operator setup): wrapping quotes
+        // because they copied the console output literally, a stray
+        // `Bearer ` prefix copied from a curl example, or — worst —
+        // pasting the entire localStorage JSON blob and expecting us
+        // to dig out the field. Normalize all of these before the
+        // shape check fires, so the user only sees an error when the
+        // value is fundamentally not a JWT.
+        let v = raw.trim();
+        // If they pasted the whole zustand-persist blob, try to pull
+        // .state.token out of it.
+        if (v.startsWith("{")) {
+          try {
+            const parsed = JSON.parse(v);
+            const candidate =
+              parsed?.state?.token ??
+              parsed?.token ??
+              parsed?.access_token ??
+              null;
+            if (typeof candidate === "string") v = candidate.trim();
+          } catch {
+            /* fall through to the shape check below */
+          }
+        }
+        // Strip a leading "Bearer " (curl/Authorization-header copy).
+        v = v.replace(/^Bearer\s+/i, "");
+        // Strip surrounding quotes (single, double, or smart). Console
+        // output often comes wrapped in quotes when copied as a string.
+        v = v.replace(/^['"“‘]+|['"”’]+$/g, "");
+        // Strip any internal whitespace — JWTs never contain spaces or
+        // newlines, but copy-paste sometimes inserts them.
+        v = v.replace(/\s+/g, "");
+
         if (v === "") {
           docsAuthToken = null;
           await figma.clientStorage.deleteAsync("docs_auth_token");
@@ -163,12 +196,18 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
         // Minimal sanity check — JWTs are three base64url segments
         // separated by dots. Bcrypt hashes / passwords don't match.
         if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(v)) {
+          // Surface a more actionable detail than the bare format
+          // requirement so the user can self-diagnose. The first 12
+          // chars are safe to echo back — they're the base64-encoded
+          // JWT header which is public anyway.
+          const dots = (v.match(/\./g) || []).length;
+          const preview = v.length > 0 ? v.slice(0, 16) + (v.length > 16 ? "…" : "") : "(empty)";
           send({
             type: "projects.send-result",
             payload: {
               ok: false,
               error: "invalid_token_format",
-              detail: "Expected a JWT (three base64url segments separated by dots).",
+              detail: `Not a JWT — got ${v.length} chars, ${dots} dot(s). Preview: ${preview}. Expected eyJ…aaa.bbb.ccc from JSON.parse(localStorage['indmoney-ds-auth']).state.token`,
             },
           });
           return;

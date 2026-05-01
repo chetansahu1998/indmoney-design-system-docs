@@ -47,7 +47,7 @@ let allPagesLoaded = false;
 // size, and the plugin is still narrow enough to dock alongside the canvas.
 figma.showUI(__html__, { width: 440, height: 720, themeColors: true });
 figma.ui.onmessage = async (msg) => {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     try {
         switch (msg.type) {
             case "ready":
@@ -73,7 +73,37 @@ figma.ui.onmessage = async (msg) => {
                 // Empty string clears the stored token (logout flow). The token
                 // never leaves the plugin's clientStorage; it's only sent as the
                 // Authorization header on /api/projects/export calls.
-                const v = (_a = msg.payload) !== null && _a !== void 0 ? _a : "";
+                const raw = (_a = msg.payload) !== null && _a !== void 0 ? _a : "";
+                // Be forgiving about how the user pasted the token. Common
+                // mistakes (observed during operator setup): wrapping quotes
+                // because they copied the console output literally, a stray
+                // `Bearer ` prefix copied from a curl example, or — worst —
+                // pasting the entire localStorage JSON blob and expecting us
+                // to dig out the field. Normalize all of these before the
+                // shape check fires, so the user only sees an error when the
+                // value is fundamentally not a JWT.
+                let v = raw.trim();
+                // If they pasted the whole zustand-persist blob, try to pull
+                // .state.token out of it.
+                if (v.startsWith("{")) {
+                    try {
+                        const parsed = JSON.parse(v);
+                        const candidate = (_e = (_d = (_c = (_b = parsed === null || parsed === void 0 ? void 0 : parsed.state) === null || _b === void 0 ? void 0 : _b.token) !== null && _c !== void 0 ? _c : parsed === null || parsed === void 0 ? void 0 : parsed.token) !== null && _d !== void 0 ? _d : parsed === null || parsed === void 0 ? void 0 : parsed.access_token) !== null && _e !== void 0 ? _e : null;
+                        if (typeof candidate === "string")
+                            v = candidate.trim();
+                    }
+                    catch (_j) {
+                        /* fall through to the shape check below */
+                    }
+                }
+                // Strip a leading "Bearer " (curl/Authorization-header copy).
+                v = v.replace(/^Bearer\s+/i, "");
+                // Strip surrounding quotes (single, double, or smart). Console
+                // output often comes wrapped in quotes when copied as a string.
+                v = v.replace(/^['"“‘]+|['"”’]+$/g, "");
+                // Strip any internal whitespace — JWTs never contain spaces or
+                // newlines, but copy-paste sometimes inserts them.
+                v = v.replace(/\s+/g, "");
                 if (v === "") {
                     docsAuthToken = null;
                     await figma.clientStorage.deleteAsync("docs_auth_token");
@@ -87,12 +117,18 @@ figma.ui.onmessage = async (msg) => {
                 // Minimal sanity check — JWTs are three base64url segments
                 // separated by dots. Bcrypt hashes / passwords don't match.
                 if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(v)) {
+                    // Surface a more actionable detail than the bare format
+                    // requirement so the user can self-diagnose. The first 12
+                    // chars are safe to echo back — they're the base64-encoded
+                    // JWT header which is public anyway.
+                    const dots = (v.match(/\./g) || []).length;
+                    const preview = v.length > 0 ? v.slice(0, 16) + (v.length > 16 ? "…" : "") : "(empty)";
                     send({
                         type: "projects.send-result",
                         payload: {
                             ok: false,
                             error: "invalid_token_format",
-                            detail: "Expected a JWT (three base64url segments separated by dots).",
+                            detail: `Not a JWT — got ${v.length} chars, ${dots} dot(s). Preview: ${preview}. Expected eyJ…aaa.bbb.ccc from JSON.parse(localStorage['indmoney-ds-auth']).state.token`,
                         },
                     });
                     return;
@@ -190,7 +226,7 @@ figma.ui.onmessage = async (msg) => {
                     try {
                         body = JSON.parse(bodyText);
                     }
-                    catch ( /* keep text */_e) { /* keep text */ }
+                    catch ( /* keep text */_k) { /* keep text */ }
                     if (!res.ok) {
                         send({
                             type: "projects.send-result",
@@ -214,7 +250,7 @@ figma.ui.onmessage = async (msg) => {
                             trace_id: body.trace_id,
                         },
                     });
-                    toast(`Exported — project ${(_c = (_b = body.project_id) === null || _b === void 0 ? void 0 : _b.slice(0, 8)) !== null && _c !== void 0 ? _c : "?"}…`, "success");
+                    toast(`Exported — project ${(_g = (_f = body.project_id) === null || _f === void 0 ? void 0 : _f.slice(0, 8)) !== null && _g !== void 0 ? _g : "?"}…`, "success");
                 }
                 catch (err) {
                     send({
@@ -233,7 +269,7 @@ figma.ui.onmessage = async (msg) => {
         }
     }
     catch (e) {
-        toast(`Error: ${(_d = e.message) !== null && _d !== void 0 ? _d : "unknown"}`, "error");
+        toast(`Error: ${(_h = e.message) !== null && _h !== void 0 ? _h : "unknown"}`, "error");
     }
 };
 // Selection-change watcher — emits a live summary so the UI can update without
