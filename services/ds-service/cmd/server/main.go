@@ -517,6 +517,20 @@ func (s *server) routes(mux *http.ServeMux) {
 	// tenant + (json_extract details.flow_id == flow_id) ordered DESC.
 	mux.HandleFunc("GET /v1/projects/{slug}/flows/{flow_id}/activity",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFlowActivity)))
+
+	// Phase 5 U1 — DRD collab. Public ticket endpoint (auth-gated)
+	// + the loopback-only auth/load/snapshot bridge endpoints the
+	// Hocuspocus sidecar calls. The sidecar is expected to run on
+	// the internal network and to send DS_HOCUSPOCUS_SHARED_SECRET in
+	// the X-DS-Hocuspocus-Secret header for the /internal/* routes.
+	mux.HandleFunc("POST /v1/projects/{slug}/flows/{flow_id}/drd/ticket",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleDRDTicket)))
+	mux.HandleFunc("POST /internal/drd/auth",
+		s.projectsServer.HandleDRDInternalAuthGated())
+	mux.HandleFunc("GET /internal/drd/load",
+		s.projectsServer.HandleDRDInternalLoadGated())
+	mux.HandleFunc("POST /internal/drd/snapshot",
+		s.projectsServer.HandleDRDInternalSnapshotGated())
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────

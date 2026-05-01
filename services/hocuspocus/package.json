@@ -1,0 +1,24 @@
+{
+  "name": "@indmoney/ds-hocuspocus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hocuspocus sidecar that bridges DRD collaboration to ds-service. Phase 5 U1.",
+  "type": "module",
+  "scripts": {
+    "start": "node --enable-source-maps --import tsx server.ts",
+    "build": "tsc -p .",
+    "dev": "tsx watch server.ts"
+  },
+  "dependencies": {
+    "@hocuspocus/server": "^2.13.5",
+    "yjs": "^13.6.18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -1453,6 +1454,254 @@ func (s *Server) HandleRecentDecisions(w http.ResponseWriter, r *http.Request) {
 		"decisions": out,
 		"count":     len(out),
 	})
+}
+
+// ─── Phase 5 U1: DRD collab auth bridge ───────────────────────────────────
+
+// HandleDRDTicket serves POST /v1/projects/{slug}/flows/{flow_id}/drd/ticket.
+// Auth-gated; mints a single-use 60s ticket bound to (user, tenant, flow)
+// for Hocuspocus' WebSocket handshake. Tenant + flow visibility checks
+// happen here so the sidecar can trust the ticket without re-checking.
+func (s *Server) HandleDRDTicket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	if s.deps.Tickets == nil {
+		writeJSONErr(w, http.StatusInternalServerError, "tickets_not_configured", "")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	flowID := r.PathValue("flow_id")
+	if slug == "" || flowID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
+		return
+	}
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	if _, err := repo.resolveDRDFlowID(r.Context(), slug, flowID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+		return
+	}
+
+	// The DRD ticket's traceID is `drd:<flow_id>` so the existing
+	// ticket store can scope it; the sidecar uses the same channel
+	// when redeeming.
+	traceID := "drd:" + flowID
+	ticket := s.deps.Tickets.IssueTicket(claims.Sub, tenantID, traceID, sse.DefaultTicketTTL)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ticket":     ticket,
+		"trace_id":   traceID,
+		"flow_id":    flowID,
+		"tenant_id":  tenantID,
+		"user_id":    claims.Sub,
+		"role":       claims.Role,
+		"expires_in": int(sse.DefaultTicketTTL.Seconds()),
+	})
+}
+
+// requireHocuspocusSecret is middleware-style: validates the
+// X-DS-Hocuspocus-Secret header matches the env value. Used by the
+// /internal/drd/* routes the sidecar calls.
+func (s *Server) requireHocuspocusSecret(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		want := osGetenv(HocuspocusSharedSecretEnv)
+		if want == "" {
+			writeJSONErr(w, http.StatusInternalServerError, "secret_not_configured",
+				"DS_HOCUSPOCUS_SHARED_SECRET env not set")
+			return
+		}
+		got := r.Header.Get("X-DS-Hocuspocus-Secret")
+		if got != want {
+			writeJSONErr(w, http.StatusUnauthorized, "bad_secret", "")
+			return
+		}
+		next(w, r)
+	}
+}
+
+// HandleDRDInternalAuth serves POST /internal/drd/auth.
+// Hocuspocus posts {ticket, flow_id} on each WebSocket handshake. We
+// redeem + verify the ticket's flow matches, then return the user
+// context + role so Hocuspocus can decide read-only vs. editor.
+func (s *Server) HandleDRDInternalAuth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	if s.deps.Tickets == nil {
+		writeJSONErr(w, http.StatusInternalServerError, "tickets_not_configured", "")
+		return
+	}
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
+	var req struct {
+		Ticket string `json:"ticket"`
+		FlowID string `json:"flow_id"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "decode", err.Error())
+		return
+	}
+	if req.Ticket == "" || req.FlowID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_fields", "ticket + flow_id required")
+		return
+	}
+	userID, tenantID, traceID, ok := s.deps.Tickets.RedeemTicket(req.Ticket)
+	if !ok {
+		writeJSONErr(w, http.StatusUnauthorized, "invalid_ticket", "")
+		return
+	}
+	wantTrace := "drd:" + req.FlowID
+	if traceID != wantTrace {
+		writeJSONErr(w, http.StatusForbidden, "wrong_channel", "ticket bound to a different flow")
+		return
+	}
+
+	// Read the user's tenant role so Hocuspocus can gate read-only.
+	role, err := s.deps.DB.GetTenantRole(r.Context(), tenantID, userID)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "role_lookup", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_id":   userID,
+		"tenant_id": tenantID,
+		"flow_id":   req.FlowID,
+		"role":      role,
+	})
+}
+
+// HandleDRDInternalLoad serves GET /internal/drd/load?flow_id=...&tenant_id=...
+// Hocuspocus calls this on first peer connect to bootstrap the Y.Doc
+// from the persisted snapshot. Returns 200 + binary body when a snapshot
+// exists, 200 + empty body otherwise.
+func (s *Server) HandleDRDInternalLoad(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	q := r.URL.Query()
+	flowID := q.Get("flow_id")
+	tenantID := q.Get("tenant_id")
+	if flowID == "" || tenantID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_params", "flow_id + tenant_id required")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	state, err := repo.LoadYDocState(r.Context(), flowID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "load_ydoc", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(http.StatusOK)
+	if state != nil {
+		_, _ = w.Write(state)
+	}
+}
+
+// HandleDRDInternalSnapshot serves POST /internal/drd/snapshot.
+// Body shape: binary Y.Doc state. Headers carry flow_id + tenant_id +
+// user_id + reason. Persists + writes audit_log + bumps revision.
+func (s *Server) HandleDRDInternalSnapshot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	flowID := r.Header.Get("X-DS-Flow-ID")
+	tenantID := r.Header.Get("X-DS-Tenant-ID")
+	userID := r.Header.Get("X-DS-User-ID")
+	reason := r.Header.Get("X-DS-Snapshot-Reason") // "idle" | "disconnect"
+	if flowID == "" || tenantID == "" || userID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_headers",
+			"X-DS-Flow-ID / X-DS-Tenant-ID / X-DS-User-ID required")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, MaxYDocBytes+1))
+	if err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "read_body", err.Error())
+		return
+	}
+	if len(body) > MaxYDocBytes {
+		writeJSONErr(w, http.StatusRequestEntityTooLarge, "ydoc_too_large",
+			fmt.Sprintf("max %d bytes", MaxYDocBytes))
+		return
+	}
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	rev, err := repo.PersistYDocSnapshot(r.Context(), flowID, userID, body)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "persist", err.Error())
+		return
+	}
+
+	// Audit-log the snapshot. flow_id + bytes + revision land in details
+	// so the activity rail (U12) surfaces "DRD edit" entries.
+	details, _ := json.Marshal(map[string]any{
+		"flow_id":  flowID,
+		"bytes":    len(body),
+		"revision": rev,
+		"reason":   reason,
+	})
+	_ = s.deps.DB.WriteAudit(r.Context(), db.AuditEntry{
+		ID:         uuid.NewString(),
+		TS:         time.Now().UTC(),
+		EventType:  MakeDRDAuditEvent("snapshot"),
+		TenantID:   tenantID,
+		UserID:     userID,
+		Method:     "POST",
+		Endpoint:   "/internal/drd/snapshot",
+		StatusCode: http.StatusOK,
+		Details:    string(details),
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"flow_id":  flowID,
+		"revision": rev,
+		"bytes":    len(body),
+	})
+}
+
+// osGetenv is a tiny indirection so tests can inject a value via the
+// ds-service test fixtures without importing os in every spec.
+var osGetenv = os.Getenv
+
+// HandleDRDInternalAuthGated etc. are exposed for cmd/server's route
+// table. The bare HandleDRDInternalAuth method is unguarded so tests can
+// drive it directly; production routing always goes through the gated
+// wrapper which enforces the shared secret.
+func (s *Server) HandleDRDInternalAuthGated() http.HandlerFunc {
+	return s.requireHocuspocusSecret(s.HandleDRDInternalAuth)
+}
+
+func (s *Server) HandleDRDInternalLoadGated() http.HandlerFunc {
+	return s.requireHocuspocusSecret(s.HandleDRDInternalLoad)
+}
+
+func (s *Server) HandleDRDInternalSnapshotGated() http.HandlerFunc {
+	return s.requireHocuspocusSecret(s.HandleDRDInternalSnapshot)
 }
 
 // ─── Phase 5 U12: activity rail ────────────────────────────────────────────
