@@ -334,18 +334,35 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
             "success",
           );
         } catch (err) {
+          // "Failed to fetch" is browser-speak for "request never made
+          // it onto the wire" — could be CORS, manifest-domain gate,
+          // DNS, or the tunnel being down. Probe a known-good Vercel
+          // path to disambiguate before reporting back.
+          const e = err as Error & { name?: string; cause?: unknown };
+          let probe = "skipped";
+          try {
+            const p = await fetch(`${docsURL}/favicon.ico`, { method: "GET" });
+            probe = `favicon=${p.status}`;
+          } catch (probeErr) {
+            probe = `favicon-failed: ${(probeErr as Error).message}`;
+          }
+          const detail = [
+            `${e.name || "Error"}: ${e.message}`,
+            `probe(${probe})`,
+            e.cause ? `cause=${JSON.stringify(e.cause).slice(0, 120)}` : null,
+          ].filter(Boolean).join(" · ");
           send({
             type: "projects.send-result",
             payload: {
               ok: false,
               error: "network",
-              detail: (err as Error).message,
+              detail,
             },
           });
-          toast(
-            `Couldn't reach ${docsURL}: ${(err as Error).message}`,
-            "error",
-          );
+          toast(`Couldn't reach ${docsURL}: ${detail}`, "error");
+          // Mirror to plugin console so the user can grab a fuller
+          // stack from Figma's plugin DevTools if needed.
+          console.error("[projects.send] fetch failed", { url: `${docsURL}/api/projects/export`, err, probe });
         }
         return;
       case "projects.autofix":
