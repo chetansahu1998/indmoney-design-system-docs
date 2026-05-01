@@ -621,6 +621,11 @@ func (s *server) routes(mux *http.ServeMux) {
 	// Used by the plugin's auto-fix deeplink flow: GET resolves the
 	// violation context, POST flips status to fixed via the system
 	// transition (idempotent on already-fixed rows).
+	// Phase 7.8 — list violations for the active version. Backs the
+	// Violations tab on /projects/{slug}; was missing while the
+	// frontend client.ts shipped pointing at this URL.
+	mux.HandleFunc("GET /v1/projects/{slug}/violations",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleListViolations)))
 	mux.HandleFunc("GET /v1/projects/{slug}/violations/{id}",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleViolationGet)))
 	mux.HandleFunc("POST /v1/projects/{slug}/violations/{id}/fix-applied",

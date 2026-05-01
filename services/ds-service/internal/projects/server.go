@@ -469,6 +469,157 @@ func (s *Server) HandleProjectGet(w http.ResponseWriter, r *http.Request) {
 	writeJSONErr(w, http.StatusNotFound, "not_found", "")
 }
 
+// HandleListViolations serves GET /v1/projects/{slug}/violations.
+//
+// Returns the violations for the given project, scoped to a specific
+// version (?v=<id>, or latest if omitted). Backs the Violations tab on
+// the /projects/<slug> page. Filters mirror lib/projects/client.ts
+// listViolations() — persona_id, mode_label, category (comma-joined).
+//
+// Was missing for Phase 7.8 — the frontend client.ts shipped before
+// the handler did, so every project page logged a 404 on the
+// Violations tab while the rest of the page rendered fine.
+func (s *Server) HandleListViolations(w http.ResponseWriter, r *http.Request) {
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_slug", "")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	project, err := repo.GetProjectBySlug(r.Context(), slug)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+		return
+	}
+
+	// Resolve version: explicit ?v= or latest by version_index for the project.
+	versionID := r.URL.Query().Get("v")
+	if versionID == "" {
+		err := s.deps.DB.DB.QueryRowContext(r.Context(),
+			`SELECT id FROM project_versions
+			 WHERE project_id = ? AND tenant_id = ?
+			 ORDER BY version_index DESC LIMIT 1`,
+			project.ID, tenantID,
+		).Scan(&versionID)
+		if errors.Is(err, sql.ErrNoRows) {
+			// No versions yet — return empty result, not 404. Frontend
+			// renders an empty-state pane.
+			writeJSON(w, http.StatusOK, map[string]any{"violations": []any{}, "count": 0})
+			return
+		}
+		if err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "version_lookup", err.Error())
+			return
+		}
+	}
+
+	// Build the WHERE clause incrementally so optional filters compose without
+	// SQL injection risk — only fixed property names go into the SQL string;
+	// values are always parameterized.
+	args := []any{versionID, tenantID}
+	where := "version_id = ? AND tenant_id = ?"
+	if v := r.URL.Query().Get("persona_id"); v != "" {
+		where += " AND persona_id = ?"
+		args = append(args, v)
+	}
+	if v := r.URL.Query().Get("mode_label"); v != "" {
+		where += " AND mode_label = ?"
+		args = append(args, v)
+	}
+	if v := r.URL.Query().Get("category"); v != "" {
+		// Comma-joined multi-select — matches the frontend's serialization.
+		parts := strings.Split(v, ",")
+		ph := strings.Repeat("?,", len(parts))
+		ph = strings.TrimRight(ph, ",")
+		where += " AND category IN (" + ph + ")"
+		for _, p := range parts {
+			args = append(args, strings.TrimSpace(p))
+		}
+	}
+
+	// active first → acknowledged → dismissed → fixed; within a status tier
+	// the inbox-style sort by severity then created_at gives the operator a
+	// stable read order across re-fetches.
+	q := `SELECT id, version_id, screen_id, tenant_id, rule_id, severity,
+	             COALESCE(category, 'token_drift'),
+	             property, observed, suggestion, persona_id, mode_label,
+	             status, COALESCE(auto_fixable, 0), created_at
+	      FROM violations
+	      WHERE ` + where + `
+	      ORDER BY
+	        CASE status WHEN 'active' THEN 0 WHEN 'acknowledged' THEN 1
+	                    WHEN 'dismissed' THEN 2 WHEN 'fixed' THEN 3 ELSE 4 END,
+	        CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
+	                      WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
+	        created_at DESC`
+	rows, err := s.deps.DB.DB.QueryContext(r.Context(), q, args...)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "query", err.Error())
+		return
+	}
+	defer rows.Close()
+	out := make([]map[string]any, 0)
+	for rows.Next() {
+		var v Violation
+		var personaID, modeLabel sql.NullString
+		var observed, suggestion sql.NullString
+		var createdAt string
+		var autoFixInt int
+		if err := rows.Scan(&v.ID, &v.VersionID, &v.ScreenID, &v.TenantID,
+			&v.RuleID, &v.Severity, &v.Category,
+			&v.Property, &observed, &suggestion,
+			&personaID, &modeLabel,
+			&v.Status, &autoFixInt, &createdAt); err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "scan", err.Error())
+			return
+		}
+		row := map[string]any{
+			"id":           v.ID,
+			"version_id":   v.VersionID,
+			"screen_id":    v.ScreenID,
+			"rule_id":      v.RuleID,
+			"severity":     v.Severity,
+			"category":     v.Category,
+			"property":     v.Property,
+			"observed":     observed.String,
+			"suggestion":   suggestion.String,
+			"status":       v.Status,
+			"auto_fixable": autoFixInt == 1,
+			"created_at":   createdAt,
+		}
+		if personaID.Valid {
+			row["persona_id"] = personaID.String
+		}
+		if modeLabel.Valid {
+			row["mode_label"] = modeLabel.String
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "rows", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"violations": out,
+		"count":      len(out),
+		"version_id": versionID,
+	})
+}
+
 // HandleProjectList serves GET /v1/projects.
 func (s *Server) HandleProjectList(w http.ResponseWriter, r *http.Request) {
 	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
