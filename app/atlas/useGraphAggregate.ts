@@ -113,14 +113,29 @@ export function useGraphAggregate(platform: GraphPlatform): GraphAggregateState 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platform]);
 
-  // SSE subscription. Reconnects with backoff on error.
+  // SSE subscription. Reconnects with backoff on error, capped at
+  // MAX_ATTEMPTS so a misconfigured deployment (e.g. ds-service
+  // unreachable; Chrome's PNA blocking loopback from a public origin)
+  // doesn't loop forever — the page will surface its error state and
+  // stop spamming the network tab. The aggregate fetch's status field
+  // is what the UI reads; SSE failures here only affect live updates,
+  // not the initial render.
   useEffect(() => {
     let cancelled = false;
     let es: EventSource | null = null;
     let backoffMs = 2000;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 6; // 2 → 4 → 8 → 16 → 30 → 30 ≈ 90s total before giving up
 
     async function mintAndOpen(): Promise<void> {
       if (cancelled) return;
+      if (attempts >= MAX_ATTEMPTS) {
+        // Bail. The aggregate REST fetch's error state already tells
+        // the user the backend is unreachable; no point hammering the
+        // SSE endpoint on top.
+        return;
+      }
+      attempts += 1;
       try {
         const token = getToken();
         const headers: Record<string, string> = {
@@ -156,11 +171,13 @@ export function useGraphAggregate(platform: GraphPlatform): GraphAggregateState 
           es?.close();
           es = null;
           if (cancelled) return;
-          // Backoff capped at 30s; reset on next successful open.
           window.setTimeout(() => void mintAndOpen(), backoffMs);
           backoffMs = Math.min(backoffMs * 2, 30_000);
         };
         es.onopen = () => {
+          // Successful open — reset the attempt counter so a transient
+          // disconnect later doesn't count against the cap.
+          attempts = 0;
           backoffMs = 2000;
         };
       } catch {
