@@ -1611,6 +1611,34 @@ func (t *TenantRepo) ListDecisionsForFlow(ctx context.Context, flowID string, in
 	return out, linkRows.Err()
 }
 
+// AdminReactivateDecision flips a superseded decision back to 'accepted'
+// and clears its superseded_by_id. Cross-tenant write — only the
+// super-admin handler should reach this method. Returns the count of
+// rows affected (0 when the id doesn't exist or wasn't superseded).
+//
+// The reverse operation — moving Accepted → Superseded — happens through
+// CreateDecision when a successor's supersedes_id points at this one;
+// admins shouldn't manually mark a decision superseded outside that
+// chain because doing so would orphan the chain.
+func (db *DB) AdminReactivateDecision(ctx context.Context, decisionID string) (int, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := db.db.ExecContext(ctx,
+		`UPDATE decisions
+		    SET status = 'accepted',
+		        superseded_by_id = NULL,
+		        updated_at = ?
+		  WHERE id = ?
+		    AND status = 'superseded'
+		    AND deleted_at IS NULL`,
+		now, decisionID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("admin reactivate: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 // ListRecentDecisions returns the most recent decisions across the entire
 // database — used by /atlas/admin's Recent Decisions feed. Super-admin
 // scope; the handler guards the call.

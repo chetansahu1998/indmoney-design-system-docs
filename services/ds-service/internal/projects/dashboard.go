@@ -54,12 +54,18 @@ type TopViolator struct {
 	HighestSeverity string `json:"highest_severity"`
 }
 
-// DashboardDecision is a placeholder shape; Phase 5's `decisions`
-// entity replaces it.
+// DashboardDecision carries the minimum fields the Recent Decisions
+// panel renders — id + title + created_at + status, plus the project
+// slug + flow_id Phase 5.2 added so admins can deep-link from
+// /atlas/admin → /projects/<slug>?decision=<id> without a follow-up
+// fetch.
 type DashboardDecision struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
 	CreatedAt string `json:"created_at"`
+	Status    string `json:"status"`
+	FlowID    string `json:"flow_id"`
+	Slug      string `json:"slug"`
 }
 
 // BuildDashboardSummary runs the five aggregations against the entire
@@ -237,16 +243,18 @@ func BuildDashboardSummary(ctx context.Context, db *sql.DB, weeksWindow int) (Da
 
 	go func() {
 		defer wg.Done()
-		// Phase 5 U10 wiring — read the most recent active/proposed
-		// decisions cross-tenant. The DashboardDecision shape (id +
-		// title + created_at) intentionally stays narrow so the panel
-		// renders without joining metadata; the deeplink in U10's UI
-		// pivots into the project's Decisions tab for full context.
+		// Phase 5 U10 + 5.2 P1 — recent decisions cross-tenant + the
+		// slug + flow_id needed for /atlas/admin to deep-link into
+		// the project's Decisions tab. JOIN cost is small (decisions
+		// → project_versions → projects); the limit caps it at 20.
 		rows, err := db.QueryContext(ctx,
-			`SELECT id, title, made_at
-			   FROM decisions
-			  WHERE deleted_at IS NULL AND status IN ('proposed', 'accepted')
-			  ORDER BY made_at DESC
+			`SELECT d.id, d.title, d.made_at, d.status, d.flow_id, p.slug
+			   FROM decisions d
+			   JOIN project_versions pv ON pv.id = d.version_id
+			   JOIN projects p ON p.id = pv.project_id
+			  WHERE d.deleted_at IS NULL
+			    AND d.status IN ('proposed', 'accepted', 'superseded')
+			  ORDER BY d.made_at DESC
 			  LIMIT 20`)
 		if err != nil {
 			record(fmt.Errorf("recent_decisions: %w", err))
@@ -256,7 +264,7 @@ func BuildDashboardSummary(ctx context.Context, db *sql.DB, weeksWindow int) (Da
 		var local []DashboardDecision
 		for rows.Next() {
 			var d DashboardDecision
-			if err := rows.Scan(&d.ID, &d.Title, &d.CreatedAt); err != nil {
+			if err := rows.Scan(&d.ID, &d.Title, &d.CreatedAt, &d.Status, &d.FlowID, &d.Slug); err != nil {
 				record(err)
 				return
 			}

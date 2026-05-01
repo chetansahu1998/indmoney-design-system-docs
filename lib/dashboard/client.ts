@@ -28,6 +28,47 @@ export interface DashboardDecision {
   id: string;
   title: string;
   created_at: string;
+  /** Phase 5.2 P1 — backend now returns these so the panel can deep-
+   *  link to /projects/<slug>?decision=<id> + offer the admin reactivate
+   *  control on superseded rows. */
+  status?: "proposed" | "accepted" | "superseded";
+  flow_id?: string;
+  slug?: string;
+}
+
+/**
+ * POST /v1/atlas/admin/decisions/:id/reactivate — super-admin only.
+ * Flips a superseded decision back to accepted; idempotent on non-
+ * superseded rows.
+ */
+export async function reactivateDecision(
+  decisionID: string,
+): Promise<{ ok: true; updated: number } | { ok: false; status: number; error: string }> {
+  try {
+    const token = getToken();
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(
+      `${dsBaseURL()}/v1/atlas/admin/decisions/${encodeURIComponent(decisionID)}/reactivate`,
+      { method: "POST", headers },
+    );
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try {
+        const body = (await res.json()) as { error?: string; detail?: string };
+        msg = body.detail ?? body.error ?? msg;
+      } catch {}
+      return { ok: false, status: res.status, error: msg };
+    }
+    const data = (await res.json()) as { updated: number };
+    return { ok: true, updated: data.updated };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 export interface DashboardSummary {

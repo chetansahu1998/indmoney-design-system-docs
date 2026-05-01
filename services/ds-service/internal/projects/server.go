@@ -1429,6 +1429,64 @@ func (s *Server) HandleDecisionGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rec)
 }
 
+// HandleAdminReactivateDecision serves POST /v1/atlas/admin/decisions/{id}/reactivate.
+// Super-admin only — main.go gates with requireSuperAdmin.
+//
+// Flips a superseded decision back to 'accepted' + clears its
+// superseded_by_id. Idempotent on a non-superseded row (returns 200 +
+// {updated: 0}); the caller can re-trigger without breaking the chain.
+//
+// Audit-log row writes after the UPDATE so the activity rail surfaces
+// the moderation action under decision.admin_reactivate.
+func (s *Server) HandleAdminReactivateDecision(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_id", "")
+		return
+	}
+	repoDB := NewDB(s.deps.DB.DB)
+	updated, err := repoDB.AdminReactivateDecision(r.Context(), id)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "reactivate", err.Error())
+		return
+	}
+	if updated > 0 {
+		// Resolve tenant_id + flow_id for the audit_log row. Single
+		// lookup; super-admin path so cross-tenant is fine.
+		var tenantID, flowID string
+		_ = s.deps.DB.DB.QueryRowContext(r.Context(),
+			`SELECT tenant_id, flow_id FROM decisions WHERE id = ?`,
+			id,
+		).Scan(&tenantID, &flowID)
+		details, _ := json.Marshal(map[string]any{
+			"decision_id": id,
+			"flow_id":     flowID,
+			"action":      "admin_reactivate",
+			"schema_ver":  ProjectsSchemaVersion,
+		})
+		_ = s.deps.DB.WriteAudit(r.Context(), db.AuditEntry{
+			ID:         uuid.NewString(),
+			TS:         time.Now().UTC(),
+			EventType:  MakeDecisionAuditEvent("admin_reactivate"),
+			TenantID:   tenantID,
+			UserID:     "", // super-admin handler doesn't carry the projects-claims context
+			Method:     "POST",
+			Endpoint:   r.URL.Path,
+			StatusCode: http.StatusOK,
+			IPAddress:  clientIP(r),
+			Details:    string(details),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"decision_id": id,
+		"updated":     updated,
+	})
+}
+
 // HandleRecentDecisions serves GET /v1/atlas/admin/decisions/recent.
 // Super-admin only — registered behind requireSuperAdmin in main.go.
 func (s *Server) HandleRecentDecisions(w http.ResponseWriter, r *http.Request) {

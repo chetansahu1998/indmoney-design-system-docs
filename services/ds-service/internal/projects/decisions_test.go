@@ -307,6 +307,62 @@ func TestRepo_DecisionLinks_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestDB_AdminReactivateDecision_FlipsSuperseded(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	versionID, _ := seedFlowAndScreens(t, repo, uA)
+	var flowID string
+	if err := d.DB.QueryRow(`SELECT flow_id FROM screens WHERE version_id = ? LIMIT 1`, versionID).Scan(&flowID); err != nil {
+		t.Fatalf("flow_id: %v", err)
+	}
+	first, _ := repo.CreateDecision(context.Background(), flowID, "", uA, DecisionInput{Title: "First"})
+	in2, _ := ValidateDecisionInput(DecisionInput{Title: "Second", SupersedesID: first.ID})
+	_, _ = repo.CreateDecision(context.Background(), flowID, "", uA, in2)
+
+	// Confirm first is now superseded.
+	first2, _ := repo.GetDecision(context.Background(), first.ID)
+	if first2.Status != "superseded" {
+		t.Fatalf("expected superseded predecessor, got %q", first2.Status)
+	}
+
+	// Admin reactivates.
+	repoDB := NewDB(d.DB)
+	n, err := repoDB.AdminReactivateDecision(context.Background(), first.ID)
+	if err != nil {
+		t.Fatalf("reactivate: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 row updated, got %d", n)
+	}
+	first3, _ := repo.GetDecision(context.Background(), first.ID)
+	if first3.Status != "accepted" {
+		t.Errorf("expected accepted after reactivate, got %q", first3.Status)
+	}
+	if first3.SupersededByID != nil {
+		t.Errorf("expected superseded_by_id cleared, got %+v", first3.SupersededByID)
+	}
+}
+
+func TestDB_AdminReactivateDecision_IdempotentOnNonSuperseded(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	versionID, _ := seedFlowAndScreens(t, repo, uA)
+	var flowID string
+	if err := d.DB.QueryRow(`SELECT flow_id FROM screens WHERE version_id = ? LIMIT 1`, versionID).Scan(&flowID); err != nil {
+		t.Fatalf("flow_id: %v", err)
+	}
+	rec, _ := repo.CreateDecision(context.Background(), flowID, "", uA, DecisionInput{Title: "Active"})
+
+	repoDB := NewDB(d.DB)
+	n, err := repoDB.AdminReactivateDecision(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatalf("reactivate: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 (no-op) for non-superseded, got %d", n)
+	}
+}
+
 func TestDB_ListRecentDecisions_OrdersByMadeAt(t *testing.T) {
 	d, tA, _, uA := newTestDB(t)
 	repo := NewTenantRepo(d.DB, tA)

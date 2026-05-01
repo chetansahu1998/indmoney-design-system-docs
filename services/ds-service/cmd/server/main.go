@@ -494,6 +494,11 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/atlas/admin/decisions/recent",
 		s.requireSuperAdmin(s.projectsServer.HandleRecentDecisions))
 
+	// Phase 5.2 P1 — admin moderation: re-flip a superseded decision
+	// back to accepted. Cross-tenant write — guarded by requireSuperAdmin.
+	mux.HandleFunc("POST /v1/atlas/admin/decisions/{id}/reactivate",
+		s.requireSuperAdmin(s.projectsServer.HandleAdminReactivateDecision))
+
 	// Phase 5 U6 — universal comments with @mention parsing. Comments
 	// can target a DRD block, a decision, or a violation; the server
 	// parses @mentions inside the body and emits notification rows in
