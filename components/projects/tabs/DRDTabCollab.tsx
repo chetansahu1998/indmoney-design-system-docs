@@ -37,6 +37,7 @@ import {
   type DRDCollabBundle,
 } from "@/lib/drd/collab";
 import { drdBlockSpecs } from "@/lib/drd/customBlocks";
+import { useReducedMotion } from "@/lib/animations/context";
 import EmptyTab from "./EmptyTab";
 import ActivityRail from "@/components/drd/ActivityRail";
 
@@ -160,13 +161,18 @@ function CollabEditor({ slug, flowID, readOnly, bundle, user }: CollabEditorProp
     [bundle.doc],
   );
 
+  // Phase 5.1 P3 — respect reduced-motion: when the user has the OS
+  // setting on, BlockNote's "activity" cursor-label mode is too jumpy
+  // (labels appear + fade on each remote keystroke). Switch to "always"
+  // so labels are static — no animation, but presence is still legible.
+  const reducedMotion = useReducedMotion();
   const editor = useCreateBlockNote({
     schema: drdSchema,
     collaboration: {
       fragment,
       user: { name: user.name, color: user.color },
       provider: { awareness: bundle.provider.awareness ?? undefined },
-      showCursorLabels: "activity",
+      showCursorLabels: reducedMotion ? "always" : "activity",
     },
   });
 

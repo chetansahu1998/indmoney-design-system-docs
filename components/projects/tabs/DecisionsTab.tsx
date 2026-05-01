@@ -15,7 +15,8 @@
  * onSubmitted so the new decision lands immediately in the local list.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import EmptyState from "@/components/empty-state/EmptyState";
 import DecisionCard from "@/components/decisions/DecisionCard";
 import DecisionForm from "@/components/decisions/DecisionForm";
@@ -43,6 +44,16 @@ export default function DecisionsTab({ slug, flowID, readOnly }: Props) {
   const [composing, setComposing] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
+  // Phase 5.1 P3 — deep-link from /atlas/admin or anywhere else.
+  // ?decision=<id> in the URL scrolls + highlights the matching card
+  // on first ok-state render. The highlight is a brief outline pulse
+  // that fades after 1.5s; the flag clears so navigating away + back
+  // doesn't re-trigger it.
+  const searchParams = useSearchParams();
+  const decisionTarget = searchParams?.get("decision") ?? null;
+  const highlightedRef = useRef<HTMLDivElement | null>(null);
+  const [highlightedID, setHighlightedID] = useState<string | null>(null);
+
   useEffect(() => {
     if (!flowID) {
       setState({ kind: "idle" });
@@ -67,6 +78,31 @@ export default function DecisionsTab({ slug, flowID, readOnly }: Props) {
     setComposing(false);
     setReloadKey((k) => k + 1);
   }, []);
+
+  // Once decisions arrive AND the URL targets one, scroll into view +
+  // mark for highlight. Toggling includeSuperseded if the target is a
+  // superseded card so it actually renders.
+  useEffect(() => {
+    if (!decisionTarget) return;
+    if (state.kind !== "ok") return;
+    const target = state.decisions.find((d) => d.id === decisionTarget);
+    if (!target) {
+      // Target is superseded → flip the toggle so the next fetch
+      // includes it. The next render will scroll.
+      if (!includeSuperseded) setIncludeSuperseded(true);
+      return;
+    }
+    setHighlightedID(target.id);
+    // Scroll on next paint so the DOM ref has resolved.
+    requestAnimationFrame(() => {
+      highlightedRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+    const t = setTimeout(() => setHighlightedID(null), 1500);
+    return () => clearTimeout(t);
+  }, [decisionTarget, state, includeSuperseded]);
 
   // Group cards by chain root: cards reachable via supersedes_id form a
   // group; standalone decisions render alone. Within a chain, render
@@ -213,7 +249,22 @@ export default function DecisionsTab({ slug, flowID, readOnly }: Props) {
           {grouped.map((chain) => (
             <SupersessionChain key={chain[0].id} decorate={chain.length > 1}>
               {chain.map((d, i) => (
-                <DecisionCard key={d.id} decision={d} compact={i > 0} />
+                <div
+                  key={d.id}
+                  ref={d.id === highlightedID ? highlightedRef : undefined}
+                  data-decision-id={d.id}
+                  style={{
+                    outline:
+                      d.id === highlightedID
+                        ? "2px solid var(--accent)"
+                        : "none",
+                    outlineOffset: 2,
+                    borderRadius: 8,
+                    transition: "outline-color 200ms ease, outline-width 200ms ease",
+                  }}
+                >
+                  <DecisionCard decision={d} compact={i > 0} />
+                </div>
               ))}
             </SupersessionChain>
           ))}
