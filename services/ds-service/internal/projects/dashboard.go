@@ -237,11 +237,33 @@ func BuildDashboardSummary(ctx context.Context, db *sql.DB, weeksWindow int) (Da
 
 	go func() {
 		defer wg.Done()
-		// Phase 5 stub. Decisions land as a first-class entity in Phase 5;
-		// the dashboard reads from that endpoint without code changes
-		// (the JSON shape stays stable).
+		// Phase 5 U10 wiring — read the most recent active/proposed
+		// decisions cross-tenant. The DashboardDecision shape (id +
+		// title + created_at) intentionally stays narrow so the panel
+		// renders without joining metadata; the deeplink in U10's UI
+		// pivots into the project's Decisions tab for full context.
+		rows, err := db.QueryContext(ctx,
+			`SELECT id, title, made_at
+			   FROM decisions
+			  WHERE deleted_at IS NULL AND status IN ('proposed', 'accepted')
+			  ORDER BY made_at DESC
+			  LIMIT 20`)
+		if err != nil {
+			record(fmt.Errorf("recent_decisions: %w", err))
+			return
+		}
+		defer rows.Close()
+		var local []DashboardDecision
+		for rows.Next() {
+			var d DashboardDecision
+			if err := rows.Scan(&d.ID, &d.Title, &d.CreatedAt); err != nil {
+				record(err)
+				return
+			}
+			local = append(local, d)
+		}
 		mu.Lock()
-		out.RecentDecisions = []DashboardDecision{}
+		out.RecentDecisions = local
 		mu.Unlock()
 	}()
 

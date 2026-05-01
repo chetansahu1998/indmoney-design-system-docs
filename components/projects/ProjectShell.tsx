@@ -667,7 +667,13 @@ export default function ProjectShell({
               auditProgress={auditProgress}
             />
           )}
-          {activeTab === "decisions" && <DecisionsTab />}
+          {activeTab === "decisions" && (
+            <DecisionsTab
+              slug={slug}
+              flowID={screens[0]?.FlowID ?? null}
+              readOnly={isReadOnly(machineState)}
+            />
+          )}
           {activeTab === "json" && (
             <JSONTab
               slug={project.Slug}
