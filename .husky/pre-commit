@@ -1,0 +1,42 @@
+# Auto-rebuild figma-plugin/code.js + auto-fix/*.js when their .ts
+# sources are staged.
+#
+# Why: Figma loads code.js (per manifest.main), not code.ts. If a
+# contributor edits code.ts but forgets to rebuild, Figma silently runs
+# stale code — the bug that caused the welcome modal to never dismiss
+# and projects.send to no-op for all of Phase 1's lifetime.
+#
+# This hook detects any staged .ts file under figma-plugin/, runs the
+# project's tsc, and stages the resulting .js outputs into the same
+# commit so the bundle is always in lockstep with the source.
+
+# Pull the list of staged files (Added, Copied, Modified — drop Deleted).
+STAGED_TS=$(git diff --cached --name-only --diff-filter=ACM \
+            | grep -E '^figma-plugin/.*\.ts$' || true)
+
+if [ -z "$STAGED_TS" ]; then
+  # No plugin TS changes — nothing to do.
+  exit 0
+fi
+
+echo "▸ figma-plugin TS files staged — rebuilding code.js…"
+echo "$STAGED_TS" | sed 's/^/    /'
+
+# Run tsc against the plugin's tsconfig. -p . compiles code.ts +
+# auto-fix/*.ts per the existing tsconfig include list.
+if ! ( cd figma-plugin && npx --no-install tsc -p . ); then
+  echo
+  echo "✗ figma-plugin tsc failed — fix the type errors above and re-stage."
+  exit 1
+fi
+
+# Stage the rebuilt .js files so they ride along with the .ts edit.
+# Only stage what we actually generate — don't sweep up untracked
+# noise. The two outputs we care about: code.js and auto-fix/apply.js.
+for js in figma-plugin/code.js figma-plugin/auto-fix/apply.js; do
+  if [ -f "$js" ]; then
+    git add "$js"
+  fi
+done
+
+echo "✓ figma-plugin/code.js rebuilt + staged"
