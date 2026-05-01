@@ -286,24 +286,30 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
           // operator is busy hunting for the cog icon.
           return;
         }
-        // Trace ID lives in the body now — not as a custom request header.
-        // Custom headers expand the CORS preflight Access-Control-Request-Headers
-        // list; some Figma plugin sandbox versions (esp. desktop) reject the
-        // resulting preflight with a generic "Failed to fetch" even when
-        // curl-tested preflight passes. Body-as-JSON keeps the request
-        // "simple-ish" — only Authorization triggers preflight, which we
-        // know works from curl.
+        // Avoid CORS preflight entirely. Figma plugin sandbox (esp. desktop,
+        // Origin: null) returns generic "Failed to fetch" on preflighted
+        // requests even when the preflight succeeds against curl —
+        // confirmed by the favicon=404 probe (origin reachable, POST
+        // not). To make this a "simple" request and skip preflight:
+        //   1. Content-Type: text/plain  (instead of application/json)
+        //   2. No Authorization header   (token moves into the body)
+        //   3. No custom headers
+        // The Vercel proxy parses the body as JSON regardless of
+        // Content-Type and reads auth from body._auth as a fallback.
         const traceId = (typeof crypto !== "undefined" && crypto.randomUUID)
           ? crypto.randomUUID() : String(Date.now());
-        const bodyWithTrace = { ...(msg.payload as Record<string, unknown>), trace_id: traceId };
+        const bodyWithAuth = {
+          ...(msg.payload as Record<string, unknown>),
+          trace_id: traceId,
+          _auth: docsAuthToken,
+        };
         try {
           const res = await fetch(`${docsURL}/api/projects/export`, {
             method: "POST",
             headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${docsAuthToken}`,
+              "Content-Type": "text/plain;charset=UTF-8",
             },
-            body: JSON.stringify(bodyWithTrace),
+            body: JSON.stringify(bodyWithAuth),
           });
           const bodyText = await res.text();
           let body: any = {};

@@ -21,25 +21,40 @@ import { type NextRequest } from "next/server";
 const DS_SERVICE_URL = process.env.DS_SERVICE_URL ?? "http://localhost:8080";
 
 export async function POST(req: NextRequest) {
-  const auth = req.headers.get("authorization");
-  if (!auth?.startsWith("Bearer ")) {
-    return Response.json(
-      { ok: false, error: "unauth", detail: "missing Bearer token" },
-      { status: 401 },
-    );
-  }
+  // Body first — Figma plugin sandbox sends Content-Type: text/plain to
+  // skip CORS preflight (see code.ts), so we read as text and parse
+  // manually rather than trusting Next's req.json().
   let body: Record<string, unknown> = {};
   try {
-    body = (await req.json()) as Record<string, unknown>;
+    const text = await req.text();
+    body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
   } catch (err) {
     return Response.json(
       { ok: false, error: "invalid_json", detail: (err as Error).message },
       { status: 400 },
     );
   }
-  // Trace ID can come either from the X-Trace-ID header (curl, future
-  // clients) or from the body (Figma plugin — see code.ts comment about
-  // why custom headers were dropped).
+
+  // Auth can come from the Authorization header (curl, future clients)
+  // OR from body._auth (Figma plugin — to dodge CORS preflight). Either
+  // way we forward to ds-service as a Bearer token.
+  const authHeader = req.headers.get("authorization");
+  const bodyAuth = typeof body._auth === "string" ? (body._auth as string) : null;
+  const auth = authHeader?.startsWith("Bearer ")
+    ? authHeader
+    : bodyAuth
+      ? `Bearer ${bodyAuth}`
+      : null;
+  if (!auth) {
+    return Response.json(
+      { ok: false, error: "unauth", detail: "missing Bearer token (header or body._auth)" },
+      { status: 401 },
+    );
+  }
+  // Strip auth from forwarded body — not part of the export schema and
+  // would otherwise leak the token into ds-service request logs.
+  if ("_auth" in body) delete body._auth;
+
   const traceId =
     req.headers.get("x-trace-id") ??
     (typeof body.trace_id === "string" ? body.trace_id : null) ??
