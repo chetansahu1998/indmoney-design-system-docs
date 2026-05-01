@@ -148,6 +148,43 @@ export const FigmaLinkBlock = createReactBlockSpec(
 );
 
 function FigmaLinkRenderer({ url, label }: { url: string; label: string }) {
+  // Phase 5.2 P4 — fetch /v1/figma/frame-metadata for a thumbnail.
+  // When the tenant has no PAT configured the response is URL-only +
+  // we keep the gradient placeholder. The endpoint caches 5min server-
+  // side; client-side we just refetch on URL change.
+  const [meta, setMeta] = useState<{
+    title: string;
+    thumbnail_url?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!url) return;
+    let cancelled = false;
+    const token = (typeof window !== "undefined" && window.localStorage)
+      ? JSON.parse(window.localStorage.getItem("indmoney-ds-auth") ?? "{}")?.state?.token
+      : "";
+    fetch(
+      `${dsBaseURL()}/v1/figma/frame-metadata?url=${encodeURIComponent(url)}`,
+      {
+        headers: { Accept: "application/json", Authorization: `Bearer ${token ?? ""}` },
+      },
+    )
+      .then(async (res) => {
+        if (cancelled || !res.ok) return;
+        const data = (await res.json()) as { title?: string; thumbnail_url?: string };
+        setMeta({
+          title: data.title ?? "",
+          thumbnail_url: data.thumbnail_url,
+        });
+      })
+      .catch(() => {
+        // Network failure → keep the URL-parse fallback below.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
+
   if (!url) {
     return (
       <div
@@ -164,9 +201,8 @@ function FigmaLinkRenderer({ url, label }: { url: string; label: string }) {
       </div>
     );
   }
-  // Parse the URL to extract a friendly title from the path. Figma URLs
-  // are shaped /file/<key>/<title>?node-id=… → use <title> when present.
-  let displayLabel = label;
+  // Pick the displayed label: explicit prop > server metadata > URL parse.
+  let displayLabel = label || meta?.title || "";
   if (!displayLabel) {
     try {
       const u = new URL(url);
@@ -197,16 +233,33 @@ function FigmaLinkRenderer({ url, label }: { url: string; label: string }) {
         margin: "8px 0",
       }}
     >
-      <span
-        aria-hidden
-        style={{
-          width: 24,
-          height: 24,
-          borderRadius: 4,
-          background: "linear-gradient(135deg, #ff7262, #a259ff)",
-          flexShrink: 0,
-        }}
-      />
+      {meta?.thumbnail_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={meta.thumbnail_url}
+          alt=""
+          aria-hidden
+          style={{
+            width: 56,
+            height: 36,
+            objectFit: "cover",
+            borderRadius: 4,
+            flexShrink: 0,
+            background: "rgba(0,0,0,0.04)",
+          }}
+        />
+      ) : (
+        <span
+          aria-hidden
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: 4,
+            background: "linear-gradient(135deg, #ff7262, #a259ff)",
+            flexShrink: 0,
+          }}
+        />
+      )}
       <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
         <span
           style={{

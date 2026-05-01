@@ -86,6 +86,12 @@ type ServerDeps struct {
 	// a closure that returns a stubbed renderer.
 	PipelineFactory func(ctx context.Context, tenantID string, repo *TenantRepo) (*Pipeline, error)
 
+	// Phase 5.2 P4 — FigmaPATResolver decrypts the tenant's PAT for
+	// non-pipeline handlers (figma frame-metadata proxy). nil means the
+	// metadata endpoint returns URL-only info without a thumbnail; tests
+	// can substitute a closure returning a fake PAT.
+	FigmaPATResolver func(ctx context.Context, tenantID string) (string, error)
+
 	Log *slog.Logger
 }
 
@@ -1807,6 +1813,66 @@ func (s *Server) HandleDRDInternalLoadGated() http.HandlerFunc {
 
 func (s *Server) HandleDRDInternalSnapshotGated() http.HandlerFunc {
 	return s.requireHocuspocusSecret(s.HandleDRDInternalSnapshot)
+}
+
+// ─── Phase 5.2 P4: Figma frame metadata proxy ─────────────────────────────
+
+// HandleFigmaFrameMetadata serves GET /v1/figma/frame-metadata?url=<figma_url>.
+// Auth-gated, tenant-scoped. Parses the URL → calls Figma's /v1/images
+// with the tenant's PAT → returns the signed CDN PNG URL + the frame
+// title. 5min in-process cache keyed by (tenant_id, file_key, node_id).
+//
+// When the tenant has no PAT configured (FigmaPATResolver returns empty
+// string with no error), the response falls back to URL-only metadata
+// (title + node_id) without a thumbnail. Caller's UI keeps the gradient
+// placeholder in that case.
+func (s *Server) HandleFigmaFrameMetadata(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	raw := r.URL.Query().Get("url")
+	if raw == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_url", "?url= required")
+		return
+	}
+	parsed, err := ParseFigmaURL(raw)
+	if err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_figma_url", err.Error())
+		return
+	}
+
+	cacheKey := figmaCacheKey(tenantID, parsed.FileKey, parsed.NodeID)
+	if cached, ok := figmaProxy.get(cacheKey); ok {
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
+
+	if s.deps.FigmaPATResolver != nil && parsed.NodeID != "" {
+		pat, perr := s.deps.FigmaPATResolver(r.Context(), tenantID)
+		if perr == nil && pat != "" {
+			thumb, ferr := fetchFigmaThumbnailURL(r.Context(), pat, parsed.FileKey, parsed.NodeID)
+			if ferr == nil {
+				parsed.ThumbnailURL = thumb
+				parsed.Source = "figma"
+			} else if !errors.Is(ferr, errFigmaNotFound) {
+				s.deps.Log.Warn("figma frame-metadata proxy failed", "error", ferr)
+			}
+		}
+	}
+
+	figmaProxy.set(cacheKey, parsed)
+	writeJSON(w, http.StatusOK, parsed)
 }
 
 // ─── Phase 5 U12: activity rail ────────────────────────────────────────────

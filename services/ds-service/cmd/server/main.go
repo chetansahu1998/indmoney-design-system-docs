@@ -126,6 +126,25 @@ func main() {
 		}, nil
 	}
 
+	// Phase 5.2 P4 — Figma PAT resolver. Returns the decrypted per-tenant
+	// PAT for the figma-frame-metadata proxy. Tenants without a configured
+	// PAT get an empty string + nil error so the proxy falls back to URL-
+	// only metadata gracefully.
+	figmaPATResolver := func(ctx context.Context, tenantID string) (string, error) {
+		rec, err := dbConn.GetFigmaToken(ctx, tenantID)
+		if err != nil {
+			return "", err
+		}
+		if rec == nil {
+			return "", nil
+		}
+		pat, err := cfg.EncryptionKey.Decrypt(rec.EncryptedToken)
+		if err != nil {
+			return "", err
+		}
+		return string(pat), nil
+	}
+
 	projectsServer := projects.NewServer(projects.ServerDeps{
 		DB:              dbConn,
 		Broker:          broker,
@@ -136,6 +155,7 @@ func main() {
 		AuditEnqueuer:   auditEnqueuer,
 		DataDir:         dataDir,
 		PipelineFactory: pipelineFactory,
+		FigmaPATResolver: figmaPATResolver,
 		Log:             log,
 	})
 
@@ -522,6 +542,11 @@ func (s *server) routes(mux *http.ServeMux) {
 	// tenant + (json_extract details.flow_id == flow_id) ordered DESC.
 	mux.HandleFunc("GET /v1/projects/{slug}/flows/{flow_id}/activity",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFlowActivity)))
+
+	// Phase 5.2 P4 — Figma frame metadata proxy. Auth-gated, tenant-
+	// scoped. Powers the DRD's figmaLink custom block thumbnails.
+	mux.HandleFunc("GET /v1/figma/frame-metadata",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaFrameMetadata)))
 
 	// Phase 5 U1 — DRD collab. Public ticket endpoint (auth-gated)
 	// + the loopback-only auth/load/snapshot bridge endpoints the
