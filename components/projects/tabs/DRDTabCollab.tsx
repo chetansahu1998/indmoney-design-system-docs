@@ -24,6 +24,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BlockNoteSchema } from "@blocknote/core";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import "@blocknote/core/fonts/inter.css";
@@ -35,8 +36,15 @@ import {
   userColor,
   type DRDCollabBundle,
 } from "@/lib/drd/collab";
+import { drdBlockSpecs } from "@/lib/drd/customBlocks";
 import EmptyTab from "./EmptyTab";
 import ActivityRail from "@/components/drd/ActivityRail";
+
+// Phase 5.1 P2 — schema with custom blocks (decisionRef, figmaLink,
+// violationRef). Defaults preserved so paragraph/heading/list/etc.
+// continue to work. Created at module scope so the schema reference
+// is stable across renders.
+const drdSchema = BlockNoteSchema.create({ blockSpecs: drdBlockSpecs });
 
 interface Props {
   slug: string;
@@ -153,6 +161,7 @@ function CollabEditor({ slug, flowID, readOnly, bundle, user }: CollabEditorProp
   );
 
   const editor = useCreateBlockNote({
+    schema: drdSchema,
     collaboration: {
       fragment,
       user: { name: user.name, color: user.color },
