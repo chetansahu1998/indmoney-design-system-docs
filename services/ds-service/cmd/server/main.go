@@ -24,6 +24,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -202,6 +203,29 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Phase 6 — RebuildGraphIndex worker materialises the mind-graph
+	// `graph_index` table from upstream sources. Pool size from env
+	// `GRAPH_INDEX_REBUILD_WORKERS` (default 1) per Phase 1 learning #6.
+	// Tenant list is auto-discovered from the `tenants` table; manifest +
+	// tokens paths default relative to RepoDir for local dev.
+	graphRebuildPool := &projects.GraphRebuildPool{
+		Size:      graphRebuildWorkersFromEnv(log),
+		DB:        dbConn.DB,
+		TenantIDs: discoverTenantIDs(workerCtx, dbConn.DB, log),
+		Sources: projects.GraphRebuildSources{
+			ManifestPath: getenv("GRAPH_INDEX_MANIFEST_PATH",
+				filepath.Join(cfg.RepoDir, "public/icons/glyph/manifest.json")),
+			TokensDir: getenv("GRAPH_INDEX_TOKENS_DIR",
+				filepath.Join(cfg.RepoDir, "lib/tokens/indmoney")),
+		},
+		Publisher: &projects.SSEGraphPublisher{Broker: broker},
+		Log:       log,
+	}
+	if err := graphRebuildPool.Start(workerCtx); err != nil {
+		log.Error("graph rebuild pool start", "err", err)
+		os.Exit(1)
+	}
+
 	srv := &server{
 		cfg:            cfg,
 		db:             dbConn,
@@ -338,6 +362,60 @@ func workerPoolSizeFromEnv(log *slog.Logger) int {
 		return maxSize
 	}
 	return n
+}
+
+// graphRebuildWorkersFromEnv reads GRAPH_INDEX_REBUILD_WORKERS (default 1).
+// Phase 6 — Phase 1 learning #6 mandates env-driven pool sizing on day one
+// so production tuning doesn't require a code change.
+func graphRebuildWorkersFromEnv(log *slog.Logger) int {
+	const defaultSize = 1
+	const maxSize = 8
+	raw := os.Getenv("GRAPH_INDEX_REBUILD_WORKERS")
+	if raw == "" {
+		return defaultSize
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Warn("graph_rebuild: GRAPH_INDEX_REBUILD_WORKERS not an integer; using default",
+			"raw", raw, "default", defaultSize, "err", err.Error())
+		return defaultSize
+	}
+	if n <= 0 {
+		log.Warn("graph_rebuild: GRAPH_INDEX_REBUILD_WORKERS clamped to 1", "raw", n)
+		return 1
+	}
+	if n > maxSize {
+		log.Warn("graph_rebuild: GRAPH_INDEX_REBUILD_WORKERS clamped to max", "raw", n, "max", maxSize)
+		return maxSize
+	}
+	return n
+}
+
+// discoverTenantIDs reads the `tenants` table so the rebuild worker can
+// iterate every tenant's slice on the safety-net ticker. Failures degrade to
+// "no full rebuilds" — incremental SSE-driven updates still work because
+// they pass the tenant_id explicitly. The query is cheap (a single SELECT
+// over a tiny table) so we run it at boot rather than caching.
+func discoverTenantIDs(ctx context.Context, db *sql.DB, log *slog.Logger) []string {
+	rows, err := db.QueryContext(ctx, `SELECT id FROM tenants ORDER BY id`)
+	if err != nil {
+		log.Warn("graph_rebuild: tenant discovery failed; safety-net ticker disabled",
+			"err", err.Error())
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil && id != "" {
+			out = append(out, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Warn("graph_rebuild: tenant discovery iter error; partial list",
+			"err", err.Error(), "found", len(out))
+	}
+	return out
 }
 
 // loadDotEnv reads .env.local from cwd or any ancestor.
@@ -479,6 +557,52 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/inbox/events/ticket",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleInboxEventsTicket)))
 	mux.HandleFunc("GET /v1/inbox/events", s.projectsServer.HandleInboxEvents)
+
+	// Phase 6 U2 — mind-graph aggregate read + SSE bust channel.
+	// The handler runs a single indexed SELECT against graph_index; the
+	// RebuildGraphIndex worker materialises rows out-of-band. SSE channel
+	// graph:<tenant>:<platform> emits GraphIndexUpdated whenever the
+	// worker flushes for that slice (read-after-write contract).
+	mux.HandleFunc("GET /v1/projects/graph",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleGraphAggregate)))
+	mux.HandleFunc("POST /v1/projects/graph/events/ticket",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleGraphEventsTicket)))
+	mux.HandleFunc("GET /v1/projects/graph/events", s.projectsServer.HandleGraphEvents)
+
+	// Phase 8 U9 — global search backed by SQLite FTS5. Tenant scoped via
+	// claims; ACL filter joins flow_grants. See internal/projects/search.go.
+	mux.HandleFunc("GET /v1/search",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleSearch)))
+
+	// Phase 7 U2 — rule catalog editor (super-admin gated inside handler).
+	mux.HandleFunc("GET /v1/atlas/admin/rules",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAdminListRules)))
+	mux.HandleFunc("PATCH /v1/atlas/admin/rules/{rule_id}",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAdminPatchRule)))
+
+	// Phase 7 U4 — persona library approval queue.
+	mux.HandleFunc("GET /v1/atlas/admin/personas/pending",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAdminListPendingPersonas)))
+	mux.HandleFunc("POST /v1/atlas/admin/personas/{id}/approve",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAdminApprovePersona)))
+	mux.HandleFunc("POST /v1/atlas/admin/personas/{id}/reject",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAdminRejectPersona)))
+
+	// Phase 7.5 / U3 — taxonomy curator.
+	mux.HandleFunc("GET /v1/atlas/admin/taxonomy",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAdminListTaxonomy)))
+	mux.HandleFunc("POST /v1/atlas/admin/taxonomy/promote",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAdminPromoteTaxonomy)))
+	mux.HandleFunc("POST /v1/atlas/admin/taxonomy/archive",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAdminArchiveTaxonomy)))
+	mux.HandleFunc("POST /v1/atlas/admin/taxonomy/reorder",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAdminReorderTaxonomy)))
+
+	// Phase 7.5 — notification preferences (per-user, per-channel CRUD).
+	mux.HandleFunc("GET /v1/users/me/notification-preferences",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleListMyNotificationPrefs)))
+	mux.HandleFunc("PUT /v1/users/me/notification-preferences",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleUpsertMyNotificationPref)))
 
 	// Phase 4 U7 — per-component reverse view. Cross-tenant aggregate +
 	// tenant-scoped per-flow detail for "Where this breaks". The

@@ -1,0 +1,235 @@
+"use client";
+
+/**
+ * Phase 6 — `/atlas` mind-graph entry route.
+ *
+ * The page wires three concerns:
+ *   1. Reduced-motion gate (Phase 1 hook). Brain graph is animation-heavy;
+ *      reduced-motion users see a 2D EmptyState pointing at /atlas/admin.
+ *   2. WebGL2 capability check. Browsers without WebGL2 (Safari < 15) get
+ *      the same 2D fallback.
+ *   3. Dynamic-import of BrainGraph with `ssr:false` so three.js never
+ *      executes during SSR (it inspects `window` at module top-level).
+ *
+ * Platform comes from `?platform=` query string, default mobile (R25 —
+ * Mobile↔Web are separate IA trees; the toggle is a per-mount choice).
+ *
+ * Deep links: `/atlas?focus=flow_<id>` lands with the flow leaf already
+ * zoomed (R23). The BrainGraph reads the param and dispatches FOCUS on
+ * mount.
+ */
+
+import dynamic from "next/dynamic";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+
+import { hasWebGL2, useReducedMotion } from "./reducedMotion";
+import type { GraphPlatform } from "./types";
+
+const BrainGraph = dynamic(() => import("./BrainGraph"), {
+  ssr: false,
+  loading: () => <BrainGraphSkeleton />,
+});
+
+export default function AtlasPage() {
+  // useSearchParams must live under a Suspense boundary in App Router; the
+  // outer wrapper provides it so the page doesn't bail out of static
+  // optimisation. The inner client component reads params freely.
+  return (
+    <Suspense fallback={<BrainGraphSkeleton />}>
+      <AtlasInner />
+    </Suspense>
+  );
+}
+
+function AtlasInner() {
+  const params = useSearchParams();
+  const reducedMotion = useReducedMotion();
+  const [webgl2, setWebgl2] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    setWebgl2(hasWebGL2());
+  }, []);
+
+  const platformParam = params?.get("platform");
+  const platform: GraphPlatform =
+    platformParam === "web" ? "web" : "mobile";
+  const focusNodeID = params?.get("focus") ?? null;
+  // Phase 7.5 — hydrate filter chips from share-link URL.
+  const filtersParam = params?.get("filters") ?? "";
+  const initialFiltersFromURL = filtersParam
+    ? filtersParam.split(",").reduce(
+        (acc, f) => {
+          if (f === "components" || f === "tokens" || f === "decisions") acc[f] = true;
+          return acc;
+        },
+        { components: false, tokens: false, decisions: false } as Record<
+          "components" | "tokens" | "decisions",
+          boolean
+        >,
+      )
+    : null;
+
+  if (reducedMotion) {
+    return <ReducedMotionFallback />;
+  }
+  if (webgl2 === false) {
+    return <WebGLFallback />;
+  }
+  if (webgl2 === null) {
+    return <BrainGraphSkeleton />;
+  }
+  return (
+    <main className="atlas-shell">
+      <Suspense fallback={<BrainGraphSkeleton />}>
+        <BrainGraph
+          platform={platform}
+          focusNodeID={focusNodeID}
+          initialFilters={initialFiltersFromURL}
+        />
+      </Suspense>
+      <style jsx>{`
+        .atlas-shell {
+          position: fixed;
+          inset: 0;
+          background: #000814;
+          overflow: hidden;
+          color: rgba(255, 255, 255, 0.92);
+          font-family: var(--font-sans, "Inter Variable", sans-serif);
+        }
+      `}</style>
+    </main>
+  );
+}
+
+function BrainGraphSkeleton() {
+  return (
+    <div className="skel">
+      <div className="skel-glow" aria-hidden />
+      <p>Loading mind graph…</p>
+      <style jsx>{`
+        .skel {
+          position: fixed;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          background: radial-gradient(
+            circle at 50% 50%,
+            #0e1322 0%,
+            #000814 60%
+          );
+          color: rgba(255, 255, 255, 0.55);
+          font-family: var(--font-sans, "Inter Variable", sans-serif);
+          font-size: 13px;
+          letter-spacing: 0.02em;
+        }
+        .skel-glow {
+          position: absolute;
+          width: 240px;
+          height: 240px;
+          border-radius: 50%;
+          background: radial-gradient(
+            circle,
+            rgba(123, 159, 255, 0.18) 0%,
+            transparent 70%
+          );
+          animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+          0%,
+          100% {
+            transform: scale(1);
+            opacity: 0.6;
+          }
+          50% {
+            transform: scale(1.08);
+            opacity: 1;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function ReducedMotionFallback() {
+  return (
+    <main className="fallback">
+      <div className="fallback-card">
+        <h1>Reduced motion is enabled</h1>
+        <p>
+          The mind graph is animation-driven and isn&apos;t shown when your
+          system requests reduced motion. Open the admin dashboard for a
+          static view, or disable reduced motion in your OS settings to view
+          the brain.
+        </p>
+        <div className="fallback-cta">
+          <Link href="/atlas/admin">Open admin dashboard →</Link>
+        </div>
+      </div>
+      <FallbackStyles />
+    </main>
+  );
+}
+
+function WebGLFallback() {
+  return (
+    <main className="fallback">
+      <div className="fallback-card">
+        <h1>This browser doesn&apos;t support WebGL 2</h1>
+        <p>
+          The mind graph requires WebGL 2 (Chrome 56+, Firefox 51+,
+          Safari 15+). Open this page in a recent browser, or use the admin
+          dashboard for a non-3D view.
+        </p>
+        <div className="fallback-cta">
+          <Link href="/atlas/admin">Open admin dashboard →</Link>
+        </div>
+      </div>
+      <FallbackStyles />
+    </main>
+  );
+}
+
+function FallbackStyles() {
+  return (
+    <style jsx global>{`
+      .fallback {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: #000814;
+        color: rgba(255, 255, 255, 0.92);
+        font-family: var(--font-sans, "Inter Variable", sans-serif);
+        padding: 24px;
+      }
+      .fallback-card {
+        max-width: 520px;
+        padding: 32px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(8px);
+      }
+      .fallback-card h1 {
+        margin: 0 0 12px;
+        font-size: 22px;
+        font-weight: 600;
+      }
+      .fallback-card p {
+        margin: 0 0 20px;
+        line-height: 1.6;
+        color: rgba(255, 255, 255, 0.65);
+      }
+      .fallback-cta a {
+        color: #7b9fff;
+        text-decoration: none;
+        font-weight: 500;
+      }
+      .fallback-cta a:hover {
+        text-decoration: underline;
+      }
+    `}</style>
+  );
+}

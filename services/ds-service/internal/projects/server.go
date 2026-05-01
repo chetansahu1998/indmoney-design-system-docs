@@ -216,13 +216,25 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 	for _, flow := range req.Flows {
 		var personaID *string
 		if flow.PersonaName != "" {
-			persona, err := repo.UpsertPersona(r.Context(), flow.PersonaName, claims.Sub)
+			persona, wasNew, err := repo.UpsertPersonaTracked(r.Context(), flow.PersonaName, claims.Sub)
 			if err != nil {
 				writeJSONErr(w, http.StatusInternalServerError, "upsert_persona", err.Error())
 				return
 			}
 			id := persona.ID
 			personaID = &id
+			// Phase 7.6 — fire a `persona.pending` SSE event when a fresh
+			// pending row was created so the admin's bell badge updates
+			// without polling. inbox:<tenant_id> is the channel admins
+			// already subscribe to (Phase 4 inbox).
+			if wasNew && s.deps.Broker != nil {
+				s.deps.Broker.Publish(inboxBroadcastChannel(tenantID), sse.PersonaPending{
+					Tenant:          tenantID,
+					PersonaID:       persona.ID,
+					Name:            persona.Name,
+					CreatedByUserID: persona.CreatedByUserID,
+				})
+			}
 		}
 		f, err := repo.UpsertFlow(r.Context(), Flow{
 			ProjectID: project.ID,
@@ -401,17 +413,34 @@ func (s *Server) HandleProjectGet(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
 	p, err := repo.GetProjectBySlug(r.Context(), slug)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			writeJSONErr(w, http.StatusNotFound, "not_found", "")
-			return
-		}
+	if err == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"project": p})
+		return
+	}
+	if !errors.Is(err, ErrNotFound) {
 		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"project": p,
-	})
+
+	// Phase 7.5 — flow_aliases redirect. The slug doesn't match an active
+	// project; check whether it's the prior slug of a renamed flow. If
+	// found, 301 to the live slug. Browsers + the frontend's fetch path
+	// follow the redirect transparently; pasted URLs from before the
+	// rename keep working.
+	if redirectedTo, lookErr := repo.LookupFlowAlias(r.Context(), slug); lookErr == nil && redirectedTo != "" {
+		// Build the live URL preserving the original path tail (anything
+		// past /v1/projects/{slug}). This keeps query strings + sub-paths
+		// like /v1/projects/{slug}/screens/{id} working through the
+		// redirect.
+		newPath := strings.Replace(r.URL.Path, "/"+slug, "/"+redirectedTo, 1)
+		if r.URL.RawQuery != "" {
+			newPath += "?" + r.URL.RawQuery
+		}
+		w.Header().Set("Location", newPath)
+		w.WriteHeader(http.StatusMovedPermanently)
+		return
+	}
+	writeJSONErr(w, http.StatusNotFound, "not_found", "")
 }
 
 // HandleProjectList serves GET /v1/projects.

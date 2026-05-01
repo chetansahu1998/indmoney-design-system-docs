@@ -206,3 +206,49 @@ func (e ProjectViolationLifecycleChanged) Type() string { return "project.violat
 
 // Payload implements Event.
 func (e ProjectViolationLifecycleChanged) Payload() any { return e }
+
+// PersonaPending (Phase 7.6) — emitted on the inbox:<tenant_id> channel
+// when a designer's plugin export creates a new pending persona row. The
+// admin shell's bell badge subscribes and increments its pending counter.
+//
+// We carry minimal payload (id + name + suggester) — enough for the bell
+// to render a nice toast preview. Full row data is fetched by the
+// approval queue UI on click-through.
+type PersonaPending struct {
+	Tenant          string `json:"tenant_id"`
+	PersonaID       string `json:"persona_id"`
+	Name            string `json:"name"`
+	CreatedByUserID string `json:"created_by_user_id"`
+}
+
+// TenantID implements Event.
+func (e PersonaPending) TenantID() string { return e.Tenant }
+
+// Type implements Event.
+func (e PersonaPending) Type() string { return "persona.pending" }
+
+// Payload implements Event.
+func (e PersonaPending) Payload() any { return e }
+
+// GraphIndexUpdated (Phase 6 U2) — emitted whenever the RebuildGraphIndex
+// worker completes a flush for (tenant, platform). Subscribers on the
+// graph:<tenant>:<platform> channel re-fetch the aggregate; the
+// MaterializedAt RFC3339 timestamp doubles as the cache_key so the client
+// can short-circuit no-op busts.
+//
+// The channel is platform-scoped (mobile vs. web) per R25 — separate IA
+// trees should not bust each other.
+type GraphIndexUpdated struct {
+	Tenant         string `json:"tenant_id"`
+	Platform       string `json:"platform"`
+	MaterializedAt string `json:"materialized_at"`
+}
+
+// TenantID implements Event.
+func (e GraphIndexUpdated) TenantID() string { return e.Tenant }
+
+// Type implements Event.
+func (e GraphIndexUpdated) Type() string { return "graph.index_updated" }
+
+// Payload implements Event.
+func (e GraphIndexUpdated) Payload() any { return e }

@@ -1,8 +1,9 @@
 ---
 title: "feat: Projects · Flow Atlas — Phase 4 of 8 (violation lifecycle + designer surfaces)"
 type: feat
-status: active
+status: shipped
 date: 2026-05-01
+closure: docs/solutions/2026-05-01-002-phase-4-lifecycle-learnings.md
 origin: docs/brainstorms/2026-04-29-projects-flow-atlas-requirements.md
 predecessor: docs/plans/2026-05-01-001-feat-projects-flow-atlas-phase-3-plan.md
 ---

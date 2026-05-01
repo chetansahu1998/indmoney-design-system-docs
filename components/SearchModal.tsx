@@ -5,6 +5,7 @@ import { Command, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@
 import { Command as CommandPrimitive } from "cmdk";
 import { overlayVariants, panelVariants } from "@/lib/motion-variants";
 import { buildSemanticPairs, buildBasePalette } from "@/lib/tokens/loader";
+import { SearchResultsSection } from "@/components/search/SearchResultsSection";
 import { useUIStore } from "@/lib/ui-store";
 
 type Item = {
@@ -226,6 +227,18 @@ export default function SearchModal({ onClose }: { onClose: () => void }) {
               >
                 No results for &ldquo;{query}&rdquo;
               </CommandEmpty>
+
+              {/* Phase 8 U10 — server-side search hits across flows /
+                  decisions / DRDs / personas / components. Renders above
+                  the static token results so live-data hits are first
+                  and most discoverable. */}
+              {!selected && query.trim() !== "" && (
+                <SearchResultsSection
+                  query={query}
+                  scope="all"
+                  onPick={() => setQuery("")}
+                />
+              )}
 
               {selected ? (
                 <CommandGroup heading={`Copy from ${selected.title}`}>

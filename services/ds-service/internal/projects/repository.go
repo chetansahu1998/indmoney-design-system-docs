@@ -119,10 +119,55 @@ func (t *TenantRepo) UpsertProject(ctx context.Context, p Project) (Project, err
 		rfc3339(now), rfc3339(now),
 	)
 	if err != nil {
-		// Slug collisions can race two concurrent first-imports of the same
-		// (product, path); on conflict, re-read.
 		if strings.Contains(err.Error(), "UNIQUE") {
-			return t.UpsertProject(ctx, p)
+			// Slug collision causes:
+			//   (a) Race: two concurrent first-imports of the same
+			//       (tenant, product, platform, path) — the other goroutine
+			//       won; re-read by that 4-tuple and return the existing row.
+			//   (b) Cross-platform collision: a row already exists for the
+			//       same (tenant, product, path) on a *different* platform.
+			//       The lookup-by-platform misses it, but the slug index is
+			//       (tenant_id, slug) — so we hit UNIQUE. Regenerate the
+			//       slug with a platform suffix and retry ONCE.
+			//
+			// Pre-Phase 6 this path recursed on the public method, which
+			// could loop forever for case (b). The fix below is bounded:
+			// at most one retry, and only for case (b).
+			row := t.r.db.QueryRowContext(ctx,
+				`SELECT id, slug, name, platform, product, path, owner_user_id, created_at, updated_at
+				   FROM projects
+				  WHERE tenant_id = ? AND product = ? AND platform = ? AND path = ? AND deleted_at IS NULL`,
+				t.tenantID, p.Product, p.Platform, p.Path,
+			)
+			var existing Project
+			var createdAt, updatedAt string
+			scanErr := row.Scan(&existing.ID, &existing.Slug, &existing.Name, &existing.Platform,
+				&existing.Product, &existing.Path, &existing.OwnerUserID, &createdAt, &updatedAt)
+			if scanErr == nil {
+				// Case (a): concurrent insert won — return existing row.
+				existing.TenantID = t.tenantID
+				existing.CreatedAt = parseTime(createdAt)
+				existing.UpdatedAt = parseTime(updatedAt)
+				return existing, nil
+			}
+			if !errors.Is(scanErr, sql.ErrNoRows) {
+				return Project{}, fmt.Errorf("post-collision lookup: %w", scanErr)
+			}
+			// Case (b): same slug but different platform. Append the
+			// platform to disambiguate, regenerate IDs, retry ONCE.
+			p.Slug = makeSlug(p.Product, p.Path) + "-" + strings.ToLower(p.Platform)
+			p.ID = uuid.NewString()
+			retryErr := t.r.db.QueryRowContext(ctx,
+				`INSERT INTO projects (id, slug, name, platform, product, path, owner_user_id, tenant_id, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 RETURNING id`,
+				p.ID, p.Slug, p.Name, p.Platform, p.Product, p.Path, p.OwnerUserID, t.tenantID,
+				rfc3339(now), rfc3339(now),
+			).Scan(&p.ID)
+			if retryErr != nil {
+				return Project{}, fmt.Errorf("insert project (cross-platform retry): %w", retryErr)
+			}
+			return p, nil
 		}
 		return Project{}, fmt.Errorf("insert project: %w", err)
 	}
@@ -307,9 +352,23 @@ func (t *TenantRepo) InsertScreens(ctx context.Context, screens []Screen) error 
 // UpsertPersona finds an approved persona by name in the tenant, or creates a
 // pending one if absent. Race-safe: ON CONFLICT clause on the partial unique
 // index resolves concurrent first-suggests.
+//
+// Wraps UpsertPersonaTracked, discarding the wasNew signal. Existing
+// callers that don't care about the difference between "found" and
+// "newly suggested" use this overload.
 func (t *TenantRepo) UpsertPersona(ctx context.Context, name, createdByUserID string) (Persona, error) {
+	p, _, err := t.UpsertPersonaTracked(ctx, name, createdByUserID)
+	return p, err
+}
+
+// UpsertPersonaTracked is the same upsert but returns wasNew=true when
+// the call resulted in a fresh pending row (vs. returning an existing
+// approved/pending row). Phase 7.6 admin bell uses wasNew to fire a
+// `persona.pending` SSE event only when there's actually new work for
+// the DS lead.
+func (t *TenantRepo) UpsertPersonaTracked(ctx context.Context, name, createdByUserID string) (Persona, bool, error) {
 	if t.tenantID == "" {
-		return Persona{}, errors.New("projects: tenant_id required")
+		return Persona{}, false, errors.New("projects: tenant_id required")
 	}
 	// Try approved first.
 	row := t.r.db.QueryRowContext(ctx,
@@ -323,7 +382,7 @@ func (t *TenantRepo) UpsertPersona(ctx context.Context, name, createdByUserID st
 	if err := row.Scan(&p.ID, &p.Name, &p.Status, &p.CreatedByUserID, &createdAt); err == nil {
 		p.TenantID = t.tenantID
 		p.CreatedAt = parseTime(createdAt)
-		return p, nil
+		return p, false, nil
 	}
 
 	// Try pending — return existing pending row if the same designer suggested.
@@ -337,7 +396,7 @@ func (t *TenantRepo) UpsertPersona(ctx context.Context, name, createdByUserID st
 	if err := row.Scan(&p.ID, &p.Name, &p.Status, &p.CreatedByUserID, &createdAt); err == nil {
 		p.TenantID = t.tenantID
 		p.CreatedAt = parseTime(createdAt)
-		return p, nil
+		return p, false, nil
 	}
 
 	// Insert new pending; race-safe via partial unique index — if another
@@ -355,12 +414,21 @@ func (t *TenantRepo) UpsertPersona(ctx context.Context, name, createdByUserID st
 		// SQLite versions without ON CONFLICT clause-with-where support fall back
 		// to plain UNIQUE error; recover by re-reading.
 		if strings.Contains(err.Error(), "UNIQUE") {
-			return t.UpsertPersona(ctx, name, createdByUserID)
+			pp, _, rerr := t.UpsertPersonaTracked(ctx, name, createdByUserID)
+			return pp, false, rerr
 		}
-		return Persona{}, fmt.Errorf("insert persona: %w", err)
+		return Persona{}, false, fmt.Errorf("insert persona: %w", err)
 	}
-	// Re-read to get the row that won (might be ours or a concurrent approved one).
-	return t.UpsertPersona(ctx, name, createdByUserID)
+	// Re-read to get the row that won (might be ours or a concurrent
+	// approved one). If we get back a pending row matching our inserted
+	// id, the call was new — bubble that signal up so the call site can
+	// publish PersonaPending on the SSE bus.
+	pp, _, rerr := t.UpsertPersonaTracked(ctx, name, createdByUserID)
+	if rerr != nil {
+		return Persona{}, false, rerr
+	}
+	wasNew := pp.ID == id && pp.Status == "pending"
+	return pp, wasNew, nil
 }
 
 // GetProjectBySlug returns the project for the given slug within the caller's
