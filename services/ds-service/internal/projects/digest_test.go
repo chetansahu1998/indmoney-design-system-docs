@@ -97,6 +97,70 @@ func TestValidatePreferenceInput_RejectsBadChannel(t *testing.T) {
 	}
 }
 
+func TestRenderSlackBlocks_HasHeaderContextSections(t *testing.T) {
+	payload := DigestPayload{
+		Header: "Your daily digest",
+		FlowGroups: []DigestFlowGroup{
+			{
+				FlowName: "Tax / F&O",
+				Items: []DigestItem{
+					{Kind: "mention", Snippet: "ack — let's revisit"},
+					{Kind: "decision_made"},
+				},
+			},
+			{
+				FlowName: "Plutus / Onboarding",
+				Items: []DigestItem{
+					{Kind: "mention", Snippet: "please confirm"},
+				},
+			},
+		},
+	}
+	blocks := RenderSlackBlocks(payload)
+	if len(blocks) < 5 {
+		t.Fatalf("expected at least header+context+divider+2 sections+1 divider, got %d", len(blocks))
+	}
+	if blocks[0].Type != "header" || blocks[0].Text == nil ||
+		blocks[0].Text.Text != "Your daily digest" {
+		t.Errorf("first block should be header with payload header text, got %+v", blocks[0])
+	}
+	if blocks[1].Type != "context" || len(blocks[1].Elements) == 0 {
+		t.Errorf("second block should be context with summary, got %+v", blocks[1])
+	}
+	// Find at least one section with the flow name + a bullet point.
+	foundSection := false
+	for _, b := range blocks {
+		if b.Type == "section" && b.Text != nil &&
+			strings.Contains(b.Text.Text, "Tax / F&O") &&
+			strings.Contains(b.Text.Text, "ack — let's revisit") {
+			foundSection = true
+			break
+		}
+	}
+	if !foundSection {
+		t.Errorf("expected a section with Tax / F&O + snippet, got %+v", blocks)
+	}
+}
+
+func TestRenderSlackBlocks_TruncatesAtMaxGroups(t *testing.T) {
+	groups := make([]DigestFlowGroup, 12)
+	for i := range groups {
+		groups[i] = DigestFlowGroup{
+			FlowName: "Flow " + string(rune('A'+i)),
+			Items:    []DigestItem{{Kind: "mention"}},
+		}
+	}
+	blocks := RenderSlackBlocks(DigestPayload{Header: "h", FlowGroups: groups})
+	// Should include the trailing "…and N more flows" context block.
+	last := blocks[len(blocks)-1]
+	if last.Type != "context" || len(last.Elements) == 0 {
+		t.Fatalf("expected trailing context block for truncation, got %+v", last)
+	}
+	if !strings.Contains(last.Elements[0].Text, "more flow") {
+		t.Errorf("truncation message missing: %q", last.Elements[0].Text)
+	}
+}
+
 func TestRenderSlackText_StructuresFlowGroups(t *testing.T) {
 	payload := DigestPayload{
 		Header: "Your daily digest",

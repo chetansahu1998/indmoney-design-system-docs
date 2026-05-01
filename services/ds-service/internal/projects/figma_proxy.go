@@ -159,3 +159,71 @@ var errFigmaNotFound = errors.New("figma: file or node not found")
 // figmaHTTPClient is a single http.Client with a strict 8s timeout. All
 // figma proxy calls share it so connection reuse + timeouts apply.
 var figmaHTTPClient = &http.Client{Timeout: 8 * time.Second}
+
+// ─── Phase 5.3 P2 — per-tenant rate limit ───────────────────────────────────
+//
+// A malicious tab embedding lots of Figma URLs could otherwise drain a
+// tenant's Figma PAT quota. A simple token bucket keyed by tenant_id
+// caps requests at FigmaProxyBurstSize tokens with one token refilling
+// every FigmaProxyRefillEvery interval.
+//
+// The 5min server-side cache (figmaProxyCache above) absorbs the common
+// case — repeat fetches of the same URL hit memory, not Figma. The rate
+// limit only kicks in when a tab is requesting many *distinct* URLs in
+// rapid succession.
+
+const (
+	// 5 burst, refilled at 1 token per 200ms ≈ 5 req/sec sustained.
+	FigmaProxyBurstSize   = 5
+	FigmaProxyRefillEvery = 200 * time.Millisecond
+)
+
+type figmaRateLimiter struct {
+	mu      sync.Mutex
+	buckets map[string]*figmaBucket
+}
+
+type figmaBucket struct {
+	tokens   float64
+	updated  time.Time
+	lastUsed time.Time
+}
+
+var figmaProxyLimiter = &figmaRateLimiter{
+	buckets: map[string]*figmaBucket{},
+}
+
+// allow returns true and decrements when the tenant has at least one
+// token; false otherwise. Tokens refill at 1 per FigmaProxyRefillEvery,
+// capped at FigmaProxyBurstSize.
+func (rl *figmaRateLimiter) allow(tenantID string, now time.Time) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	b, ok := rl.buckets[tenantID]
+	if !ok {
+		// Brand-new tenant — start with a full bucket and consume one.
+		rl.buckets[tenantID] = &figmaBucket{
+			tokens:   float64(FigmaProxyBurstSize - 1),
+			updated:  now,
+			lastUsed: now,
+		}
+		return true
+	}
+
+	elapsed := now.Sub(b.updated)
+	if elapsed > 0 {
+		refill := float64(elapsed) / float64(FigmaProxyRefillEvery)
+		b.tokens += refill
+		if b.tokens > float64(FigmaProxyBurstSize) {
+			b.tokens = float64(FigmaProxyBurstSize)
+		}
+		b.updated = now
+	}
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	b.lastUsed = now
+	return true
+}

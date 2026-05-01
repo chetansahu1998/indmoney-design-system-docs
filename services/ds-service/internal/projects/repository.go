@@ -1611,18 +1611,49 @@ func (t *TenantRepo) ListDecisionsForFlow(ctx context.Context, flowID string, in
 	return out, linkRows.Err()
 }
 
+// AdminReactivateOutcome captures the chain delta for a successful
+// admin reactivate. Phase 5.3 P1 — the mind graph (Phase 6) consumes
+// this via the SSE event so it can erase the supersession edge from
+// the predecessor to its former successor without a follow-up fetch.
+type AdminReactivateOutcome struct {
+	Updated                  int
+	PreviousSupersededByID   string
+}
+
 // AdminReactivateDecision flips a superseded decision back to 'accepted'
 // and clears its superseded_by_id. Cross-tenant write — only the
 // super-admin handler should reach this method. Returns the count of
-// rows affected (0 when the id doesn't exist or wasn't superseded).
+// rows affected (0 when the id doesn't exist or wasn't superseded) plus
+// the prior superseded_by_id so the caller can publish the chain delta.
+//
+// Single transaction so the SELECT reads the prior state under the same
+// lock as the UPDATE; otherwise a concurrent admin click could race.
 //
 // The reverse operation — moving Accepted → Superseded — happens through
 // CreateDecision when a successor's supersedes_id points at this one;
 // admins shouldn't manually mark a decision superseded outside that
 // chain because doing so would orphan the chain.
-func (db *DB) AdminReactivateDecision(ctx context.Context, decisionID string) (int, error) {
+func (db *DB) AdminReactivateDecision(ctx context.Context, decisionID string) (AdminReactivateOutcome, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := db.db.ExecContext(ctx,
+	tx, err := db.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AdminReactivateOutcome{}, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var prior sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT superseded_by_id FROM decisions
+		  WHERE id = ? AND status = 'superseded' AND deleted_at IS NULL`,
+		decisionID,
+	).Scan(&prior); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AdminReactivateOutcome{Updated: 0}, nil
+		}
+		return AdminReactivateOutcome{}, fmt.Errorf("read prior: %w", err)
+	}
+
+	res, err := tx.ExecContext(ctx,
 		`UPDATE decisions
 		    SET status = 'accepted',
 		        superseded_by_id = NULL,
@@ -1633,10 +1664,18 @@ func (db *DB) AdminReactivateDecision(ctx context.Context, decisionID string) (i
 		now, decisionID,
 	)
 	if err != nil {
-		return 0, fmt.Errorf("admin reactivate: %w", err)
+		return AdminReactivateOutcome{}, fmt.Errorf("admin reactivate: %w", err)
 	}
 	n, _ := res.RowsAffected()
-	return int(n), nil
+
+	if err := tx.Commit(); err != nil {
+		return AdminReactivateOutcome{}, fmt.Errorf("commit: %w", err)
+	}
+	out := AdminReactivateOutcome{Updated: int(n)}
+	if prior.Valid {
+		out.PreviousSupersededByID = prior.String
+	}
+	return out, nil
 }
 
 // ListRecentDecisions returns the most recent decisions across the entire

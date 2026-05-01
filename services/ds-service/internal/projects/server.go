@@ -1484,12 +1484,12 @@ func (s *Server) HandleAdminReactivateDecision(w http.ResponseWriter, r *http.Re
 		return
 	}
 	repoDB := NewDB(s.deps.DB.DB)
-	updated, err := repoDB.AdminReactivateDecision(r.Context(), id)
+	outcome, err := repoDB.AdminReactivateDecision(r.Context(), id)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "reactivate", err.Error())
 		return
 	}
-	if updated > 0 {
+	if outcome.Updated > 0 {
 		// Resolve tenant_id + flow_id + slug for the audit_log + SSE
 		// publish. Single lookup; super-admin path so cross-tenant is
 		// fine.
@@ -1503,10 +1503,11 @@ func (s *Server) HandleAdminReactivateDecision(w http.ResponseWriter, r *http.Re
 			id,
 		).Scan(&tenantID, &flowID, &slug)
 		details, _ := json.Marshal(map[string]any{
-			"decision_id": id,
-			"flow_id":     flowID,
-			"action":      "admin_reactivate",
-			"schema_ver":  ProjectsSchemaVersion,
+			"decision_id":                id,
+			"flow_id":                    flowID,
+			"action":                     "admin_reactivate",
+			"previous_superseded_by_id":  outcome.PreviousSupersededByID,
+			"schema_ver":                 ProjectsSchemaVersion,
 		})
 		_ = s.deps.DB.WriteAudit(r.Context(), db.AuditEntry{
 			ID:         uuid.NewString(),
@@ -1521,22 +1522,26 @@ func (s *Server) HandleAdminReactivateDecision(w http.ResponseWriter, r *http.Re
 			Details:    string(details),
 		})
 
-		// Phase 5.2 P3 — broadcast on the tenant inbox channel so any
-		// embedded decisionRef blocks pull the freshly-accepted state.
+		// Phase 5.2 P3 + 5.3 P1 — broadcast with chain delta. Mind-graph
+		// (Phase 6) reads previous_superseded_by_id to erase the
+		// supersession edge from this decision to its former successor.
 		if s.deps.Broker != nil && tenantID != "" {
 			s.deps.Broker.Publish(inboxBroadcastChannel(tenantID), sse.ProjectDecisionChanged{
-				ProjectSlug: slug,
-				FlowID:      flowID,
-				DecisionID:  id,
-				Tenant:      tenantID,
-				Status:      "accepted",
-				Action:      "admin_reactivated",
+				ProjectSlug:            slug,
+				FlowID:                 flowID,
+				DecisionID:             id,
+				Tenant:                 tenantID,
+				Status:                 "accepted",
+				Action:                 "admin_reactivated",
+				PreviousStatus:         "superseded",
+				PreviousSupersededByID: outcome.PreviousSupersededByID,
 			})
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"decision_id": id,
-		"updated":     updated,
+		"decision_id":                id,
+		"updated":                    outcome.Updated,
+		"previous_superseded_by_id":  outcome.PreviousSupersededByID,
 	})
 }
 
@@ -1856,6 +1861,18 @@ func (s *Server) HandleFigmaFrameMetadata(w http.ResponseWriter, r *http.Request
 	if cached, ok := figmaProxy.get(cacheKey); ok {
 		writeJSON(w, http.StatusOK, cached)
 		return
+	}
+
+	// Phase 5.3 P2 — per-tenant rate limit. Only enforced when we'd
+	// actually call Figma's API; cache hits above bypass. 429 carries
+	// Retry-After in seconds so clients back off gracefully.
+	if s.deps.FigmaPATResolver != nil && parsed.NodeID != "" {
+		if !figmaProxyLimiter.allow(tenantID, time.Now()) {
+			w.Header().Set("Retry-After", "1")
+			writeJSONErr(w, http.StatusTooManyRequests, "rate_limited",
+				"figma proxy: too many requests for this tenant")
+			return
+		}
 	}
 
 	if s.deps.FigmaPATResolver != nil && parsed.NodeID != "" {

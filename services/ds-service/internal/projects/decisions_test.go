@@ -317,7 +317,7 @@ func TestDB_AdminReactivateDecision_FlipsSuperseded(t *testing.T) {
 	}
 	first, _ := repo.CreateDecision(context.Background(), flowID, "", uA, DecisionInput{Title: "First"})
 	in2, _ := ValidateDecisionInput(DecisionInput{Title: "Second", SupersedesID: first.ID})
-	_, _ = repo.CreateDecision(context.Background(), flowID, "", uA, in2)
+	second, _ := repo.CreateDecision(context.Background(), flowID, "", uA, in2)
 
 	// Confirm first is now superseded.
 	first2, _ := repo.GetDecision(context.Background(), first.ID)
@@ -327,12 +327,15 @@ func TestDB_AdminReactivateDecision_FlipsSuperseded(t *testing.T) {
 
 	// Admin reactivates.
 	repoDB := NewDB(d.DB)
-	n, err := repoDB.AdminReactivateDecision(context.Background(), first.ID)
+	outcome, err := repoDB.AdminReactivateDecision(context.Background(), first.ID)
 	if err != nil {
 		t.Fatalf("reactivate: %v", err)
 	}
-	if n != 1 {
-		t.Errorf("expected 1 row updated, got %d", n)
+	if outcome.Updated != 1 {
+		t.Errorf("expected 1 row updated, got %d", outcome.Updated)
+	}
+	if outcome.PreviousSupersededByID != second.ID {
+		t.Errorf("expected previous_superseded_by_id=%s, got %q", second.ID, outcome.PreviousSupersededByID)
 	}
 	first3, _ := repo.GetDecision(context.Background(), first.ID)
 	if first3.Status != "accepted" {
@@ -354,12 +357,15 @@ func TestDB_AdminReactivateDecision_IdempotentOnNonSuperseded(t *testing.T) {
 	rec, _ := repo.CreateDecision(context.Background(), flowID, "", uA, DecisionInput{Title: "Active"})
 
 	repoDB := NewDB(d.DB)
-	n, err := repoDB.AdminReactivateDecision(context.Background(), rec.ID)
+	outcome, err := repoDB.AdminReactivateDecision(context.Background(), rec.ID)
 	if err != nil {
 		t.Fatalf("reactivate: %v", err)
 	}
-	if n != 0 {
-		t.Errorf("expected 0 (no-op) for non-superseded, got %d", n)
+	if outcome.Updated != 0 {
+		t.Errorf("expected 0 (no-op) for non-superseded, got %d", outcome.Updated)
+	}
+	if outcome.PreviousSupersededByID != "" {
+		t.Errorf("expected empty PreviousSupersededByID, got %q", outcome.PreviousSupersededByID)
 	}
 }
 

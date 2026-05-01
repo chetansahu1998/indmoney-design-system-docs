@@ -80,8 +80,15 @@ func main() {
 				log.Printf("digest: %s missing slack webhook; skipping", p.UserID)
 				continue
 			}
-			text := projects.RenderSlackText(payload)
-			if err := sender.Send(ctx, p.SlackWebhookURL, projects.SlackMessage{Text: text}); err != nil {
+			// Phase 5.3 P3 — send both `text` (fallback / push summary)
+			// and `blocks` (BlockKit body). Slack uses text for the
+			// channel preview + mobile notification; blocks renders the
+			// message body on modern clients.
+			msg := projects.SlackMessage{
+				Text:   projects.RenderSlackText(payload),
+				Blocks: projects.RenderSlackBlocks(payload),
+			}
+			if err := sender.Send(ctx, p.SlackWebhookURL, msg); err != nil {
 				log.Printf("digest: slack send %s: %v", p.UserID, err)
 				continue
 			}

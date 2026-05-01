@@ -394,9 +394,31 @@ type SlackSender struct {
 	HTTPClient *http.Client
 }
 
-// SlackMessage matches Slack's incoming-webhook JSON shape (text only —
-// blocks/attachments are Phase 7 polish).
+// SlackMessage matches Slack's incoming-webhook JSON shape. Text is the
+// fallback (used by older Slack clients + by accessibility tools); Blocks
+// is the Phase 5.3 P3 BlockKit payload that gives modern Slack clients
+// the richer formatting (header + section + context + divider).
+//
+// Slack's contract: when blocks is set, text becomes the notification
+// summary shown in the channel preview / mobile push; the body uses
+// blocks. We populate both so the digest reads cleanly everywhere.
 type SlackMessage struct {
+	Text   string         `json:"text"`
+	Blocks []SlackBlock   `json:"blocks,omitempty"`
+}
+
+// SlackBlock is the BlockKit element shape. We only use a small subset
+// (header / section / context / divider); each carries a minimal field
+// set per Slack's documented schema.
+type SlackBlock struct {
+	Type     string         `json:"type"`
+	Text     *SlackTextObj  `json:"text,omitempty"`
+	Elements []SlackTextObj `json:"elements,omitempty"`
+}
+
+// SlackTextObj is a "text" object in BlockKit terminology.
+type SlackTextObj struct {
+	Type string `json:"type"` // plain_text | mrkdwn
 	Text string `json:"text"`
 }
 
@@ -429,8 +451,10 @@ func (s *SlackSender) Send(ctx context.Context, webhookURL string, msg SlackMess
 	return nil
 }
 
-// RenderSlackText is the simplest text-only digest render. Phase 7 admin
-// can swap to Block-Kit for richer formatting.
+// RenderSlackText is the text-only digest render. Slack uses this for
+// older clients + the channel-preview / push-notification summary. Phase
+// 5.3 P3's RenderSlackBlocks is the richer form modern Slack clients
+// see in the message body.
 func RenderSlackText(payload DigestPayload) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "*%s* — %d flow%s\n",
@@ -446,6 +470,102 @@ func RenderSlackText(payload DigestPayload) string {
 		}
 	}
 	return b.String()
+}
+
+// RenderSlackBlocks composes a BlockKit payload — Phase 5.3 P3.
+//
+// Layout per flow group:
+//
+//   header        ← Header text (bold, large)
+//   context       ← "N flows · N updates" summary line
+//   divider
+//   section       ← per flow: bold flow name + bullet items as mrkdwn
+//   ...
+//
+// Slack caps blocks at 50 per message; we cap at 8 flow groups so we
+// stay well under (header + context + divider + 8 × (section + divider)
+// = ~19 blocks max). Beyond 8 flows we summarise the tail.
+func RenderSlackBlocks(payload DigestPayload) []SlackBlock {
+	const maxFlowGroups = 8
+
+	totalUpdates := 0
+	for _, g := range payload.FlowGroups {
+		totalUpdates += len(g.Items)
+	}
+
+	blocks := []SlackBlock{
+		{
+			Type: "header",
+			Text: &SlackTextObj{Type: "plain_text", Text: payload.Header},
+		},
+		{
+			Type: "context",
+			Elements: []SlackTextObj{
+				{
+					Type: "mrkdwn",
+					Text: fmt.Sprintf("%d flow%s · %d update%s",
+						len(payload.FlowGroups), pluralize(len(payload.FlowGroups)),
+						totalUpdates, pluralize(totalUpdates)),
+				},
+			},
+		},
+		{Type: "divider"},
+	}
+
+	groups := payload.FlowGroups
+	truncated := 0
+	if len(groups) > maxFlowGroups {
+		truncated = len(groups) - maxFlowGroups
+		groups = groups[:maxFlowGroups]
+	}
+
+	for i, g := range groups {
+		var body strings.Builder
+		fmt.Fprintf(&body, "*%s*", g.FlowName)
+		if len(g.Items) == 0 {
+			body.WriteString(" — no items")
+		}
+		for _, it := range g.Items {
+			body.WriteString("\n• ")
+			body.WriteString(it.Kind)
+			if it.Snippet != "" {
+				body.WriteString(": ")
+				// Slack mrkdwn doesn't render arbitrary characters
+				// safely; trim any leading/trailing whitespace + cap
+				// length so the digest stays readable.
+				snip := strings.TrimSpace(it.Snippet)
+				if len(snip) > 200 {
+					snip = snip[:200] + "…"
+				}
+				body.WriteString(snip)
+			}
+		}
+		blocks = append(blocks, SlackBlock{
+			Type: "section",
+			Text: &SlackTextObj{Type: "mrkdwn", Text: body.String()},
+		})
+		if i < len(groups)-1 {
+			blocks = append(blocks, SlackBlock{Type: "divider"})
+		}
+	}
+
+	if truncated > 0 {
+		blocks = append(blocks,
+			SlackBlock{Type: "divider"},
+			SlackBlock{
+				Type: "context",
+				Elements: []SlackTextObj{
+					{
+						Type: "mrkdwn",
+						Text: fmt.Sprintf("…and %d more flow%s — open the inbox for the rest.",
+							truncated, pluralize(truncated)),
+					},
+				},
+			},
+		)
+	}
+
+	return blocks
 }
 
 func pluralize(n int) string {

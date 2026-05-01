@@ -121,21 +121,35 @@ func (e ProjectAuditProgress) Type() string { return "project.audit_progress" }
 // Payload implements Event.
 func (e ProjectAuditProgress) Payload() any { return e }
 
-// ProjectDecisionChanged (Phase 5.2 P3) — emitted whenever a decision
-// is created, superseded, or admin-reactivated. The DRD's custom
-// decisionRef block subscribes to its project's trace_id channel and
-// re-fetches the embedded card so the rendered status stays live.
+// ProjectDecisionChanged (Phase 5.2 P3 + 5.3 P1) — emitted whenever a
+// decision is created, superseded, or admin-reactivated. Multiple
+// surfaces consume:
+//
+//   - DRD decisionRef custom block (Phase 5.2 P3): re-fetches the
+//     embedded card so its rendered status stays live.
+//   - Decisions tab in /projects/<slug> (Phase 5): refreshes the list.
+//   - Mind graph in /atlas (Phase 6): redraws the supersession chain
+//     edge between two decision nodes when the chain shape changes.
+//
+// Phase 5.3 P1 added PreviousStatus + PreviousSupersededByID so the
+// mind graph has enough delta to reverse the chain edge without a
+// follow-up fetch (e.g., admin_reactivated returns the previously-
+// superseded-by id so the graph can erase that edge).
 //
 // Action carries the verb so downstream UIs can pick the right
 // animation (slide-down for new, color-cross-fade for supersede).
 type ProjectDecisionChanged struct {
-	ProjectSlug string `json:"project_slug"`
-	FlowID      string `json:"flow_id"`
-	DecisionID  string `json:"decision_id"`
-	Tenant      string `json:"tenant_id"`
-	Status      string `json:"status"`
-	Action      string `json:"action"` // created | superseded | admin_reactivated
-	ActorUserID string `json:"actor_user_id,omitempty"`
+	ProjectSlug              string `json:"project_slug"`
+	FlowID                   string `json:"flow_id"`
+	DecisionID               string `json:"decision_id"`
+	Tenant                   string `json:"tenant_id"`
+	Status                   string `json:"status"`
+	Action                   string `json:"action"` // created | superseded | admin_reactivated
+	ActorUserID              string `json:"actor_user_id,omitempty"`
+	// Phase 5.3 P1 — chain delta for the mind-graph.
+	PreviousStatus           string `json:"previous_status,omitempty"`
+	PreviousSupersededByID   string `json:"previous_superseded_by_id,omitempty"`
+	SupersedesID             string `json:"supersedes_id,omitempty"`
 }
 
 func (e ProjectDecisionChanged) TenantID() string { return e.Tenant }

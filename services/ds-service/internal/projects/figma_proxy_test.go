@@ -106,6 +106,49 @@ func TestErrFigmaNotFound_IsErrorsIs(t *testing.T) {
 	}
 }
 
+func TestFigmaRateLimiter_BurstThenDeny(t *testing.T) {
+	rl := &figmaRateLimiter{buckets: map[string]*figmaBucket{}}
+	now := time.Now()
+	for i := 0; i < FigmaProxyBurstSize; i++ {
+		if !rl.allow("t1", now) {
+			t.Fatalf("call %d should have been allowed (burst)", i)
+		}
+	}
+	if rl.allow("t1", now) {
+		t.Errorf("burst+1 should be denied")
+	}
+}
+
+func TestFigmaRateLimiter_RefillsOverTime(t *testing.T) {
+	rl := &figmaRateLimiter{buckets: map[string]*figmaBucket{}}
+	now := time.Now()
+	for i := 0; i < FigmaProxyBurstSize; i++ {
+		_ = rl.allow("t1", now)
+	}
+	// 600ms later → 3 tokens refilled (200ms refill rate).
+	later := now.Add(600 * time.Millisecond)
+	allowed := 0
+	for i := 0; i < 5; i++ {
+		if rl.allow("t1", later) {
+			allowed++
+		}
+	}
+	if allowed < 2 || allowed > 3 {
+		t.Errorf("expected 2-3 allowed after 600ms refill, got %d", allowed)
+	}
+}
+
+func TestFigmaRateLimiter_PerTenantIsolation(t *testing.T) {
+	rl := &figmaRateLimiter{buckets: map[string]*figmaBucket{}}
+	now := time.Now()
+	for i := 0; i < FigmaProxyBurstSize; i++ {
+		_ = rl.allow("t1", now)
+	}
+	if !rl.allow("t2", now) {
+		t.Errorf("t2 should be unaffected by t1's exhaustion")
+	}
+}
+
 func TestFigmaCacheKey_StableAcrossInputs(t *testing.T) {
 	a := figmaCacheKey("t1", "f1", "n1")
 	b := figmaCacheKey("t1", "f1", "n1")
