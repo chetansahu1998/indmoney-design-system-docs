@@ -4,8 +4,7 @@
   "buildCommand": "npm run build",
   "build": {
     "env": {
-      "NEXT_PUBLIC_BRAND": "indmoney",
-      "NEXT_PUBLIC_DS_SERVICE_URL": "http://localhost:8080"
+      "NEXT_PUBLIC_BRAND": "indmoney"
     }
   },
   "git": {
