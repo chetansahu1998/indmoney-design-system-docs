@@ -1352,6 +1352,35 @@ func (s *Server) HandleDecisionCreate(w http.ResponseWriter, r *http.Request) {
 		Details:    string(details),
 	})
 
+	// Phase 5.2 P3 — broadcast on the tenant inbox channel so any
+	// embedded decisionRef blocks in the DRD re-fetch + render the new
+	// state. The action verb lets clients pick the right animation.
+	if s.deps.Broker != nil {
+		s.deps.Broker.Publish(inboxBroadcastChannel(tenantID), sse.ProjectDecisionChanged{
+			ProjectSlug: slug,
+			FlowID:      rec.FlowID,
+			DecisionID:  rec.ID,
+			Tenant:      tenantID,
+			Status:      rec.Status,
+			Action:      "created",
+			ActorUserID: claims.Sub,
+		})
+		// If this decision supersedes another, the predecessor's status
+		// also flipped — broadcast a second event so any embedded ref
+		// to the predecessor re-renders as superseded.
+		if rec.SupersedesID != nil && *rec.SupersedesID != "" {
+			s.deps.Broker.Publish(inboxBroadcastChannel(tenantID), sse.ProjectDecisionChanged{
+				ProjectSlug: slug,
+				FlowID:      rec.FlowID,
+				DecisionID:  *rec.SupersedesID,
+				Tenant:      tenantID,
+				Status:      "superseded",
+				Action:      "superseded",
+				ActorUserID: claims.Sub,
+			})
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, rec)
 }
 
@@ -1455,13 +1484,18 @@ func (s *Server) HandleAdminReactivateDecision(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if updated > 0 {
-		// Resolve tenant_id + flow_id for the audit_log row. Single
-		// lookup; super-admin path so cross-tenant is fine.
-		var tenantID, flowID string
+		// Resolve tenant_id + flow_id + slug for the audit_log + SSE
+		// publish. Single lookup; super-admin path so cross-tenant is
+		// fine.
+		var tenantID, flowID, slug string
 		_ = s.deps.DB.DB.QueryRowContext(r.Context(),
-			`SELECT tenant_id, flow_id FROM decisions WHERE id = ?`,
+			`SELECT d.tenant_id, d.flow_id, p.slug
+			   FROM decisions d
+			   JOIN project_versions pv ON pv.id = d.version_id
+			   JOIN projects p ON p.id = pv.project_id
+			  WHERE d.id = ?`,
 			id,
-		).Scan(&tenantID, &flowID)
+		).Scan(&tenantID, &flowID, &slug)
 		details, _ := json.Marshal(map[string]any{
 			"decision_id": id,
 			"flow_id":     flowID,
@@ -1480,6 +1514,19 @@ func (s *Server) HandleAdminReactivateDecision(w http.ResponseWriter, r *http.Re
 			IPAddress:  clientIP(r),
 			Details:    string(details),
 		})
+
+		// Phase 5.2 P3 — broadcast on the tenant inbox channel so any
+		// embedded decisionRef blocks pull the freshly-accepted state.
+		if s.deps.Broker != nil && tenantID != "" {
+			s.deps.Broker.Publish(inboxBroadcastChannel(tenantID), sse.ProjectDecisionChanged{
+				ProjectSlug: slug,
+				FlowID:      flowID,
+				DecisionID:  id,
+				Tenant:      tenantID,
+				Status:      "accepted",
+				Action:      "admin_reactivated",
+			})
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"decision_id": id,

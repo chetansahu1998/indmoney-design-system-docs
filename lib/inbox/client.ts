@@ -198,6 +198,50 @@ export interface InboxLifecycleEvent {
   actor_user_id: string;
 }
 
+// Phase 5.2 P3 — decision_changed event relayed on the same channel.
+export interface DecisionChangedEvent {
+  project_slug: string;
+  flow_id: string;
+  decision_id: string;
+  tenant_id: string;
+  status: string;
+  action: "created" | "superseded" | "admin_reactivated";
+  actor_user_id?: string;
+}
+
+// Module-level listener sets the subscribers fan out into. The inbox
+// SSE pipe is one EventSource per page; per-block listeners piggyback
+// on it to avoid N parallel sockets.
+type DecisionListener = (event: DecisionChangedEvent) => void;
+const decisionListeners = new Set<DecisionListener>();
+
+type ViolationLifecycleListener = (event: InboxLifecycleEvent) => void;
+const violationLifecycleListeners = new Set<ViolationLifecycleListener>();
+
+/**
+ * subscribeDecisionChanges registers a listener that's invoked on every
+ * `project.decision_changed` event the existing tenant-inbox SSE pipe
+ * receives. Returns an unsubscribe.
+ */
+export function subscribeDecisionChanges(cb: DecisionListener): () => void {
+  decisionListeners.add(cb);
+  return () => {
+    decisionListeners.delete(cb);
+  };
+}
+
+/**
+ * subscribeViolationLifecycle — Phase 5.2 P3. Same pattern as
+ * subscribeDecisionChanges; lets violationRef custom blocks re-fetch
+ * when a violation transitions in any other surface.
+ */
+export function subscribeViolationLifecycle(cb: ViolationLifecycleListener): () => void {
+  violationLifecycleListeners.add(cb);
+  return () => {
+    violationLifecycleListeners.delete(cb);
+  };
+}
+
 interface TicketResponse {
   ticket: string;
   trace_id: string;
@@ -252,6 +296,18 @@ export function subscribeInboxEvents(
       try {
         const data = JSON.parse((raw as MessageEvent<string>).data) as InboxLifecycleEvent;
         onEvent(data);
+        violationLifecycleListeners.forEach((cb) => cb(data));
+      } catch {
+        // ignore malformed event
+      }
+    });
+    // Phase 5.2 P3 — relay decision_changed too. Custom DRD blocks
+    // subscribe via subscribeDecisionChanges below; this listener
+    // lets the same SSE stream serve both surfaces.
+    es.addEventListener("project.decision_changed", (raw) => {
+      try {
+        const data = JSON.parse((raw as MessageEvent<string>).data) as DecisionChangedEvent;
+        decisionListeners.forEach((cb) => cb(data));
       } catch {
         // ignore malformed event
       }

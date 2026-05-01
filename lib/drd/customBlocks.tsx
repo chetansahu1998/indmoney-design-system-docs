@@ -27,6 +27,10 @@ import { createReactBlockSpec } from "@blocknote/react";
 import { useEffect, useState } from "react";
 import DecisionCard from "@/components/decisions/DecisionCard";
 import { fetchDecision, type Decision } from "@/lib/decisions/client";
+import {
+  subscribeDecisionChanges,
+  subscribeViolationLifecycle,
+} from "@/lib/inbox/client";
 
 // ─── /decision block ────────────────────────────────────────────────────────
 
@@ -51,6 +55,10 @@ function DecisionRefRenderer({ decisionID }: { decisionID: string }) {
     { kind: "loading" } | { kind: "ok"; decision: Decision } | { kind: "error"; msg: string }
   >({ kind: "loading" });
 
+  // Refresh either on mount or when the SSE stream tells us this decision
+  // changed (Phase 5.2 P3). Bumping refreshKey re-runs the fetch effect.
+  const [refreshKey, setRefreshKey] = useState(0);
+
   useEffect(() => {
     if (!decisionID) {
       setState({ kind: "error", msg: "Decision id missing — re-pick a decision." });
@@ -68,6 +76,16 @@ function DecisionRefRenderer({ decisionID }: { decisionID: string }) {
     return () => {
       cancelled = true;
     };
+  }, [decisionID, refreshKey]);
+
+  // Listen for decision_changed events targeting this id.
+  useEffect(() => {
+    if (!decisionID) return;
+    return subscribeDecisionChanges((ev) => {
+      if (ev.decision_id === decisionID) {
+        setRefreshKey((k) => k + 1);
+      }
+    });
   }, [decisionID]);
 
   if (state.kind === "loading") {
@@ -259,6 +277,9 @@ function ViolationRefRenderer({ violationID, slug }: { violationID: string; slug
     | { kind: "error"; msg: string }
   >({ kind: "loading" });
 
+  // Phase 5.2 P3 — refresh on lifecycle SSE events for this id.
+  const [refreshKey, setRefreshKey] = useState(0);
+
   useEffect(() => {
     if (!violationID || !slug) {
       setState({ kind: "error", msg: "Violation reference missing slug or id." });
@@ -289,7 +310,16 @@ function ViolationRefRenderer({ violationID, slug }: { violationID: string; slug
     return () => {
       cancelled = true;
     };
-  }, [violationID, slug]);
+  }, [violationID, slug, refreshKey]);
+
+  useEffect(() => {
+    if (!violationID) return;
+    return subscribeViolationLifecycle((ev) => {
+      if (ev.violation_id === violationID) {
+        setRefreshKey((k) => k + 1);
+      }
+    });
+  }, [violationID]);
 
   const tint =
     state.kind === "ok"
