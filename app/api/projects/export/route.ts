@@ -28,17 +28,22 @@ export async function POST(req: NextRequest) {
       { status: 401 },
     );
   }
-  const traceId = req.headers.get("x-trace-id") ?? crypto.randomUUID();
-
-  let body: unknown;
+  let body: Record<string, unknown> = {};
   try {
-    body = await req.json();
+    body = (await req.json()) as Record<string, unknown>;
   } catch (err) {
     return Response.json(
-      { ok: false, error: "invalid_json", detail: (err as Error).message, traceId },
+      { ok: false, error: "invalid_json", detail: (err as Error).message },
       { status: 400 },
     );
   }
+  // Trace ID can come either from the X-Trace-ID header (curl, future
+  // clients) or from the body (Figma plugin — see code.ts comment about
+  // why custom headers were dropped).
+  const traceId =
+    req.headers.get("x-trace-id") ??
+    (typeof body.trace_id === "string" ? body.trace_id : null) ??
+    crypto.randomUUID();
 
   try {
     const upstream = await fetch(`${DS_SERVICE_URL}/v1/projects/export`, {
@@ -75,16 +80,26 @@ export async function POST(req: NextRequest) {
 }
 
 // CORS preflight — the Figma plugin runs in a different origin
-// (figma.com sandbox) so the browser sends OPTIONS before the POST.
+// (figma.com sandbox, Origin: null) so the browser sends OPTIONS
+// before the POST. We deliberately echo the requesting Origin and
+// keep the Allow-Headers list as small as possible, since some
+// sandboxed-fetch implementations (notably Figma desktop) treat any
+// Allow-Headers mismatch as a generic "Failed to fetch."
 export async function OPTIONS(req: NextRequest) {
   const origin = req.headers.get("origin") ?? "";
+  // Reflect what the client asked for — covers Authorization,
+  // Content-Type, and any future header we add without us having to
+  // chase the allow-list each time.
+  const reqHeaders = req.headers.get("access-control-request-headers")
+    ?? "Authorization, Content-Type";
   return new Response(null, {
     status: 204,
     headers: {
       "Access-Control-Allow-Origin": origin || "*",
       "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Trace-ID",
+      "Access-Control-Allow-Headers": reqHeaders,
       "Access-Control-Max-Age": "600",
+      "Vary": "Origin, Access-Control-Request-Headers",
     },
   });
 }

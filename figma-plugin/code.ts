@@ -286,19 +286,24 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
           // operator is busy hunting for the cog icon.
           return;
         }
+        // Trace ID lives in the body now — not as a custom request header.
+        // Custom headers expand the CORS preflight Access-Control-Request-Headers
+        // list; some Figma plugin sandbox versions (esp. desktop) reject the
+        // resulting preflight with a generic "Failed to fetch" even when
+        // curl-tested preflight passes. Body-as-JSON keeps the request
+        // "simple-ish" — only Authorization triggers preflight, which we
+        // know works from curl.
+        const traceId = (typeof crypto !== "undefined" && crypto.randomUUID)
+          ? crypto.randomUUID() : String(Date.now());
+        const bodyWithTrace = { ...(msg.payload as Record<string, unknown>), trace_id: traceId };
         try {
           const res = await fetch(`${docsURL}/api/projects/export`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
               "Authorization": `Bearer ${docsAuthToken}`,
-              // Lets the operator correlate plugin → docs → ds-service
-              // logs when something goes wrong; ds-service threads this
-              // ID through SSE events too.
-              "X-Trace-ID": (typeof crypto !== "undefined" && crypto.randomUUID)
-                ? crypto.randomUUID() : String(Date.now()),
             },
-            body: JSON.stringify(msg.payload),
+            body: JSON.stringify(bodyWithTrace),
           });
           const bodyText = await res.text();
           let body: any = {};
