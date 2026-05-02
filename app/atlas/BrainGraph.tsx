@@ -35,6 +35,10 @@ import {
   FORCE_CONFIG,
   NODE_VISUAL,
 } from "./forceConfig";
+import {
+  atlasBloomBuildUp,
+  ATLAS_BLOOM_FINAL_INTENSITY,
+} from "@/lib/animations/timelines/atlasBloomBuildUp";
 import { useReducedMotion } from "./reducedMotion";
 import { useGraphAggregate } from "./useGraphAggregate";
 import { useGraphView } from "./useGraphView";
@@ -206,6 +210,16 @@ export default function BrainGraph({
     d3Force: (id: string) => unknown;
   };
   const fgRef = useRef<FGRef | null>(null);
+  // U14a — track the live UnrealBloomPass so the build-up timeline (a
+  // separate effect, below) can tween its `strength` uniform on /atlas
+  // mount. We keep the ref outside the bloom-add effect so the timeline
+  // doesn't have to dig through `composer.passes` on every play attempt.
+  const bloomPassRef = useRef<UnrealBloomPass | null>(null);
+  // U14a — guard so the build-up only plays once per BrainGraph mount.
+  // The bloom-add effect re-runs on `aggregate.status` changes (and hot
+  // reload), but the arrival ramp is a one-shot — replaying it on filter
+  // hydration or HMR would feel like a glitch.
+  const bloomBuildUpPlayedRef = useRef(false);
 
   // ─── U6 + U8 — threshold-driven bloom + organic drift ──────────────────
   // Bloom is added once on mount via the library's postProcessingComposer
@@ -248,16 +262,81 @@ export default function BrainGraph({
       existing.threshold = 1.0;
       existing.strength = 1.2;
       existing.radius = 0.85;
+      bloomPassRef.current = existing;
       return;
     }
+    // U14a — start the build-up at strength=0 instead of the steady-state
+    // 1.2 so the arrival timeline (separate effect below) has somewhere to
+    // ramp from. Reduced-motion / build-up-already-played mounts re-set
+    // strength to 1.2 immediately (see the build-up effect below), so this
+    // zero-init is invisible to those paths.
+    const initialStrength = bloomBuildUpPlayedRef.current ? 1.2 : 0;
     const bloom = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      /* strength */ 1.2,
+      /* strength */ initialStrength,
       /* radius   */ 0.85,
       /* threshold*/ 1.0,
     );
     composer.addPass(bloom);
+    bloomPassRef.current = bloom;
   }, [aggregate.status]); // re-runs once when graph first becomes ready
+
+  // ─── U14a — initial-paint bloom build-up ───────────────────────────────
+  // /atlas previously hard-cut to a fully-bloomed brain graph because the
+  // shared `atlasBloomBuildUp` timeline only ran in `AtlasCanvas` (the
+  // project-view atlas). The U13 audit (docs/runbooks/transitions.md §1)
+  // identified the missing arrival ramp as a likely root cause of the
+  // user's "senseless transitions when I click on the node" complaint —
+  // subsequent leaf-click springs felt "alive" because the brain mount
+  // had no easing to compare against.
+  //
+  // We re-use the canonical 800ms `EASE_PAGE_OPEN` timeline. Its `apply`
+  // callback was designed for the AtlasCanvas (which drives r3f-state-
+  // backed `<Bloom>` with intensity 0→0.5 / threshold 1.0→0.7 / chroma
+  // 0→0.0008). BrainGraph instead owns a three.js `UnrealBloomPass`
+  // directly, so we adapt the callback: re-derive the timeline's progress
+  // (`t = bloomIntensity / ATLAS_BLOOM_FINAL_INTENSITY`) and scale our
+  // bloom's `strength` from 0 → 1.2. We deliberately leave `threshold`
+  // pinned at 1.0 (the U8 contract — only HDR materials whose color ×
+  // emissiveIntensity exceeds 1.0 contribute to bloom; lowering threshold
+  // would shift which node types glow). Chroma is unused on /atlas (no
+  // ChromaticAberration pass in BrainGraph's composer chain).
+  //
+  // Reduced-motion: `atlasBloomBuildUp` already gates internally via
+  // `getPrefersReducedMotion()` — it calls `apply` once with the final
+  // values and returns an empty paused timeline. Our adapter therefore
+  // immediately lands `strength = 1.2`, matching the U8 steady state. No
+  // additional gate at the call site (per U10 conventions).
+  //
+  // Hot-reload safety: `bloomBuildUpPlayedRef` flips on first play and
+  // prevents the timeline from re-running when this effect re-fires on
+  // filter changes, HMR, or a second StrictMode mount. The bloom-add
+  // effect above seeds the pass's strength to 0 only if the build-up
+  // hasn't played yet, so subsequent re-mounts arrive directly at the
+  // steady-state value rather than hard-cutting back through zero.
+  useEffect(() => {
+    if (bloomBuildUpPlayedRef.current) return;
+    if (!bloomPassRef.current) return;
+    const pass = bloomPassRef.current;
+    const tl = atlasBloomBuildUp((next) => {
+      // Re-derive progress from the shared timeline's intensity ramp
+      // (0 → ATLAS_BLOOM_FINAL_INTENSITY). Clamp guards against future
+      // tweaks to the canonical final value going to zero.
+      const t =
+        ATLAS_BLOOM_FINAL_INTENSITY > 0
+          ? next.bloomIntensity / ATLAS_BLOOM_FINAL_INTENSITY
+          : 1;
+      pass.strength = 1.2 * t;
+    });
+    bloomBuildUpPlayedRef.current = true;
+    tl.play();
+    return () => {
+      tl.kill();
+    };
+    // Depend on `aggregate.status` so the effect retries once the graph
+    // becomes ready and the bloom-add effect has populated bloomPassRef.
+    // The played-guard prevents double-play if the effect re-runs.
+  }, [aggregate.status]);
 
   // Apply force config to d3-force-3d on mount + when platform changes.
   useEffect(() => {
