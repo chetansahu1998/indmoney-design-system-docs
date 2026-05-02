@@ -66,9 +66,39 @@ interface Props {
 interface ProjectedLabel {
   id: string;
   label: string;
+  /** Slug derived from `node.signal.open_url` (e.g. `/projects/<slug>?…`).
+   *  Used as the discriminator on the `view-transition-name` (U2b) so the
+   *  browser-native View Transitions API matches this DOM element to the
+   *  project view's title bar across the cross-route morph. `null` when
+   *  the node has no open_url (no morph target — the label still renders,
+   *  just without a transition name). */
+  slug: string | null;
   x: number;
   y: number;
   visible: boolean;
+}
+
+/**
+ * Extract the project slug from a flow node's `open_url`. Backend writes
+ * URLs of the form `/projects/<slug>` or `/projects/<slug>?v=…` (see
+ * services/ds-service/internal/projects/graph_repo.go). Returns `null`
+ * for any URL that doesn't match — defensive against future backend
+ * changes that might emit a different shape.
+ *
+ * The slug is used as the View Transitions name discriminator
+ * (`flow-${slug}-label`) so the browser matches the source DOM label to
+ * the destination project title across the route boundary. Both must
+ * carry the same name for the same flow. `decodeURIComponent` is NOT
+ * applied — the slug is used as a CSS identifier and a path segment;
+ * leaving it URL-encoded is correct in both contexts (and round-trips).
+ */
+function extractSlugFromOpenURL(openURL: string | undefined): string | null {
+  if (!openURL) return null;
+  // Match `/projects/<slug>` allowing query string + hash but not extra
+  // path segments (a future `/projects/<slug>/<sub>` would not match — we
+  // want to morph only to the project root for now).
+  const match = openURL.match(/^\/projects\/([^/?#]+)/);
+  return match ? match[1] : null;
 }
 
 // Throttle: 30fps cap means update at most every ~33ms. We use a frame
@@ -160,6 +190,7 @@ function LeafLabelLayerImpl({ nodes, fgRef, morphingNode }: Props) {
         next.push({
           id: n.id,
           label: n.label,
+          slug: extractSlugFromOpenURL(n.signal.open_url),
           x: sx,
           y: sy,
           visible: onScreen,
@@ -235,6 +266,7 @@ function LeafLabelLayerImpl({ nodes, fgRef, morphingNode }: Props) {
         <div
           key={l.id}
           data-leaf-label-id={l.id}
+          data-leaf-label-slug={l.slug ?? undefined}
           className="leaf-label"
           style={{
             position: "absolute",
@@ -247,6 +279,21 @@ function LeafLabelLayerImpl({ nodes, fgRef, morphingNode }: Props) {
             // node (matches the default sprite-label convention).
             transformOrigin: "0 0",
             display: l.visible ? "block" : "none",
+            // U2b — View Transitions name. The browser matches the
+            // source label here to the destination project's title bar
+            // (which carries the same `flow-${slug}-label` name) across
+            // the cross-route morph. Only set when the node has a slug
+            // (i.e. a known project URL); otherwise omitted so the
+            // browser doesn't try to match a non-existent destination.
+            //
+            // Visibility note: `view-transition-name` on a `display:none`
+            // element is ignored by the browser (it isn't part of the
+            // captured snapshot), so there's no constraint about
+            // duplicate names — only on-screen labels participate.
+            // Off-screen labels carry the property harmlessly.
+            ...(l.slug
+              ? { viewTransitionName: `flow-${l.slug}-label` }
+              : null),
             // Visual baseline matches the canvas-sprite labels we replace
             // for non-flow nodes — see BrainGraph nodeLabel handling.
             color: "rgba(255, 255, 255, 0.92)",
