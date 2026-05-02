@@ -32,7 +32,12 @@ import type {
 } from "@/lib/projects/types";
 import { useGSAPContext } from "@/lib/animations/hooks/useGSAPContext";
 import { useReducedMotion } from "@/lib/animations/context";
-import { STAGGER_MAX_MS, STAGGER_PER_FRAME_MS } from "@/lib/animations/easings";
+import {
+  EASE_PAGE_OPEN,
+  EASE_THEME_TOGGLE,
+  STAGGER_MAX_MS,
+  STAGGER_PER_FRAME_MS,
+} from "@/lib/animations/easings";
 import EmptyTab from "./EmptyTab";
 import EmptyState from "@/components/empty-state/EmptyState";
 import { CategoryFilterChips } from "./violations/CategoryFilterChips";
@@ -332,7 +337,10 @@ export default function ViolationsTab({
         opacity: 0,
         y: 6,
         duration: 0.32,
-        ease: "expo.out",
+        // U13 — was inline "expo.out"; aliased via canonical constant so the
+        // row-stagger curve stays in lockstep with projectShellOpen +
+        // atlasBloomBuildUp (both also EASE_PAGE_OPEN).
+        ease: EASE_PAGE_OPEN,
         stagger: perItemMs / 1000,
       });
       // Phase 2 U11: new-arrival flash. Only fires on subsequent re-fetches;
@@ -350,7 +358,10 @@ export default function ViolationsTab({
             {
               backgroundColor: "rgba(0,0,0,0)",
               duration: 0.6,
-              ease: "cubic.out",
+              // U13 — was inline "cubic.out"; aliased via the theme-toggle
+              // crossfade constant (same `cubic.out` curve) so soothing
+              // crossfades share one source of truth.
+              ease: EASE_THEME_TOGGLE,
             },
           );
         }

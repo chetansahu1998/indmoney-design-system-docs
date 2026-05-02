@@ -40,6 +40,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import gsap from "gsap";
 import { useGSAPContext } from "@/lib/animations/hooks/useGSAPContext";
 import { useReducedMotion } from "@/lib/animations/context";
+import { EASE_PAGE_OPEN } from "@/lib/animations/easings";
 
 export type EmptyStateVariant =
   | "welcome"
@@ -172,7 +173,10 @@ export default function EmptyState({
         opacity: 0,
         y: 6,
         duration: 0.32,
-        ease: "expo.out",
+        // U13 — was inline "expo.out"; aliased via canonical EASE_PAGE_OPEN
+        // so the empty-state stagger matches projectShellOpen +
+        // atlasBloomBuildUp + ViolationsTab row reveal.
+        ease: EASE_PAGE_OPEN,
         stagger: 0.08,
       });
     });
