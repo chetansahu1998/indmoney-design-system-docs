@@ -2161,3 +2161,168 @@ func (t *TenantRepo) MarkNotificationsRead(ctx context.Context, userID string, i
 	n, _ := res.RowsAffected()
 	return int(n), nil
 }
+
+// ─── U12 bundle helpers (HandleProjectGet) ──────────────────────────────────
+//
+// The four list-by-* methods below back the bundled project-get response.
+// Each is tenant-scoped via the WHERE clause so cross-tenant joins return
+// empty rather than an existence oracle. The handler stitches them together
+// after resolving the active version (?v=<id> or latest by version_index).
+
+// ListVersionsByProject returns every version row for a project, newest first
+// (highest version_index first). Tenant-scoped — cross-tenant project IDs
+// silently return zero rows.
+func (t *TenantRepo) ListVersionsByProject(ctx context.Context, projectID string) ([]ProjectVersion, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	rows, err := t.r.db.QueryContext(ctx,
+		`SELECT id, project_id, version_index, status, pipeline_started_at, pipeline_heartbeat_at,
+		        error, created_by_user_id, created_at
+		   FROM project_versions
+		  WHERE project_id = ? AND tenant_id = ?
+		  ORDER BY version_index DESC`,
+		projectID, t.tenantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list versions: %w", err)
+	}
+	defer rows.Close()
+	var out []ProjectVersion
+	for rows.Next() {
+		var v ProjectVersion
+		var startedAt, heartbeatAt, errStr sql.NullString
+		var createdAt string
+		if err := rows.Scan(&v.ID, &v.ProjectID, &v.VersionIndex, &v.Status,
+			&startedAt, &heartbeatAt, &errStr, &v.CreatedByUserID, &createdAt); err != nil {
+			return nil, err
+		}
+		v.TenantID = t.tenantID
+		v.CreatedAt = parseTime(createdAt)
+		if startedAt.Valid {
+			tt := parseTime(startedAt.String)
+			v.PipelineStartedAt = &tt
+		}
+		if heartbeatAt.Valid {
+			tt := parseTime(heartbeatAt.String)
+			v.PipelineHeartbeatAt = &tt
+		}
+		if errStr.Valid {
+			v.Error = errStr.String
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// ListScreensByVersion returns every screen for a specific version, ordered
+// by created_at to keep the atlas paint deterministic across re-fetches.
+func (t *TenantRepo) ListScreensByVersion(ctx context.Context, versionID string) ([]Screen, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	rows, err := t.r.db.QueryContext(ctx,
+		`SELECT id, version_id, flow_id, x, y, width, height, screen_logical_id,
+		        png_storage_key, created_at
+		   FROM screens
+		  WHERE version_id = ? AND tenant_id = ?
+		  ORDER BY created_at`,
+		versionID, t.tenantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list screens: %w", err)
+	}
+	defer rows.Close()
+	var out []Screen
+	for rows.Next() {
+		var s Screen
+		var pngKey sql.NullString
+		var createdAt string
+		if err := rows.Scan(&s.ID, &s.VersionID, &s.FlowID, &s.X, &s.Y,
+			&s.Width, &s.Height, &s.ScreenLogicalID, &pngKey, &createdAt); err != nil {
+			return nil, err
+		}
+		s.TenantID = t.tenantID
+		s.CreatedAt = parseTime(createdAt)
+		if pngKey.Valid {
+			v := pngKey.String
+			s.PNGStorageKey = &v
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// ListScreenModesByVersion returns every screen_mode row tied to screens in
+// the given version. Joined through screens so the version filter still
+// applies — screen_modes itself doesn't carry version_id.
+func (t *TenantRepo) ListScreenModesByVersion(ctx context.Context, versionID string) ([]ScreenMode, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	rows, err := t.r.db.QueryContext(ctx,
+		`SELECT sm.id, sm.screen_id, sm.mode_label, sm.figma_frame_id,
+		        COALESCE(sm.explicit_variable_modes_json, '')
+		   FROM screen_modes sm
+		   JOIN screens s ON s.id = sm.screen_id
+		  WHERE s.version_id = ? AND sm.tenant_id = ? AND s.tenant_id = ?`,
+		versionID, t.tenantID, t.tenantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list screen_modes: %w", err)
+	}
+	defer rows.Close()
+	var out []ScreenMode
+	for rows.Next() {
+		var m ScreenMode
+		if err := rows.Scan(&m.ID, &m.ScreenID, &m.ModeLabel, &m.FigmaFrameID,
+			&m.ExplicitVariableModesJSON); err != nil {
+			return nil, err
+		}
+		m.TenantID = t.tenantID
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ListPersonasForTenant returns every non-deleted persona in the tenant,
+// approved + pending alike. The frontend needs both so the persona switcher
+// can show pending ones with a status badge.
+func (t *TenantRepo) ListPersonasForTenant(ctx context.Context) ([]Persona, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	rows, err := t.r.db.QueryContext(ctx,
+		`SELECT id, name, status, created_by_user_id, approved_by_user_id, approved_at, created_at
+		   FROM personas
+		  WHERE tenant_id = ? AND deleted_at IS NULL
+		  ORDER BY status, name`,
+		t.tenantID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list personas: %w", err)
+	}
+	defer rows.Close()
+	var out []Persona
+	for rows.Next() {
+		var p Persona
+		var approvedBy, approvedAt sql.NullString
+		var createdAt string
+		if err := rows.Scan(&p.ID, &p.Name, &p.Status, &p.CreatedByUserID,
+			&approvedBy, &approvedAt, &createdAt); err != nil {
+			return nil, err
+		}
+		p.TenantID = t.tenantID
+		p.CreatedAt = parseTime(createdAt)
+		if approvedBy.Valid {
+			v := approvedBy.String
+			p.ApprovedByUserID = &v
+		}
+		if approvedAt.Valid {
+			tt := parseTime(approvedAt.String)
+			p.ApprovedAt = &tt
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
