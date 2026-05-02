@@ -283,6 +283,54 @@ export default function ProjectShell({
     return () => mq.removeEventListener("change", handler);
   }, [theme]);
 
+  // ─── Phase 9 U3 — Esc reverse-morph back to /atlas. ─────────────────────
+  // Pressing Escape (or browser back) returns the user to /atlas with the
+  // source flow leaf re-focused at the same zoom level. The View Transitions
+  // morph plays in reverse automatically (the same `view-transition-name`
+  // tagged elements from U2b are the source/target — browser handles direc-
+  // tion). Reduced-motion users still navigate; the browser falls through
+  // to an instant swap with no morph. Spatial-continuity cue for those
+  // users is the static breadcrumb on the toolbar (U2c).
+  //
+  // We must NOT swallow Escape when the user is actively editing — DRD
+  // editor (textarea / contenteditable), version selector dropdown, decision
+  // form inputs, and any modal-open container should handle Escape locally.
+  // The check filters by `e.target.tagName` for INPUT/TEXTAREA/SELECT and
+  // by `closest('[contenteditable], [data-modal-open], [role="dialog"]')`
+  // so child portals / nested editors are respected.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let firedAt = 0;
+    function isEditableTarget(target: EventTarget | null): boolean {
+      if (!target || !(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (target.isContentEditable) return true;
+      // Modals / dialogs / dropdowns own Escape — do not navigate.
+      if (
+        target.closest(
+          '[contenteditable="true"], [data-modal-open="true"], [role="dialog"], [role="listbox"], [aria-modal="true"]',
+        )
+      ) {
+        return true;
+      }
+      return false;
+    }
+    function onKeyDown(e: KeyboardEvent): void {
+      if (e.key !== "Escape") return;
+      if (e.defaultPrevented) return;
+      if (isEditableTarget(e.target)) return;
+      // Debounce double-tap so one press doesn't fire router.back() twice.
+      const now = Date.now();
+      if (now - firedAt < 300) return;
+      firedAt = now;
+      e.preventDefault();
+      router.back();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [router]);
+
   // ─── Refresh on version change. Re-fetches the project payload. ─────────
   useEffect(() => {
     if (!activeVersionID) return;

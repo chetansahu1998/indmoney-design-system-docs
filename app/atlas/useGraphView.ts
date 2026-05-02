@@ -35,6 +35,25 @@ interface GraphView {
   /** Leaf-morph target. Set when user single-clicks a flow leaf. */
   morphingNode: GraphNode | null;
   morphTo: (node: GraphNode | null) => void;
+  /**
+   * Phase 9 U3 — reverse-morph entry point.
+   *
+   * Called when /atlas mounts after a back-navigation from a project view,
+   * with the project's slug. Walks the supplied node list looking for the
+   * flow node whose `signal.open_url` matches `/projects/<slug>`. If found,
+   * applies focus + sets zoomLevel back to "flow" so the leaf is centred.
+   * If no match (e.g. the user opened the project via a direct URL and the
+   * graph hasn't ever loaded that flow), this is a no-op — callers fall
+   * back to the bare /atlas root view (clean default per the plan's edge-
+   * case spec).
+   *
+   * Nodes are passed in (rather than read from internal state) because the
+   * aggregation layer (`useGraphAggregate`) lives outside this hook; the
+   * caller (BrainGraph) already has the resolved node list and forwarding
+   * it keeps this hook pure. The forward-direction `morphTo` works the
+   * same way — caller hands in the node, hook stores intent.
+   */
+  morphFromProject: (slug: string, nodes: GraphNode[]) => void;
 }
 
 export function useGraphView(): GraphView {
@@ -60,6 +79,33 @@ export function useGraphView(): GraphView {
     setMorphingNode(node);
   }, []);
 
+  // Phase 9 U3 — reverse-morph: resolve slug → flow node, then focus.
+  // The node match relies on `signal.open_url` matching `/projects/<slug>`
+  // exactly (plus an optional trailing `?…` query string or `#…` hash so
+  // share-link variants still resolve). We restrict to `type === "flow"`
+  // because only flow nodes carry a project URL in the brainstorm IA.
+  const morphFromProject = useCallback(
+    (slug: string, nodes: GraphNode[]): void => {
+      if (!slug) return;
+      const target = `/projects/${slug}`;
+      const match = nodes.find((n) => {
+        if (n.type !== "flow") return false;
+        const url = n.signal.open_url;
+        if (!url) return false;
+        // Accept `/projects/<slug>`, `/projects/<slug>?v=…`, `/projects/<slug>#tab=…`.
+        if (url === target) return true;
+        return (
+          url.startsWith(target) &&
+          (url[target.length] === "?" || url[target.length] === "#")
+        );
+      });
+      if (!match) return;
+      setFocusedNode(match);
+      setZoomLevel("flow");
+    },
+    [],
+  );
+
   return useMemo(
     () => ({
       filters,
@@ -71,7 +117,16 @@ export function useGraphView(): GraphView {
       setZoomLevel,
       morphingNode,
       morphTo,
+      morphFromProject,
     }),
-    [filters, focusedNode, focus, zoomLevel, morphingNode, morphTo],
+    [
+      filters,
+      focusedNode,
+      focus,
+      zoomLevel,
+      morphingNode,
+      morphTo,
+      morphFromProject,
+    ],
   );
 }
