@@ -272,11 +272,14 @@ function LeafLabelLayerImpl({ nodes, fgRef, morphingNode }: Props) {
             position: "absolute",
             left: 0,
             top: 0,
-            // translate3d to opt into a GPU layer — labels move every
-            // ~33ms so we want them on the compositor, not paint.
-            transform: `translate3d(${l.x}px, ${l.y}px, 0)`,
-            // -50% / -100% so the label anchors above and centred on the
-            // node (matches the default sprite-label convention).
+            // U3 — Center the label on the projected node coordinate.
+            // CSS transforms apply right-to-left: `translate3d` runs first
+            // (positions the label's top-left to the projected coord),
+            // then `translate(-50%, -50%)` shifts the box up + left by
+            // half its size — anchoring the label's *centre* on the node.
+            // translate3d also opts into a GPU layer (labels move every
+            // ~33ms so we want them on the compositor, not paint).
+            transform: `translate(-50%, -50%) translate3d(${l.x}px, ${l.y}px, 0)`,
             transformOrigin: "0 0",
             display: l.visible ? "block" : "none",
             // U2b — View Transitions name. The browser matches the
@@ -302,11 +305,8 @@ function LeafLabelLayerImpl({ nodes, fgRef, morphingNode }: Props) {
             fontWeight: 500,
             letterSpacing: "0.02em",
             whiteSpace: "nowrap",
-            // Lift slightly off the node centre and centre horizontally.
-            // Implemented via marginLeft/marginTop so transform stays
-            // pure-translate (cheaper for the compositor).
-            marginLeft: "-50%",
-            marginTop: "-24px",
+            // U3 — centring is handled in the `transform` above
+            // (`translate(-50%, -50%)`), so no margin offset here.
             textShadow: "0 1px 2px rgba(0, 0, 0, 0.6)",
             userSelect: "none",
           }}

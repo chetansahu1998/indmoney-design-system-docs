@@ -84,10 +84,12 @@ test.describe("Phase 9 U2a — leaf-label DOM overlay", () => {
     const transform = await first.evaluate(
       (el) => (el as HTMLElement).style.transform,
     );
-    // Match `translate3d(<number>px, <number>px, 0)` — note: react inlines
-    // styles via the .style property exactly as authored.
+    // U3 — labels are centred on the node via `translate(-50%, -50%)`
+    // followed by `translate3d(<x>px, <y>px, 0)`. CSS transforms apply
+    // right-to-left so translate3d positions the box first, then the
+    // -50% shift centres the box's own centre on the projected coord.
     expect(transform).toMatch(
-      /^translate3d\(-?\d+(?:\.\d+)?px, -?\d+(?:\.\d+)?px, 0\)$/,
+      /^translate\(-50%, -50%\) translate3d\(-?\d+(?:\.\d+)?px, -?\d+(?:\.\d+)?px, 0\)$/,
     );
 
     // The id attribute is preserved so view-transition-name matching (U2b)
@@ -124,10 +126,22 @@ test.describe("Phase 9 U2a — leaf-label DOM overlay", () => {
       return els
         .filter((el) => (el as HTMLElement).style.display === "block")
         .map((el) => {
+          // U3 — transform shape is now
+          // `translate(-50%, -50%) translate3d(<x>px, <y>px, 0)`.
           const m = (el as HTMLElement).style.transform.match(
             /translate3d\((-?\d+(?:\.\d+)?)px, (-?\d+(?:\.\d+)?)px,/,
           );
-          return m ? { x: parseFloat(m[1]), y: parseFloat(m[2]) } : null;
+          if (!m) return null;
+          const rect = el.getBoundingClientRect();
+          return {
+            x: parseFloat(m[1]),
+            y: parseFloat(m[2]),
+            // Bounding-rect centre — must equal the projected coord
+            // (the layer's own client rect is at the viewport origin
+            // since it has `inset: 0`).
+            cx: rect.left + rect.width / 2,
+            cy: rect.top + rect.height / 2,
+          };
         })
         .filter(Boolean);
     });
@@ -142,6 +156,13 @@ test.describe("Phase 9 U2a — leaf-label DOM overlay", () => {
         expect(pt!.x).toBeLessThan(vp.width + 50);
         expect(pt!.y).toBeGreaterThan(-50);
         expect(pt!.y).toBeLessThan(vp.height + 50);
+
+        // U3 — the label's bounding-rect centre must match the
+        // projected node coordinate within ±2 px. With the
+        // `translate(-50%, -50%)` anchor, the box's centre lands on
+        // (x, y) regardless of label width.
+        expect(Math.abs(pt!.cx - pt!.x)).toBeLessThanOrEqual(2);
+        expect(Math.abs(pt!.cy - pt!.y)).toBeLessThanOrEqual(2);
       }
     }
   });
