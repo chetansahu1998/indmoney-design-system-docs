@@ -682,6 +682,7 @@ export default function ProjectShell({
               }
               onViewInJSON={() => changeTab("json")}
               auditProgress={auditProgress}
+              personas={personas}
             />
           )}
           {activeTab === "decisions" && (
