@@ -1,5 +1,6 @@
 /**
  * Phase 7.6 + 7.7 — real shader-based edge pulse on click-and-hold.
+ * U9 — z-distance depth-fade (holographic feel; distant edges dim).
  *
  * Phase 6 v1 shipped a "dim non-incident edges" approximation. Phase 7.6
  * replaced it with a sine-wave alpha modulation on incident edges via a
@@ -7,6 +8,24 @@
  * 7.7 polish: one ShaderMaterial PER edge class so incident edges keep
  * their semantic colour while pulsing (supersedes pulses orange,
  * binds-to pulses purple, etc.) instead of a fixed neutral.
+ *
+ * U9 — depth-of-field analog. Edges fade with eye-space z-distance. The
+ * vertex shader writes `vViewZ = -mvPosition.z` (positive in front of
+ * camera). The fragment shader multiplies alpha by
+ * `1.0 - smoothstep(uNear, uFar, vViewZ)` so close edges stay full
+ * brightness and distant edges fall off smoothly. The fade is structural
+ * (camera-relative, not animated) — not gated on reduced-motion.
+ *
+ * Defaults:
+ *   uNear = 50  — edges within 50 units of the camera are not faded.
+ *   uFar  = 300 — edges past 300 units are fully transparent.
+ * Tuned for the current force-graph node spread; revisit if the layout
+ * scale changes materially.
+ *
+ * Note on injection style: the existing shader is a hand-written
+ * ShaderMaterial (not a stdlib material with `onBeforeCompile`), so the
+ * U9 plan's "extend onBeforeCompile injection" reduces in this file to
+ * direct edits of the VERTEX/FRAGMENT strings. Same effect.
  *
  * Architecture:
  *   - One ShaderMaterial instance per edge class — `pulseMaterials` map
@@ -22,7 +41,7 @@
  *     refresh.
  *
  * Performance: 4 shaders × 1 uniform write per frame = 4 GPU sync calls.
- * Negligible (sub-microsecond on modern hardware).
+ * Depth-fade adds 1 smoothstep + 1 multiply per fragment; negligible.
  */
 
 import * as THREE from "three";
@@ -30,9 +49,18 @@ import * as THREE from "three";
 import { EDGE_STYLE } from "./forceConfig";
 import type { GraphEdgeClass } from "./types";
 
+// U9 — depth-fade defaults. Exported so BrainGraph (or future tuning UI)
+// can override per-instance if needed; current call site uses defaults.
+export const DEPTH_FADE_NEAR_DEFAULT = 50;
+export const DEPTH_FADE_FAR_DEFAULT = 300;
+
 const VERTEX = `
+  // U9 — eye-space depth varying for fragment-side fade.
+  varying float vViewZ;
   void main() {
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vViewZ = -mvPosition.z;
+    gl_Position = projectionMatrix * mvPosition;
   }
 `;
 
@@ -40,19 +68,33 @@ const FRAGMENT = `
   uniform float uTime;
   uniform vec3 uColor;
   uniform float uBaseAlpha;
+  // U9 — depth-fade range (eye-space units).
+  uniform float uNear;
+  uniform float uFar;
+  varying float vViewZ;
   void main() {
     // Sine wave at 1Hz: alpha pulses uBaseAlpha → 1.0 → uBaseAlpha over 1s.
     float pulse = uBaseAlpha + 0.4 * sin(uTime * 6.2831853);
-    gl_FragColor = vec4(uColor, pulse);
+    // U9 — multiply alpha by depth-fade. close (vViewZ < uNear) → 1.0;
+    // distant (vViewZ > uFar) → 0.0; smoothstep gives a soft falloff.
+    float depthFade = 1.0 - smoothstep(uNear, uFar, vViewZ);
+    gl_FragColor = vec4(uColor, pulse * depthFade);
   }
 `;
 
-function makePulseMaterial(colorHex: string, baseAlpha: number): THREE.ShaderMaterial {
+function makePulseMaterial(
+  colorHex: string,
+  baseAlpha: number,
+  near = DEPTH_FADE_NEAR_DEFAULT,
+  far = DEPTH_FADE_FAR_DEFAULT,
+): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 },
       uColor: { value: new THREE.Color(colorHex) },
       uBaseAlpha: { value: baseAlpha },
+      uNear: { value: near },
+      uFar: { value: far },
     },
     vertexShader: VERTEX,
     fragmentShader: FRAGMENT,

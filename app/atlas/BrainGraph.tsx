@@ -394,6 +394,14 @@ export default function BrainGraph({
   }, []);
 
   // Edge color resolver — class → preset.
+  // U9 — Depth-fade is applied per-fragment by the shared `pulseMaterials`
+  // (see edgePulseShader.ts: uNear/uFar uniforms baked at construction
+  // with DEPTH_FADE_NEAR_DEFAULT / DEPTH_FADE_FAR_DEFAULT). No per-edge
+  // plumbing needed: every incident edge that picks up
+  // `pulseMaterials[class]` from `linkMaterial` below inherits the fade
+  // through the shared uniform values. Library-default LineBasic edges
+  // (non-held state) do not depth-fade — the holographic feel is most
+  // visible during the held / pulse interaction where shader edges bind.
   const linkColor = (link: unknown): string => {
     const l = link as FGEdge;
     return EDGE_STYLE[l.class]?.color ?? "#3D4F7A";
