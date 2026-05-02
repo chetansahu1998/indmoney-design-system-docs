@@ -77,12 +77,20 @@ function getSharedNodeMaterial(type: GraphNodeKind): THREE.MeshBasicMaterial {
   let m = SHARED_NODE_MATERIAL.get(type);
   if (!m) {
     const v = NODE_VISUAL[type] ?? NODE_VISUAL.flow;
+    // U8 — Per-type emissive hierarchy. Multiply the base colour by
+    // `emissiveIntensity` so the resulting RGB can exceed 1.0 (HDR signal).
+    // The bloom pass uses a luminance threshold ≈ 1.0, so only types whose
+    // intensity lifts the colour above 1.0 produce visible glow. `toneMapped:
+    // false` is mandatory — without it the renderer's ACES filmic tonemap
+    // would clamp the HDR signal back below the threshold before the bloom
+    // pass samples it, defeating the per-type hierarchy entirely.
     const colour = new THREE.Color(v.color);
     colour.multiplyScalar(v.emissiveIntensity);
     m = new THREE.MeshBasicMaterial({
       color: colour,
       transparent: true,
       opacity: 1.0,
+      toneMapped: false,
     });
     SHARED_NODE_MATERIAL.set(type, m);
   }
@@ -189,24 +197,54 @@ export default function BrainGraph({
   };
   const fgRef = useRef<FGRef | null>(null);
 
-  // ─── U6 — bloom + organic drift ────────────────────────────────────────
+  // ─── U6 + U8 — threshold-driven bloom + organic drift ──────────────────
   // Bloom is added once on mount via the library's postProcessingComposer
   // accessor. Reduced-motion users still get bloom (it's static); we only
   // gate the per-frame drift loop.
+  //
+  // U8 — The threshold is set to 1.0 so only materials whose
+  // `color × emissiveIntensity` exceeds 1.0 in any channel contribute to the
+  // bloom. Combined with `toneMapped: false` on the shared node materials,
+  // this produces a per-type visual hierarchy: products (intensity 3.5)
+  // glow brightest, folders (1.8) and flows (1.2) glow softer, and
+  // components / tokens / decisions (≤ 1.0) sit below the threshold and
+  // remain crisp / dim — letting the filter-driven opacity gate do the
+  // structural visual weighting.
+  //
+  // Implementation note: react-force-graph-3d owns its own three.js
+  // EffectComposer and exposes `postProcessingComposer()` for `addPass`.
+  // The `<EffectComposer>` JSX wrap from `@react-three/postprocessing`
+  // cannot be mounted into that owned composer (it would create a second
+  // composer with an incompatible Pass base class — three.js's
+  // `EffectComposer.Pass.render(renderer, writeBuffer, readBuffer, ...)`
+  // and postprocessing-lib's `Pass.render(renderer, inputBuffer,
+  // outputBuffer, ...)` swap their two buffer arguments). We therefore
+  // keep three.js's `UnrealBloomPass` and map the plan's parameters to
+  // its (resolution, strength, radius, threshold) signature:
+  //   - luminanceThreshold 1.0       → threshold 1.0
+  //   - intensity 1.2                → strength  1.2
+  //   - mipmapBlur + KernelSize.LARGE → radius   0.85 (UnrealBloomPass
+  //     already does a 5-mip downsample / upsample chain; `radius` is the
+  //     equivalent dial for kernel breadth).
   useEffect(() => {
     if (!fgRef.current) return;
     const composer = fgRef.current.postProcessingComposer();
-    // Avoid double-adding on hot reload.
-    if (
-      composer.passes.some((p) => (p as { constructor?: { name?: string } }).constructor?.name === "UnrealBloomPass")
-    ) {
+    // Avoid double-adding on hot reload. Also reuse / retune an existing
+    // pass if one was added by an earlier mount under the old parameters.
+    const existing = composer.passes.find(
+      (p) => (p as { constructor?: { name?: string } }).constructor?.name === "UnrealBloomPass",
+    ) as UnrealBloomPass | undefined;
+    if (existing) {
+      existing.threshold = 1.0;
+      existing.strength = 1.2;
+      existing.radius = 0.85;
       return;
     }
     const bloom = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      /* strength */ 0.6,
-      /* radius   */ 0.7,
-      /* threshold*/ 0.4,
+      /* strength */ 1.2,
+      /* radius   */ 0.85,
+      /* threshold*/ 1.0,
     );
     composer.addPass(bloom);
   }, [aggregate.status]); // re-runs once when graph first becomes ready
