@@ -406,6 +406,43 @@ export default function ProjectShell({
     window.location.hash = buildHash(tab, activePersonaName);
   }
 
+  // Phase 6 U7 — Violations → Decisions cross-link. ViolationsTab calls
+  // this when the user clicks "View decision" on a row whose decision_link
+  // points at a known decision. We reuse the existing Phase 5.1
+  // `?decision=<id>` deep-link pattern so DecisionsTab's outline-pulse
+  // effect highlights the target without a second mechanism.
+  function viewDecisionFromViolation(decisionID: string): void {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("decision", decisionID);
+    // Strip any prior violation highlight so the inverse cross-link
+    // (Decisions → Violations) doesn't fire on this navigation.
+    params.delete("violation");
+    router.replace(`/projects/${slug}?${params.toString()}`);
+    if (activeTab !== "decisions") {
+      changeTab("decisions");
+    }
+  }
+
+  // Phase 6 U7 — Decisions → Violations cross-link. DecisionCard calls
+  // this when the user clicks "View" on a linked-violation row. We
+  // surface a `?violation=<id>` query param + flip to the Violations
+  // tab; ViolationsTab reads the URL param via highlightedViolationID
+  // and runs the same outline-pulse pattern that the Decisions side
+  // ships.
+  function viewViolationFromDecision(violationID: string, _screenID: string): void {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("violation", violationID);
+    params.delete("decision");
+    router.replace(`/projects/${slug}?${params.toString()}`);
+    if (activeTab !== "violations") {
+      changeTab("violations");
+    }
+  }
+
+  // Read the active violation-highlight target from the URL so reload
+  // + back-navigation re-trigger the pulse.
+  const highlightedViolationID = searchParams.get("violation");
+
   function changeVersion(id: string): void {
     setActiveVersionID(id);
     // Reflect in the search param so reload keeps the version pinned.
@@ -683,6 +720,8 @@ export default function ProjectShell({
               onViewInJSON={() => changeTab("json")}
               auditProgress={auditProgress}
               personas={personas}
+              onViewDecision={viewDecisionFromViolation}
+              highlightedViolationID={highlightedViolationID}
             />
           )}
           {activeTab === "decisions" && (
@@ -690,6 +729,7 @@ export default function ProjectShell({
               slug={slug}
               flowID={screens[0]?.FlowID ?? null}
               readOnly={isReadOnly(machineState)}
+              onViewViolation={viewViolationFromDecision}
             />
           )}
           {activeTab === "json" && (

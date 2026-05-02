@@ -640,6 +640,9 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleDecisionList)))
 	mux.HandleFunc("GET /v1/decisions/{id}",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleDecisionGet)))
+	// Phase 6 U7 — Linked violations subsection on DecisionCard.
+	mux.HandleFunc("GET /v1/decisions/{id}/violations",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleDecisionViolations)))
 	mux.HandleFunc("GET /v1/atlas/admin/decisions/recent",
 		s.requireSuperAdmin(s.projectsServer.HandleRecentDecisions))
 

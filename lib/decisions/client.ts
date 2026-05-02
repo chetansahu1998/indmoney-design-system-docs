@@ -9,6 +9,7 @@
  */
 
 import { getToken } from "../auth-client";
+import type { Violation } from "../projects/types";
 
 export type DecisionStatus = "proposed" | "accepted" | "superseded";
 
@@ -138,6 +139,45 @@ export async function fetchDecision(id: string): Promise<ApiResult<Decision>> {
     const data = (await res.json()) as Decision;
     return { ok: true, data };
   } catch (err) {
+    return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * GET /v1/decisions/:id/violations — Phase 6 U7. Lists every violation
+ * linked to a decision via decision_links (link_type='violation'),
+ * tenant-scoped. Backs the "Linked violations" subsection on DecisionCard.
+ *
+ * Returns the same Violation row shape as listViolations() so the
+ * caller can reuse rendering helpers if it wants. Empty result is
+ * `{violations: [], count: 0}` — the card falls back to the empty state.
+ *
+ * The optional `signal` lets callers cancel an in-flight request when
+ * the card unmounts (or the user changes tab) so React doesn't warn
+ * about setState on an unmounted component.
+ */
+export async function listLinkedViolations(
+  decisionID: string,
+  signal?: AbortSignal,
+): Promise<ApiResult<{ violations: Violation[]; count: number }>> {
+  try {
+    const res = await fetch(
+      `${dsBaseURL()}/v1/decisions/${encodeURIComponent(decisionID)}/violations`,
+      { headers: authedHeaders(), signal },
+    );
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: await safeJSONErr(res) };
+    }
+    const data = (await res.json()) as { violations: Violation[]; count: number };
+    return { ok: true, data };
+  } catch (err) {
+    // Aborted fetches surface as DOMException with name="AbortError" —
+    // we surface that as a non-error sentinel so callers know to skip
+    // setState. The status=0 + error="aborted" pair is unique to this
+    // path and lets the caller distinguish from a real network error.
+    if (err instanceof Error && err.name === "AbortError") {
+      return { ok: false, status: 0, error: "aborted" };
+    }
     return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
   }
 }

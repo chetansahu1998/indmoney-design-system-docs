@@ -30,6 +30,11 @@ interface Props {
   slug: string;
   flowID: string | null;
   readOnly?: boolean;
+  /** Phase 6 U7 — when the user clicks a row inside a card's "Linked
+   *  violations" subsection, this callback runs. ProjectShell wires it
+   *  to a tab-switch + violation-row scroll-into-view. Optional so
+   *  callers that don't host the Violations tab still render. */
+  onViewViolation?: (violationID: string, screenID: string) => void;
 }
 
 type ViewState =
@@ -38,7 +43,7 @@ type ViewState =
   | { kind: "ok"; decisions: Decision[] }
   | { kind: "error"; status: number; error: string };
 
-export default function DecisionsTab({ slug, flowID, readOnly }: Props) {
+export default function DecisionsTab({ slug, flowID, readOnly, onViewViolation }: Props) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
   const [includeSuperseded, setIncludeSuperseded] = useState(false);
   const [composing, setComposing] = useState(false);
@@ -263,7 +268,11 @@ export default function DecisionsTab({ slug, flowID, readOnly }: Props) {
                     transition: "outline-color 200ms ease, outline-width 200ms ease",
                   }}
                 >
-                  <DecisionCard decision={d} compact={i > 0} />
+                  <DecisionCard
+                    decision={d}
+                    compact={i > 0}
+                    onViewViolation={onViewViolation}
+                  />
                 </div>
               ))}
             </SupersessionChain>
