@@ -30,7 +30,7 @@ import { SearchInput } from "./SearchInput";
 import { SignalAnimationLayer } from "./SignalAnimationLayer";
 import { advancePulseTime, dimMaterial, pulseMaterials } from "./edgePulseShader";
 import {
-  BACKGROUND_COLOR,
+  backgroundColor,
   EDGE_STYLE,
   FORCE_CONFIG,
   NODE_VISUAL,
@@ -246,7 +246,7 @@ export default function BrainGraph({
   // keep three.js's `UnrealBloomPass` and map the plan's parameters to
   // its (resolution, strength, radius, threshold) signature:
   //   - luminanceThreshold 1.0       → threshold 1.0
-  //   - intensity 1.2                → strength  1.2
+  //   - intensity 0.7 (U4 retune)    → strength  0.7
   //   - mipmapBlur + KernelSize.LARGE → radius   0.85 (UnrealBloomPass
   //     already does a 5-mip downsample / upsample chain; `radius` is the
   //     equivalent dial for kernel breadth).
@@ -260,17 +260,17 @@ export default function BrainGraph({
     ) as UnrealBloomPass | undefined;
     if (existing) {
       existing.threshold = 1.0;
-      existing.strength = 1.2;
+      existing.strength = 0.7;
       existing.radius = 0.85;
       bloomPassRef.current = existing;
       return;
     }
     // U14a — start the build-up at strength=0 instead of the steady-state
-    // 1.2 so the arrival timeline (separate effect below) has somewhere to
-    // ramp from. Reduced-motion / build-up-already-played mounts re-set
-    // strength to 1.2 immediately (see the build-up effect below), so this
-    // zero-init is invisible to those paths.
-    const initialStrength = bloomBuildUpPlayedRef.current ? 1.2 : 0;
+    // 0.7 (U4 retune) so the arrival timeline (separate effect below) has
+    // somewhere to ramp from. Reduced-motion / build-up-already-played
+    // mounts re-set strength to 0.7 immediately (see the build-up effect
+    // below), so this zero-init is invisible to those paths.
+    const initialStrength = bloomBuildUpPlayedRef.current ? 0.7 : 0;
     const bloom = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
       /* strength */ initialStrength,
@@ -326,7 +326,7 @@ export default function BrainGraph({
         ATLAS_BLOOM_FINAL_INTENSITY > 0
           ? next.bloomIntensity / ATLAS_BLOOM_FINAL_INTENSITY
           : 1;
-      pass.strength = 1.2 * t;
+      pass.strength = 0.7 * t;
     });
     bloomBuildUpPlayedRef.current = true;
     tl.play();
@@ -337,6 +337,36 @@ export default function BrainGraph({
     // becomes ready and the bloom-add effect has populated bloomPassRef.
     // The played-guard prevents double-play if the effect re-runs.
   }, [aggregate.status]);
+
+  // ─── U4 — theme-toggle reactivity for the scene background ────────────
+  // The library's `backgroundColor` prop is read at mount and not re-read
+  // on subsequent renders (it sets `scene.background` once). To stay in
+  // sync with the design-system theme toggle we observe
+  // `document.documentElement[data-theme]` and rewrite `scene.background`
+  // directly when it changes. `THREE.Color` is a plain value type — no
+  // GPU resource to dispose; the renderer reads `scene.background` each
+  // frame so the swap picks up automatically.
+  //
+  // StrictMode safety: the cleanup disconnects the observer on unmount /
+  // re-mount, so the double-mount in dev does not leak observers.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const apply = () => {
+      const scene = fgRef.current?.scene();
+      if (!scene) return;
+      scene.background = new THREE.Color(backgroundColor());
+    };
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === "attributes" && m.attributeName === "data-theme") {
+          apply();
+          break;
+        }
+      }
+    });
+    observer.observe(document.documentElement, { attributes: true });
+    return () => observer.disconnect();
+  }, []);
 
   // Apply force config to d3-force-3d on mount + when platform changes.
   useEffect(() => {
@@ -736,7 +766,7 @@ export default function BrainGraph({
             <FG
               ref={fgRef}
               graphData={{ nodes: visible.nodes, links: visible.edges }}
-              backgroundColor={BACKGROUND_COLOR}
+              backgroundColor={backgroundColor()}
           // Disable built-in particles & directional arrows — we render
           // ours via SignalAnimationLayer for the hold interaction.
           linkDirectionalParticles={0}
