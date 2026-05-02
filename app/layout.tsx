@@ -1,5 +1,11 @@
 import type { Metadata } from "next";
 import "./globals.css";
+// Phase 9 U2b — View Transitions keyframes for the /atlas → /projects
+// flow-leaf morph. Imported globally because the pseudo-elements
+// (::view-transition-old/new) attach to the document root and must be in
+// scope on both the source (/atlas) and destination (/projects/[slug])
+// pages for the cross-route morph to animate. Pure CSS — no JS cost.
+import "./atlas/view-transitions.css";
 import ToastHost from "@/components/ui/Toast";
 import RootClient from "@/components/RootClient";
 
