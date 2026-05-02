@@ -642,6 +642,106 @@ The visual hierarchy work (selective bloom + edge depth-fade) and motion grammar
 - **Rollback boundary:** revert package.json + the modified animation files. Returns to current motion baseline.
 - **Gate: U10 should land before U11 (verification harness should test the final motion experience, not the in-flight one).**
 
+### Phase B+ — Critical wiring gaps surfaced 2026-05-02 19:30 (added post-execution-start)
+
+These two units were added after U2a + U6 shipped, when running the project view at `/projects/indian-stocks-research` revealed the canvas + tabs render blank because the API response is incomplete. They are NEW critical-path items that block any meaningful demo of the project view.
+
+- U12. **Bundle versions/screens/screen_modes/personas in HandleProjectGet response**
+
+**Goal:** Fix the silent wiring gap that makes the project view's atlas canvas + tabs render with zero data even though the DB has 238 screens across 3 flows for our test project. `services/ds-service/internal/projects/server.go:447` currently returns only `{project: p}`. The client-side type at `lib/projects/types.ts:215-226` declares `versions?`, `screens?`, `screen_modes?`, `available_personas?` as optional, with comment lines 217-219 explicitly stating: *"The plan's later units (U7/U8) extend the GET response with these arrays; we declare them as optional today so client.ts can read them without a version bump on the server side."* The server-side extension was deferred and never landed. `ProjectShellLoader.tsx:84-87` reads each field with `?? []` fallback, so the page silently renders empty — no error, no hint, just blank.
+
+**Requirements:** Renders R12 functional (project view requires screens to render anything).
+
+**Dependencies:** None (independent of U2b/U7; touches Go server code, not the morph chain).
+
+**Files:**
+- Modify: `services/ds-service/internal/projects/server.go:432-470` — `HandleProjectGet` extends to fetch + return versions, screens, screen_modes, personas alongside the project.
+- Possibly modify: `services/ds-service/internal/projects/repository.go` — add `ListVersionsByProject(ctx, projectID)`, `ListScreensByVersion(ctx, versionID)`, `ListScreenModesByVersion(ctx, versionID)`, `ListPersonasForTenant(ctx, tenantID)` if not already present (verify; many of these may exist piecemeal under different names).
+- Verify (read-only): `components/projects/ProjectShell.tsx:319` and `:475` already do their own `?? []` fallbacks on `versions` — those second fetches may be redundant once the bundled response lands; document but don't refactor in this unit.
+- Test: `services/ds-service/internal/projects/server_test.go` — extend `TestHandleProjectGet` (or add) to assert response includes versions, screens, screen_modes, available_personas as non-empty arrays when data exists.
+
+**Approach:**
+- Active version resolution: from `?v=<id>` query param, or latest version_index for the project (mirrors the pattern in HandleListViolations).
+- Cross-tenant scope check stays — repo already gates by tenant.
+- No SSE channel changes. No client changes needed (the optional types already accept the bundled shape).
+- One round-trip = whole bundle. If load times suffer at scale (50+ flows × 50+ screens × ~5 modes), revisit with pagination — out of scope today.
+
+**Patterns to follow:**
+- Existing `HandleListViolations` (server.go ~line 472) shows the version-resolution + tenant-scoped fetch pattern in this file.
+- Existing repo methods for list-by-version (verify exact names during impl).
+
+**Test scenarios:**
+- Happy path: GET /v1/projects/indian-stocks-research returns versions[2], screens[238], screen_modes (whatever count), available_personas (whatever count exists for tenant).
+- Edge case: project with zero screens (just-created, pre-pipeline) → arrays present but empty; client renders empty state.
+- Edge case: explicit `?v=<id>` returns screens for that specific version.
+- Edge case: cross-tenant slug → 404 (existing behavior; verify).
+- Error path: DB query failure on screens fetch → 500 with diagnostic; project fetch already returned successfully so partial-failure handling matters (decide: 500 the whole thing, or return project + log the screens error).
+
+**Verification:**
+- Manual: `curl -sS http://localhost:8080/v1/projects/indian-stocks-research -H "Authorization: Bearer $TOK" | python3 -m json.tool` — assert top-level keys include `project`, `versions`, `screens`, `screen_modes`, `available_personas`.
+- UI: open `/projects/indian-stocks-research` — atlas canvas renders 19+ Research Product frames at preserved Figma (x,y); JSON tab shows screen tree; Violations tab shows the audit-pipeline result.
+- **Rollback boundary:** server.go HandleProjectGet revert (one function). Client-side optional types absorb the shape change either way.
+- **Gate: do not start U13 transition audit until U12 lands** — without screens to render, transitions have nothing to fade in/out, and the audit conclusions will be wrong.
+
+---
+
+- U13. **Per-page transition + entry/exit audit (the "senseless transitions" surface)**
+
+**Goal:** Comprehensive audit + reconciliation of every page transition against the brainstorm's R27 expectation ("shared three.js + r3f render pipeline ... transitions between mind graph and project view are shared-element morphs at ~600ms"). The user's verbatim feedback (2026-05-02): *"once i click on the node the transitions is senseless you need to research each pages entry and exit at different page states etc."* This is broader than U2b/U3 (which only address the leaf morph + Esc reverse).
+
+**Requirements:** R27 (transition fidelity); cross-cutting.
+
+**Dependencies:** U2b + U3 + U4 + U12 (all need to land first; transitions can't be audited on broken page rendering).
+
+**Files (audit, then targeted edits):**
+- Read + assess: `lib/animations/timelines/atlasBloomBuildUp.ts` (atlas page initial paint).
+- Read + assess: `lib/animations/timelines/projectShellOpen.ts` (project view mount: toolbar + atlas canvas + tab strip + tab content).
+- Read + assess: `lib/animations/timelines/tabSwitch.ts` (intra-project tab switching).
+- Read + assess: `lib/animations/timelines/themeToggle.ts` (light↔dark).
+- Read + assess: `app/atlas/view-transitions.css` (created in U2b — duration/easing for cross-route morph).
+- Read + assess: `/components` page mount — verify ComponentCanvas's mount animation is consistent with the unified curve language from U10.
+- Read + assess: `/inbox` mount + filter changes — confirm transitions are present and consistent.
+- Modify: each timeline file as needed to align with the unified easing family from U10 (recommend `EASE_DOLLY = "expo.inOut"` for camera-ish moves, `EASE_PAGE_OPEN = "expo.out"` for entrance-only).
+- Documentation: `docs/runbooks/transitions.md` (new) — single page documenting every page entry, exit, and intra-page transition with the chosen curve + duration. Operator + future contributor reference.
+
+**Approach:**
+- For each page state transition (entry, exit, tab switch, filter change), capture: current curve + duration, brainstorm-implied curve + duration, gap, fix.
+- The "senseless transitions" complaint suggests transitions that fire at the wrong time (after route mount instead of during) or with mismatched durations (250ms entrance + 600ms exit feels broken). Audit for these specific issues.
+- Reduced-motion: every transition must collapse to a 0ms instant via `useReducedMotion()` from `lib/animations/context.ts` (canonical) OR via `@media (prefers-reduced-motion: reduce)` in CSS for the View Transitions side.
+- Sample transitions to instrument with `performance.measure` so the audit can produce concrete numbers, not vibes.
+
+**Patterns to follow:**
+- The existing timeline files all follow the same shape (export `function timelineName(scope): Timeline { ... }`); audit findings should propose changes that preserve the shape.
+- Single-curve consolidation per U10's motion-grammar plan.
+
+**Test scenarios:**
+- Each page mount: assert visible content within 800ms of route change.
+- Tab switch within /projects/[slug]: assert no flash-of-empty-content during the 150ms out + 180ms in.
+- /atlas → /projects/[slug] (forward morph): assert title bar text matches source leaf within 700ms (already in U2b's spec; verify it's still passing).
+- /projects/[slug] → /atlas (Esc reverse): assert source flow leaf re-focused within 700ms (already in U3's spec).
+- Reduced-motion: each transition lands instantly (0ms duration on the animation property; final state visible on first paint).
+
+**Verification:**
+- Document the audit findings in `docs/runbooks/transitions.md` (the audit IS the deliverable; targeted edits are follow-ups).
+- Manual demo of each page transition with screen recording at 60fps.
+- **Rollback boundary:** each timeline edit is independent; revert any one without affecting the others.
+
+---
+
+### Wiring Gaps Audit (2026-05-02 19:35) — items found while debugging the canvas-blank bug
+
+These are gaps similar in shape to U12's HandleProjectGet defect — code that says "U7/U8 will extend this" or "TODO(U*-prod-wire)" but the follow-up never landed. Surfaced now so they can be tracked rather than continuing to silently break things downstream.
+
+**In scope for this plan (folded into U13 follow-ups or separate units):**
+- `lib/projects/types.ts:217-219` — comment about U7/U8 extending GET response — addressed by U12.
+- `components/projects/ProjectShell.tsx:319, 475` — second `r.data.versions ?? []` reads suggest two different fetch paths populate version state. May become redundant after U12; document during U12 impl.
+
+**Out of scope for this plan — flag for a separate backend audit-rules plan:**
+- 8 `TODO(U*-prod-wire)` markers in `services/ds-service/internal/projects/rules/` — `theme_parity.go:65`, `a11y_contrast.go:80`, `cross_persona.go:325`, `prototype.go:38`, `loaders.go:2`, `component_governance.go:47`, `a11y_touch_target.go:83`, `flow_graph.go:40`. Production wiring of audit-rule loaders deferred; affects WHICH violations the audit pipeline detects. Backend-only; doesn't block atlas integration seams. **Recommend separate `/ce-plan` for "audit-rules production wiring closure."**
+- `services/ds-service/internal/figma/dtcg/adapter.go:585` — "follow-up /v1/files/<key>/nodes calls (deferred to v1.1)" — token-extraction depth limit. Not in plan scope.
+
+---
+
 ### Phase E — Verification
 
 - U11. **Playwright spec covering AE-1 through AE-8**
@@ -751,7 +851,7 @@ The visual hierarchy work (selective bloom + edge depth-fade) and motion grammar
 
 ## Phased Delivery
 
-**Re-estimated post-review.** The original 7-9d estimate was wrong: U2's DOM-overlay layer is its own sub-project (now U2a + U2b + U2c), U6/U7 are net-new wiring not "verify" (Reactivate UX, persona×theme chips, linked-violations subsection, cross-link), and U10's spring rollout touches three call sites. Honest estimate: **11-14 person-days** with the parallelism shown below. Critical path is U1 → U2a → U2b → U3, ~5-6 days serial.
+**Re-estimated post-review.** The original 7-9d estimate was wrong: U2's DOM-overlay layer is its own sub-project (now U2a + U2b + U2c), U6/U7 are net-new wiring not "verify" (Reactivate UX, persona×theme chips, linked-violations subsection, cross-link), U10's spring rollout touches three call sites, and **post-execution-start the canvas-blank bug surfaced U12 (HandleProjectGet wiring gap) and U13 (per-page transition audit)** — 2 more days. Honest estimate: **13-16 person-days** with the parallelism shown below. Critical path is U1 → U2a → U2b → U3 → U12 → U13, ~7-8 days serial.
 
 ### Phase A — Cross-route morph foundation (must land first; ~5-6 days serial critical path)
 
