@@ -483,6 +483,65 @@ backstop must lift to keep the source-leaf snapshot alive long enough.
 Total deferred: ~8.5h of motion polish, captured here so they don't
 silently rot.
 
+## Click-glitch findings 2026-05-02 (Plan 005 U1)
+
+User report (2026-05-02 ~23:30 IST): *"hover and click interaction of the atlas is broken when clicking on them it glitches into something loading zooming into the mind graph."*
+
+### Root cause (static analysis; verified against `app/atlas/BrainGraph.tsx:554-600` + `app/atlas/LeafMorphHandoff.tsx`)
+
+The flow-leaf click path itself is correctly orchestrated:
+
+| Step | Code | Effect |
+|---|---|---|
+| 1 | `handleNodeClick` at BrainGraph:554 | `if (node.type === "flow") { view.morphTo(node); return; }` — early exit, no spring |
+| 2 | `view.morphTo(node)` updates `morphingNode` state in `useGraphView` | LeafMorphHandoff observes the change and mounts |
+| 3 | LeafMorphHandoff `useEffect` fires | reads `node.signal.open_url` |
+| 4 | **`router.replace('/atlas?from=<slug>')`** | ⚠️ **glitch source — see below** |
+| 5 | `router.push(url)` | navigates to `/projects/<slug>` |
+
+Step 4 is the bug. `router.replace` in Next.js App Router is a **routing primitive** — even when the target path matches the current path, it re-invokes the route's render. `app/atlas/page.tsx` wraps `BrainGraph` in `<Suspense fallback={<BrainGraphSkeleton />}>`. Suspense fallbacks run during the brief re-fetch window. User sees:
+
+```
+click → BrainGraphSkeleton (~50-200ms) → /projects/<slug>
+```
+
+The skeleton's "Loading mind graph…" text + radial-glow background is exactly the "glitches into something loading + zooming back into the mind graph" the user described. The "zoom" feel comes from the canvas un-mounting + the skeleton's centered glow appearing where the brain was.
+
+The followup #72 commit (`7994956`) added `router.replace` to wire the forward direction of U3's `?from=` reverse-morph contract. The wire is correct; the **primitive is too heavy**. `window.history.replaceState` mutates the URL identically without triggering Next.js routing.
+
+### Fix
+
+In `app/atlas/LeafMorphHandoff.tsx`, replace:
+
+```ts
+router.replace(`${here.pathname}${here.search}`);
+```
+
+with:
+
+```ts
+window.history.replaceState(null, "", `${here.pathname}${here.search}`);
+```
+
+The reverse-morph receiving end at `app/atlas/page.tsx` reads `?from=` via `useSearchParams()` on the **next** /atlas mount (after browser back). `useSearchParams` reads from `window.location.search` on hydration, so a non-routing URL mutation is sufficient.
+
+### What this is NOT
+
+Verified by code reading:
+
+- **NOT a camera-spring race.** `handleNodeClick` returns at line 560 for flow nodes; `cameraSpringApi.start()` only fires for product/folder clicks (line 593). No spring frame between click and route push for flow leaves.
+- **NOT atlasBloomBuildUp re-firing.** The `bloomBuildUpPlayedRef` guard (U14a, BrainGraph:321) prevents replay; even if it didn't, the timeline runs against the bloom pass `strength` uniform — no DOM impact.
+- **NOT a StrictMode double-mount.** LeafMorphHandoff's effect deps are `[node, router]`. Same node reference across StrictMode double-mount fires the effect once.
+- **NOT a LOD pin failure.** U4's `morphingNode` LOD pin keeps the source label HOT through the transition; source-snapshot capture is unaffected by the BrainGraphSkeleton flash.
+
+### Verification gate (post-fix)
+
+Manual: open `localhost:3001/atlas`, click a flow leaf, observe ZERO BrainGraphSkeleton flash. Cross-route morph should be a clean cross-fade with the title bar materializing in place.
+
+DevTools Performance trace (optional): zero `Suspense fallback` mount events between click and `/projects/<slug>` route mount.
+
+---
+
 ## Edits landed in U13
 
 | File                                          | Change                                       |

@@ -65,11 +65,20 @@ export function LeafMorphHandoff({ node, reducedMotion: _reducedMotion }: Props)
     // /atlas history entry BEFORE pushing the project URL. router.back()
     // from the project view returns to /atlas?from=<slug>, which U3's
     // page.tsx + useGraphView.morphFromProject pick up to refocus the
-    // source leaf. router.replace mutates the current entry without
-    // adding a new one to the stack, so the back-stack stays clean:
+    // source leaf.
+    //
+    // **Plan 005 U1 — use window.history.replaceState, NOT router.replace.**
+    // router.replace is a Next.js routing primitive: even when the target
+    // path matches the current path, it re-invokes the /atlas route. That
+    // re-invocation flashes <BrainGraphSkeleton> via the Suspense fallback
+    // in app/atlas/page.tsx — exactly the "glitches into something loading"
+    // the user reported. window.history.replaceState mutates the URL
+    // identically with zero routing impact; the receiving end at
+    // app/atlas/page.tsx reads ?from= via useSearchParams() on the next
+    // /atlas mount (after browser back), which works either way.
     //
     //   before: [ ..., /atlas ]
-    //   after replace + push: [ ..., /atlas?from=<slug>, /projects/<slug> ]
+    //   after replaceState + push: [ ..., /atlas?from=<slug>, /projects/<slug> ]
     //   on Esc/back: [ ..., /atlas?from=<slug> ]  (current)
     const slug = extractSlugFromOpenURL(url);
     if (slug && typeof window !== "undefined") {
@@ -79,7 +88,7 @@ export function LeafMorphHandoff({ node, reducedMotion: _reducedMotion }: Props)
       const here = new URL(window.location.href);
       if (here.pathname === "/atlas") {
         here.searchParams.set("from", slug);
-        router.replace(`${here.pathname}${here.search}`);
+        window.history.replaceState(null, "", `${here.pathname}${here.search}`);
       }
     }
 
