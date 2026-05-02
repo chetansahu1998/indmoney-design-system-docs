@@ -32,49 +32,59 @@ export const FORCE_CONFIG = {
 
 /** Node visual presets per type. Read by BrainGraph's nodeThreeObject
  *  factory (U5). Emissive colors are tuned for the bloom postprocessing
- *  chain (U6) — they look duller without bloom. */
+ *  chain (U6/U8) — they look duller without bloom.
+ *
+ *  Phase 8 U8 — Per-type emissive hierarchy. The bloom pass uses a
+ *  luminance threshold ≈ 1.0; only materials whose `color × emissiveIntensity`
+ *  produces channels above 1.0 contribute meaningful glow. With base colours
+ *  in [0, 1], an `emissiveIntensity > ~1.5` lifts the brightest channel
+ *  above the threshold and produces visible bloom; lower values fall under
+ *  the threshold and remain crisp/dim. The values below were chosen so
+ *  products glow strongest, folders/flows dimmer, and components/tokens/
+ *  decisions only carry minimal HDR signal — letting the filter-driven
+ *  opacity gate do the rest of the visual weighting. */
 export const NODE_VISUAL = {
   product: {
     radius: 8,
     color: "#7B9FFF",
-    emissiveIntensity: 1.4,
+    emissiveIntensity: 3.5,
     /** Always render the label; products are the brain-view anchors. */
     labelMinZoom: 0,
   },
   folder: {
     radius: 5,
     color: "#5C6FA8",
-    emissiveIntensity: 0.7,
+    emissiveIntensity: 1.8,
     labelMinZoom: 0.6,
   },
   flow: {
     radius: 4,
     color: "#3D4F7A",
-    emissiveIntensity: 0.5,
+    emissiveIntensity: 1.2,
     labelMinZoom: 0.9,
   },
   persona: {
     radius: 4,
     color: "#9F8FFF",
-    emissiveIntensity: 0.6,
+    emissiveIntensity: 1.0,
     labelMinZoom: 0.7,
   },
   component: {
     radius: 3,
     color: "#5C6FA8",
-    emissiveIntensity: 0.5,
+    emissiveIntensity: 1.0,
     labelMinZoom: 0.95,
   },
   token: {
     radius: 2.5,
     color: "#FFB347",
-    emissiveIntensity: 0.4,
+    emissiveIntensity: 0.8,
     labelMinZoom: 1.0,
   },
   decision: {
     radius: 4,
     color: "#FFB347",
-    emissiveIntensity: 0.7,
+    emissiveIntensity: 0.8,
     labelMinZoom: 0.85,
   },
 } as const;
