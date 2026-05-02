@@ -49,10 +49,13 @@ function PageNav() {
   const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
   const items = [
     { href: "/",              label: "Foundations" },
+    { href: "/atlas",         label: "Atlas" },
+    { href: "/projects",      label: "Projects" },
     { href: "/components",    label: "Components" },
     { href: "/icons",         label: "Icons" },
     { href: "/illustrations", label: "Illustrations" },
     { href: "/logos",         label: "Logos" },
+    { href: "/inbox",         label: "Inbox" },
     { href: "/files",         label: "Files" },
   ];
   return (

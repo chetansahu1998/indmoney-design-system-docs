@@ -37,11 +37,19 @@
     --bg-page:       #000000;
     --bg-surface:    #191919;
     --bg-surface-2:  #222222;
+    /* Atlas / mind-graph immersive canvas. Slightly elevated above
+     * --bg-page to give the holographic glow somewhere to read against,
+     * still dark for the brain-graph aesthetic per R20 brainstorm.
+     * Theme-aware: light theme below uses a deep ink rather than pure
+     * white so the bloom + glowing nodes remain legible. */
+    --bg-canvas:     #050810;
     --text-1:        #f7f7f7;
     --text-2:        #8f8f8f;
     --text-3:        #707070;
     --accent:        #4d93fc;
+    --accent-soft:   rgba(77, 147, 252, 0.18);
     --border:        #2e2e2e;
+    --border-subtle: #1c1c1c;
     --border-strong: #404040;
     /* Status semantic colors. Used by audit chips, drift highlights, fix
        priority pills. Defined here (not in lib/tokens) because they're
@@ -79,11 +87,17 @@
     --bg-page:       #ffffff;
     --bg-surface:    #f9f9fb;
     --bg-surface-2:  #f2f3f7;
+    /* Atlas stays a deep ink even in light theme so the bloom + glowing
+     * nodes remain legible. Brain-graph aesthetic is intentionally
+     * immersive; users get rest-of-site light theme everywhere else. */
+    --bg-canvas:     #0b1424;
     --text-1:        #1d2539;
     --text-2:        #475067;
     --text-3:        #666d85;
     --accent:        #0f61ff;
+    --accent-soft:   rgba(15, 97, 255, 0.18);
     --border:        #eaecf0;
+    --border-subtle: #f3f4f7;
     --border-strong: #d0d4dd;
     /* Light-theme status colors — slightly higher saturation since the
        white background washes them out otherwise. */

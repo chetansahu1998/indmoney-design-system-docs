@@ -15,10 +15,13 @@ import { brandLabel, currentBrand } from "@/lib/brand";
  *  shared const later. */
 const TOP_ROUTES = [
   { href: "/",              label: "Foundations" },
-  { href: "/icons",         label: "Icons" },
+  { href: "/atlas",         label: "Atlas" },
+  { href: "/projects",      label: "Projects" },
   { href: "/components",    label: "Components" },
+  { href: "/icons",         label: "Icons" },
   { href: "/illustrations", label: "Illustrations" },
   { href: "/logos",         label: "Logos" },
+  { href: "/inbox",         label: "Inbox" },
   { href: "/files",         label: "Files" },
   { href: "/health",        label: "Health" },
 ];

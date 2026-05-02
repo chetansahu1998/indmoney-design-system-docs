@@ -116,12 +116,21 @@ function AtlasInner() {
         />
       </Suspense>
       <style jsx>{`
+        /* Atlas no longer takes over the viewport with position:fixed —
+         * that hid the global Header (and its top-nav back to /, /projects,
+         * etc), making /atlas feel like a separate site. Now we fill the
+         * viewport BELOW the header and respect the brand's theme tokens.
+         * Brain graph stays visually immersive via the dark canvas token,
+         * not a hardcoded color, so the user's theme toggle still applies. */
         .atlas-shell {
           position: fixed;
-          inset: 0;
-          background: #000814;
+          top: var(--header-h);
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: var(--bg-canvas, var(--bg-page));
           overflow: hidden;
-          color: rgba(255, 255, 255, 0.92);
+          color: var(--text-1);
           font-family: var(--font-sans, "Inter Variable", sans-serif);
         }
       `}</style>
@@ -137,15 +146,14 @@ function BrainGraphSkeleton() {
       <style jsx>{`
         .skel {
           position: fixed;
-          inset: 0;
+          top: var(--header-h);
+          left: 0;
+          right: 0;
+          bottom: 0;
           display: grid;
           place-items: center;
-          background: radial-gradient(
-            circle at 50% 50%,
-            #0e1322 0%,
-            #000814 60%
-          );
-          color: rgba(255, 255, 255, 0.55);
+          background: var(--bg-canvas, var(--bg-page));
+          color: var(--text-3);
           font-family: var(--font-sans, "Inter Variable", sans-serif);
           font-size: 13px;
           letter-spacing: 0.02em;
@@ -157,10 +165,13 @@ function BrainGraphSkeleton() {
           border-radius: 50%;
           background: radial-gradient(
             circle,
-            rgba(123, 159, 255, 0.18) 0%,
+            var(--accent-soft, rgba(123, 159, 255, 0.18)) 0%,
             transparent 70%
           );
           animation: pulse 2s ease-in-out infinite;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .skel-glow { animation: none; }
         }
         @keyframes pulse {
           0%,
@@ -222,34 +233,38 @@ function FallbackStyles() {
     <style jsx global>{`
       .fallback {
         position: fixed;
-        inset: 0;
+        top: var(--header-h);
+        left: 0;
+        right: 0;
+        bottom: 0;
         display: grid;
         place-items: center;
-        background: #000814;
-        color: rgba(255, 255, 255, 0.92);
+        background: var(--bg-canvas, var(--bg-page));
+        color: var(--text-1);
         font-family: var(--font-sans, "Inter Variable", sans-serif);
         padding: 24px;
       }
       .fallback-card {
         max-width: 520px;
         padding: 32px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        border: 1px solid var(--border-subtle, var(--border));
         border-radius: 16px;
-        background: rgba(255, 255, 255, 0.03);
+        background: var(--bg-surface);
         backdrop-filter: blur(8px);
       }
       .fallback-card h1 {
         margin: 0 0 12px;
         font-size: 22px;
         font-weight: 600;
+        color: var(--text-1);
       }
       .fallback-card p {
         margin: 0 0 20px;
         line-height: 1.6;
-        color: rgba(255, 255, 255, 0.65);
+        color: var(--text-3);
       }
       .fallback-cta a {
-        color: #7b9fff;
+        color: var(--accent, #7b9fff);
         text-decoration: none;
         font-weight: 500;
       }
