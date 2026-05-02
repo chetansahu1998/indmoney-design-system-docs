@@ -122,4 +122,67 @@ test.describe("Phase 6 mind graph (/atlas)", () => {
     expect(after?.width).toBe(before!.width);
     expect(after?.height).toBe(before!.height);
   });
+
+  /**
+   * U2 regression: HoverSignalCard must mount at the projected node
+   * position, NOT the (0, 0) top-left default.
+   *
+   * The previous implementation set `hoverNode` synchronously but only
+   * computed `hoverPos` from a deferred mousemove listener — so the card
+   * mounted with `top: 0; left: 0` and only re-positioned once the cursor
+   * wiggled. We now project the node's world-space center to screen
+   * coordinates inside `handleNodeHover`, so the card lands correctly on
+   * the very first paint.
+   *
+   * This test sweeps the cursor across the canvas to land on a node, then
+   * asserts the card (if it appears) has a non-zero `top`. Hovering a
+   * specific three.js node from Playwright is unreliable (we can't query
+   * world-space coords from the page), so we soft-skip when no card
+   * appears within the timeout.
+   */
+  test("hover signal card mounts at projected node position (not 0,0)", async ({ page }) => {
+    const hasFilters = await page
+      .locator('button:has-text("Hierarchy")')
+      .isVisible({ timeout: 10_000 })
+      .catch(() => false);
+    test.skip(!hasFilters, "Atlas not rendered (likely no graph data in test DB)");
+
+    const canvas = page.locator("canvas").first();
+    await expect(canvas).toBeVisible();
+    const box = await canvas.boundingBox();
+    if (!box) test.skip(true, "canvas not measurable");
+
+    // Sweep across the canvas in a grid. Force-graph nodes drift, so a
+    // sweep is more likely to land on one than a single static hover.
+    const card = page.locator('[data-testid="hover-signal-card"]');
+    const cols = 8;
+    const rows = 5;
+    let appeared = false;
+    for (let r = 1; r < rows && !appeared; r++) {
+      for (let c = 1; c < cols && !appeared; c++) {
+        const x = box!.x + (box!.width * c) / cols;
+        const y = box!.y + (box!.height * r) / rows;
+        await page.mouse.move(x, y);
+        // Brief pause so onNodeHover can fire.
+        await page.waitForTimeout(60);
+        if (await card.isVisible().catch(() => false)) {
+          appeared = true;
+        }
+      }
+    }
+
+    test.skip(!appeared, "No node was hovered during the sweep (graph layout may vary in test env)");
+
+    // The bug was: card mounts at (top: 0, left: 0). After the fix the
+    // card sits near the projected node, which is somewhere inside the
+    // canvas — so `top` must be > 0 (the canvas is not flush with the
+    // viewport top in dev because of nav chrome / margins, and even at
+    // best-case the projected node y is > 0).
+    const top = await card.evaluate((el) => parseFloat((el as HTMLElement).style.top) || 0);
+    const left = await card.evaluate((el) => parseFloat((el as HTMLElement).style.left) || 0);
+    // Both axes must be non-default. A (0, 0) card means hoverPos was null
+    // when the card mounted — exactly the bug U2 fixes.
+    expect(top).toBeGreaterThan(0);
+    expect(left).toBeGreaterThan(0);
+  });
 });

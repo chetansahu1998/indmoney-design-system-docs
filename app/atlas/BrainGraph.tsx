@@ -600,20 +600,85 @@ export default function BrainGraph({
   };
 
   // ─── U9 — hover card wiring ────────────────────────────────────────────
+  // U2 fix (2026-05-02): the previous implementation set `hoverNode` on
+  // hover-in but only computed `hoverPos` from a `mousemove` listener that
+  // was attached *after* React re-rendered. Result: the card mounted with
+  // hoverPos = null (top-left of viewport) and only re-positioned once the
+  // user wiggled the cursor. Static cursors → card stuck at (0, 0).
+  //
+  // Fix: project the node's world-space center to screen coordinates
+  // directly inside `handleNodeHover`, using three.js's Vector3.project()
+  // against the live camera. This anchors the card to the *node* (not the
+  // cursor), which matches the "precision pointing" lens — the card sits
+  // where the user is looking, regardless of cursor jitter.
+  //
+  // Important r180 detail: `renderer.getSize(target)` returns CSS pixels.
+  // Do NOT multiply by `getPixelRatio()` for DOM-overlay coordinates; DPR
+  // only matters when reading pixels off the framebuffer.
+  const projectNodeToScreen = (node: FGNode): { x: number; y: number } | null => {
+    const fg = fgRef.current;
+    if (!fg) return null;
+    if (node.x === undefined || node.y === undefined) return null;
+    const cam = fg.camera();
+    const renderer = fg.renderer();
+    if (!cam || !renderer) return null;
+    const v = new THREE.Vector3(node.x, node.y, node.z ?? 0).project(cam);
+    const size = renderer.getSize(new THREE.Vector2());
+    const canvas = renderer.domElement;
+    const rect = canvas.getBoundingClientRect();
+    // `v.x`, `v.y` are in NDC (-1..1). Map to CSS pixels relative to the
+    // canvas, then offset by the canvas's viewport origin so the result is
+    // in `clientX/clientY` space (matches `position: fixed` overlays).
+    const x = ((v.x + 1) / 2) * size.x + rect.left;
+    const y = ((1 - v.y) / 2) * size.y + rect.top;
+    return { x, y };
+  };
+
   const handleNodeHover = (rawNode: unknown | null) => {
     const node = rawNode as FGNode | null;
     setHoverNode(node);
-    if (node === null) setHoverPos(null);
+    if (node === null) {
+      setHoverPos(null);
+      return;
+    }
+    const pos = projectNodeToScreen(node);
+    if (pos) setHoverPos(pos);
   };
 
-  // Track mouse position for the hover card anchor.
+  // Re-project on each rAF tick while a node is hovered so the card tracks
+  // the node as the force simulation drifts it (and as our organic-drift
+  // y-oscillator nudges it). This replaces the old `mousemove` listener,
+  // which produced cursor-anchored (jittery) positioning.
   useEffect(() => {
     if (hoverNode === null) return;
-    const onMove = (e: MouseEvent) => {
-      setHoverPos({ x: e.clientX, y: e.clientY });
+    let raf = 0;
+    let canceled = false;
+    const tick = () => {
+      if (canceled) return;
+      const pos = projectNodeToScreen(hoverNode);
+      if (pos) {
+        setHoverPos((prev) => {
+          // Skip state churn when the projected position hasn't moved
+          // meaningfully — avoids a re-render every frame for a static
+          // node. 0.5 px is below visual resolution.
+          if (
+            prev &&
+            Math.abs(prev.x - pos.x) < 0.5 &&
+            Math.abs(prev.y - pos.y) < 0.5
+          ) {
+            return prev;
+          }
+          return pos;
+        });
+      }
+      raf = requestAnimationFrame(tick);
     };
-    window.addEventListener("mousemove", onMove);
-    return () => window.removeEventListener("mousemove", onMove);
+    raf = requestAnimationFrame(tick);
+    return () => {
+      canceled = true;
+      cancelAnimationFrame(raf);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hoverNode]);
 
   // ─── U11 — click-and-hold pointer-down/up wiring ───────────────────────
