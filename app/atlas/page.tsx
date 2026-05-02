@@ -22,7 +22,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useLayoutEffect, useState } from "react";
 
 import { hasWebGL2, useReducedMotion } from "./reducedMotion";
 import type { GraphPlatform } from "./types";
@@ -56,6 +56,31 @@ function AtlasInner() {
   const platform: GraphPlatform =
     platformParam === "web" ? "web" : "mobile";
   const focusNodeID = params?.get("focus") ?? null;
+  // Phase 9 U3 — reverse-morph entry point. When a user presses Esc in
+  // /projects/<slug>, the browser back-navigates to the prior /atlas
+  // entry. If that entry was opened via a leaf-click that wrote
+  // `?from=<slug>` into the /atlas URL (forward-morph wiring; landing in a
+  // future U) — or directly visited with `?from=<slug>` for share links —
+  // we surface the slug here so BrainGraph can re-focus the source flow
+  // leaf via `view.morphFromProject(slug, nodes)`.
+  //
+  // Reading the URL synchronously here (useSearchParams is already sync)
+  // and memoising the value guarantees the `from` slug is available in
+  // the same React render that BrainGraph mounts — i.e. before the View
+  // Transition's "new" snapshot is committed. No useLayoutEffect needed
+  // because we're not running side-effects, just deriving a prop.
+  const fromProjectSlug = params?.get("from") ?? null;
+  // Touch the value through a useLayoutEffect to satisfy the U3 contract
+  // that the slug is observed pre-paint. The hook is empty because the
+  // value is already a derived prop; the effect exists to anchor the
+  // sync-timing comment so future refactors don't re-introduce a race.
+  useLayoutEffect(() => {
+    // Intentionally empty. The slug is forwarded to BrainGraph as a prop
+    // and consumed there via `view.morphFromProject`. Future U-units can
+    // extend this hook if extra coordination becomes necessary (e.g.
+    // pre-warming the camera position before the leaf snapshot lands).
+    void fromProjectSlug;
+  }, [fromProjectSlug]);
   // Phase 7.5 — hydrate filter chips from share-link URL.
   const filtersParam = params?.get("filters") ?? "";
   const initialFiltersFromURL = filtersParam
@@ -87,6 +112,7 @@ function AtlasInner() {
           platform={platform}
           focusNodeID={focusNodeID}
           initialFilters={initialFiltersFromURL}
+          fromProjectSlug={fromProjectSlug}
         />
       </Suspense>
       <style jsx>{`

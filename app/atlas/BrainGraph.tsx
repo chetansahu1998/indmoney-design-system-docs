@@ -98,6 +98,14 @@ interface BrainGraphProps {
     tokens: boolean;
     decisions: boolean;
   } | null;
+  /**
+   * Phase 9 U3 — reverse-morph source slug. When the user back-navigates
+   * from /projects/<slug> to /atlas, the page surfaces the slug here so
+   * we can re-focus the matching flow leaf at zoomLevel "flow". null when
+   * the user landed on /atlas via any other path (direct URL, share-link,
+   * fresh tab) — the BrainGraph just renders the bare brain view.
+   */
+  fromProjectSlug?: string | null;
 }
 
 /**
@@ -118,6 +126,7 @@ export default function BrainGraph({
   platform: platformProp,
   focusNodeID,
   initialFilters,
+  fromProjectSlug,
 }: BrainGraphProps) {
   const reducedMotion = useReducedMotion();
   const [platform, setPlatform] = useState<GraphPlatform>(platformProp);
@@ -455,6 +464,18 @@ export default function BrainGraph({
     const node = aggregate.data.nodes.find((n) => n.id === focusNodeID) as FGNode | undefined;
     if (node) view.focus(node);
   }, [focusNodeID, aggregate.data, view]);
+
+  // ─── Phase 9 U3 — reverse-morph: re-focus by project slug ──────────────
+  // Triggered by /atlas?from=<slug>. The hook resolves the slug to a flow
+  // node via `view.morphFromProject(slug, nodes)` (which scans node.signal.
+  // open_url for `/projects/<slug>`). The browser-native View Transition
+  // (same `view-transition-name` from U2b) plays in reverse against the
+  // re-focused leaf-label DOM node. No-op if the slug doesn't resolve —
+  // the user lands on the bare brain view (clean fallback per the plan).
+  useEffect(() => {
+    if (!fromProjectSlug || !aggregate.data) return;
+    view.morphFromProject(fromProjectSlug, aggregate.data.nodes);
+  }, [fromProjectSlug, aggregate.data, view]);
 
   // ─── Empty + error states ──────────────────────────────────────────────
   if (aggregate.status === "empty") {
