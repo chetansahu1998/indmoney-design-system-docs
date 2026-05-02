@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { listViolations } from "@/lib/projects/client";
 import type {
+  Persona,
   Violation,
   ViolationCategory,
   ViolationSeverity,
@@ -34,6 +35,8 @@ import { STAGGER_MAX_MS, STAGGER_PER_FRAME_MS } from "@/lib/animations/easings";
 import EmptyTab from "./EmptyTab";
 import EmptyState from "@/components/empty-state/EmptyState";
 import { CategoryFilterChips } from "./violations/CategoryFilterChips";
+import { PersonaFilterChips, NO_PERSONA } from "./violations/PersonaFilterChips";
+import { ThemeFilterChips, NO_MODE } from "./violations/ThemeFilterChips";
 import LifecycleButtons from "./violations/LifecycleButtons";
 import FixInFigmaButton from "./violations/FixInFigmaButton";
 
@@ -65,6 +68,11 @@ interface ViolationsTabProps {
   /** Phase 5 U11 — when present, lifecycle buttons surface the
    *  "Link to decision" autocomplete sourced from this flow. */
   flowID?: string | null;
+  /** Phase 6 U6 — persona library scoped to the active version. Used
+   *  by PersonaFilterChips to render names for the persona-id chips.
+   *  Optional so legacy callers without persona data degrade to chips
+   *  showing IDs. */
+  personas?: Persona[];
 }
 
 type ViolationsState =
@@ -80,6 +88,7 @@ export default function ViolationsTab({
   onViewInJSON,
   auditProgress,
   flowID,
+  personas,
 }: ViolationsTabProps) {
   const [state, setState] = useState<ViolationsState>({ status: "loading" });
   // Phase 2 U11 — category filter chips. Selected = empty set means "all"
@@ -87,6 +96,18 @@ export default function ViolationsTab({
   const [selectedCategories, setSelectedCategories] = useState<
     Set<ViolationCategory>
   >(() => new Set());
+  // Phase 6 U6 — persona × theme filter chips. Same semantics as the
+  // category chips: empty set = "all". Filtering happens client-side
+  // because the dataset is already loaded for the active version, and
+  // the listViolations API only accepts a single persona_id /
+  // mode_label per request — multi-select would require N round-trips
+  // or a server-side change.
+  const [selectedPersonas, setSelectedPersonas] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [selectedThemes, setSelectedThemes] = useState<Set<string>>(
+    () => new Set(),
+  );
   // Track which violation IDs we've already rendered so SSE-driven re-fetches
   // can identify "new" rows for the arrival-flash animation.
   const seenIDs = useRef<Set<string>>(new Set());
@@ -105,6 +126,28 @@ export default function ViolationsTab({
   }, []);
   const clearCategories = useCallback(() => {
     setSelectedCategories(new Set());
+  }, []);
+  const togglePersona = useCallback((id: string) => {
+    setSelectedPersonas((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const clearPersonas = useCallback(() => {
+    setSelectedPersonas(new Set());
+  }, []);
+  const toggleTheme = useCallback((mode: string) => {
+    setSelectedThemes((prev) => {
+      const next = new Set(prev);
+      if (next.has(mode)) next.delete(mode);
+      else next.add(mode);
+      return next;
+    });
+  }, []);
+  const clearThemes = useCallback(() => {
+    setSelectedThemes(new Set());
   }, []);
 
   // Phase 3 U6: re-fetch violations when an audit transitions from
@@ -272,21 +315,43 @@ export default function ViolationsTab({
     );
   }
 
-  // Phase 2 U11: derive category-axis bookkeeping BEFORE applying the
-  // category filter so chip counts reflect the dataset, not the filtered
-  // view. Then apply the filter and group by severity for rendering.
+  // Phase 2 U11 / Phase 6 U6: derive chip-axis bookkeeping BEFORE applying
+  // any chip filter so each chip's "(N)" count reflects the dataset, not
+  // the filtered view. Then apply the filter and group by severity for
+  // rendering.
   const categoryCounts = new Map<ViolationCategory, number>();
   const availableCategories = new Set<ViolationCategory>();
+  const personaCounts = new Map<string, number>();
+  const availablePersonas = new Set<string>();
+  const themeCounts = new Map<string, number>();
+  const availableThemes = new Set<string>();
   for (const v of state.violations) {
-    if (!v.Category) continue;
-    availableCategories.add(v.Category);
-    categoryCounts.set(v.Category, (categoryCounts.get(v.Category) ?? 0) + 1);
+    if (v.Category) {
+      availableCategories.add(v.Category);
+      categoryCounts.set(v.Category, (categoryCounts.get(v.Category) ?? 0) + 1);
+    }
+    const personaKey = v.PersonaID ? v.PersonaID : NO_PERSONA;
+    availablePersonas.add(personaKey);
+    personaCounts.set(personaKey, (personaCounts.get(personaKey) ?? 0) + 1);
+    const themeKey = v.ModeLabel ? v.ModeLabel : NO_MODE;
+    availableThemes.add(themeKey);
+    themeCounts.set(themeKey, (themeCounts.get(themeKey) ?? 0) + 1);
   }
 
-  const filteredViolations =
-    selectedCategories.size === 0
-      ? state.violations
-      : state.violations.filter((v) => selectedCategories.has(v.Category));
+  const filteredViolations = state.violations.filter((v) => {
+    if (selectedCategories.size > 0 && !selectedCategories.has(v.Category)) {
+      return false;
+    }
+    if (selectedPersonas.size > 0) {
+      const key = v.PersonaID ? v.PersonaID : NO_PERSONA;
+      if (!selectedPersonas.has(key)) return false;
+    }
+    if (selectedThemes.size > 0) {
+      const key = v.ModeLabel ? v.ModeLabel : NO_MODE;
+      if (!selectedThemes.has(key)) return false;
+    }
+    return true;
+  });
 
   // Group by severity, preserving the canonical order (critical → info).
   const grouped: Record<ViolationSeverity, Violation[]> = {
@@ -311,6 +376,21 @@ export default function ViolationsTab({
         selected={selectedCategories}
         onToggle={toggleCategory}
         onClear={clearCategories}
+      />
+      <PersonaFilterChips
+        available={availablePersonas}
+        personas={personas ?? []}
+        counts={personaCounts}
+        selected={selectedPersonas}
+        onToggle={togglePersona}
+        onClear={clearPersonas}
+      />
+      <ThemeFilterChips
+        available={availableThemes}
+        counts={themeCounts}
+        selected={selectedThemes}
+        onToggle={toggleTheme}
+        onClear={clearThemes}
       />
       <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "12px 0" }}>
       {filteredViolations.length === 0 ? (
@@ -403,6 +483,10 @@ export default function ViolationsTab({
                   data-violation-row
                   data-violation-id={v.ID}
                   data-category={v.Category}
+                  data-persona-id={v.PersonaID ?? ""}
+                  data-mode-label={v.ModeLabel ?? ""}
+                  data-auto-fixable={v.AutoFixable === true ? "true" : "false"}
+                  data-status={v.Status}
                   style={{
                     display: "grid",
                     gridTemplateColumns: "1fr auto",
@@ -440,6 +524,7 @@ export default function ViolationsTab({
                     <LifecycleButtons
                       slug={slug}
                       violationID={v.ID}
+                      status={v.Status}
                       flowID={flowID ?? null}
                       onResolved={() =>
                         setResolvedSet((prev) => {
@@ -449,7 +534,12 @@ export default function ViolationsTab({
                         })
                       }
                     />
-                    {v.AutoFixable && (
+                    {/* Phase 6 U6 — defense-in-depth guard: render the
+                        Fix in Figma CTA only when the server flagged the
+                        violation as auto_fixable. The button itself
+                        carries no client-side capability check, so the
+                        guard lives here at the call site. */}
+                    {v.AutoFixable === true && (
                       <FixInFigmaButton violationID={v.ID} />
                     )}
                     <button

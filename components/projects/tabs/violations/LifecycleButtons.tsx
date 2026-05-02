@@ -1,12 +1,24 @@
 "use client";
 
 /**
- * Inline Acknowledge / Dismiss controls for a single violation row in the
- * ViolationsTab. Phase 4 U6 — replaces Phase 1 U10's disabled placeholders.
+ * Inline Acknowledge / Dismiss / Reactivate controls for a single violation
+ * row in the ViolationsTab. Phase 4 U6 introduced acknowledge/dismiss;
+ * Phase 6 U6 adds Reactivate (admin-only, dismissed → active) per R8.
  *
- * Layout: two buttons side-by-side until the user picks one; selecting an
- * action expands an inline reason input below. Submit triggers the PATCH
- * endpoint and tells the parent to fade-out the row on success.
+ * Layout: action buttons side-by-side until the user picks one; selecting
+ * an action expands an inline reason input below. Submit triggers the
+ * PATCH endpoint and tells the parent to fade-out the row on success.
+ *
+ * Visibility:
+ *   - Acknowledge / Dismiss render when status === "active". (Status
+ *     transitions for already-acknowledged rows happen elsewhere — the
+ *     fix-applied path or the system-only Mark Fixed action.)
+ *   - Reactivate renders ONLY when status === "dismissed" AND the caller
+ *     has an admin role (super_admin | tenant_admin). The backend
+ *     enforces the same gate (`isAdminRole` in
+ *     services/ds-service/internal/projects/lifecycle.go); the client
+ *     guard is defense-in-depth so the button never appears for users
+ *     who would 403 on submit.
  *
  * The bulk inbox flow uses BulkActionBar for the same job; this component
  * stays inline because the per-row UX in the project shell shouldn't pop
@@ -18,16 +30,22 @@ import {
   patchViolationLifecycle,
   type LifecycleAction,
 } from "@/lib/inbox/client";
+import { useAuth } from "@/lib/auth-client";
+import type { ViolationStatus } from "@/lib/projects/types";
 import DecisionLinkAutocomplete from "./DecisionLinkAutocomplete";
 
 interface Props {
   slug: string;
   violationID: string;
+  /** Current lifecycle status — drives which actions are shown. */
+  status: ViolationStatus;
   /** Phase 5 U11 — when present, the form surfaces a Decision picker. */
   flowID?: string | null;
   /** Called after a successful PATCH so the parent can collapse the row. */
   onResolved: (action: LifecycleAction) => void;
 }
+
+const ADMIN_ROLES = new Set(["super_admin", "tenant_admin"]);
 
 type FormState =
   | { kind: "idle" }
@@ -37,11 +55,14 @@ type FormState =
 export default function LifecycleButtons({
   slug,
   violationID,
+  status,
   flowID,
   onResolved,
 }: Props) {
   const [state, setState] = useState<FormState>({ kind: "idle" });
   const [linkDecisionID, setLinkDecisionID] = useState("");
+  const role = useAuth((s) => s.role);
+  const isAdmin = role !== null && ADMIN_ROLES.has(role);
 
   const open = (action: LifecycleAction) =>
     setState({ kind: "open", action, reason: "", submitting: false });
@@ -71,6 +92,29 @@ export default function LifecycleButtons({
   };
 
   if (state.kind === "idle") {
+    // Reactivate is the only action available for dismissed rows, and
+    // only to admins. Non-admins viewing a dismissed row see no actions
+    // (the row exists in the dataset but is informational for them).
+    if (status === "dismissed") {
+      if (!isAdmin) return null;
+      return (
+        <div style={{ display: "flex", gap: 6, alignSelf: "center" }}>
+          <button
+            type="button"
+            onClick={() => open("reactivate")}
+            style={btnStyle(false)}
+            aria-label="Reactivate dismissed violation with reason"
+            data-action="reactivate"
+          >
+            Reactivate
+          </button>
+        </div>
+      );
+    }
+    // Active rows get the standard acknowledge/dismiss pair. Acknowledged
+    // rows have no inline actions — they wait for the system-only
+    // Mark Fixed transition (driven by the auto-fix or re-audit paths).
+    if (status !== "active") return null;
     return (
       <div style={{ display: "flex", gap: 6, alignSelf: "center" }}>
         <button
@@ -120,7 +164,9 @@ export default function LifecycleButtons({
         placeholder={
           state.action === "dismiss"
             ? "Rationale (required, ≤256 chars)"
-            : "Reason (required, ≤256 chars)"
+            : state.action === "reactivate"
+              ? "Override reason (required, ≤256 chars)"
+              : "Reason (required, ≤256 chars)"
         }
         maxLength={256}
         rows={2}
