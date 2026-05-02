@@ -7,6 +7,16 @@
  *
  * GSAP eases are passed as strings. See https://gsap.com/docs/v3/Eases for
  * the parametrized variants (e.g. `back.out(1.2)` overshoot factor).
+ *
+ * U10 — these constants are the *canonical* curves for sequenced DOM
+ * choreography (GSAP timelines). For triggered 3D transitions we use
+ * `@react-spring/three` springs instead of named eases — see
+ * `lib/animations/conventions.md` for the three-tool motion grammar.
+ *
+ * `EASE_DOLLY` is the standard camera-tween curve. When a GSAP-driven
+ * camera move is unavoidable, prefer this constant over an inline string;
+ * for the canonical r3f / react-force-graph-3d camera dolly, use a spring
+ * with `{ tension: 170, friction: 26 }` (canonical react-spring default).
  */
 
 /** Page-load reveal — `expo.out` for snappy mhdyousuf-style cadence. */
