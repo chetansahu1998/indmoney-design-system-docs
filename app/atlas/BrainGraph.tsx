@@ -18,6 +18,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { useSpring } from "@react-spring/three";
 
 import { FilterChips } from "./FilterChips";
 import { HoverSignalCard } from "./HoverSignalCard";
@@ -389,7 +390,33 @@ export default function BrainGraph({
     };
   }, [hold.heldNodeID]);
 
-  // ─── U10 — single-click recursive zoom ─────────────────────────────────
+  // ─── U10 — single-click recursive zoom (spring-driven) ─────────────────
+  // We replace the library's `cameraPosition()` linear tween (mechanical
+  // feel) with a `@react-spring/three` spring that imperatively writes
+  // the camera position + lookAt every frame. The library owns camera
+  // mounting, so we can't wrap it in `<animated.perspectiveCamera>` —
+  // the imperative `onChange` pattern is the documented r3f / external-
+  // camera escape hatch. See lib/animations/conventions.md.
+  //
+  // Spring config: tension 170 / friction 26 — react-spring's canonical
+  // default; feels mass-spring-y (decelerates naturally, settles without
+  // visible overshoot for small distances and a tiny one for large).
+  const lookAtTargetRef = useRef(new THREE.Vector3(0, 0, 0));
+  const [, cameraSpringApi] = useSpring(() => ({
+    px: 0,
+    py: 0,
+    pz: 600, // matches the library's default initial camera distance
+    config: { tension: 170, friction: 26 },
+    onChange: ({ value }) => {
+      const cam = fgRef.current?.camera();
+      if (!cam) return;
+      const v = value as { px: number; py: number; pz: number };
+      cam.position.set(v.px, v.py, v.pz);
+      const t = lookAtTargetRef.current;
+      cam.lookAt(t.x, t.y, t.z);
+    },
+  }));
+
   const handleNodeClick = (rawNode: unknown) => {
     const node = rawNode as FGNode;
     if (node.type === "flow") {
@@ -400,21 +427,40 @@ export default function BrainGraph({
     }
     if (node.type === "product" || node.type === "folder") {
       view.focus(node);
-      // Camera tween — react-force-graph-3d animates over `transitionMs`.
-      if (fgRef.current && node.x !== undefined && node.y !== undefined && node.z !== undefined) {
+      if (
+        fgRef.current &&
+        node.x !== undefined &&
+        node.y !== undefined &&
+        node.z !== undefined
+      ) {
         const distance = node.type === "product" ? 200 : 120;
         // Position the camera "behind" the node along its current vector
         // from origin, so the zoom feels continuous rather than orbital.
         const dir = new THREE.Vector3(node.x, node.y, node.z).normalize();
-        fgRef.current.cameraPosition(
-          {
-            x: node.x + dir.x * distance,
-            y: node.y + dir.y * distance,
-            z: node.z + dir.z * distance,
-          },
-          { x: node.x, y: node.y, z: node.z },
-          reducedMotion ? 0 : 1000,
-        );
+        const targetPx = node.x + dir.x * distance;
+        const targetPy = node.y + dir.y * distance;
+        const targetPz = node.z + dir.z * distance;
+        // The spring's onChange reads from this ref so lookAt tracks the
+        // node, not (0,0,0). Update before kicking the spring.
+        lookAtTargetRef.current.set(node.x, node.y, node.z);
+        // Seed the spring's "from" with the camera's current position so
+        // the first onChange tick doesn't snap.
+        const cam = fgRef.current.camera();
+        if (reducedMotion) {
+          // Reduced-motion: skip the spring; jump to the target.
+          cameraSpringApi.set({
+            px: targetPx,
+            py: targetPy,
+            pz: targetPz,
+          });
+          cam.position.set(targetPx, targetPy, targetPz);
+          cam.lookAt(node.x, node.y, node.z);
+        } else {
+          cameraSpringApi.start({
+            from: { px: cam.position.x, py: cam.position.y, pz: cam.position.z },
+            to: { px: targetPx, py: targetPy, pz: targetPz },
+          });
+        }
       }
     }
   };
