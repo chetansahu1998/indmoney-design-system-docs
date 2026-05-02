@@ -35,6 +35,7 @@ import {
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import gsap from "gsap";
 import { showToast } from "@/components/ui/Toast";
 import EmptyState from "@/components/empty-state/EmptyState";
 import RetryableError from "@/components/empty-state/RetryableError";
@@ -173,7 +174,14 @@ export default function ProjectShell({
   const [activePersonaName, setActivePersonaName] = useState<string | null>(
     null,
   );
-  const [previousTab, setPreviousTab] = useState<ProjectTab | null>(null);
+  // U14b — `pendingTab` is the incoming tab during a swap. While non-null,
+  // both `activeTab` (outgoing) and `pendingTab` (incoming) are mounted so
+  // the outgoing fade in `tabSwitch` runs against real DOM. On timeline
+  // completion we promote pendingTab → activeTab and clear pendingTab.
+  // Pre-U14b code only kept the incoming mounted (React unmounted outgoing
+  // synchronously); the outgoing fade animated nothing → hard cut + incoming
+  // fade.
+  const [pendingTab, setPendingTab] = useState<ProjectTab | null>(null);
 
   const theme = useProjectView((s) => s.theme);
   const selectedScreenID = useProjectView((s) => s.selectedScreenID);
@@ -181,7 +189,11 @@ export default function ProjectShell({
 
   // ─── Refs ───────────────────────────────────────────────────────────────
   const scopeRef = useRef<HTMLDivElement>(null);
-  const tabContentRef = useRef<HTMLDivElement>(null);
+  // U14b — separate refs for outgoing vs incoming panels so the paired-
+  // curtain tabSwitch timeline can animate two distinct DOM nodes during
+  // the swap window.
+  const outgoingPaneRef = useRef<HTMLDivElement>(null);
+  const incomingPaneRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -278,20 +290,48 @@ export default function ProjectShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx]);
 
-  // ─── Tab switch animation — runs after `activeTab` changes. ─────────────
+  // ─── Tab switch animation — paired-curtain (U14b). ──────────────────────
+  // When `pendingTab` is set we have BOTH outgoing (`activeTab`) and
+  // incoming (`pendingTab`) panels mounted. We run the tabSwitch timeline
+  // against both DOM nodes so the outgoing fade-up actually animates real
+  // DOM (pre-U14b it was dead code — outgoing was already unmounted by the
+  // time the effect fired). On completion we promote pendingTab into
+  // activeTab so React tears down the old panel.
   useEffect(() => {
     if (!ctx) return;
-    if (!previousTab || previousTab === activeTab) return;
-    const incoming = tabContentRef.current;
-    if (!incoming) return;
+    if (!pendingTab || pendingTab === activeTab) return;
+    const outgoing = outgoingPaneRef.current;
+    const incoming = incomingPaneRef.current;
+    if (!incoming) {
+      // Defensive: if for some reason the incoming pane didn't mount this
+      // tick, promote immediately so we don't leave the UI stuck on the
+      // outgoing tab.
+      setActiveTab(pendingTab);
+      setPendingTab(null);
+      return;
+    }
+    let cancelled = false;
     ctx.add(() => {
-      // Single-pane swap: the same DOM node is reused for outgoing+incoming
-      // because we only render one tab at a time. We pass the same ref for
-      // both so the tween runs as a fade-in (incoming branch) only.
-      const tl = tabSwitch(null, incoming);
+      const tl = tabSwitch(outgoing, incoming);
+      tl.eventCallback("onComplete", () => {
+        if (cancelled) return;
+        // Clear inline styles GSAP set on the panes before React promotes
+        // pendingTab → activeTab. The outgoing pane element will be reused
+        // for the new activeTab content (single-pane render after the swap),
+        // so its opacity:0/transform from the outgoing tween must be cleared
+        // or the user would see a blank pane. The incoming pane unmounts on
+        // the same render so it's only cleared defensively for symmetry.
+        if (outgoing) gsap.set(outgoing, { clearProps: "all" });
+        if (incoming) gsap.set(incoming, { clearProps: "all" });
+        setActiveTab((curr) => (pendingTab && !cancelled ? pendingTab : curr));
+        setPendingTab(null);
+      });
       tl.play();
     });
-  }, [activeTab, previousTab, ctx]);
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingTab, activeTab, ctx]);
 
   // ─── URL hash sync (read on mount + hashchange). ────────────────────────
   useEffect(() => {
@@ -299,10 +339,13 @@ export default function ProjectShell({
     const apply = () => {
       const { tab, persona } = parseHash(window.location.hash);
       if (tab) {
+        // U14b — route hash-driven tab changes through pendingTab so the
+        // paired-curtain animation runs. If the hash matches the current
+        // active or already-pending target, no-op.
         setActiveTab((curr) => {
           if (curr === tab) return curr;
-          setPreviousTab(curr);
-          return tab;
+          setPendingTab((p) => (p === tab ? p : tab));
+          return curr;
         });
       }
       setActivePersonaName(persona);
@@ -517,8 +560,18 @@ export default function ProjectShell({
 
   function changeTab(tab: ProjectTab): void {
     if (tab === activeTab) return;
-    setPreviousTab(activeTab);
-    setActiveTab(tab);
+    // U14b — stage as pendingTab. The tab-switch useEffect mounts both
+    // outgoing + incoming panels, runs the paired-curtain timeline, and
+    // promotes pendingTab → activeTab on completion. Reduced-motion users
+    // still go through the same path; tabSwitch handles the snap-style
+    // render internally.
+    //
+    // While a swap is in flight (pendingTab !== null) we ignore further
+    // changes to avoid two timelines fighting on the same outgoing DOM
+    // node. The whole curtain is ~330ms — a brief block. Repeated rapid
+    // clicks therefore latch on the first target rather than thrashing.
+    if (pendingTab) return;
+    setPendingTab(tab);
     if (typeof window === "undefined") return;
     window.location.hash = buildHash(tab, activePersonaName);
   }
@@ -559,6 +612,70 @@ export default function ProjectShell({
   // Read the active violation-highlight target from the URL so reload
   // + back-navigation re-trigger the pulse.
   const highlightedViolationID = searchParams.get("violation");
+
+  // U14b — Render the body of a single tab. Used twice during a swap (one
+  // for outgoing, one for incoming) so the paired-curtain timeline has two
+  // real DOM nodes to animate. Pre-U14b only the active tab rendered, so
+  // outgoing was already gone by the time the GSAP timeline ran.
+  function renderTabBody(tab: ProjectTab) {
+    if (tab === "drd") {
+      return DRD_COLLAB_ENABLED && screens[0]?.FlowID ? (
+        <DRDTabCollab
+          slug={slug}
+          flowID={screens[0].FlowID}
+          readOnly={isReadOnly(machineState)}
+        />
+      ) : (
+        <DRDTab
+          slug={slug}
+          flowID={screens[0]?.FlowID ?? null}
+          readOnly={isReadOnly(machineState)}
+        />
+      );
+    }
+    if (tab === "violations") {
+      return (
+        <ViolationsTab
+          slug={slug}
+          versionID={activeVersionID}
+          flowID={screens[0]?.FlowID ?? null}
+          filters={
+            activePersonaName
+              ? {
+                  persona_id:
+                    personas.find((p) => p.Name === activePersonaName)?.ID,
+                }
+              : undefined
+          }
+          onViewInJSON={() => changeTab("json")}
+          auditProgress={auditProgress}
+          personas={personas}
+          onViewDecision={viewDecisionFromViolation}
+          highlightedViolationID={highlightedViolationID}
+        />
+      );
+    }
+    if (tab === "decisions") {
+      return (
+        <DecisionsTab
+          slug={slug}
+          flowID={screens[0]?.FlowID ?? null}
+          readOnly={isReadOnly(machineState)}
+          onViewViolation={viewViolationFromDecision}
+        />
+      );
+    }
+    if (tab === "json") {
+      return (
+        <JSONTab
+          slug={project.Slug}
+          screens={screens}
+          screenModes={screenModes}
+        />
+      );
+    }
+    return null;
+  }
 
   function changeVersion(id: string): void {
     setActiveVersionID(id);
@@ -843,78 +960,53 @@ export default function ProjectShell({
             );
           })}
         </div>
+        {/* U14b — paired-curtain tab swap. While pendingTab is set, BOTH
+            outgoing and incoming panes are mounted, stacked absolutely in
+            the same container, so the GSAP tabSwitch timeline animates
+            real DOM for both fade tracks. On timeline complete, pendingTab
+            is promoted into activeTab and the outgoing pane unmounts. */}
         <div
-          ref={tabContentRef}
           data-anim="tab-content"
-          role="tabpanel"
-          id={`tabpanel-${activeTab}`}
-          aria-labelledby={`tab-${activeTab}`}
           style={{
             flex: 1,
             minHeight: 0,
-            overflow: "auto",
-            padding: 16,
+            overflow: "hidden",
+            position: "relative",
           }}
         >
-          {activeTab === "drd" && (
-            DRD_COLLAB_ENABLED && screens[0]?.FlowID ? (
-              <DRDTabCollab
-                slug={slug}
-                flowID={screens[0].FlowID}
-                readOnly={isReadOnly(machineState)}
-              />
-            ) : (
-              <DRDTab
-                slug={slug}
-                flowID={screens[0]?.FlowID ?? null}
-                // Phase 3 U7-lite: ?read_only_preview=1 simulates a Phase 7
-                // ACL-denied path so designers can review the read-only UX
-                // before per-resource grants ship. Phase 7 will replace
-                // this query-param check with an actual permission check
-                // resolved server-side in fetchProject's response.
-                // Phase 3 U7: read-only resolves through the machine — covers
-                // both the ?read_only_preview=1 preview path and (Phase 7) a
-                // server-resolved ACL flag without re-reading the query param.
-                readOnly={isReadOnly(machineState)}
-              />
-            )
-          )}
-          {activeTab === "violations" && (
-            <ViolationsTab
-              slug={slug}
-              versionID={activeVersionID}
-              flowID={screens[0]?.FlowID ?? null}
-              filters={
-                activePersonaName
-                  ? {
-                      persona_id:
-                        personas.find((p) => p.Name === activePersonaName)
-                          ?.ID,
-                    }
-                  : undefined
-              }
-              onViewInJSON={() => changeTab("json")}
-              auditProgress={auditProgress}
-              personas={personas}
-              onViewDecision={viewDecisionFromViolation}
-              highlightedViolationID={highlightedViolationID}
-            />
-          )}
-          {activeTab === "decisions" && (
-            <DecisionsTab
-              slug={slug}
-              flowID={screens[0]?.FlowID ?? null}
-              readOnly={isReadOnly(machineState)}
-              onViewViolation={viewViolationFromDecision}
-            />
-          )}
-          {activeTab === "json" && (
-            <JSONTab
-              slug={project.Slug}
-              screens={screens}
-              screenModes={screenModes}
-            />
-          )}
+          <div
+            ref={outgoingPaneRef}
+            role="tabpanel"
+            id={`tabpanel-${activeTab}`}
+            aria-labelledby={`tab-${activeTab}`}
+            style={{
+              position: "absolute",
+              inset: 0,
+              overflow: "auto",
+              padding: 16,
+              // Outgoing is fading out — block clicks so users can't
+              // interact with the about-to-disappear tab during the swap.
+              pointerEvents: pendingTab ? "none" : "auto",
+            }}
+          >
+            {renderTabBody(activeTab)}
+          </div>
+          {pendingTab && pendingTab !== activeTab ? (
+            <div
+              ref={incomingPaneRef}
+              role="tabpanel"
+              id={`tabpanel-${pendingTab}`}
+              aria-labelledby={`tab-${pendingTab}`}
+              style={{
+                position: "absolute",
+                inset: 0,
+                overflow: "auto",
+                padding: 16,
+              }}
+            >
+              {renderTabBody(pendingTab)}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
