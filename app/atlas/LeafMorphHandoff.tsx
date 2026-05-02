@@ -20,8 +20,10 @@
  * overlay and the ProjectToolbar title carry matching CSS
  * `view-transition-name` values; the browser handles the morph.
  *
- * This component now does one thing: observe `morphingNode` and trigger
- * `router.push` on the flow's URL. No Framer, no rendered output.
+ * This component now does one thing: observe `morphingNode`, rewrite the
+ * /atlas history entry to carry `?from=<slug>` (so Esc/back from the
+ * project view re-focuses the source leaf — U3's receiving-end contract),
+ * then push the project URL.
  *
  * Reduced-motion + Firefox-default + any browser without View Transitions:
  * instant route swap. The spatial-continuity cue for those users is the
@@ -42,12 +44,45 @@ interface Props {
   reducedMotion: boolean;
 }
 
+/**
+ * Extract the project slug from a flow node's open_url.
+ * Mirrors the regex used by app/atlas/LeafLabelLayer.tsx (U2b).
+ * Returns null when the URL doesn't match — caller skips the rewrite.
+ */
+function extractSlugFromOpenURL(url: string): string | null {
+  const m = url.match(/^\/projects\/([^/?#]+)/);
+  return m ? m[1] : null;
+}
+
 export function LeafMorphHandoff({ node, reducedMotion: _reducedMotion }: Props) {
   const router = useRouter();
 
   useEffect(() => {
     const url = node.signal.open_url;
     if (!url) return;
+
+    // Phase 9 followup (#72) — write `?from=<slug>` onto the current
+    // /atlas history entry BEFORE pushing the project URL. router.back()
+    // from the project view returns to /atlas?from=<slug>, which U3's
+    // page.tsx + useGraphView.morphFromProject pick up to refocus the
+    // source leaf. router.replace mutates the current entry without
+    // adding a new one to the stack, so the back-stack stays clean:
+    //
+    //   before: [ ..., /atlas ]
+    //   after replace + push: [ ..., /atlas?from=<slug>, /projects/<slug> ]
+    //   on Esc/back: [ ..., /atlas?from=<slug> ]  (current)
+    const slug = extractSlugFromOpenURL(url);
+    if (slug && typeof window !== "undefined") {
+      // Read the current /atlas URL + merge ?from= without dropping
+      // existing query params (e.g. ?platform=web that the user may
+      // have set in the URL before clicking the leaf).
+      const here = new URL(window.location.href);
+      if (here.pathname === "/atlas") {
+        here.searchParams.set("from", slug);
+        router.replace(`${here.pathname}${here.search}`);
+      }
+    }
+
     router.push(url);
   }, [node, router]);
 
