@@ -1,33 +1,34 @@
-import ComponentBrowser from "@/components/ComponentBrowser";
+import ComponentCanvas from "@/components/ComponentCanvas";
 import FilesShell from "@/components/files/FilesShell";
 import { parentComponents, slugifyCategory } from "@/lib/icons/manifest";
 import type { NavGroup } from "@/components/Sidebar";
 
 /**
- * /components — three-section workspace for PARENT (organism) components.
+ * /components — horizontal-canvas component browser (restored 2026-05-02).
  *
- *   Section 1: FilesShell sidebar with categories.
- *   Section 2: Components grid for the active category, full main width
- *              by default.
- *   Section 3: Detail panel — opens on demand when a card is clicked,
- *              docks beside the grid (desktop) or as a bottom sheet
- *              (mobile). Closing returns the grid to full width.
+ * Designers think in canvas, not in page-of-text. The previous three-section
+ * sidebar+grid+detail layout (commit 7ef994e) reverted the horizontal direction
+ * the user originally shipped (b10b765); this page restores it on top of the
+ * atomic-design tier hierarchy added later (430fdd7) — `parentComponents()`
+ * filters to organism-tier components only, so /components stays the
+ * organism gallery while atoms get their own surface in a future iteration.
  *
- * Atomic-design hierarchy: this surface shows tier="parent" only — the
- * 30 organisms designers actually consume (Toast Messages, Status Bar,
- * Footer CTA, Bottom Nav, Masthead/*, …). Atoms get their own surface
- * (`/atoms` planned) so designers can drill into primitives.
+ * The canvas owns the entire viewport below the global header. Categories
+ * flow left-to-right as section bands. Inside each band, components stack
+ * vertically with their default variant at Figma's own dimensions and the
+ * full variant matrix strung out next to it. Pan via trackpad / wheel /
+ * space-drag / arrow keys. Click a component → inspector overlay slides in.
  *
- * Each parent's detail panel surfaces every variant with its own props,
- * layout, appearance, structure, and a "Built from" rail of the atoms
- * that variant composes — resolved via the manifest's composes[] graph.
+ * Sidebar stays — category sub-anchors trigger horizontal pan via in-canvas
+ * listeners (the canvas reads its `data-cat` lookup from the URL hash).
+ *
+ * Phase 4 reverse-view integration (commit 463692b — `WhereThisBreaks.tsx`
+ * consumes `/v1/components/violations`) lives inside the inspector overlay
+ * and is independent of this page-level layout choice.
  */
 export default function ComponentsPage() {
   const entries = parentComponents();
 
-  // Group by category. Categories on Design System page are derived
-  // from the set name's "/"-prefix when present (e.g. "Masthead/Hot" →
-  // "Masthead"); otherwise fall back to the page name.
   const grouped = new Map<string, typeof entries>();
   for (const e of entries) {
     const cat = e.category || "uncategorized";
@@ -37,7 +38,6 @@ export default function ComponentsPage() {
   const cats = Array.from(grouped.entries())
     .sort((a, b) => b[1].length - a[1].length)
     .map(([cat, list]) => ({ cat, count: list.length }));
-  const orderedCategories = cats.map((c) => c.cat);
 
   const nav: NavGroup[] = [
     {
@@ -49,10 +49,11 @@ export default function ComponentsPage() {
       })),
     },
   ];
+  const sectionIds = cats.map(({ cat }) => `cat-${slugifyCategory(cat)}`);
 
   return (
-    <FilesShell nav={nav} title="Components" sectionIds={[]}>
-      <ComponentBrowser entries={entries} orderedCategories={orderedCategories} />
+    <FilesShell nav={nav} title="Components" sectionIds={sectionIds} fullBleed>
+      <ComponentCanvas entries={entries} />
     </FilesShell>
   );
 }
