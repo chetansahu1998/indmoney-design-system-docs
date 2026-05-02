@@ -1674,6 +1674,117 @@ func (s *Server) HandleDecisionGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, rec)
 }
 
+// HandleDecisionViolations serves GET /v1/decisions/{id}/violations.
+//
+// Phase 6 U7 — backs the "Linked violations" subsection on DecisionCard.
+// Joins decision_links (link_type='violation') with violations on
+// target_id = violation.id, scoped to the same tenant. Returns the same
+// row shape as HandleListViolations so the frontend Violation type stays
+// shared.
+//
+// Empty result is a 200 with {violations: [], count: 0} — the card
+// renders a "No linked violations" empty state.
+func (s *Server) HandleDecisionViolations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_id", "")
+		return
+	}
+
+	// Verify the decision belongs to this tenant before returning links.
+	// Same gate as HandleDecisionGet so a leaked decision id doesn't enable
+	// cross-tenant violation enumeration.
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	if _, err := repo.GetDecision(r.Context(), id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup_decision", err.Error())
+		return
+	}
+
+	q := `SELECT v.id, v.version_id, v.screen_id, v.tenant_id, v.rule_id, v.severity,
+	             COALESCE(v.category, 'token_drift'),
+	             v.property, v.observed, v.suggestion, v.persona_id, v.mode_label,
+	             v.status, COALESCE(v.auto_fixable, 0), v.created_at
+	      FROM decision_links dl
+	      JOIN violations v ON v.id = dl.target_id AND v.tenant_id = dl.tenant_id
+	      WHERE dl.decision_id = ? AND dl.tenant_id = ? AND dl.link_type = 'violation'
+	      ORDER BY
+	        CASE v.status WHEN 'active' THEN 0 WHEN 'acknowledged' THEN 1
+	                      WHEN 'dismissed' THEN 2 WHEN 'fixed' THEN 3 ELSE 4 END,
+	        CASE v.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1
+	                        WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END,
+	        v.created_at DESC`
+	rows, err := s.deps.DB.DB.QueryContext(r.Context(), q, id, tenantID)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "query", err.Error())
+		return
+	}
+	defer rows.Close()
+	out := make([]map[string]any, 0)
+	for rows.Next() {
+		var v Violation
+		var personaID, modeLabel sql.NullString
+		var observed, suggestion sql.NullString
+		var createdAt string
+		var autoFixInt int
+		if err := rows.Scan(&v.ID, &v.VersionID, &v.ScreenID, &v.TenantID,
+			&v.RuleID, &v.Severity, &v.Category,
+			&v.Property, &observed, &suggestion,
+			&personaID, &modeLabel,
+			&v.Status, &autoFixInt, &createdAt); err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "scan", err.Error())
+			return
+		}
+		row := map[string]any{
+			"id":           v.ID,
+			"version_id":   v.VersionID,
+			"screen_id":    v.ScreenID,
+			"tenant_id":    v.TenantID,
+			"rule_id":      v.RuleID,
+			"severity":     v.Severity,
+			"category":     v.Category,
+			"property":     v.Property,
+			"observed":     observed.String,
+			"suggestion":   suggestion.String,
+			"status":       v.Status,
+			"auto_fixable": autoFixInt == 1,
+			"created_at":   createdAt,
+		}
+		if personaID.Valid {
+			row["persona_id"] = personaID.String
+		}
+		if modeLabel.Valid {
+			row["mode_label"] = modeLabel.String
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "rows", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"violations": out,
+		"count":      len(out),
+	})
+}
+
 // HandleAdminReactivateDecision serves POST /v1/atlas/admin/decisions/{id}/reactivate.
 // Super-admin only — main.go gates with requireSuperAdmin.
 //

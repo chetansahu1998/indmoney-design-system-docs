@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { listViolations } from "@/lib/projects/client";
+import { listDecisionsForFlow } from "@/lib/decisions/client";
 import type {
   Persona,
   Violation,
@@ -73,6 +74,17 @@ interface ViolationsTabProps {
    *  Optional so legacy callers without persona data degrade to chips
    *  showing IDs. */
   personas?: Persona[];
+  /** Phase 6 U7 — when a violation is linked to a decision (via
+   *  decision_links rows), the row surfaces a "View decision" CTA that
+   *  hands the decision id back to ProjectShell, which switches to the
+   *  Decisions tab + appends ?decision=<id> so the existing 1.5s
+   *  outline-pulse highlights it. Optional so this tab still renders in
+   *  isolation tests / fixtures without the parent shell. */
+  onViewDecision?: (decisionID: string) => void;
+  /** Phase 6 U7 — Playwright + outline-pulse target. When set, the
+   *  matching violation row gets a 1.5s accent outline, mirroring the
+   *  pulse pattern from DecisionsTab. */
+  highlightedViolationID?: string | null;
 }
 
 type ViolationsState =
@@ -89,6 +101,8 @@ export default function ViolationsTab({
   auditProgress,
   flowID,
   personas,
+  onViewDecision,
+  highlightedViolationID,
 }: ViolationsTabProps) {
   const [state, setState] = useState<ViolationsState>({ status: "loading" });
   // Phase 2 U11 — category filter chips. Selected = empty set means "all"
@@ -220,6 +234,84 @@ export default function ViolationsTab({
     // Filter shape may change identity each render — stringify for a stable dep.
     // reloadTrigger forces a re-fetch on audit_complete (Phase 3 U6).
   }, [slug, versionID, filters?.persona_id, filters?.mode_label, reloadTrigger]);
+
+  // Phase 6 U7 — build a violation_id → decision_id index from the
+  // flow's decisions. We use the existing list endpoint (no new server
+  // round-trip) and read decision.links where link_type === 'violation'.
+  // Skipped when flowID is null (no flow context) or onViewDecision is
+  // omitted (the parent doesn't host the Decisions tab).
+  const [violationToDecision, setViolationToDecision] = useState<
+    Map<string, string>
+  >(() => new Map());
+  useEffect(() => {
+    if (!flowID) {
+      setViolationToDecision(new Map());
+      return;
+    }
+    if (!onViewDecision) {
+      // Parent isn't wiring the cross-link; skip the fetch entirely.
+      return;
+    }
+    let cancelled = false;
+    void listDecisionsForFlow(slug, flowID, { includeSuperseded: true }).then((r) => {
+      if (cancelled) return;
+      if (!r.ok) {
+        // Non-fatal — the cross-link is a soft-add. Leave the map empty
+        // so violation rows just don't show "View decision".
+        setViolationToDecision(new Map());
+        return;
+      }
+      const next = new Map<string, string>();
+      for (const d of r.data.decisions ?? []) {
+        for (const link of d.links ?? []) {
+          if (link.link_type === "violation") {
+            // First-write-wins — if two decisions both link the same
+            // violation, the most recently made wins because the list
+            // endpoint returns made_at DESC. We honour that order so
+            // "View decision" jumps to the freshest record.
+            if (!next.has(link.target_id)) {
+              next.set(link.target_id, d.id);
+            }
+          }
+        }
+      }
+      setViolationToDecision(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, flowID, onViewDecision, reloadTrigger]);
+
+  // Phase 6 U7 — outline-pulse a freshly-targeted violation row when
+  // ProjectShell sets highlightedViolationID after a Decisions → Violations
+  // cross-link click. The pulse mirrors DecisionsTab's existing 1.5s
+  // accent-outline pattern; we read the row by data-violation-id once
+  // it's in the DOM, scroll it into view, then let the inline `outline`
+  // style render the highlight (cleared by the parent after 1.5s).
+  // Reduced-motion gates the smooth scroll only — the outline itself is
+  // a static state so reduced-motion users still see the highlight.
+  const [pulsedID, setPulsedID] = useState<string | null>(null);
+  useEffect(() => {
+    if (!highlightedViolationID) {
+      setPulsedID(null);
+      return;
+    }
+    if (state.status !== "ok") return;
+    setPulsedID(highlightedViolationID);
+    requestAnimationFrame(() => {
+      const row = rootRef.current?.querySelector<HTMLLIElement>(
+        `[data-violation-id="${CSS.escape(highlightedViolationID)}"]`,
+      );
+      if (row) {
+        row.scrollIntoView({
+          behavior: reduced ? "auto" : "smooth",
+          block: "center",
+        });
+      }
+    });
+    const t = setTimeout(() => setPulsedID(null), 1500);
+    return () => clearTimeout(t);
+  }, [highlightedViolationID, state, reduced]);
 
   // Stagger row reveal once rows are in the DOM. ~50ms per row, clamped to a
   // 600ms total window so a thousand-violation flow doesn't take 50 seconds.
@@ -477,6 +569,8 @@ export default function ViolationsTab({
             >
               {rows.map((v) => {
                 const fading = resolvedSet.has(v.ID);
+                const pulsed = pulsedID === v.ID;
+                const linkedDecisionID = violationToDecision.get(v.ID);
                 return (
                 <li
                   key={v.ID}
@@ -487,6 +581,7 @@ export default function ViolationsTab({
                   data-mode-label={v.ModeLabel ?? ""}
                   data-auto-fixable={v.AutoFixable === true ? "true" : "false"}
                   data-status={v.Status}
+                  data-linked-decision-id={linkedDecisionID ?? ""}
                   style={{
                     display: "grid",
                     gridTemplateColumns: "1fr auto",
@@ -494,9 +589,11 @@ export default function ViolationsTab({
                     padding: "10px 14px",
                     opacity: fading ? 0 : 1,
                     transform: fading ? "translateX(-12px)" : "none",
-                    transition: "opacity 220ms ease, transform 220ms ease",
+                    transition: "opacity 220ms ease, transform 220ms ease, outline-color 200ms ease, outline-width 200ms ease",
                     pointerEvents: fading ? "none" : "auto",
                     borderTop: "1px solid var(--border)",
+                    outline: pulsed ? "2px solid var(--accent)" : "none",
+                    outlineOffset: pulsed ? -2 : 0,
                   }}
                 >
                   <div style={{ minWidth: 0 }}>
@@ -542,6 +639,18 @@ export default function ViolationsTab({
                     {v.AutoFixable === true && (
                       <FixInFigmaButton violationID={v.ID} />
                     )}
+                    {linkedDecisionID && onViewDecision && (
+                      <button
+                        type="button"
+                        data-testid="violation-view-decision"
+                        data-decision-id={linkedDecisionID}
+                        onClick={() => onViewDecision(linkedDecisionID)}
+                        style={viewDecisionBtnStyle}
+                        title={`Open linked decision ${linkedDecisionID.slice(0, 8)}…`}
+                      >
+                        View decision
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => onViewInJSON?.(v.ScreenID)}
@@ -570,5 +679,19 @@ const viewJsonBtnStyle: React.CSSProperties = {
   border: "1px solid var(--border)",
   borderRadius: 6,
   color: "var(--text-1)",
+  cursor: "pointer",
+};
+
+// Phase 6 U7 — accent-tinted variant so the cross-link CTA reads as
+// "navigation" rather than "neutral action". Mirrors the chip styling
+// used elsewhere on the violations row for tonal consistency.
+const viewDecisionBtnStyle: React.CSSProperties = {
+  padding: "6px 10px",
+  fontSize: 11,
+  fontFamily: "var(--font-mono)",
+  background: "transparent",
+  border: "1px solid var(--accent)",
+  borderRadius: 6,
+  color: "var(--accent)",
   cursor: "pointer",
 };
