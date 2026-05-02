@@ -1,7 +1,8 @@
 ---
 title: "Phase 4 deploy runbook — violation lifecycle + designer surfaces"
 date: 2026-05-01
-status: active
+status: shipped
+shipped: 2026-05-01
 phase: 4
 ---
 

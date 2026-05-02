@@ -1,7 +1,8 @@
 ---
 title: "feat: Files tab + audit pipeline + living docs + plugin guardrails (Foundations-parity UX)"
 type: feat
-status: active
+status: shipped
+shipped: 2026-04-30
 date: 2026-04-28
 deepened: 2026-04-28
 origin: docs/brainstorms/2026-04-28-files-tab-audit-pipeline-requirements.md

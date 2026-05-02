@@ -1,7 +1,8 @@
 ---
 title: "feat: Projects · Flow Atlas — Phase 1 of 8 (plugin → project view round-trip)"
 type: feat
-status: active
+status: shipped
+shipped: 2026-04-29
 date: 2026-04-29
 deepened: 2026-04-29
 origin: docs/brainstorms/2026-04-29-projects-flow-atlas-requirements.md

@@ -54,7 +54,9 @@ DesignBrain's `internal/extraction/` and `internal/canonical/` packages do four 
 
 ### Plugin — separate track
 
-10. **`figma-plugin/`** — `manifest.json`, `code.ts`, `ui.html`. Local-first: plugin posts the user's Figma selection to `https://localhost:7474/import` (or a hosted ds-service URL). The service pushes back token suggestions, identifies whether the selection drifts from existing tokens, and offers an "inject this as a new component" command.
+10. **`figma-plugin/`** — `manifest.json`, `code.ts`, `ui.html`. Local-first. Two HTTP paths (verified 2026-05-02):
+    - **Audit / publish:** plugin POSTs to `http://localhost:7474/v1/audit/run` and `/v1/publish` (audit-server). The service runs the brand audit and publishes selection metadata locally.
+    - **Projects export:** plugin POSTs to `http://localhost:7474/v1/projects/export` (audit-server forwards to ds-service `localhost:8080/v1/projects/export` carrying the user's docs-site JWT). Plugin uses `Content-Type: text/plain` and embeds the JWT in body field `_auth` to dodge CORS preflight (commit `3d1e479`). The Vercel `/api/projects/export` route exists as a fallback for browser-based callers but is **not** the plugin's primary path. There is no `/import` endpoint anywhere — earlier docs that referenced it were stale.
 
 ### Visual polish (designer hat)
 

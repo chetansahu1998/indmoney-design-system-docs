@@ -1,7 +1,8 @@
 ---
 title: Phase 6 — Mind Graph (/atlas) runbook
 created: 2026-05-01
-status: active
+status: shipped
+shipped: 2026-05-02
 ---
 
 # Phase 6 — Mind Graph runbook

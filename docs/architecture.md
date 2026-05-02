@@ -1,8 +1,8 @@
 # INDmoney DS Docs · Architecture
 
-> Last reviewed: 2026-04-26
+> **Last reviewed: 2026-04-26 — diagram below covers the token round-trip only and predates Phases 4–9 (project view, atlas mind-graph, decisions, inbox, plugin Projects mode). For current production topology including the Figma plugin's projects-export path through audit-server, the Cloudflare quick-tunnel reality, and all the surfaces shipped since, see [`docs/runbooks/deploy-domain-setup.md`](./runbooks/deploy-domain-setup.md). The `*.indmoney.dev` zone shown below is aspirational — production runs on ephemeral `trycloudflare.com` URLs as of 2026-05-02.**
 
-## High-level
+## High-level (token round-trip path — partial; see runbook for full)
 
 ```
                     Figma (INDstocks V4 + Glyph)
@@ -17,23 +17,34 @@
             │   ├── SQLite (auth+audit+state) │
             │   └── git commit + push         │
             └─────────────────────────────────┘
-                         │ port 8080 → Cloudflare Tunnel
+                         │ port 8080 → Cloudflare quick tunnel
+                         │   (ephemeral trycloudflare.com URL —
+                         │    NOT a stable .indmoney.dev domain today)
                          ▼
-                api.ds.indmoney.dev (HTTPS)
+            <ephemeral>.trycloudflare.com (HTTPS)
                          ▲
                          │ Bearer JWT
             ┌─────────────────────────────────┐
             │  Next.js docs site (Vercel)     │
-            │   ├── /api/sync (Edge proxy)    │
-            │   ├── ColorSection (data-token) │
-            │   ├── ⌘K cmdk search            │
-            │   ├── TokenExportDialog         │
-            │   └── SyncModal                 │
+            │   ├── /api/sync (token sync)    │
+            │   ├── /api/projects/export      │
+            │   │   (browser-fallback only;   │
+            │   │    plugin uses localhost:7474│
+            │   │    via audit-server)        │
+            │   ├── /atlas (mind graph)       │
+            │   ├── /projects/[slug]          │
+            │   ├── /components (horizontal   │
+            │   │   canvas, atomic-tier)      │
+            │   └── /inbox                    │
             └─────────────────────────────────┘
                          │
                          ▼
-                indmoney.ds.indmoney.dev
+        indmoney-design-system-docs.vercel.app
+        (production alias TODAY;
+         indmoney.ds.indmoney.dev is future-state)
 ```
+
+> **Plugin path correction.** The Figma plugin (`figma-plugin/`) does NOT travel through Vercel for the projects-export round-trip. Its primary path is `localhost:7474/v1/projects/export` (audit-server), which forwards to `localhost:8080/v1/projects/export` (ds-service) carrying the user's docs-site JWT. See [`deploy-domain-setup.md`](./runbooks/deploy-domain-setup.md) and [`STATUS.md`](./STATUS.md) for the verified contract (commit `3d1e479` made the switch).
 
 ## Token round-trip (operator-driven)
 

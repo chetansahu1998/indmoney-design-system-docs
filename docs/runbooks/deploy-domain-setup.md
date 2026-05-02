@@ -32,13 +32,20 @@ services/ds-service/data/ds.db            (SQLite — the production DB)
 
 Figma plugin (in-Figma sandbox, designer's machine)
         │
-        ├─▶ HTTP localhost:7474   (audit-server: publish + audit endpoints,
-        │                          plugin polls /__health every 5s)
+        ├─▶ HTTP localhost:7474   (audit-server: publish, audit, AND
+        │                          projects-export endpoints. Plugin polls
+        │                          /__health every 5s, POSTs the projects-
+        │                          export payload here, audit-server forwards
+        │                          to ds-service localhost:8080 with the JWT
+        │                          extracted from body._auth.)
         │
-        └─▶ HTTPS Vercel /api/projects/export   (Phase 7.8 proxy → ds-service
-                                                  via the same tunnel above,
-                                                  uses the user's docs-site JWT
-                                                  pasted into plugin Settings)
+        └─▶ HTTPS Vercel /api/projects/export   (Phase 7.8 proxy — **fallback
+                                                  for browser-based callers
+                                                  only**, NOT the plugin's
+                                                  primary path. The plugin
+                                                  switched to audit-server
+                                                  forwarding in commit 3d1e479
+                                                  to dodge CORS preflight.)
 ```
 
 ## The two backend processes — what each does
@@ -206,7 +213,16 @@ curl -sS -o /dev/null -w "%{http_code}\n" \
 # 2. audit-server responds (expect 200)
 curl -sS -o /dev/null -w "%{http_code}\n" http://localhost:7474/__health
 
-# 3. Vercel proxy reaches ds-service (expect 401 — proxy passed; auth missing)
+# 3a. audit-server projects-export forwarder reaches ds-service
+#     (expect 401 — request reached ds-service; ds-service rejected fake auth).
+#     This is the plugin's actual export path.
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  -X POST http://localhost:7474/v1/projects/export \
+  -H "Content-Type: text/plain" \
+  -d '{"_auth":"fake.fake.fake","file_id":"smoke","file_name":"smoke","flows":[{"section_id":"s","frame_ids":["f1"],"frames":[{"frame_id":"f1","x":0,"y":0,"width":100,"height":100}],"platform":"mobile","product":"Indian Stocks","path":"smoke","persona_name":"","name":"smoke","mode_groups":[],"unpaired_frame_ids":["f1"]}]}'
+
+# 3b. Vercel browser-fallback path still alive (expect 401 with body._auth missing).
+#     This is NOT the plugin path — only for browser callers that go via Vercel.
 curl -sS -o /dev/null -w "%{http_code}\n" \
   -X POST https://indmoney-design-system-docs.vercel.app/api/projects/export \
   -H "Content-Type: application/json" -d '{}'
