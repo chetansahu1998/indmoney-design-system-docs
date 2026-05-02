@@ -1,21 +1,33 @@
 "use client";
 
 /**
- * Phase 6 U12 — leaf-morph hand-off to project view.
+ * Phase 9 U1 — leaf-click navigator.
  *
  * The user clicks a flow leaf → BrainGraph dispatches `morphTo(node)` →
- * this layer renders a Framer Motion `motion.div` with a `layoutId` that
- * matches a target on the project view's title bar. router.push to the
- * flow URL; Framer auto-tweens the layout shift across the route boundary
- * (~600ms cubic-out per R27).
+ * this layer pushes the route. The visual morph itself happens via the
+ * browser-native View Transitions API (CSS `view-transition-name` on the
+ * leaf-label DOM in the overlay layer + the project view's title), with
+ * Next.js 16.2's `experimental.viewTransition: true` (next.config.ts)
+ * auto-wrapping the navigation in `document.startViewTransition()`.
  *
- * In parallel: the r3f scene fades out (handled by BrainGraph via opacity
- * tween on its outer container) and the project view's atlas fades in.
+ * What this file used to do (pre-Phase-9): mount a Framer Motion
+ * `motion.div` with `layoutId={`flow-${node.id}-label`}` and rely on
+ * Framer to animate the layout shift across the route boundary. That
+ * pattern does NOT work — Framer's `layoutId` does not bridge Next.js
+ * App Router route changes (vercel/next.js#49279, still open 2026), and
+ * React 19.2.4 stable does not export the `<ViewTransition>` component
+ * (Canary-only). The new contract: leaf labels in the BrainGraph DOM
+ * overlay and the ProjectToolbar title carry matching CSS
+ * `view-transition-name` values; the browser handles the morph.
  *
- * Reduced-motion: instant route swap, no morph.
+ * This component now does one thing: observe `morphingNode` and trigger
+ * `router.push` on the flow's URL. No Framer, no rendered output.
+ *
+ * Reduced-motion + Firefox-default + any browser without View Transitions:
+ * instant route swap. The spatial-continuity cue for those users is the
+ * static breadcrumb on the project toolbar (U2c), not an outline pulse.
  */
 
-import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
@@ -23,57 +35,21 @@ import type { GraphNode } from "./types";
 
 interface Props {
   node: GraphNode;
+  /** Carried for parity with prior callers; the View Transitions CSS
+   *  handles reduced-motion via @media (prefers-reduced-motion: reduce)
+   *  on the ::view-transition-old/new pseudo-elements (U2b). We don't
+   *  branch on this prop here — the route push is the same either way. */
   reducedMotion: boolean;
 }
 
-export function LeafMorphHandoff({ node, reducedMotion }: Props) {
+export function LeafMorphHandoff({ node, reducedMotion: _reducedMotion }: Props) {
   const router = useRouter();
 
   useEffect(() => {
-    if (!node.signal.open_url) return;
-    if (reducedMotion) {
-      // Instant route swap. The morph layer still renders for one frame
-      // but the route push happens immediately.
-      router.push(node.signal.open_url);
-      return;
-    }
-    // Give Framer one render frame to anchor the layoutId before pushing.
-    const t = window.setTimeout(() => {
-      router.push(node.signal.open_url ?? "");
-    }, 50);
-    return () => window.clearTimeout(t);
-  }, [node, reducedMotion, router]);
+    const url = node.signal.open_url;
+    if (!url) return;
+    router.push(url);
+  }, [node, router]);
 
-  if (reducedMotion) return null;
-
-  return (
-    <motion.div
-      layoutId={`flow-${node.id}-label`}
-      className="morph"
-      initial={{ opacity: 1 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-    >
-      {node.label}
-      <style jsx>{`
-        .morph {
-          position: fixed;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          padding: 12px 24px;
-          background: rgba(123, 159, 255, 0.18);
-          border: 1px solid rgba(123, 159, 255, 0.4);
-          border-radius: 999px;
-          color: #ffffff;
-          font-family: var(--font-sans, "Inter Variable", sans-serif);
-          font-size: 18px;
-          font-weight: 600;
-          z-index: 30;
-          pointer-events: none;
-        }
-      `}</style>
-    </motion.div>
-  );
+  return null;
 }
