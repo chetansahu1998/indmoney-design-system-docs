@@ -47,44 +47,44 @@ export const NODE_VISUAL = {
   product: {
     radius: 8,
     color: "#7B9FFF",
-    emissiveIntensity: 3.5,
+    emissiveIntensity: 1.75,
     /** Always render the label; products are the brain-view anchors. */
     labelMinZoom: 0,
   },
   folder: {
     radius: 5,
     color: "#5C6FA8",
-    emissiveIntensity: 1.8,
+    emissiveIntensity: 0.9,
     labelMinZoom: 0.6,
   },
   flow: {
     radius: 4,
     color: "#3D4F7A",
-    emissiveIntensity: 1.2,
+    emissiveIntensity: 0.6,
     labelMinZoom: 0.9,
   },
   persona: {
     radius: 4,
     color: "#9F8FFF",
-    emissiveIntensity: 1.0,
+    emissiveIntensity: 0.5,
     labelMinZoom: 0.7,
   },
   component: {
     radius: 3,
     color: "#5C6FA8",
-    emissiveIntensity: 1.0,
+    emissiveIntensity: 0.5,
     labelMinZoom: 0.95,
   },
   token: {
     radius: 2.5,
     color: "#FFB347",
-    emissiveIntensity: 0.8,
+    emissiveIntensity: 0.4,
     labelMinZoom: 1.0,
   },
   decision: {
     radius: 4,
     color: "#FFB347",
-    emissiveIntensity: 0.8,
+    emissiveIntensity: 0.4,
     labelMinZoom: 0.85,
   },
 } as const;
@@ -98,5 +98,20 @@ export const EDGE_STYLE = {
   supersedes: { color: "#FFB347", alpha: 0.8, width: 1.2, directed: true },
 } as const;
 
-/** Background color of the r3f Canvas — near-black so bloom emissives pop. */
-export const BACKGROUND_COLOR = "#000814";
+/** Background color of the r3f Canvas — reads the `--bg-canvas` design
+ *  token from `documentElement` at runtime so the scene stays theme-aware
+ *  (dark / light / future themes). SSR / non-DOM environments fall back to
+ *  the dark-theme canvas hex so server-rendered snapshots don't crash.
+ *
+ *  U4 (Phase 7 polish): replaced the prior `BACKGROUND_COLOR` constant
+ *  (`"#000814"`) with this function. BrainGraph also installs a
+ *  MutationObserver on `documentElement[data-theme]` and rewrites
+ *  `scene.background` whenever the toggle flips — see BrainGraph.tsx
+ *  near the `backgroundColor={backgroundColor()}` prop. */
+export function backgroundColor(): string {
+  if (typeof window === "undefined") return "#050810";
+  const v = getComputedStyle(document.documentElement)
+    .getPropertyValue("--bg-canvas")
+    .trim();
+  return v || "#050810";
+}
