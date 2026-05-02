@@ -43,6 +43,7 @@ export function HoverSignalCard({ node, anchor }: Props) {
       className="card"
       role="dialog"
       aria-label={`${node.type} signal: ${node.label}`}
+      data-testid="hover-signal-card"
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0 }}
