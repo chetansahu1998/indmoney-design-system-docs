@@ -444,7 +444,68 @@ func (s *Server) HandleProjectGet(w http.ResponseWriter, r *http.Request) {
 	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
 	p, err := repo.GetProjectBySlug(r.Context(), slug)
 	if err == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"project": p})
+		// U12: bundle versions / screens / screen_modes / personas in
+		// the same response so the project shell can hydrate atlas + tabs
+		// in one round-trip. Frontend reads each as optional with `?? []`,
+		// so empty arrays for a just-created project are valid.
+		versions, vErr := repo.ListVersionsByProject(r.Context(), p.ID)
+		if vErr != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "list_versions", vErr.Error())
+			return
+		}
+
+		// Active version: explicit ?v= wins, else latest by version_index
+		// (versions slice is already ordered DESC). Mirrors the resolution
+		// pattern in HandleListViolations below.
+		activeVersionID := r.URL.Query().Get("v")
+		if activeVersionID == "" && len(versions) > 0 {
+			activeVersionID = versions[0].ID
+		}
+
+		var screens []Screen
+		var screenModes []ScreenMode
+		if activeVersionID != "" {
+			screens, err = repo.ListScreensByVersion(r.Context(), activeVersionID)
+			if err != nil {
+				writeJSONErr(w, http.StatusInternalServerError, "list_screens", err.Error())
+				return
+			}
+			screenModes, err = repo.ListScreenModesByVersion(r.Context(), activeVersionID)
+			if err != nil {
+				writeJSONErr(w, http.StatusInternalServerError, "list_screen_modes", err.Error())
+				return
+			}
+		}
+
+		personas, pErr := repo.ListPersonasForTenant(r.Context())
+		if pErr != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "list_personas", pErr.Error())
+			return
+		}
+
+		// Always emit non-nil slices so the JSON serializes as `[]`
+		// rather than `null` — the client's `?? []` fallback would
+		// handle null too, but the contract is "arrays present".
+		if versions == nil {
+			versions = []ProjectVersion{}
+		}
+		if screens == nil {
+			screens = []Screen{}
+		}
+		if screenModes == nil {
+			screenModes = []ScreenMode{}
+		}
+		if personas == nil {
+			personas = []Persona{}
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"project":            p,
+			"versions":           versions,
+			"screens":            screens,
+			"screen_modes":       screenModes,
+			"available_personas": personas,
+		})
 		return
 	}
 	if !errors.Is(err, ErrNotFound) {

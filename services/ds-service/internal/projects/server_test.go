@@ -271,6 +271,172 @@ func TestHandleExport_NoTenantInClaims_403(t *testing.T) {
 	}
 }
 
+// TestHandleProjectGet_BundledResponse covers U12 — the GET response must
+// carry versions / screens / screen_modes / available_personas alongside
+// the project so the frontend can hydrate atlas + tabs in one round-trip.
+func TestHandleProjectGet_BundledResponse(t *testing.T) {
+	srv, tA, uA, _, _ := newTestServer(t)
+	repo := NewTenantRepo(srv.deps.DB.DB, tA)
+	ctx := context.Background()
+
+	p, err := repo.UpsertProject(ctx, Project{
+		Name: "P", Platform: "mobile", Product: "Plutus", Path: "X", OwnerUserID: uA,
+	})
+	if err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	v1, err := repo.CreateVersion(ctx, p.ID, uA)
+	if err != nil {
+		t.Fatalf("seed v1: %v", err)
+	}
+	v2, err := repo.CreateVersion(ctx, p.ID, uA)
+	if err != nil {
+		t.Fatalf("seed v2: %v", err)
+	}
+	f, err := repo.UpsertFlow(ctx, Flow{ProjectID: p.ID, FileID: "F", Name: "Flow"})
+	if err != nil {
+		t.Fatalf("seed flow: %v", err)
+	}
+	// Two screens on the latest version (v2), one on v1 — verifies the
+	// handler resolves "latest by version_index" rather than dumping all.
+	v2Screens := []Screen{
+		{VersionID: v2.ID, FlowID: f.ID, X: 0, Y: 0, Width: 375, Height: 812},
+		{VersionID: v2.ID, FlowID: f.ID, X: 0, Y: 1000, Width: 375, Height: 812},
+	}
+	if err := repo.InsertScreens(ctx, v2Screens); err != nil {
+		t.Fatalf("seed v2 screens: %v", err)
+	}
+	v1Screens := []Screen{
+		{VersionID: v1.ID, FlowID: f.ID, X: 0, Y: 0, Width: 375, Height: 812},
+	}
+	if err := repo.InsertScreens(ctx, v1Screens); err != nil {
+		t.Fatalf("seed v1 screens: %v", err)
+	}
+	// One screen_mode on a v2 screen so the modes array is non-empty.
+	tx, err := repo.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	if err := repo.InsertScreenModes(ctx, tx, []ScreenMode{
+		{ScreenID: v2Screens[0].ID, ModeLabel: "light", FigmaFrameID: "fig-1"},
+	}); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("insert screen_mode: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	// One persona so available_personas is non-empty.
+	if _, err := repo.UpsertPersona(ctx, "Trader", uA); err != nil {
+		t.Fatalf("seed persona: %v", err)
+	}
+
+	// Happy path: latest version implicit.
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}}
+	r := requestWithClaims(http.MethodGet, "/v1/projects/"+p.Slug, nil, claims)
+	r.SetPathValue("slug", p.Slug)
+	w := httptest.NewRecorder()
+	srv.HandleProjectGet(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200; got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Project           map[string]any   `json:"project"`
+		Versions          []map[string]any `json:"versions"`
+		Screens           []map[string]any `json:"screens"`
+		ScreenModes       []map[string]any `json:"screen_modes"`
+		AvailablePersonas []map[string]any `json:"available_personas"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, w.Body.String())
+	}
+	if resp.Project == nil {
+		t.Fatal("project missing from response")
+	}
+	if len(resp.Versions) != 2 {
+		t.Fatalf("expected 2 versions; got %d", len(resp.Versions))
+	}
+	// Latest first — v2 should lead.
+	if resp.Versions[0]["ID"] != v2.ID {
+		t.Fatalf("expected versions ordered DESC; got first=%v", resp.Versions[0]["ID"])
+	}
+	if len(resp.Screens) != 2 {
+		t.Fatalf("expected 2 screens (latest version only); got %d", len(resp.Screens))
+	}
+	if len(resp.ScreenModes) != 1 {
+		t.Fatalf("expected 1 screen_mode; got %d", len(resp.ScreenModes))
+	}
+	if len(resp.AvailablePersonas) != 1 {
+		t.Fatalf("expected 1 persona; got %d", len(resp.AvailablePersonas))
+	}
+
+	// `?v=<id>` pins the version → screens for v1 only (1 screen, 0 modes).
+	r2 := requestWithClaims(http.MethodGet, "/v1/projects/"+p.Slug+"?v="+v1.ID, nil, claims)
+	r2.SetPathValue("slug", p.Slug)
+	w2 := httptest.NewRecorder()
+	srv.HandleProjectGet(w2, r2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("v= request expected 200; got %d", w2.Code)
+	}
+	var resp2 struct {
+		Versions    []map[string]any `json:"versions"`
+		Screens     []map[string]any `json:"screens"`
+		ScreenModes []map[string]any `json:"screen_modes"`
+	}
+	_ = json.Unmarshal(w2.Body.Bytes(), &resp2)
+	if len(resp2.Screens) != 1 {
+		t.Fatalf("?v=v1: expected 1 screen; got %d", len(resp2.Screens))
+	}
+	if len(resp2.ScreenModes) != 0 {
+		t.Fatalf("?v=v1: expected 0 screen_modes; got %d", len(resp2.ScreenModes))
+	}
+}
+
+// TestHandleProjectGet_EmptyProject covers the just-created edge case —
+// no versions, no screens, no modes. Arrays must still be present so the
+// client renders an empty state rather than crashing on undefined.
+func TestHandleProjectGet_EmptyProject(t *testing.T) {
+	srv, tA, uA, _, _ := newTestServer(t)
+	repo := NewTenantRepo(srv.deps.DB.DB, tA)
+	p, err := repo.UpsertProject(context.Background(), Project{
+		Name: "P", Platform: "mobile", Product: "Plutus", Path: "X", OwnerUserID: uA,
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}}
+	r := requestWithClaims(http.MethodGet, "/v1/projects/"+p.Slug, nil, claims)
+	r.SetPathValue("slug", p.Slug)
+	w := httptest.NewRecorder()
+	srv.HandleProjectGet(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200; got %d body=%s", w.Code, w.Body.String())
+	}
+
+	// Decode as raw map so we can assert keys exist (vs. omitempty stripping).
+	var resp map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, key := range []string{"project", "versions", "screens", "screen_modes", "available_personas"} {
+		if _, ok := resp[key]; !ok {
+			t.Errorf("response missing key %q; body=%s", key, w.Body.String())
+		}
+	}
+	// Versions/screens must be `[]`, not `null`.
+	if string(resp["versions"]) != "[]" {
+		t.Errorf("expected versions=[]; got %s", string(resp["versions"]))
+	}
+	if string(resp["screens"]) != "[]" {
+		t.Errorf("expected screens=[]; got %s", string(resp["screens"]))
+	}
+	if string(resp["screen_modes"]) != "[]" {
+		t.Errorf("expected screen_modes=[]; got %s", string(resp["screen_modes"]))
+	}
+}
+
 func TestHandleProjectGet_CrossTenant_404(t *testing.T) {
 	srv, tA, uA, _, _ := newTestServer(t)
 	repo := NewTenantRepo(srv.deps.DB.DB, tA)
