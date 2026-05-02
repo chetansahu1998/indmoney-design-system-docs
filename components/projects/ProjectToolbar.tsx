@@ -11,8 +11,18 @@
  *
  * Design intent (mhdyousuf/resn refs): controls feel snappy + monospace-
  * accented. No fancy chrome — the toolbar is functional, not decorative.
+ *
+ * U2c — Static `/atlas › <flow name>` breadcrumb. Always-on (NOT gated by
+ * reduced-motion). For motion users it's standard wayfinding; for reduced-
+ * motion + Firefox-default-flag users it serves as the *primary* spatial-
+ * continuity substitute for the cross-route morph (per the corrected
+ * Reduced-Motion + Unsupported Browser Strategy in the Phase plan's Key
+ * Technical Decisions section). Clicking `/atlas` navigates to the atlas
+ * route — no animation hook here; the reverse-morph (U3) is wired by
+ * the atlas side via View Transitions if the API is available.
  */
 
+import Link from "next/link";
 import type { Persona, Project, ProjectVersion } from "@/lib/projects/types";
 import {
   useProjectView,
@@ -63,6 +73,8 @@ export default function ProjectToolbar({
   const theme = useProjectView((s) => s.theme);
   const setTheme = useProjectView((s) => s.setTheme);
 
+  const resolvedFlowName = flowName ?? project.Name;
+
   return (
     <div
       data-anim="toolbar"
@@ -76,6 +88,52 @@ export default function ProjectToolbar({
         flexWrap: "wrap",
       }}
     >
+      {/* U2c — Static `/atlas › <flow name>` breadcrumb. Always rendered;
+          provides spatial-continuity context for both motion and no-motion
+          users. Inherits the toolbar's mono font via inline styles. The
+          `›` separator + flow-name span are both rendered as plain text
+          so flow names containing slashes (e.g. "F&O / Learn") don't
+          break the breadcrumb structure — the slash is just a glyph in
+          the flowName text node. */}
+      <nav
+        data-tour="atlas-breadcrumb"
+        aria-label="Atlas breadcrumb"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+          color: "var(--text-3)",
+          width: "100%",
+          minWidth: 0,
+        }}
+      >
+        <Link
+          href="/atlas"
+          data-testid="atlas-breadcrumb-link"
+          style={{
+            color: "var(--text-2)",
+            textDecoration: "none",
+          }}
+        >
+          /atlas
+        </Link>
+        <span aria-hidden>›</span>
+        <span
+          data-testid="atlas-breadcrumb-flow"
+          style={{
+            color: "var(--text-1)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            minWidth: 0,
+          }}
+        >
+          {resolvedFlowName}
+        </span>
+      </nav>
+
       {/* Breadcrumb — Product → Path → Flow. Mono so it reads as IDish. */}
       <nav
         aria-label="Project breadcrumb"
@@ -107,7 +165,7 @@ export default function ProjectToolbar({
             viewTransitionName: `flow-${slug}-label`,
           }}
         >
-          {flowName ?? project.Name}
+          {resolvedFlowName}
         </span>
       </nav>
 
