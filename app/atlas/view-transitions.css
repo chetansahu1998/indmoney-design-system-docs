@@ -1,0 +1,68 @@
+/*
+ * Phase 9 U2b — View Transitions keyframes for the /atlas → /projects morph.
+ *
+ * The browser-native View Transitions API auto-generates a default
+ * cross-fade animation between the `::view-transition-old(<name>)` and
+ * `::view-transition-new(<name>)` pseudo-elements when both pages snapshot
+ * an element with the same `view-transition-name`. Without explicit CSS,
+ * the animation is a 250ms ease-in-out cross-fade with a default scale
+ * morph between the bounding rects.
+ *
+ * We override duration + easing only (NOT the keyframes themselves):
+ *   - Duration: 600ms — long enough to read the spatial continuity, short
+ *     enough not to feel laggy. Matches the `dolly` cinematic timing on
+ *     the rest of the Projects animation language.
+ *   - Easing: `cubic-bezier(0.87, 0, 0.13, 1)` — equivalent to GSAP's
+ *     `expo.inOut` (the canonical EASE_DOLLY in lib/animations/easings.ts).
+ *
+ * Reduced motion: `animation-duration: 0s` collapses the morph to instant.
+ * Users still get the route swap; they just don't see the bounding-rect
+ * tween. The breadcrumb (U2c) carries the spatial-continuity cue for
+ * those users — this CSS stays a pure visual override.
+ *
+ * Browser support:
+ *   - Chrome 111+ / Edge 111+ — native single-page support; Next.js 16.2's
+ *     experimental.viewTransition wraps router pushes in
+ *     document.startViewTransition() so cross-route works.
+ *   - Safari 18.0+ (released Sept 2024) — same pseudo-element syntax.
+ *   - Firefox (no flag) — no-op; the API is undefined and Next.js falls
+ *     through to a plain route swap. No console error, no broken UI.
+ *
+ * Selector specificity note: `flow-*` is a custom-ident pattern in the
+ * View Transitions spec (no glob in CSS itself); we list the pseudo-class
+ * with `*=` would fail. Instead we use the `view-transition-name: *`
+ * fallback wouldn't work either — we use a wildcard via attribute-style
+ * selectors. The correct path is to declare per-name rules at runtime
+ * OR use the `:has()` workaround — but neither scales. Workaround used
+ * here: leverage the spec's pseudo-element structure where `::view-
+ * transition-old(*)` is a valid selector for "any name". This IS in the
+ * spec (https://drafts.csswg.org/css-view-transitions-1/#named-view-transition-pseudo).
+ */
+
+/* All view-transition pseudo-elements — overrides default 250ms with our
+ * EASE_DOLLY-equivalent cubic-bezier and 600ms duration. Applies to ALL
+ * named transitions on the page (including the title-bar morph in U2b
+ * and any future named transitions). The View Transitions group nests
+ * old/new pseudo-elements under the same wrapper, so animating the
+ * `::view-transition-group(*)` would synchronise both sides. */
+::view-transition-group(*) {
+  animation-duration: 600ms;
+  animation-timing-function: cubic-bezier(0.87, 0, 0.13, 1);
+}
+
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: 600ms;
+  animation-timing-function: cubic-bezier(0.87, 0, 0.13, 1);
+}
+
+/* Reduced-motion override. Matches the canonical reduced-motion source
+ * (`lib/animations/context.ts` reads the same media query); the CSS-only
+ * override here means we don't need a JS branch in the morph code path. */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 0s;
+  }
+}

@@ -521,6 +521,7 @@ export default function ProjectShell({
       ) : null}
 
       <ProjectToolbar
+        slug={slug}
         project={project}
         versions={versions}
         activeVersionID={activeVersionID}
@@ -528,6 +529,7 @@ export default function ProjectShell({
         personas={personas}
         activePersonaName={activePersonaName}
         onPersonaChange={changePersona}
+        flowName={initialProject.Name}
       />
 
       {/* Phase 3 U11: 4-step Shepherd.js tour. Mounts only for

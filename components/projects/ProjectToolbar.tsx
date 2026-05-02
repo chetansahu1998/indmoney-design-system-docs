@@ -28,6 +28,10 @@ const THEME_LABELS: Record<ThemeMode, string> = {
 const THEME_ORDER: ThemeMode[] = ["light", "dark", "auto"];
 
 interface ProjectToolbarProps {
+  /** Project slug. Required for the U2b View-Transitions morph: the title
+   *  bar's `view-transition-name` must match the source flow-leaf label
+   *  in /atlas (`flow-${slug}-label`). */
+  slug: string;
   project: Project;
   /** All available versions; ordered newest first. May be empty if upstream hasn't shipped this list yet. */
   versions: ProjectVersion[];
@@ -46,6 +50,7 @@ interface ProjectToolbarProps {
 }
 
 export default function ProjectToolbar({
+  slug,
   project,
   versions,
   activeVersionID,
@@ -89,7 +94,19 @@ export default function ProjectToolbar({
         <span aria-hidden>/</span>
         <span>{project.Path}</span>
         <span aria-hidden>/</span>
-        <span style={{ color: "var(--text-1)" }}>
+        {/* U2b — View-Transitions destination. The browser-native View
+            Transitions API matches this element to the source flow-leaf
+            label in /atlas (which carries the same name); during the
+            cross-route morph the bounding rect + opacity animate
+            between them. The CSS keyframes (duration + easing) live in
+            `app/atlas/view-transitions.css`. */}
+        <span
+          data-tour="project-title"
+          style={{
+            color: "var(--text-1)",
+            viewTransitionName: `flow-${slug}-label`,
+          }}
+        >
           {flowName ?? project.Name}
         </span>
       </nav>
