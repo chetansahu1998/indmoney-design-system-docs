@@ -765,12 +765,28 @@ func claimsFrom(r *http.Request) *auth.Claims {
 
 func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Primary: Authorization header (Bearer token) — what every JSON
+		// caller uses (browser fetch, plugin POSTs, curl smoke tests).
 		raw := r.Header.Get("Authorization")
-		if !strings.HasPrefix(raw, "Bearer ") {
+		token := ""
+		if strings.HasPrefix(raw, "Bearer ") {
+			token = strings.TrimPrefix(raw, "Bearer ")
+		}
+		// Fallback for GET requests only: ?token=<jwt> in the query string.
+		// Image / binary loaders (THREE.TextureLoader, KTX2Loader,
+		// <img src>) cannot set custom headers — the browser's image
+		// pipeline owns that request. Without this fallback, every
+		// /screens/:id/{png,ktx2} URL 401s on the project view's atlas
+		// canvas. Gated to GET so we don't accept tokens-in-URL on any
+		// state-changing request — bears the same tradeoffs as
+		// CloudFront signed URLs / Vercel image-signing tokens.
+		if token == "" && r.Method == http.MethodGet {
+			token = r.URL.Query().Get("token")
+		}
+		if token == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "missing bearer token"})
 			return
 		}
-		token := strings.TrimPrefix(raw, "Bearer ")
 		claims, err := s.jwt.VerifyAccessToken(token)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid token", "detail": err.Error()})

@@ -229,15 +229,23 @@ export async function getTextureKTX2OrPNG(
  * URL path returned by `lib/projects/client.ts:screenPngUrl()` which
  * is `/v1/projects/<slug>/screens/<id>/png`. Backend ships a sibling
  * /ktx2 route at the same path shape.
+ *
+ * Preserves any `?token=<jwt>` query string the caller appended for
+ * image-loader auth (image loaders can't carry Authorization headers,
+ * so we fall back to query-param token — see screenPngUrl + the GET
+ * fallback in cmd/server/main.go's requireAuth).
  */
 function pngURLToKTX2(pngURL: string): string {
-  if (pngURL.endsWith("/png")) {
-    return pngURL.slice(0, -3) + "ktx2";
+  const queryIdx = pngURL.indexOf("?");
+  const path = queryIdx === -1 ? pngURL : pngURL.slice(0, queryIdx);
+  const query = queryIdx === -1 ? "" : pngURL.slice(queryIdx);
+  let newPath = path;
+  if (path.endsWith("/png")) {
+    newPath = path.slice(0, -3) + "ktx2";
+  } else if (path.endsWith(".png")) {
+    newPath = path.slice(0, -4) + ".ktx2";
   }
-  if (pngURL.endsWith(".png")) {
-    return pngURL.slice(0, -4) + ".ktx2";
-  }
-  return pngURL;
+  return newPath + query;
 }
 
 /**

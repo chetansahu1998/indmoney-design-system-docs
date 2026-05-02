@@ -43,6 +43,7 @@ import {
 import * as THREE from "three";
 import type { Screen } from "@/lib/projects/types";
 import { screenPngUrl } from "@/lib/projects/client";
+import { useAuth } from "@/lib/auth-client";
 import AtlasControls from "./AtlasControls";
 import AtlasFrame from "./AtlasFrame";
 import AtlasPostprocessing, {
@@ -221,14 +222,19 @@ function Scene({
   }, []);
 
   // Pre-compute per-frame URLs once so React doesn't recreate strings on
-  // every render — small but adds up across 30+ frames.
+  // every render — small but adds up across 30+ frames. Pass the JWT so
+  // the URL carries `?token=<jwt>` — image-loaders can't set Authorization
+  // headers, so the GET fallback in requireAuth (cmd/server/main.go) reads
+  // the token from query string instead. Same risk profile as CloudFront
+  // signed URLs / Vercel image-signing tokens.
+  const authToken = useAuth((s) => s.token);
   const frames = useMemo(
     () =>
       screens.map((s) => ({
         screen: s,
-        url: screenPngUrl(slug, s.ID),
+        url: screenPngUrl(slug, s.ID, authToken),
       })),
-    [screens, slug],
+    [screens, slug, authToken],
   );
 
   return (

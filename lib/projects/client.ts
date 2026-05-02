@@ -125,17 +125,22 @@ async function safeJSONErr(res: Response): Promise<string> {
  *
  * The plain URL is consumed by `THREE.TextureLoader` inside r3f. The
  * Authorization header cannot be sent from a `<img>`/Texture loader; the
- * server therefore accepts a short-lived `?ticket=` (minted by the SSE
- * ticket flow) when present. Phase 1 stays simple: this helper returns the
- * canonical URL only — the texture cache layer adds the ticket if needed.
+ * server therefore accepts a `?token=<jwt>` query-param fallback (gated
+ * to GET requests only by the auth middleware in cmd/server/main.go).
+ * Same risk profile as CloudFront signed URLs / Vercel image-signing
+ * tokens — acceptable for an authenticated docs surface.
+ *
+ * The caller passes the JWT from `useAuth().token` so this function stays
+ * pure (no zustand reads at module scope, SSR-safe).
  *
  * Browser caches the response under `Cache-Control: private, max-age=300`
  * (set server-side by U11), so theme-toggle round-trips don't refetch.
  */
-export function screenPngUrl(slug: string, screenID: string): string {
-  return `${dsBaseURL()}/v1/projects/${encodeURIComponent(
+export function screenPngUrl(slug: string, screenID: string, token?: string | null): string {
+  const base = `${dsBaseURL()}/v1/projects/${encodeURIComponent(
     slug,
   )}/screens/${encodeURIComponent(screenID)}/png`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────────
