@@ -29,6 +29,15 @@ interface ViewState {
   zoomLevel: GraphZoomLevel;
   focusedNodeID: string | null;
   focusedNode: GraphNode | null;
+  /**
+   * Phase 9 U4 — leaf-morph source node. When set, the morph source must
+   * stay HOT (i.e. survive culling) for the duration of the View Transition
+   * regardless of zoom/focus, so the snapshot the browser captures has a
+   * crisp label. Mirrors the Phase 6 closure invariant: "selected/hovered
+   * nodes forced HOT regardless of viewport — load-bearing for any
+   * cross-surface choreography."
+   */
+  morphingNode?: GraphNode | null;
 }
 
 export function cullVisibleSubset(
@@ -75,10 +84,29 @@ export function cullVisibleSubset(
     };
   }
 
-  const nodes = all.filter((n) => allowed.has(n.type) && inSubtree(n));
+  // 3. U4 — pin set: nodes that must always pass culling regardless of
+  // zoom/focus/type. Currently only the morph-source node and its ancestor
+  // chain (so its parent edges still resolve to visible endpoints — without
+  // the chain the leaf would be a stranded node referenced by a hierarchy
+  // edge whose other end was filtered out, and the edge filter at step 4
+  // would drop the edge anyway). We walk parents up to the same 12-depth
+  // limit used in `inSubtree` for symmetry.
+  const pinned = new Set<string>();
+  if (view.morphingNode) {
+    let cursor: GraphNode | undefined = view.morphingNode;
+    let depth = 0;
+    while (cursor && depth++ < 12) {
+      pinned.add(cursor.id);
+      cursor = cursor.parent_id ? byID.get(cursor.parent_id) : undefined;
+    }
+  }
+
+  const nodes = all.filter(
+    (n) => pinned.has(n.id) || (allowed.has(n.type) && inSubtree(n)),
+  );
   const visibleIDs = new Set(nodes.map((n) => n.id));
 
-  // 3. Edge classes — at brain view only hierarchy; past it, hierarchy +
+  // 4. Edge classes — at brain view only hierarchy; past it, hierarchy +
   // any toggled satellite class. Drop edges to invisible nodes.
   const edges = allEdges.filter((e) => {
     if (!visibleIDs.has(e.source) || !visibleIDs.has(e.target)) return false;
