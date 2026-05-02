@@ -21,6 +21,7 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 
 import { FilterChips } from "./FilterChips";
 import { HoverSignalCard } from "./HoverSignalCard";
+import { LeafLabelLayer } from "./LeafLabelLayer";
 import { LeafMorphHandoff } from "./LeafMorphHandoff";
 import { PlatformToggle } from "./PlatformToggle";
 import { SavedViewShareButton } from "./SavedViewShareButton";
@@ -484,7 +485,14 @@ export default function BrainGraph({
           linkDirectionalParticles={0}
           // Per-node visuals.
           nodeThreeObject={nodeThreeObject}
-          nodeLabel={(n: unknown) => (n as FGNode).label}
+          // U2a: suppress canvas-sprite labels for flow-type nodes — the
+          // DOM overlay (LeafLabelLayer) renders those so they can carry
+          // a `view-transition-name` for the cross-route morph (U2b).
+          // Non-flow types (folder, product, etc.) keep canvas labels.
+          nodeLabel={(n: unknown) => {
+            const node = n as FGNode;
+            return node.type === "flow" ? "" : node.label;
+          }}
           // Per-edge visuals. linkMaterial overrides linkColor/linkWidth/
           // linkOpacity for incident edges during a click-and-hold (Phase
           // 7.6 shader pulse). When no node is held, linkMaterial is null
@@ -520,6 +528,20 @@ export default function BrainGraph({
           nodes={visible.nodes}
           edges={visible.edges}
           reducedMotion={reducedMotion}
+        />
+        {/* U2a — DOM-overlay labels for flow leaves. Each label tracks
+            its node by projecting the node's world position to screen
+            space every frame. Required as the morph SOURCE for the
+            View Transitions cross-route morph (U2b) — a WebGL sprite
+            cannot serve as a view-transition source because the canvas
+            is rasterized as one texture during the snapshot. */}
+        <LeafLabelLayer
+          nodes={visible.nodes}
+          fgRef={fgRef as unknown as React.MutableRefObject<{
+            camera: () => THREE.Camera;
+            renderer: () => THREE.WebGLRenderer;
+          } | null>}
+          morphingNode={view.morphingNode}
         />
       </div>
 
