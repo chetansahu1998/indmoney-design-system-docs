@@ -44,8 +44,16 @@ import type { ProjectVersion } from "./types";
 
 /** Audit sub-state inside `view_ready`. */
 export type AuditStatus =
-  | { kind: "complete" }
-  | { kind: "running"; completed: number; total: number }
+  | { kind: "complete"; completedTotal?: number }
+  | {
+      kind: "running";
+      completed: number;
+      total: number;
+      /** Monotonic counter incremented on every accepted progress tick.
+       *  Used to drop out-of-order ticks (U5: stale events fired after a
+       *  later tick has already landed). */
+      lastTickAt: number;
+    }
   | { kind: "failed"; error: string };
 
 /** Top-level project-view state. Every render branch in ProjectShell
@@ -79,9 +87,17 @@ export type ProjectViewMachineAction =
   /** SSE: project.view_ready landed. */
   | { type: "view_ready" }
   /** SSE: project.audit_progress tick (per Phase 3 U6 — per-rule). */
-  | { type: "audit_progress"; completed: number; total: number }
+  | {
+      type: "audit_progress";
+      completed: number;
+      total: number;
+      /** Wall-clock timestamp when the event was received, in ms. The
+       *  reducer drops ticks whose timestamp is older than the most-
+       *  recently-accepted tick (U5: out-of-order SSE events). */
+      receivedAt?: number;
+    }
   /** SSE: project.audit_complete. */
-  | { type: "audit_complete" }
+  | { type: "audit_complete"; finalCount?: number }
   /** SSE: project.audit_failed. */
   | { type: "audit_failed"; error: string }
   /** SSE: project.export_failed mid-pending. */
@@ -181,15 +197,27 @@ export function reducer(
       };
     }
     case "view_ready": {
-      // Pending → view_ready. SSE event during pending state means the
-      // backend pipeline finished the fast preview; the audit may still
-      // be running, but the atlas can render now.
-      if (state.kind !== "pending") return state;
-      return {
-        kind: "view_ready",
-        audit: { kind: "complete" },
-        readOnly: false,
-      };
+      // SSE view_ready: the backend pipeline has finished the fast
+      // preview — the atlas + tabs can render now, but the audit is
+      // still running. U5: this is the moment the spinner should appear
+      // in the toolbar.
+      //
+      // From `pending`: fresh-export deeplink path — promote into
+      //   view_ready/running so the shell mounts with the audit-running
+      //   indicator visible.
+      // From `view_ready/complete` (the SSR cold-start path): a redundant
+      //   view_ready event after page hydration. Keep `complete`; we don't
+      //   want to regress a finished audit back to running.
+      // From `view_ready/running` or `view_ready/failed`: ignore (already
+      //   in a more-specific sub-state).
+      if (state.kind === "pending") {
+        return {
+          kind: "view_ready",
+          audit: { kind: "running", completed: 0, total: 0, lastTickAt: 0 },
+          readOnly: false,
+        };
+      }
+      return state;
     }
     case "audit_progress": {
       if (state.kind !== "view_ready") return state;
@@ -197,19 +225,40 @@ export function reducer(
       // ordered per channel, but if a stale tick arrives after
       // audit_complete we ignore it.
       if (state.audit.kind === "complete") return state;
+      if (state.audit.kind === "failed") return state;
       if (action.total <= 0) return state;
+      // U5 — out-of-order tick guard. The broker doesn't guarantee
+      // strict per-trace ordering across reconnects, so a late tick can
+      // arrive after a newer one (e.g. completed=3 after completed=7).
+      // We use the receivedAt timestamp to drop stale ticks; if the
+      // caller didn't supply one, fall back to monotonic completed
+      // (current tick must be ≥ previous completed to advance).
+      const ts = action.receivedAt ?? Date.now();
+      if (state.audit.kind === "running") {
+        if (ts < state.audit.lastTickAt) return state;
+        if (
+          ts === state.audit.lastTickAt &&
+          action.completed < state.audit.completed
+        ) {
+          return state;
+        }
+      }
       return {
         ...state,
         audit: {
           kind: "running",
           completed: action.completed,
           total: action.total,
+          lastTickAt: ts,
         },
       };
     }
     case "audit_complete": {
       if (state.kind !== "view_ready") return state;
-      return { ...state, audit: { kind: "complete" } };
+      return {
+        ...state,
+        audit: { kind: "complete", completedTotal: action.finalCount },
+      };
     }
     case "audit_failed": {
       if (state.kind !== "view_ready") return state;

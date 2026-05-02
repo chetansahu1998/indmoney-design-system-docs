@@ -66,7 +66,9 @@ import {
   reducer as projectViewReducer,
   shouldRenderShell,
 } from "@/lib/projects/view-machine";
-import ProjectToolbar from "./ProjectToolbar";
+import ProjectToolbar, {
+  type ProjectToolbarAuditState,
+} from "./ProjectToolbar";
 import DRDTab from "./tabs/DRDTab";
 import DRDTabCollab from "./tabs/DRDTabCollab";
 
@@ -207,6 +209,57 @@ export default function ProjectShell({
   // useState that U6 added. Threading through view-machine keeps a single
   // source of truth for the audit's running/complete state.
   const auditProgress = auditProgressFromState(machineState);
+
+  // Phase 9 U5 — derive a flat audit-state discriminator for the toolbar
+  // badge. The view-machine uses a nested AuditStatus inside view_ready;
+  // ProjectToolbar only needs the four-way enum + an optional count or
+  // error message to render the small AuditStateBadge.
+  const auditBadge: ProjectToolbarAuditState = useMemo(() => {
+    if (machineState.kind === "pending") {
+      return { kind: "pending" };
+    }
+    if (machineState.kind !== "view_ready") {
+      // loading / error / version_not_found / permission_denied — no
+      // audit badge surfaces. The toolbar itself doesn't even render in
+      // most of those branches; permission_denied is the exception and
+      // there we hide the badge intentionally so the read-only banner
+      // dominates.
+      return { kind: "pending" };
+    }
+    if (machineState.audit.kind === "running") {
+      return {
+        kind: "running",
+        completed: machineState.audit.completed,
+        total: machineState.audit.total,
+      };
+    }
+    if (machineState.audit.kind === "failed") {
+      return { kind: "failed", error: machineState.audit.error };
+    }
+    return {
+      kind: "complete",
+      finalCount: machineState.audit.completedTotal,
+    };
+  }, [machineState]);
+
+  // Phase 9 U5 — slow-render affordance. When the user opens a project
+  // page that's still in `pending` (fresh export waiting on view_ready)
+  // and the SSE event hasn't arrived after 15s, we surface a "Slow to
+  // render — refresh?" affordance. Implemented as a piece of local state
+  // (not a reducer kind) because it's strictly cosmetic — the underlying
+  // machine state is still `pending` and a refresh is the user's choice,
+  // not a state transition.
+  const [slowRender, setSlowRender] = useState(false);
+  useEffect(() => {
+    if (machineState.kind !== "pending") {
+      setSlowRender(false);
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      setSlowRender(true);
+    }, 15_000);
+    return () => window.clearTimeout(handle);
+  }, [machineState.kind]);
 
   // ─── GSAP context (shared scope for every component-scoped tween). ──────
   const ctx = useGSAPContext(scopeRef);
@@ -402,10 +455,19 @@ export default function ProjectShell({
 
     const unsubscribe = subscribeProjectEvents(slug, traceID, (ev) => {
       if (ev.type === "audit_complete") {
-        // Phase 3 U7: dispatch into the state machine so audit-running
-        // transitions cleanly to audit_complete + the Violations tab
-        // swaps from progress UI to the populated list.
-        dispatch({ type: "audit_complete" });
+        // Phase 3 U7 + U5: dispatch into the state machine so audit-
+        // running transitions cleanly to audit_complete + the Violations
+        // tab swaps from progress UI to the populated list. The final
+        // violation count (when emitted by the broker) hydrates the
+        // toolbar's count badge so the user sees an immediate "N
+        // violations" without re-fetching the violations endpoint.
+        const finalCount =
+          typeof ev.data?.violation_count === "number"
+            ? ev.data.violation_count
+            : typeof ev.data?.count === "number"
+              ? ev.data.count
+              : undefined;
+        dispatch({ type: "audit_complete", finalCount });
         showToast({
           message: "Audit complete",
           tone: "success",
@@ -426,13 +488,20 @@ export default function ProjectShell({
         dispatch({ type: "export_failed", error });
         showToast({ message: "Export failed", tone: "danger" });
       } else if (ev.type === "audit_progress") {
-        // Phase 3 U6 + U7: per-rule progress tick → reducer.
+        // Phase 3 U6 + U7 + U5: per-rule progress tick → reducer. We
+        // capture Date.now() at receive time so the reducer can drop
+        // stale (out-of-order) ticks deterministically.
         const completed =
           typeof ev.data?.completed === "number" ? ev.data.completed : 0;
         const total =
           typeof ev.data?.total === "number" ? ev.data.total : 0;
         if (total > 0) {
-          dispatch({ type: "audit_progress", completed, total });
+          dispatch({
+            type: "audit_progress",
+            completed,
+            total,
+            receivedAt: Date.now(),
+          });
         }
       }
     });
@@ -524,10 +593,45 @@ export default function ProjectShell({
         ) : null}
 
         {machineState.kind === "pending" ? (
+          // U5 — slow-render affordance. After 15s in `pending` (the
+          // SSE view_ready event hasn't arrived), surface a manual-
+          // refresh CTA so the user has a way out if the backend is
+          // genuinely stuck. We don't auto-refresh because the
+          // pipeline may still be making progress server-side; a hard
+          // refresh would discard partial work the user can see.
           <EmptyState
             variant="loading"
             title="Project landing…"
-            description="Backend pipeline is finishing the fast preview. Atlas + DRD render here as soon as it's ready."
+            description={
+              slowRender
+                ? "This is taking longer than usual. Slow to render — refresh to retry, or wait for the backend to catch up."
+                : "Backend pipeline is finishing the fast preview. Atlas + DRD render here as soon as it's ready."
+            }
+            action={
+              slowRender ? (
+                <button
+                  type="button"
+                  data-testid="project-pending-refresh"
+                  onClick={() => {
+                    if (typeof window !== "undefined") {
+                      window.location.reload();
+                    }
+                  }}
+                  style={{
+                    padding: "6px 14px",
+                    fontSize: 12,
+                    fontFamily: "var(--font-mono)",
+                    background: "var(--bg)",
+                    color: "var(--text-1)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                  }}
+                >
+                  Refresh
+                </button>
+              ) : null
+            }
           />
         ) : null}
 
@@ -615,6 +719,28 @@ export default function ProjectShell({
         activePersonaName={activePersonaName}
         onPersonaChange={changePersona}
         flowName={initialProject.Name}
+        auditState={auditBadge}
+        onAuditRetry={() => {
+          // U5: the retry CTA on a failed-audit badge re-fetches the
+          // project payload, which dispatches `fetch_succeeded` and
+          // resets the audit sub-state. Phase 6 will replace this with
+          // a dedicated POST /audit/retry endpoint once the broker
+          // supports it.
+          if (!activeVersionID) return;
+          void fetchProject(slug, activeVersionID).then((r) => {
+            if (!r.ok) return;
+            if (r.data.versions) setVersions(r.data.versions);
+            const activeStatus =
+              r.data.versions?.find((v) => v.ID === activeVersionID)
+                ?.Status ?? "view_ready";
+            dispatch({
+              type: "fetch_succeeded",
+              versions: r.data.versions ?? [],
+              activeVersionStatus: activeStatus,
+              readOnly: searchParams.get("read_only_preview") === "1",
+            });
+          });
+        }}
       />
 
       {/* Phase 3 U11: 4-step Shepherd.js tour. Mounts only for

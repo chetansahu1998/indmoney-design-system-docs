@@ -28,6 +28,23 @@ import {
   useProjectView,
   type ThemeMode,
 } from "@/lib/projects/view-store";
+import { useReducedMotion } from "@/lib/animations/context";
+
+/**
+ * Phase 9 U5 — flattened audit state for the toolbar badge. ProjectShell
+ * derives this from the view-machine's nested AuditStatus + top-level
+ * pending kind so the toolbar doesn't have to know the full machine
+ * shape. Four kinds:
+ *   - pending: skeleton (canvas not yet visible / no audit info to show)
+ *   - running: the spinner / dot indicator + completed/total tooltip
+ *   - complete: the violation-count badge (final number once known)
+ *   - failed: red badge with retry CTA
+ */
+export type ProjectToolbarAuditState =
+  | { kind: "pending" }
+  | { kind: "running"; completed: number; total: number }
+  | { kind: "complete"; finalCount: number | undefined }
+  | { kind: "failed"; error: string };
 
 const THEME_LABELS: Record<ThemeMode, string> = {
   light: "Light",
@@ -57,6 +74,17 @@ interface ProjectToolbarProps {
 
   /** Optional flow segment for the breadcrumb tail; defaults to project.Name. */
   flowName?: string;
+
+  /** Phase 9 U5 — audit-state discriminator. Drives the small badge
+   *  rendered after the breadcrumb. Optional so consumers that don't
+   *  care (e.g. tests, storybook stubs) can omit it; the badge falls
+   *  back to the "pending" skeleton. */
+  auditState?: ProjectToolbarAuditState;
+
+  /** Phase 9 U5 — invoked when the user clicks the retry CTA on a
+   *  failed-audit badge. Optional; when omitted the badge still
+   *  renders the failure but the retry button is hidden. */
+  onAuditRetry?: () => void;
 }
 
 export default function ProjectToolbar({
@@ -69,6 +97,8 @@ export default function ProjectToolbar({
   activePersonaName,
   onPersonaChange,
   flowName,
+  auditState,
+  onAuditRetry,
 }: ProjectToolbarProps) {
   const theme = useProjectView((s) => s.theme);
   const setTheme = useProjectView((s) => s.setTheme);
@@ -168,6 +198,14 @@ export default function ProjectToolbar({
           {resolvedFlowName}
         </span>
       </nav>
+
+      {/* Phase 9 U5 — audit-state badge. Renders next to the breadcrumb
+          so the user has an at-a-glance answer to "is the audit still
+          running, or did it finish?" right where they're already
+          looking. The visual payload swaps with the auditState kind:
+          spinner (running) → count (complete) → red retry (failed) →
+          invisible (pending). */}
+      <AuditStateBadge state={auditState} onRetry={onAuditRetry} />
 
       {/* Theme toggle — segmented Light / Dark / Auto. */}
       <div
@@ -290,6 +328,196 @@ export default function ProjectToolbar({
         </label>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Phase 9 U5 — audit-state badge.
+ *
+ * Renders one of four micro-UIs depending on the audit's state. The
+ * component is intentionally small + self-contained so the four
+ * branches stay readable in one place; we don't break it into
+ * sub-components because each branch is ~10 lines and they share the
+ * same outer chip styling.
+ *
+ * Reduced-motion: the running spinner is replaced with a static "•••"
+ * dot indicator. Three dots is a stronger affordance than a single
+ * static dot — it reads as "in progress" without movement, and
+ * doesn't require a separate aria-label to communicate the same meaning
+ * the spinner conveys to motion users.
+ */
+function AuditStateBadge({
+  state,
+  onRetry,
+}: {
+  state: ProjectToolbarAuditState | undefined;
+  onRetry?: () => void;
+}): React.ReactElement | null {
+  const reducedMotion = useReducedMotion();
+
+  if (!state || state.kind === "pending") {
+    // Skeleton — invisible placeholder that holds layout space so the
+    // toolbar doesn't shift when the badge resolves to running/complete.
+    return (
+      <span
+        data-testid="audit-badge-pending"
+        aria-hidden
+        style={{
+          display: "inline-block",
+          width: 80,
+          height: 22,
+          borderRadius: 4,
+          background: "transparent",
+        }}
+      />
+    );
+  }
+
+  if (state.kind === "running") {
+    const label =
+      state.total > 0
+        ? `Audit running — ${state.completed}/${state.total}`
+        : "Audit running";
+    return (
+      <span
+        data-testid="audit-badge-running"
+        role="status"
+        aria-live="polite"
+        title={label}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "3px 8px",
+          fontSize: 11,
+          fontFamily: "var(--font-mono)",
+          color: "var(--text-2)",
+          border: "1px solid var(--border)",
+          borderRadius: 4,
+          background:
+            "color-mix(in srgb, var(--bg) 92%, var(--text-1) 8%)",
+        }}
+      >
+        {reducedMotion ? (
+          <span
+            data-testid="audit-badge-spinner-static"
+            aria-hidden
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              letterSpacing: 1,
+              color: "var(--text-3)",
+            }}
+          >
+            •••
+          </span>
+        ) : (
+          <span
+            data-testid="audit-badge-spinner"
+            aria-hidden
+            style={{
+              display: "inline-block",
+              width: 10,
+              height: 10,
+              borderRadius: "50%",
+              border: "1.5px solid var(--text-3)",
+              borderTopColor: "var(--text-1)",
+              animation: "audit-spinner-rotate 0.9s linear infinite",
+            }}
+          />
+        )}
+        <span>Audit running</span>
+        {/* Inline keyframes — keeps the badge self-contained without
+            polluting a global stylesheet. The keyframes are inert under
+            reduced-motion because that branch never renders the
+            spinner element above. */}
+        {!reducedMotion ? (
+          <style>{`@keyframes audit-spinner-rotate { to { transform: rotate(360deg); } }`}</style>
+        ) : null}
+      </span>
+    );
+  }
+
+  if (state.kind === "complete") {
+    const count = state.finalCount;
+    const text =
+      typeof count === "number"
+        ? count === 1
+          ? "1 violation"
+          : `${count} violations`
+        : "Audit complete";
+    return (
+      <span
+        data-testid="audit-badge-complete"
+        role="status"
+        title={text}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "3px 8px",
+          fontSize: 11,
+          fontFamily: "var(--font-mono)",
+          color: "var(--text-1)",
+          border: "1px solid var(--border)",
+          borderRadius: 4,
+          background:
+            "color-mix(in srgb, var(--bg) 86%, var(--success, #2a8) 14%)",
+        }}
+      >
+        <span aria-hidden style={{ color: "var(--success, #2a8)" }}>
+          ✓
+        </span>
+        <span>{text}</span>
+      </span>
+    );
+  }
+
+  // failed
+  return (
+    <span
+      data-testid="audit-badge-failed"
+      role="alert"
+      title={state.error}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "3px 8px",
+        fontSize: 11,
+        fontFamily: "var(--font-mono)",
+        color: "var(--text-1)",
+        border: "1px solid var(--danger, #c33)",
+        borderRadius: 4,
+        background:
+          "color-mix(in srgb, var(--bg) 80%, var(--danger, #c33) 20%)",
+      }}
+    >
+      <span aria-hidden style={{ color: "var(--danger, #c33)" }}>
+        !
+      </span>
+      <span>Audit failed</span>
+      {onRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          data-testid="audit-badge-retry"
+          style={{
+            marginLeft: 4,
+            padding: "0 6px",
+            fontSize: 11,
+            fontFamily: "var(--font-mono)",
+            background: "transparent",
+            color: "var(--danger, #c33)",
+            border: "1px solid var(--danger, #c33)",
+            borderRadius: 3,
+            cursor: "pointer",
+          }}
+        >
+          Retry
+        </button>
+      ) : null}
+    </span>
   );
 }
 
