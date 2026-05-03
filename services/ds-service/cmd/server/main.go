@@ -646,6 +646,13 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/atlas/admin/rules/{rule_id}",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAdminPatchRule)))
 
+	// Personas — non-admin list endpoint, used by the Figma plugin's
+	// persona dropdown and the atlas inspector chips. Default ?status=
+	// is approved (the common case); 'pending' / 'all' available without
+	// the super-admin gate.
+	mux.HandleFunc("GET /v1/personas",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleListPersonas)))
+
 	// Phase 7 U4 — persona library approval queue.
 	mux.HandleFunc("GET /v1/atlas/admin/personas/pending",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAdminListPendingPersonas)))
