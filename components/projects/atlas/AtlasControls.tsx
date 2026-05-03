@@ -30,7 +30,9 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 interface AtlasControlsProps {
   /** Optional callback fired when the user finishes a zoom gesture. */
   onZoomEnd?: (zoom: number) => void;
-  /** Lower zoom bound. Default 0.1 (very far out). */
+  /** Lower zoom bound. Default 0.005 — must stay below useAtlasViewport's
+   *  MIN_INITIAL_ZOOM or OrbitControls clamps the fit-zoom on mount and the
+   *  canvas paints a tiny middle slice that often contains no frames. */
   minZoom?: number;
   /** Upper zoom bound. Default 4.0 (4x native pixel density). */
   maxZoom?: number;
@@ -38,7 +40,7 @@ interface AtlasControlsProps {
 
 export default function AtlasControls({
   onZoomEnd,
-  minZoom = 0.1,
+  minZoom = 0.005,
   maxZoom = 4.0,
 }: AtlasControlsProps) {
   const ref = useRef<OrbitControlsImpl | null>(null);

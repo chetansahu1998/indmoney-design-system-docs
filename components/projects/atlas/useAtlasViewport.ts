@@ -48,7 +48,12 @@ export interface AtlasViewport {
 const FIT_PADDING = 0.1;
 
 /** Reasonable zoom guard so a degenerate single-frame project still fits. */
-const MIN_INITIAL_ZOOM = 0.05;
+// 0.005 lets large flow exports (~20k × 40k world units across 200+ screens
+// at native Figma frame dimensions) fit the canvas at first paint. The
+// previous floor of 0.05 capped the fit so aggressively that orthographic
+// view height was ~8000 world units — only ~20% of frames vertically, and
+// usually centered on an empty middle band, so the canvas looked blank.
+const MIN_INITIAL_ZOOM = 0.005;
 const MAX_INITIAL_ZOOM = 4.0;
 
 function storageKey(slug: string, versionID: string | undefined): string {
