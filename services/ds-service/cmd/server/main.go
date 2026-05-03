@@ -878,6 +878,14 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid token", "detail": err.Error()})
 			return
 		}
+		// Plan 2026-05-03-001 / T1 — revocation list. Signature is valid; check
+		// whether ops has explicitly disabled this jti (e.g. leaked token,
+		// former designer). 60 s in-memory cache so the happy path doesn't
+		// pay an extra SQL round-trip per request.
+		if claims.ID != "" && s.db.IsJTIRevoked(r.Context(), claims.ID) {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "token_revoked"})
+			return
+		}
 		ctx := context.WithValue(r.Context(), ctxClaims, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
