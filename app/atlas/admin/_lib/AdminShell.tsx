@@ -34,7 +34,7 @@ const NAV_LINKS: { href: string; label: string; key: string }[] = [
 ];
 
 function dsBaseURL(): string {
-  return process.env.NEXT_PUBLIC_DS_SERVICE_URL ?? "http://localhost:8080";
+  return process.env.NEXT_PUBLIC_DS_SERVICE_URL || "http://localhost:8080";
 }
 
 export function AdminShell({ title, description, children }: Props) {

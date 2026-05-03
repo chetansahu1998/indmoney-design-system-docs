@@ -16,7 +16,7 @@ import { useEffect, useRef, useState } from "react";
 import { getToken } from "@/lib/auth-client";
 
 function dsBaseURL(): string {
-  return process.env.NEXT_PUBLIC_DS_SERVICE_URL ?? "http://localhost:8080";
+  return process.env.NEXT_PUBLIC_DS_SERVICE_URL || "http://localhost:8080";
 }
 
 export interface SearchHit {

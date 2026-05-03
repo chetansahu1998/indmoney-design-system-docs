@@ -62,7 +62,7 @@ const SEVERITY_TINTS: Record<string, string> = {
 };
 
 function dsBaseURL(): string {
-  return process.env.NEXT_PUBLIC_DS_SERVICE_URL ?? "http://localhost:8080";
+  return process.env.NEXT_PUBLIC_DS_SERVICE_URL || "http://localhost:8080";
 }
 
 export default function WhereThisBreaks({ name }: Props) {

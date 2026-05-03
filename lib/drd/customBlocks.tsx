@@ -320,7 +320,7 @@ export const ViolationRefBlock = createReactBlockSpec(
 );
 
 function dsBaseURL(): string {
-  return process.env.NEXT_PUBLIC_DS_SERVICE_URL ?? "http://localhost:8080";
+  return process.env.NEXT_PUBLIC_DS_SERVICE_URL || "http://localhost:8080";
 }
 
 function ViolationRefRenderer({ violationID, slug }: { violationID: string; slug: string }) {

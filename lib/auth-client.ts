@@ -32,7 +32,7 @@ export const useAuth = create<AuthState>()(
 
 /** Login via ds-service direct call (bypasses Next.js — same-origin in dev, CORS in prod). */
 export async function login(email: string, password: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  const dsUrl = process.env.NEXT_PUBLIC_DS_SERVICE_URL ?? "http://localhost:8080";
+  const dsUrl = process.env.NEXT_PUBLIC_DS_SERVICE_URL || "http://localhost:8080";
   try {
     const res = await fetch(`${dsUrl}/v1/auth/login`, {
       method: "POST",

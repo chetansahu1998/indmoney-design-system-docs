@@ -87,7 +87,7 @@ export type ApiErr = { ok: false; status: number; error: string };
 export type ApiResult<T> = ApiOk<T> | ApiErr;
 
 function dsBaseURL(): string {
-  return process.env.NEXT_PUBLIC_DS_SERVICE_URL ?? "http://localhost:8080";
+  return process.env.NEXT_PUBLIC_DS_SERVICE_URL || "http://localhost:8080";
 }
 
 export async function fetchDashboardSummary(

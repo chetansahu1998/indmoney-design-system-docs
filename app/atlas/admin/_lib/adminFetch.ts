@@ -12,7 +12,7 @@
 import { getToken } from "@/lib/auth-client";
 
 function dsBaseURL(): string {
-  return process.env.NEXT_PUBLIC_DS_SERVICE_URL ?? "http://localhost:8080";
+  return process.env.NEXT_PUBLIC_DS_SERVICE_URL || "http://localhost:8080";
 }
 
 function authedHeaders(extra?: Record<string, string>): Record<string, string> {

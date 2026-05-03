@@ -42,7 +42,7 @@ export type ApiResult<T> = ApiOk<T> | ApiErr;
 // ─── Internals ──────────────────────────────────────────────────────────────
 
 function dsBaseURL(): string {
-  return process.env.NEXT_PUBLIC_DS_SERVICE_URL ?? "http://localhost:8080";
+  return process.env.NEXT_PUBLIC_DS_SERVICE_URL || "http://localhost:8080";
 }
 
 /** Returns headers with `Authorization: Bearer <token>` if a token is present. */
