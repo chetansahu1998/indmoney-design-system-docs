@@ -646,3 +646,53 @@ func TestRepo_TxWrap_CommitPersistsAllWrites(t *testing.T) {
 		t.Fatalf("expected 1 flow after commit; got %d", len(flows))
 	}
 }
+
+// TestRepo_UpsertProject_FileIDIsolatesProjects — plan 2026-05-03-001 / T5.
+// Pre-T5: two Figma files with the same (product, platform, path) collapsed
+// into one project row. With file_id as part of the lookup key, distinct
+// file_ids produce distinct project rows even when the metadata triple
+// matches, and re-uploads of the same file return the same row.
+func TestRepo_UpsertProject_FileIDIsolatesProjects(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	a, err := repo.UpsertProject(ctx, Project{
+		Name: "FileA project", Platform: "mobile", Product: "Indian Stocks",
+		Path: "research", FileID: "file-aaa", OwnerUserID: uA,
+	})
+	if err != nil {
+		t.Fatalf("upsert A: %v", err)
+	}
+	b, err := repo.UpsertProject(ctx, Project{
+		Name: "FileB project", Platform: "mobile", Product: "Indian Stocks",
+		Path: "research", FileID: "file-bbb", OwnerUserID: uA,
+	})
+	if err != nil {
+		t.Fatalf("upsert B: %v", err)
+	}
+	if a.ID == b.ID {
+		t.Fatalf("expected distinct project IDs for distinct file_ids; both returned %s", a.ID)
+	}
+	if a.Slug == b.Slug {
+		t.Fatalf("expected distinct slugs to keep URLs unambiguous; both = %s", a.Slug)
+	}
+	if a.FileID != "file-aaa" || b.FileID != "file-bbb" {
+		t.Fatalf("file_id round-trip failed: a=%q b=%q", a.FileID, b.FileID)
+	}
+
+	// Re-upsert FileA — must return the SAME row (idempotent on file_id).
+	again, err := repo.UpsertProject(ctx, Project{
+		Name: "FileA renamed", Platform: "mobile", Product: "Indian Stocks",
+		Path: "research", FileID: "file-aaa", OwnerUserID: uA,
+	})
+	if err != nil {
+		t.Fatalf("upsert A again: %v", err)
+	}
+	if again.ID != a.ID {
+		t.Fatalf("re-upsert by same file_id created a new row; want %s got %s", a.ID, again.ID)
+	}
+	if again.Name != "FileA renamed" {
+		t.Fatalf("rename didn't propagate; got %q", again.Name)
+	}
+}

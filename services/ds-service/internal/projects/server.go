@@ -287,6 +287,7 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 		Platform:    first.Platform,
 		Product:     first.Product,
 		Path:        first.Path,
+		FileID:      req.FileID, // T5 — uniqueness key, not just metadata
 		OwnerUserID: claims.Sub,
 	})
 	if err != nil {

@@ -24,12 +24,16 @@ const ProjectsSchemaVersion = "1.0"
 
 // Project mirrors the projects table.
 type Project struct {
-	ID          string
-	Slug        string
-	Name        string
-	Platform    string // mobile | web
-	Product     string
-	Path        string
+	ID       string
+	Slug     string
+	Name     string
+	Platform string // mobile | web
+	Product  string
+	Path     string
+	// FileID — Figma file key from the export request. Plan 2026-05-03-001 / T5.
+	// Empty for legacy / system rows that pre-date the column. Two different
+	// Figma files can no longer collapse into one project row per tenant.
+	FileID      string
 	OwnerUserID string
 	TenantID    string
 	DeletedAt   *time.Time
@@ -47,8 +51,14 @@ type ProjectVersion struct {
 	PipelineStartedAt   *time.Time
 	PipelineHeartbeatAt *time.Time
 	Error               string
-	CreatedByUserID     string
-	CreatedAt           time.Time
+	// PrunedAt — non-nil when the on-disk PNG cache for this version has
+	// been reclaimed by the retention sweeper (plan 2026-05-03-001 / T6).
+	// SQLite rows + canonical_trees stay; only the rendered PNGs are gone.
+	// HandleVersionRetry can re-render them on demand from the audit_log
+	// frame snapshot.
+	PrunedAt        *time.Time
+	CreatedByUserID string
+	CreatedAt       time.Time
 }
 
 // Flow mirrors the flows table.

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -194,7 +195,40 @@ func (p *Pipeline) RunFastPreview(ctx context.Context, in PipelineInputs) error 
 		p.fail(pipelineCtx, in, err)
 		return err
 	}
+
+	// T6 — retention sweep. The version we just landed bumped this
+	// project to N+1 versions. If N+1 exceeds the retention budget,
+	// reclaim the oldest versions' on-disk PNG dirs. Runs async with a
+	// detached context so a slow sweep doesn't block the HTTP response
+	// (already sent) or the SSE bus.
+	if p.DataDir != "" {
+		retain := versionRetention()
+		go func() {
+			swCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			pruned, _, err := PruneOldVersionDirs(swCtx, p.Log, p.Repo, p.DataDir, in.ProjectID, retain)
+			if err != nil && p.Log != nil {
+				p.Log.Warn("retention sweep failed", "project_id", in.ProjectID, "err", err.Error())
+			}
+			if pruned > 0 && p.Log != nil {
+				p.Log.Info("retention sweep", "project_id", in.ProjectID, "pruned_versions", pruned, "retain", retain)
+			}
+		}()
+	}
 	return nil
+}
+
+// versionRetention reads VERSION_RETENTION env var (defaults to
+// DefaultVersionRetention=3). Floored at 1 — retaining zero versions
+// would prune even the just-landed view_ready, which is never what we
+// want.
+func versionRetention() int {
+	if raw := os.Getenv("VERSION_RETENTION"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 1 {
+			return n
+		}
+	}
+	return DefaultVersionRetention
 }
 
 // runStages is the inner pipeline. Split out so RunFastPreview can wrap it

@@ -2,7 +2,9 @@ package projects
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -122,45 +124,106 @@ func parseTime(s string) time.Time {
 
 // ─── Projects ────────────────────────────────────────────────────────────────
 
-// UpsertProject resolves an existing project by (tenant, product, platform, path)
-// and returns its ID + slug, or creates one if absent. Uses a prepared statement;
-// no string interpolation of user input.
+// UpsertProject resolves an existing project for the caller and returns its
+// row, or creates one if absent.
+//
+// Plan 2026-05-03-001 / T5 — lookup key is now (tenant_id, file_id).
+// Pre-T5 the key was (tenant, product, platform, path) — three hand-typed
+// strings — which silently merged different Figma files that happened to
+// share the same triple. file_id is the Figma file key (opaque from the
+// plugin's perspective) and uniquely identifies one Figma file.
+//
+// Fallback: when the caller doesn't pass a file_id (system seeds, tests),
+// the legacy lookup path runs unchanged so existing call sites keep
+// working. The migration backfilled file_id for every real project row,
+// so production exports always hit the file_id path.
+//
+// Slug collision: when two distinct file_ids hash to the same
+// makeSlug(product, path) — e.g. two Figma files both labeled
+// "Indian Stocks → research" — the second insert appends a 6-char
+// hex of the file_id ("research-a1b2c3") to keep slugs URL-friendly +
+// distinguishable.
 func (t *TenantRepo) UpsertProject(ctx context.Context, p Project) (Project, error) {
 	if t.tenantID == "" {
 		return Project{}, errors.New("projects: tenant_id required")
 	}
-	// Look up existing first.
-	row := t.handle().QueryRowContext(ctx,
-		`SELECT id, slug, name, platform, product, path, owner_user_id, created_at, updated_at
-		   FROM projects
-		  WHERE tenant_id = ? AND product = ? AND platform = ? AND path = ? AND deleted_at IS NULL`,
-		t.tenantID, p.Product, p.Platform, p.Path,
-	)
-	var existing Project
-	var createdAt, updatedAt string
-	err := row.Scan(&existing.ID, &existing.Slug, &existing.Name, &existing.Platform,
-		&existing.Product, &existing.Path, &existing.OwnerUserID, &createdAt, &updatedAt)
-	if err == nil {
-		existing.TenantID = t.tenantID
-		existing.CreatedAt = parseTime(createdAt)
-		existing.UpdatedAt = parseTime(updatedAt)
-		// Bump updated_at + name (designers may rename)
-		now := t.now().UTC()
-		_, err := t.handle().ExecContext(ctx,
-			`UPDATE projects SET name = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`,
-			p.Name, rfc3339(now), existing.ID, t.tenantID)
-		if err != nil {
-			return Project{}, fmt.Errorf("update project: %w", err)
+
+	// T5 path — file_id present. Look up by (tenant, file_id). This is
+	// the only correct lookup for plugin exports.
+	if p.FileID != "" {
+		row := t.handle().QueryRowContext(ctx,
+			`SELECT id, slug, name, platform, product, path, file_id, owner_user_id, created_at, updated_at
+			   FROM projects
+			  WHERE tenant_id = ? AND file_id = ? AND deleted_at IS NULL`,
+			t.tenantID, p.FileID,
+		)
+		var existing Project
+		var fileID sql.NullString
+		var createdAt, updatedAt string
+		err := row.Scan(&existing.ID, &existing.Slug, &existing.Name, &existing.Platform,
+			&existing.Product, &existing.Path, &fileID, &existing.OwnerUserID, &createdAt, &updatedAt)
+		if err == nil {
+			existing.TenantID = t.tenantID
+			if fileID.Valid {
+				existing.FileID = fileID.String
+			}
+			existing.CreatedAt = parseTime(createdAt)
+			existing.UpdatedAt = parseTime(updatedAt)
+			now := t.now().UTC()
+			if _, uerr := t.handle().ExecContext(ctx,
+				`UPDATE projects SET name = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`,
+				p.Name, rfc3339(now), existing.ID, t.tenantID,
+			); uerr != nil {
+				return Project{}, fmt.Errorf("update project: %w", uerr)
+			}
+			existing.Name = p.Name
+			existing.UpdatedAt = now
+			return existing, nil
 		}
-		existing.Name = p.Name
-		existing.UpdatedAt = now
-		return existing, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return Project{}, fmt.Errorf("lookup project: %w", err)
+		if !errors.Is(err, sql.ErrNoRows) {
+			return Project{}, fmt.Errorf("lookup project: %w", err)
+		}
+		// Falls through to insert below with file_id set on p.
+	} else {
+		// Legacy path — no file_id. Lookup by the historical 4-tuple.
+		// System / seed rows + tests with empty FileID end up here.
+		row := t.handle().QueryRowContext(ctx,
+			`SELECT id, slug, name, platform, product, path, file_id, owner_user_id, created_at, updated_at
+			   FROM projects
+			  WHERE tenant_id = ? AND product = ? AND platform = ? AND path = ?
+			    AND file_id IS NULL AND deleted_at IS NULL`,
+			t.tenantID, p.Product, p.Platform, p.Path,
+		)
+		var existing Project
+		var fileID sql.NullString
+		var createdAt, updatedAt string
+		err := row.Scan(&existing.ID, &existing.Slug, &existing.Name, &existing.Platform,
+			&existing.Product, &existing.Path, &fileID, &existing.OwnerUserID, &createdAt, &updatedAt)
+		if err == nil {
+			existing.TenantID = t.tenantID
+			if fileID.Valid {
+				existing.FileID = fileID.String
+			}
+			existing.CreatedAt = parseTime(createdAt)
+			existing.UpdatedAt = parseTime(updatedAt)
+			now := t.now().UTC()
+			if _, uerr := t.handle().ExecContext(ctx,
+				`UPDATE projects SET name = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`,
+				p.Name, rfc3339(now), existing.ID, t.tenantID,
+			); uerr != nil {
+				return Project{}, fmt.Errorf("update project: %w", uerr)
+			}
+			existing.Name = p.Name
+			existing.UpdatedAt = now
+			return existing, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return Project{}, fmt.Errorf("lookup project: %w", err)
+		}
 	}
 
-	// Create new.
+	// Create new. Slug derived from path; on collision (different file_id
+	// targeting same product+path) append a short hash suffix.
 	if p.ID == "" {
 		p.ID = uuid.NewString()
 	}
@@ -171,64 +234,71 @@ func (t *TenantRepo) UpsertProject(ctx context.Context, p Project) (Project, err
 	p.CreatedAt = now
 	p.UpdatedAt = now
 	p.TenantID = t.tenantID
-	_, err = t.handle().ExecContext(ctx,
-		`INSERT INTO projects (id, slug, name, platform, product, path, owner_user_id, tenant_id, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.ID, p.Slug, p.Name, p.Platform, p.Product, p.Path, p.OwnerUserID, t.tenantID,
-		rfc3339(now), rfc3339(now),
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
-			// Slug collision causes:
-			//   (a) Race: two concurrent first-imports of the same
-			//       (tenant, product, platform, path) — the other goroutine
-			//       won; re-read by that 4-tuple and return the existing row.
-			//   (b) Cross-platform collision: a row already exists for the
-			//       same (tenant, product, path) on a *different* platform.
-			//       The lookup-by-platform misses it, but the slug index is
-			//       (tenant_id, slug) — so we hit UNIQUE. Regenerate the
-			//       slug with a platform suffix and retry ONCE.
-			//
-			// Pre-Phase 6 this path recursed on the public method, which
-			// could loop forever for case (b). The fix below is bounded:
-			// at most one retry, and only for case (b).
+
+	insertOnce := func(slug string) error {
+		// FileID="" must store as SQL NULL, not as the empty string. The
+		// partial unique index `(tenant_id, file_id) WHERE file_id IS NOT
+		// NULL` treats "" as NOT NULL, which would deduplicate two
+		// distinct legacy rows with identical empty file_ids onto the
+		// same (tenant_id, "") key — wrong. nullStringValue collapses ""
+		// to NULL so the partial index ignores those rows.
+		var fileIDArg any = nil
+		if p.FileID != "" {
+			fileIDArg = p.FileID
+		}
+		_, err := t.handle().ExecContext(ctx,
+			`INSERT INTO projects (id, slug, name, platform, product, path, file_id, owner_user_id, tenant_id, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			p.ID, slug, p.Name, p.Platform, p.Product, p.Path, fileIDArg,
+			p.OwnerUserID, t.tenantID, rfc3339(now), rfc3339(now),
+		)
+		return err
+	}
+	if err := insertOnce(p.Slug); err != nil {
+		if !strings.Contains(err.Error(), "UNIQUE") {
+			return Project{}, fmt.Errorf("insert project: %w", err)
+		}
+		// UNIQUE collision can be:
+		//   (a) Concurrent insert of same (tenant, file_id) — re-read.
+		//   (b) Slug collision against an unrelated row (different
+		//       file_id but same makeSlug output, OR cross-platform
+		//       reuse of the same product+path). Disambiguate the slug
+		//       and retry once.
+		if p.FileID != "" {
 			row := t.handle().QueryRowContext(ctx,
-				`SELECT id, slug, name, platform, product, path, owner_user_id, created_at, updated_at
+				`SELECT id, slug, name, platform, product, path, file_id, owner_user_id, created_at, updated_at
 				   FROM projects
-				  WHERE tenant_id = ? AND product = ? AND platform = ? AND path = ? AND deleted_at IS NULL`,
-				t.tenantID, p.Product, p.Platform, p.Path,
+				  WHERE tenant_id = ? AND file_id = ? AND deleted_at IS NULL`,
+				t.tenantID, p.FileID,
 			)
 			var existing Project
+			var fileID sql.NullString
 			var createdAt, updatedAt string
-			scanErr := row.Scan(&existing.ID, &existing.Slug, &existing.Name, &existing.Platform,
-				&existing.Product, &existing.Path, &existing.OwnerUserID, &createdAt, &updatedAt)
-			if scanErr == nil {
-				// Case (a): concurrent insert won — return existing row.
+			if scanErr := row.Scan(&existing.ID, &existing.Slug, &existing.Name, &existing.Platform,
+				&existing.Product, &existing.Path, &fileID, &existing.OwnerUserID, &createdAt, &updatedAt); scanErr == nil {
 				existing.TenantID = t.tenantID
+				if fileID.Valid {
+					existing.FileID = fileID.String
+				}
 				existing.CreatedAt = parseTime(createdAt)
 				existing.UpdatedAt = parseTime(updatedAt)
 				return existing, nil
-			}
-			if !errors.Is(scanErr, sql.ErrNoRows) {
+			} else if !errors.Is(scanErr, sql.ErrNoRows) {
 				return Project{}, fmt.Errorf("post-collision lookup: %w", scanErr)
 			}
-			// Case (b): same slug but different platform. Append the
-			// platform to disambiguate, regenerate IDs, retry ONCE.
-			p.Slug = makeSlug(p.Product, p.Path) + "-" + strings.ToLower(p.Platform)
-			p.ID = uuid.NewString()
-			retryErr := t.handle().QueryRowContext(ctx,
-				`INSERT INTO projects (id, slug, name, platform, product, path, owner_user_id, tenant_id, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-				 RETURNING id`,
-				p.ID, p.Slug, p.Name, p.Platform, p.Product, p.Path, p.OwnerUserID, t.tenantID,
-				rfc3339(now), rfc3339(now),
-			).Scan(&p.ID)
-			if retryErr != nil {
-				return Project{}, fmt.Errorf("insert project (cross-platform retry): %w", retryErr)
-			}
-			return p, nil
 		}
-		return Project{}, fmt.Errorf("insert project: %w", err)
+		// Slug collision (case b). Append 6 hex chars of file_id (or
+		// platform when no file_id is set) for disambiguation.
+		suffix := strings.ToLower(p.Platform)
+		if p.FileID != "" {
+			h := sha256.Sum256([]byte(p.FileID))
+			suffix = hex.EncodeToString(h[:3])
+		}
+		p.Slug = makeSlug(p.Product, p.Path) + "-" + suffix
+		p.ID = uuid.NewString()
+		if err := insertOnce(p.Slug); err != nil {
+			return Project{}, fmt.Errorf("insert project (slug-collision retry): %w", err)
+		}
 	}
 	return p, nil
 }
@@ -565,15 +635,16 @@ func (t *TenantRepo) GetProjectBySlug(ctx context.Context, slug string) (Project
 		return Project{}, errors.New("projects: tenant_id required")
 	}
 	row := t.r.db.QueryRowContext(ctx,
-		`SELECT id, slug, name, platform, product, path, owner_user_id, created_at, updated_at
+		`SELECT id, slug, name, platform, product, path, file_id, owner_user_id, created_at, updated_at
 		   FROM projects
 		  WHERE tenant_id = ? AND slug = ? AND deleted_at IS NULL`,
 		t.tenantID, slug,
 	)
 	var p Project
+	var fileID sql.NullString
 	var createdAt, updatedAt string
 	err := row.Scan(&p.ID, &p.Slug, &p.Name, &p.Platform, &p.Product, &p.Path,
-		&p.OwnerUserID, &createdAt, &updatedAt)
+		&fileID, &p.OwnerUserID, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Project{}, ErrNotFound
 	}
@@ -581,6 +652,9 @@ func (t *TenantRepo) GetProjectBySlug(ctx context.Context, slug string) (Project
 		return Project{}, err
 	}
 	p.TenantID = t.tenantID
+	if fileID.Valid {
+		p.FileID = fileID.String
+	}
 	p.CreatedAt = parseTime(createdAt)
 	p.UpdatedAt = parseTime(updatedAt)
 	return p, nil
@@ -635,7 +709,7 @@ func (t *TenantRepo) ListProjects(ctx context.Context, limit int) ([]Project, er
 		limit = 100
 	}
 	rows, err := t.r.db.QueryContext(ctx,
-		`SELECT id, slug, name, platform, product, path, owner_user_id, created_at, updated_at
+		`SELECT id, slug, name, platform, product, path, file_id, owner_user_id, created_at, updated_at
 		   FROM projects
 		  WHERE tenant_id = ? AND deleted_at IS NULL
 		  ORDER BY updated_at DESC
@@ -649,12 +723,16 @@ func (t *TenantRepo) ListProjects(ctx context.Context, limit int) ([]Project, er
 	var out []Project
 	for rows.Next() {
 		var p Project
+		var fileID sql.NullString
 		var createdAt, updatedAt string
 		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Platform, &p.Product, &p.Path,
-			&p.OwnerUserID, &createdAt, &updatedAt); err != nil {
+			&fileID, &p.OwnerUserID, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		p.TenantID = t.tenantID
+		if fileID.Valid {
+			p.FileID = fileID.String
+		}
 		p.CreatedAt = parseTime(createdAt)
 		p.UpdatedAt = parseTime(updatedAt)
 		out = append(out, p)
@@ -2339,7 +2417,7 @@ func (t *TenantRepo) ListVersionsByProject(ctx context.Context, projectID string
 	}
 	rows, err := t.r.db.QueryContext(ctx,
 		`SELECT id, project_id, version_index, status, pipeline_started_at, pipeline_heartbeat_at,
-		        error, created_by_user_id, created_at
+		        error, pruned_at, created_by_user_id, created_at
 		   FROM project_versions
 		  WHERE project_id = ? AND tenant_id = ?
 		  ORDER BY version_index DESC`,
@@ -2352,10 +2430,10 @@ func (t *TenantRepo) ListVersionsByProject(ctx context.Context, projectID string
 	var out []ProjectVersion
 	for rows.Next() {
 		var v ProjectVersion
-		var startedAt, heartbeatAt, errStr sql.NullString
+		var startedAt, heartbeatAt, errStr, prunedAt sql.NullString
 		var createdAt string
 		if err := rows.Scan(&v.ID, &v.ProjectID, &v.VersionIndex, &v.Status,
-			&startedAt, &heartbeatAt, &errStr, &v.CreatedByUserID, &createdAt); err != nil {
+			&startedAt, &heartbeatAt, &errStr, &prunedAt, &v.CreatedByUserID, &createdAt); err != nil {
 			return nil, err
 		}
 		v.TenantID = t.tenantID
@@ -2371,9 +2449,26 @@ func (t *TenantRepo) ListVersionsByProject(ctx context.Context, projectID string
 		if errStr.Valid {
 			v.Error = errStr.String
 		}
+		if prunedAt.Valid {
+			tt := parseTime(prunedAt.String)
+			v.PrunedAt = &tt
+		}
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// MarkVersionPruned stamps pruned_at so the retention sweeper skips this
+// version on subsequent passes. T6.
+func (t *TenantRepo) MarkVersionPruned(ctx context.Context, versionID string, at time.Time) error {
+	if t.tenantID == "" {
+		return errors.New("projects: tenant_id required")
+	}
+	_, err := t.r.db.ExecContext(ctx,
+		`UPDATE project_versions SET pruned_at = ? WHERE id = ? AND tenant_id = ?`,
+		rfc3339(at.UTC()), versionID, t.tenantID,
+	)
+	return err
 }
 
 // ListScreensByVersion returns every screen for a specific version, ordered
