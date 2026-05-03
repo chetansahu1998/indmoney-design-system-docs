@@ -1,7 +1,7 @@
 <svg width="343" height="77" viewBox="0 0 343 77" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M0 0H343V65C343 71.6274 337.627 77 331 77H12C5.37258 77 0 71.6274 0 65V0Z" fill="#FFE6E4"/>
 <g clip-path="url(#clip0_1660_5762)">
-<path d="M24 61.8332V51.1665M24 51.1665L20 55.1665M24 51.1665L28 55.1665" stroke="#DD2624" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M24 61.8332V51.1665M28 55.1665L24 51.1665L20 55.1665" stroke="#DD2624" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 <text fill="#121313" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="40.2656" y="61.5039">Your expenses are up by </tspan></text>
 <text fill="#DD2624" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="204.172" y="61.4834">20%</tspan></text>

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,6 +96,11 @@ type ServerDeps struct {
 	// metadata endpoint returns URL-only info without a thumbnail; tests
 	// can substitute a closure returning a fake PAT.
 	FigmaPATResolver func(ctx context.Context, tenantID string) (string, error)
+
+	// AssetSigner mints + verifies short-lived URL tokens for the PNG /
+	// KTX2 routes (audit Pr8 / D1). nil disables the asset-token path —
+	// the legacy `?token=<jwt>` query-string fallback continues to work.
+	AssetSigner *auth.AssetTokenSigner
 
 	Log *slog.Logger
 }
@@ -311,8 +317,23 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// audit_log row (always — success or failure).
+	// audit_log row (always — success or failure). Persist the per-frame
+	// (screen_id, figma_frame_id, x, y, w, h) snapshot inside `details` so
+	// a future recovery cmd can replay the pipeline without re-walking the
+	// Figma file (audit finding B5). Capped to MaxFramesPerProject (~250)
+	// in normal operation; the JSON blob is bounded.
 	if s.deps.AuditLogger != nil {
+		auditFrames := make([]ExportAuditFrame, 0, len(pipelineFrames))
+		for _, pf := range pipelineFrames {
+			auditFrames = append(auditFrames, ExportAuditFrame{
+				ScreenID:     pf.ScreenID,
+				FigmaFrameID: pf.FigmaFrameID,
+				X:            pf.X,
+				Y:            pf.Y,
+				Width:        pf.Width,
+				Height:       pf.Height,
+			})
+		}
 		_ = s.deps.AuditLogger.WriteExport(r.Context(), AuditExportEvent{
 			Action:    AuditActionExport,
 			UserID:    claims.Sub,
@@ -323,6 +344,7 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 			IP:        clientIP(r),
 			UserAgent: r.UserAgent(),
 			TraceID:   traceID,
+			Frames:    auditFrames,
 		})
 	}
 
@@ -483,6 +505,48 @@ func (s *Server) HandleProjectGet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		flows, fErr := repo.ListFlowsByProject(r.Context(), p.ID)
+		if fErr != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "list_flows", fErr.Error())
+			return
+		}
+
+		// Pr31 — flow-level ACL enforcement via flow_grants.
+		// Default-allow: tenant members get `editor` on every flow that
+		// has no grants attached. When grants exist, the caller's effective
+		// role is `MAX(editor_default, grant)` if they're listed; flows
+		// without an entry are HIDDEN from the response (not an existence
+		// oracle — same shape as a tenant-cross filter). Super-admins
+		// always see everything.
+		productDefault := FlowRoleEditor
+		visibleFlows := make([]Flow, 0, len(flows))
+		for _, f := range flows {
+			grants, gErr := repo.ListFlowGrants(r.Context(), f.ID)
+			if gErr != nil {
+				writeJSONErr(w, http.StatusInternalServerError, "list_flow_grants", gErr.Error())
+				return
+			}
+			if len(grants) == 0 || claims.IsAdmin {
+				f.EffectiveRole = productDefault
+				visibleFlows = append(visibleFlows, f)
+				continue
+			}
+			var match *FlowGrant
+			for i := range grants {
+				if grants[i].UserID == claims.Sub {
+					match = &grants[i]
+					break
+				}
+			}
+			if match == nil {
+				// Caller has no grant on a guarded flow → hide it.
+				continue
+			}
+			f.EffectiveRole = MaxFlowRole(FlowRoleViewer, match.Role)
+			visibleFlows = append(visibleFlows, f)
+		}
+		flows = visibleFlows
+
 		// Always emit non-nil slices so the JSON serializes as `[]`
 		// rather than `null` — the client's `?? []` fallback would
 		// handle null too, but the contract is "arrays present".
@@ -498,6 +562,9 @@ func (s *Server) HandleProjectGet(w http.ResponseWriter, r *http.Request) {
 		if personas == nil {
 			personas = []Persona{}
 		}
+		if flows == nil {
+			flows = []Flow{}
+		}
 
 		writeJSON(w, http.StatusOK, map[string]any{
 			"project":            p,
@@ -505,6 +572,7 @@ func (s *Server) HandleProjectGet(w http.ResponseWriter, r *http.Request) {
 			"screens":            screens,
 			"screen_modes":       screenModes,
 			"available_personas": personas,
+			"flows":              flows,
 		})
 		return
 	}
@@ -698,14 +766,30 @@ func (s *Server) HandleProjectList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
-	list, err := repo.ListProjects(r.Context(), 100)
+	// Pr33 — accept ?limit (default 100, max 500) so the client can opt
+	// in to larger pages instead of silently truncating at 100. The repo
+	// caps at 500 internally as well; same value here keeps the contract
+	// consistent. `truncated` flips when the page is full so the client
+	// can render a "showing N of more" hint without doing a count query.
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			if n > 500 {
+				n = 500
+			}
+			limit = n
+		}
+	}
+	list, err := repo.ListProjects(r.Context(), limit)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "list", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"projects": list,
-		"count":    len(list),
+		"projects":  list,
+		"count":     len(list),
+		"limit":     limit,
+		"truncated": len(list) == limit,
 	})
 }
 
@@ -3160,6 +3244,15 @@ func AdaptAuthMiddleware(reader func(*http.Request) *auth.Claims, next http.Hand
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := reader(r)
 		if claims == nil {
+			// Pr8 — asset-token bypass. When the upstream `requireAuth`
+			// allowed a GET through with `?at=<token>` and no JWT, no
+			// claims were set on the context. Pass straight to the inner
+			// handler — it (e.g. HandleScreenPNG) verifies the asset MAC
+			// against the resolved (tenant, screen) pair before serving.
+			if r.Method == http.MethodGet && r.URL.Query().Get("at") != "" {
+				next(w, r)
+				return
+			}
 			writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "")
 			return
 		}

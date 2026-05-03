@@ -92,7 +92,19 @@ export function LeafMorphHandoff({ node, reducedMotion: _reducedMotion }: Props)
       }
     }
 
-    router.push(url);
+    // Pr15 / A32 — encode the flow node ID into the destination URL
+    // (`?ft=<flow_uuid>`) so the destination's ProjectToolbar can emit a
+    // `view-transition-name` that matches the source leaf's `flow-<id>-label`
+    // discriminator. Without this, multiple flow leaves under one project
+    // (e.g. indian-stocks-research has 3 flows) would all share the same
+    // morph name and the browser would arbitrarily match one. `node.id`
+    // is `flow:<flow_uuid>`; strip the prefix.
+    const flowID = node.id.startsWith("flow:") ? node.id.slice(5) : node.id;
+    const destURL = url.includes("?")
+      ? `${url}&ft=${encodeURIComponent(flowID)}`
+      : `${url}?ft=${encodeURIComponent(flowID)}`;
+
+    router.push(destURL);
   }, [node, router]);
 
   return null;

@@ -57,8 +57,9 @@ export function cullVisibleSubset(
     if (filters.components) allowed.add("component");
     if (filters.tokens) allowed.add("token");
     if (filters.decisions) allowed.add("decision");
-    // Personas always visible past brain view.
-    allowed.add("persona");
+    // Personas opt-in via the designer-lens filter chip (runbook §3 — a
+    // designer reviewing a flow's audience explicitly turns this on).
+    if (filters.personas) allowed.add("persona");
   }
 
   // 2. If focused, restrict to focus + descendants + ancestors.

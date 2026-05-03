@@ -63,7 +63,8 @@ export default function InboxRow({
         checked={selected}
         onChange={() => onToggle(row.violation_id)}
         aria-label={`Select violation ${row.violation_id}`}
-        style={{ marginTop: 4 }}
+        // S21 — align native checkbox with brand.
+        style={{ marginTop: 4, accentColor: "var(--accent)" }}
       />
 
       <span

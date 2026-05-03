@@ -18,7 +18,7 @@
  * SSE so this gap closes without changing call sites.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import EmptyState from "@/components/empty-state/EmptyState";
 import {
@@ -83,6 +83,15 @@ export default function InboxShell() {
     void fetchInbox(filters).then((r) => {
       if (cancelled) return;
       if (!r.ok) {
+        // S9 — 401 from any inbox fetch means our localStorage token is
+        // either expired or was minted under a different JWT signing key
+        // (server restart with ephemeral key). Bounce to /login?next=/inbox
+        // to re-auth instead of leaving the user staring at an "Unauthorized"
+        // error chip with no recovery path. Mirrors app/inbox/layout.tsx.
+        if (r.status === 401) {
+          router.replace("/login?next=/inbox");
+          return;
+        }
         setState({ kind: "error", status: r.status, error: r.error });
         return;
       }
@@ -95,13 +104,30 @@ export default function InboxShell() {
     return () => {
       cancelled = true;
     };
-  }, [filters, filtersActive]);
+  }, [filters, filtersActive, router]);
+
+  // S25 — debounce filter writes by 200ms. Rapid chip clicks (e.g.
+  // toggling severity on/off in quick succession, or typing into the
+  // rule_id input) used to call router.replace + refetch on every event.
+  // Debouncing collapses bursts into a single URL update + fetch while
+  // still feeling instant (200ms is below the perceptual lag floor).
+  const filterDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current);
+    };
+  }, []);
 
   const updateFilters = useCallback(
     (next: InboxFilters) => {
-      const sp = inboxFiltersToSearchParams(next).toString();
-      router.replace(sp ? `/inbox?${sp}` : "/inbox");
+      // Clear selection immediately — the visual feedback for chip click
+      // shouldn't wait on the network round-trip.
       setSelected(new Set());
+      if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current);
+      filterDebounceRef.current = setTimeout(() => {
+        const sp = inboxFiltersToSearchParams(next).toString();
+        router.replace(sp ? `/inbox?${sp}` : "/inbox");
+      }, 200);
     },
     [router],
   );
@@ -459,6 +485,8 @@ export default function InboxShell() {
               checked={allSelected}
               onChange={toggleSelectAll}
               aria-label="Select all visible rows"
+              // S21 — align native checkbox with brand instead of OS default.
+              style={{ accentColor: "var(--accent)" }}
             />
             <span
               style={{
@@ -546,13 +574,18 @@ export default function InboxShell() {
   );
 }
 
+// S13 — token-aware tab pill. Mirrors the chip pattern in
+// app/atlas/FilterChips.tsx: active pill uses --accent fill + --text-on-accent
+// text (with white fallback), inactive uses transparent fill + --text-2.
+// Replaced ad-hoc inline styles + `var(--bg-base, #fff)` fallback with
+// real theme tokens so the pill reads correctly under both themes.
 function modeTabStyle(active: boolean): React.CSSProperties {
   return {
     padding: "6px 14px",
     fontSize: 12,
     fontFamily: "var(--font-mono)",
     background: active ? "var(--accent)" : "transparent",
-    color: active ? "var(--bg-base, #fff)" : "var(--text-2)",
+    color: active ? "var(--text-on-accent, #fff)" : "var(--text-2)",
     border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
     borderRadius: 999,
     cursor: "pointer",

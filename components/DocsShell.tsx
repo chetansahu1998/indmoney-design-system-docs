@@ -79,15 +79,23 @@ export default function DocsShell() {
   }, [theme]);
 
   // ⌘K / Ctrl+K
+  // Audit C6: case-insensitive match (some keymaps report "K" with caps
+  // lock on / Shift held), preventDefault + stopPropagation so child
+  // canvases (e.g. ComponentCanvas) can't swallow the gesture, and
+  // explicitly DON'T bail on input focus so Cmd+K from inside any field
+  // (the canvas search bar, tile filters) still opens the modal. The
+  // browser's own Cmd+K (omnibar focus) is also intercepted, which is
+  // intentional — every doc-tools site does this.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
+        e.stopPropagation();
         setSearchOpen(!searchOpen);
       }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("keydown", handler, { capture: true });
+    return () => window.removeEventListener("keydown", handler, { capture: true });
   }, [searchOpen, setSearchOpen]);
 
   useActiveSection(SECTIONS);
@@ -198,7 +206,11 @@ export default function DocsShell() {
               <motion.a
                 key={item.label}
                 href={item.href}
-                whileHover={{ y: -2, boxShadow: "0 8px 24px rgba(0,0,0,0.12)" }}
+                // S19 — replace hardcoded RGBA hover shadow with the
+                // theme-aware --elev-shadow-2 token (defined in globals.css
+                // for both themes). framer-motion can animate token values
+                // when fed through CSS custom properties.
+                whileHover={{ y: -2, boxShadow: "var(--elev-shadow-2)" }}
                 transition={{ type: "spring", stiffness: 300, damping: 22 }}
                 style={{
                   display: "flex",

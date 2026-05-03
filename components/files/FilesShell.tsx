@@ -67,16 +67,19 @@ export default function FilesShell({
     window.localStorage.setItem("indmoney-ds-theme", theme);
   }, [theme]);
 
-  // ⌘K
+  // ⌘K — see DocsShell for the rationale of capture-phase + case-insensitive
+  // matching + no input-focus bail. Audit C6: tile-focused / canvas-focused
+  // states must still open the modal.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
+        e.stopPropagation();
         setSearchOpen(!searchOpen);
       }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("keydown", handler, { capture: true });
+    return () => window.removeEventListener("keydown", handler, { capture: true });
   }, [searchOpen, setSearchOpen]);
 
   useActiveSection(sectionIds);

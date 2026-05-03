@@ -80,6 +80,10 @@ export interface GraphFilters {
   components: boolean;
   tokens: boolean;
   decisions: boolean;
+  /** Per runbook designer-lens — show the persona ring (satellites linking
+   *  flows to the personas they serve). Off by default to keep the brain
+   *  view legible; designer-lens users opt in. */
+  personas: boolean;
 }
 
 export const DEFAULT_FILTERS: GraphFilters = {
@@ -87,6 +91,7 @@ export const DEFAULT_FILTERS: GraphFilters = {
   components: false,
   tokens: false,
   decisions: false,
+  personas: false,
 };
 
 /** Zoom level — derived from camera.position.z by useGraphView (U13). The

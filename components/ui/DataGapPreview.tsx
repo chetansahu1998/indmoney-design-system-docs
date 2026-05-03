@@ -16,7 +16,7 @@ export default function DataGapPreview({
   diagnosis: ReactNode;     // What the extractor found / didn't find
   unlock: ReactNode;        // What needs to change to unlock real data
   command?: string;         // CLI command to (re-)run the pipeline
-  preview: ReactNode;       // Animated preview rendered inside a "demo" frame
+  preview?: ReactNode;      // Optional animated preview inside a "demo" frame
 }) {
   return (
     <motion.div
@@ -69,35 +69,39 @@ export default function DataGapPreview({
         </div>
       </div>
 
-      {/* Preview area */}
-      <div
-        style={{
-          padding: "32px 24px",
-          background:
-            "repeating-linear-gradient(135deg, transparent 0 8px, color-mix(in srgb, var(--text-3) 6%, transparent) 8px 10px)",
-          minHeight: 180,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          position: "relative",
-        }}
-      >
-        <span
+      {/* Preview area — only rendered when consumer supplies a preview.
+       *  Omitting it (audit C2) keeps the empty state honest when there's
+       *  no meaningful sample to show. */}
+      {preview && (
+        <div
           style={{
-            position: "absolute",
-            top: 8,
-            left: 12,
-            fontSize: 9,
-            fontFamily: "var(--font-mono)",
-            color: "var(--text-3)",
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
+            padding: "32px 24px",
+            background:
+              "repeating-linear-gradient(135deg, transparent 0 8px, color-mix(in srgb, var(--text-3) 6%, transparent) 8px 10px)",
+            minHeight: 180,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            position: "relative",
           }}
         >
-          Sample preview
-        </span>
-        {preview}
-      </div>
+          <span
+            style={{
+              position: "absolute",
+              top: 8,
+              left: 12,
+              fontSize: 9,
+              fontFamily: "var(--font-mono)",
+              color: "var(--text-3)",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+            }}
+          >
+            Sample preview
+          </span>
+          {preview}
+        </div>
+      )}
 
       {/* Unlock command */}
       <div style={{ padding: "16px 16px 18px" }}>

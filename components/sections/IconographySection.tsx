@@ -205,23 +205,33 @@ function IconDetail({ icon, onClose }: { icon: IconEntry; onClose: () => void })
           </button>
         </div>
 
-        <div
+        {/* Audit C21: cap the SVG-source viewer so a long inlined Glyph
+          * (some illustrations are 2-3KB of path data) doesn't blow out
+          * the modal's height or push the Copy/Close buttons off-screen.
+          * max-width:100% prevents horizontal overflow when wordBreak fails
+          * for an ID/URL-style attribute string; max-height + overflow:auto
+          * gives a contained scrollable preview. Deliberately no syntax
+          * highlighting — keeps the bundle small. */}
+        <pre
           style={{
             background: "var(--bg-surface-2)",
             border: "1px solid var(--border)",
             borderRadius: 8,
             padding: 12,
+            margin: 0,
             fontFamily: "var(--font-mono)",
             fontSize: 11,
             color: "var(--text-2)",
-            maxHeight: 220,
-            overflow: "auto",
+            maxWidth: "100%",
+            overflowX: "auto",
+            maxHeight: 200,
+            overflowY: "auto",
             whiteSpace: "pre-wrap",
             wordBreak: "break-all",
           }}
         >
           {svg || "Loading…"}
-        </div>
+        </pre>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <CopyButton label="Copy SVG" onClick={() => copy(svg, "SVG")} disabled={!svg} highlight={copied} />
@@ -298,7 +308,7 @@ function SearchBar({
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Filter Glyph icons by name or slug…"
+        placeholder="Search icons by name or slug…"
         style={{
           flex: 1,
           background: "none",
@@ -397,12 +407,16 @@ export default function IconographySection() {
         viewport={{ once: true }}
         style={{ display: "flex", gap: 12, marginBottom: 28, flexWrap: "wrap" }}
       >
+        {/* Audit C18: dropped the "Renderer · CSS mask" chip. It exposed
+          * an implementation detail to designers without giving them
+          * anything actionable, and there was no link to docs explaining
+          * what "CSS mask" meant. The technique is documented in
+          * components/sections/IconographySection.tsx's IconTile JSDoc. */}
         {[
           { label: "Total icons",  value: String(all.length) },
           { label: "Categories",   value: String(cats.length) },
           { label: "Default size", value: "24 × 24" },
           { label: "Format",       value: "SVG" },
-          { label: "Renderer",     value: "CSS mask" },
         ].map((s) => (
           <div
             key={s.label}

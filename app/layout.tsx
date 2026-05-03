@@ -43,6 +43,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: "document.documentElement.removeAttribute('data-pre-hydrate')",
           }}
         />
+        {/* Theme bootstrap — runs before first paint so /inbox,
+            /onboarding, /settings, /login (which don't mount
+            DocsShell/FilesShell/ProjectShell) still get the right
+            data-theme. Reads the same localStorage key the shells
+            write via setTheme. Default: dark. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{var t=localStorage.getItem('indmoney-ds-theme');if(t!=='light'&&t!=='dark')t='dark';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','dark');}})()",
+          }}
+        />
       </head>
       <body>
         <RootClient />

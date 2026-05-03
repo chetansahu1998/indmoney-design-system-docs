@@ -136,10 +136,65 @@ func BuildSearchRowsForTenant(ctx context.Context, db *sql.DB, tenantID string) 
 	personas := buildPersonaSearchRows(ctx, db, tenantID)
 	all = append(all, personas...)
 
+	// A12 — folder + product taxonomy nodes. Without these the search box
+	// matches flows but not the folders / products containing them, so
+	// users searching by product name ("Indian Stocks") get nothing.
+	taxonomy, err := buildTaxonomySearchRows(ctx, db, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("taxonomy search rows: %w", err)
+	}
+	all = append(all, taxonomy...)
+
 	// Component search rows are per-tenant duplicates of the manifest;
 	// they get added by the worker's full-rebuild path which already has
 	// the manifest parsed.
 	return all, nil
+}
+
+// buildTaxonomySearchRows surfaces the (product, path) taxonomy entries so
+// users can search for a folder or product directly from /atlas. Folder open
+// URLs deep-link to /projects?product=<product>&path=<path>; product roots
+// deep-link to /projects?product=<product>. Tokens are not emitted here —
+// those live in the lib/tokens-generated CSS that the search modal already
+// indexes via its own static layer.
+func buildTaxonomySearchRows(ctx context.Context, db *sql.DB, tenantID string) ([]SearchIndexRow, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT product, path FROM canonical_taxonomy
+		   WHERE tenant_id = ? AND archived_at IS NULL
+		   ORDER BY product, order_index`,
+		tenantID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SearchIndexRow
+	for rows.Next() {
+		var product, path string
+		if err := rows.Scan(&product, &path); err != nil {
+			return nil, err
+		}
+		if path == "" {
+			out = append(out, SearchIndexRow{
+				TenantID:   tenantID,
+				EntityKind: "product",
+				EntityID:   product,
+				OpenURL:    "/projects?product=" + product,
+				Title:      product,
+				Body:       "",
+			})
+		} else {
+			out = append(out, SearchIndexRow{
+				TenantID:   tenantID,
+				EntityKind: "folder",
+				EntityID:   product + "/" + path,
+				OpenURL:    "/projects?product=" + product + "&path=" + path,
+				Title:      path,
+				Body:       product,
+			})
+		}
+	}
+	return out, rows.Err()
 }
 
 func buildFlowSearchRows(ctx context.Context, db *sql.DB, tenantID string) ([]SearchIndexRow, error) {

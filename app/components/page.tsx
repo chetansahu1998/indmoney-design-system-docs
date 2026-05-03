@@ -3,6 +3,9 @@ import FilesShell from "@/components/files/FilesShell";
 import { parentComponents, slugifyCategory } from "@/lib/icons/manifest";
 import type { NavGroup } from "@/components/Sidebar";
 
+// Audit C27: per-route metadata.
+export const metadata = { title: "Components · INDmoney DS" };
+
 /**
  * /components — horizontal-canvas component browser (restored 2026-05-02).
  *
@@ -27,7 +30,16 @@ import type { NavGroup } from "@/components/Sidebar";
  * and is independent of this page-level layout choice.
  */
 export default function ComponentsPage() {
-  const entries = parentComponents();
+  // Audit C22: drop entries whose category is "Design System 🌟". The
+  // extractor stamps these as kind=component because they're top-level
+  // master frames on the DS page — but they're token-master sheets and
+  // pattern overviews, not composable organism components users can
+  // browse. Filtering here (rather than upstream in parentComponents)
+  // keeps the manifest data lossless while the UI surface shows only
+  // real shipped components.
+  const entries = parentComponents().filter(
+    (e) => (e.category ?? "").trim() !== "Design System 🌟",
+  );
 
   const grouped = new Map<string, typeof entries>();
   for (const e of entries) {
@@ -35,8 +47,24 @@ export default function ComponentsPage() {
     if (!grouped.has(cat)) grouped.set(cat, []);
     grouped.get(cat)!.push(e);
   }
+  // Audit C15: order bands by documented atomic-design tiers first
+  // (Atoms → Molecules → Organisms → Templates → Pages), then alphabetical
+  // for any category that doesn't slot into the canonical tier list.
+  // The previous "alphabetical-by-cat-size" order was implicit and meant
+  // a designer browsing the canvas saw "Buttons" (largest set) before
+  // "Atoms" — fights how the team actually frames the system.
+  const TIER_ORDER = ["Atoms", "Molecules", "Organisms", "Templates", "Pages"];
+  const tierIndex = (cat: string) => {
+    const i = TIER_ORDER.findIndex((t) => t.toLowerCase() === cat.toLowerCase());
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
   const cats = Array.from(grouped.entries())
-    .sort((a, b) => b[1].length - a[1].length)
+    .sort((a, b) => {
+      const ai = tierIndex(a[0]);
+      const bi = tierIndex(b[0]);
+      if (ai !== bi) return ai - bi;
+      return a[0].localeCompare(b[0]);
+    })
     .map(([cat, list]) => ({ cat, count: list.length }));
 
   const nav: NavGroup[] = [

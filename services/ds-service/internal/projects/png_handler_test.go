@@ -79,7 +79,10 @@ func newPNGHandlerFixture(t *testing.T) *pngHandlerFixture {
 	flowID := uuid.NewString()
 	screenID := uuid.NewString()
 	slug := "test-flow"
-	pngKey := tenantA + "/" + versionID + "/" + screenID + "@2x.png"
+	// Match production's persistPNG output: storage key includes the
+	// "screens/" prefix so the handler can resolve it relative to DataDir
+	// without an extra Join.
+	pngKey := "screens/" + tenantA + "/" + versionID + "/" + screenID + "@2x.png"
 
 	for _, q := range []struct {
 		sql  string
@@ -105,7 +108,8 @@ func newPNGHandlerFixture(t *testing.T) *pngHandlerFixture {
 	}
 
 	// Render a tiny 8×8 red PNG and write to disk at the expected key path.
-	pngPath := filepath.Join(dataDir, "screens", pngKey)
+	// pngKey already begins with "screens/"; just join under DataDir.
+	pngPath := filepath.Join(dataDir, pngKey)
 	if err := os.MkdirAll(filepath.Dir(pngPath), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

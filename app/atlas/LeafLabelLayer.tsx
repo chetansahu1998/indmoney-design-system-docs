@@ -94,10 +94,11 @@ interface ProjectedLabel {
  */
 function extractSlugFromOpenURL(openURL: string | undefined): string | null {
   if (!openURL) return null;
-  // Match `/projects/<slug>` allowing query string + hash but not extra
-  // path segments (a future `/projects/<slug>/<sub>` would not match — we
-  // want to morph only to the project root for now).
-  const match = openURL.match(/^\/projects\/([^/?#]+)/);
+  // Match `/projects/<slug>` allowing absolute URLs (https://example.com/...)
+  // and same-origin paths uniformly. Trailing query/hash/sub-paths don't
+  // change the slug. A28: backend now emits `?v=<id>` and the regex skips
+  // past that segment.
+  const match = openURL.match(/(?:^|\/\/[^/]+)\/projects\/([^/?#]+)/);
   return match ? match[1] : null;
 }
 
@@ -268,6 +269,10 @@ function LeafLabelLayerImpl({ nodes, fgRef, morphingNode }: Props) {
           data-leaf-label-id={l.id}
           data-leaf-label-slug={l.slug ?? undefined}
           className="leaf-label"
+          // Native tooltip — surfaces the full flow name when the label
+          // truncates with ellipsis (max-width 20ch in the inline style
+          // below). No JS, no portal; relies on browser-native delay.
+          title={l.label}
           style={{
             position: "absolute",
             left: 0,
@@ -294,17 +299,30 @@ function LeafLabelLayerImpl({ nodes, fgRef, morphingNode }: Props) {
             // captured snapshot), so there's no constraint about
             // duplicate names — only on-screen labels participate.
             // Off-screen labels carry the property harmlessly.
+            // A32 / Pr15 — use the flow node ID (not slug) to disambiguate
+            // multiple flows in the same project. Two flow leaves under the
+            // same project would otherwise share `flow-${slug}-label` and
+            // the browser would arbitrarily pick one source for the morph.
+            // `l.id` is `flow:<flow_uuid>` from graph_index; CSS identifier
+            // can't contain `:` so collapse to `-`.
             ...(l.slug
-              ? { viewTransitionName: `flow-${l.slug}-label` }
+              ? { viewTransitionName: `flow-${l.id.replace(/:/g, "-")}-label` }
               : null),
             // Visual baseline matches the canvas-sprite labels we replace
             // for non-flow nodes — see BrainGraph nodeLabel handling.
-            color: "rgba(255, 255, 255, 0.92)",
+            color: "var(--text-1)",
             fontFamily: "var(--font-sans, 'Inter Variable', sans-serif)",
             fontSize: "11px",
             fontWeight: 500,
             letterSpacing: "0.02em",
+            // Truncate long flow names ("Filters for Stock Screener" = 29ch)
+            // per runbook §2.3 — labels stay one line and ellipsize when
+            // they overflow the cap. Hover via parent shows full name (CSS
+            // tooltip in the wrapper).
             whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            maxWidth: "20ch",
             // U3 — centring is handled in the `transform` above
             // (`translate(-50%, -50%)`), so no margin offset here.
             textShadow: "0 1px 2px rgba(0, 0, 0, 0.6)",

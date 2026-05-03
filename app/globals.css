@@ -57,8 +57,17 @@
        this owns docs-site signal. */
     --success:       #34c759;
     --warning:       #ffb13b;
+    /* Foreground / soft variants for warning bg (bell badges, taxonomy
+       chips). Kept here so /atlas/admin chrome can drop its inline hex
+       per runbook §2.6. */
+    --warning-fg:    #2a1a00;
+    --warning-soft:  #ffc875;
     --danger:        #ff6b6b;
     --info:          var(--accent);
+    /* Atlas hover-card / dropdown backdrop — slightly translucent ink
+       used by HoverSignalCard, FilterChips popovers, etc. Replaces
+       inline rgba(10, 14, 24, 0.92) callsites per runbook §2.6. */
+    --bg-overlay:    rgba(10, 14, 24, 0.92);
     /* Modal scrim — used by every overlay (search, sync, export, icon
        detail). On dark theme, near-black with mid alpha. Defined as a
        semantic token so light theme can pick a softer value below. */
@@ -103,8 +112,13 @@
        white background washes them out otherwise. */
     --success:       #2aa84a;
     --warning:       #d97600;
+    --warning-fg:    #1f1207;
+    --warning-soft:  #f5b475;
     --danger:        #e0354c;
     --info:          var(--accent);
+    /* Atlas stays a deep canvas in light theme so the brain-graph
+       aesthetic carries through; the overlay backdrop matches. */
+    --bg-overlay:    rgba(11, 20, 36, 0.92);
     /* Light-theme overlay tokens — softer scrim so the modal feels like
        paper sliding over paper rather than a hard black wash; shadows
        reduced because white backgrounds magnify dark shadows. */
@@ -225,7 +239,33 @@ body {
    links live inside the hamburger drawer). ── */
 .page-nav {
   flex-shrink: 1;
-  overflow: hidden;
+  /* Audit C4: PageNav was overflow:hidden which clipped "Logos" → "L" at
+     1440px. Switch to overflow-x:auto so wider link sets stay reachable
+     by scroll instead of silently truncating. Below the 1380px breakpoint
+     we also tighten padding/gap so the full set continues to fit before
+     the scroll fallback kicks in. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.page-nav::-webkit-scrollbar { display: none; }
+.page-nav > a { flex-shrink: 0; }
+
+/* Tighten the nav at the 1280–1440 squeeze zone so all 12 routes fit
+   without horizontal scroll. Drops gap from 4px → 2px and link padding
+   from 4px/10px → 3px/7px. The active-pill layoutId still animates
+   correctly because layout deltas are recomputed per render. */
+@media (max-width: 1500px) {
+  .site-header {
+    padding: 0 24px;
+    gap: 10px;
+  }
+  .page-nav {
+    gap: 2px !important;
+  }
+  .page-nav > a {
+    padding: 3px 7px !important;
+  }
 }
 
 /* Brand switcher — tertiary chrome. Hidden by default and only revealed

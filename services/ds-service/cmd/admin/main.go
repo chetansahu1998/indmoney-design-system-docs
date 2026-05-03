@@ -26,6 +26,7 @@ package main
 import (
 	"bytes"
 	"context"
+	cryptoRand "crypto/rand"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -48,6 +49,8 @@ func main() {
 		os.Exit(runFanout(os.Args[2:]))
 	case "retention":
 		os.Exit(runRetention(os.Args[2:]))
+	case "seed-fixtures":
+		os.Exit(runSeedFixtures(os.Args[2:]))
 	case "migrate-sidecars":
 		fmt.Fprintln(os.Stderr, "admin: migrate-sidecars subcommand reserved; ships in Phase 2 U9.")
 		fmt.Fprintln(os.Stderr, "       (Run go run ./cmd/migrate-sidecars when that lands.)")
@@ -68,6 +71,7 @@ func usage() {
 subcommands:
   fanout            Re-audit every active flow's latest version (POST /v1/admin/audit/fanout)
   retention         Delete audit_log rows older than --days (Phase 4 U13)
+  seed-fixtures     Insert demo personas, taxonomy, notifications, prefs for an empty tenant
   migrate-sidecars  Backfill lib/audit/*.json into SQLite (Phase 2 U9; reserved)
 
 env:
@@ -215,4 +219,192 @@ func runRetention(args []string) int {
 	fmt.Printf("admin retention: deleted %d audit_log rows older than %d days (cutoff %s)\n",
 		n, *days, cutoff)
 	return 0
+}
+
+// ─── seed-fixtures ──────────────────────────────────────────────────────────
+//
+// Inserts demo rows so the empty-tenant UI surfaces (atlas/admin/personas,
+// /atlas/admin/taxonomy, /inbox, /settings/notifications) render content
+// instead of empty states. Idempotent — uses INSERT OR IGNORE so re-runs
+// don't duplicate rows. Tagged with `created_by_user_id = system@indmoney.local`
+// so future cleanup can drop fixtures with one DELETE.
+//
+// Usage:
+//
+//	admin seed-fixtures --tenant=<tenant_id> [--user=<user_email>] [--db=<path>]
+//
+// Tenant required. Defaults: --user=chetan@indmoney.com, --db=services/ds-service/data/ds.db.
+func runSeedFixtures(args []string) int {
+	fs := flag.NewFlagSet("seed-fixtures", flag.ExitOnError)
+	tenantID := fs.String("tenant", "", "Target tenant_id (required)")
+	userEmail := fs.String("user", "chetan@indmoney.com", "User email used as created_by for personas + recipient for notifications")
+	dbPath := fs.String("db", os.Getenv("DS_DB_PATH"), "Path to ds.db (env DS_DB_PATH)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *tenantID == "" {
+		fmt.Fprintln(os.Stderr, "admin seed-fixtures: --tenant is required")
+		return 2
+	}
+	if *dbPath == "" {
+		*dbPath = "services/ds-service/data/ds.db"
+	}
+
+	d, err := db.Open(*dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "admin seed-fixtures: open db %q: %v\n", *dbPath, err)
+		return 1
+	}
+	defer d.Close()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Resolve recipient + system user IDs (system@indmoney.local is created
+	// by migrations and used here as the audit attribution for fixtures).
+	var userID string
+	if err := d.QueryRowContext(ctx,
+		`SELECT id FROM users WHERE email = ?`, *userEmail,
+	).Scan(&userID); err != nil {
+		fmt.Fprintf(os.Stderr, "admin seed-fixtures: lookup user %q: %v\n", *userEmail, err)
+		return 1
+	}
+	var systemID string
+	if err := d.QueryRowContext(ctx,
+		`SELECT id FROM users WHERE email = 'system@indmoney.local'`,
+	).Scan(&systemID); err != nil {
+		// Fallback to user themselves so we don't hard-fail on tenants without
+		// the system user. Future cleanup query becomes broader.
+		systemID = userID
+	}
+
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "admin seed-fixtures: begin tx: %v\n", err)
+		return 1
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// 1. Personas — the four real design-system roles. All approved on
+	// insert: pending personas only originate from the Figma plugin's
+	// "suggest persona" flow when a designer tags a flow with a name
+	// that's not in the canonical list. We never seed fake pending rows.
+	personaSeeds := []string{
+		"Designer (in-product)",
+		"DS Lead",
+		"PM",
+		"Engineer",
+	}
+	personasIns := 0
+	for _, name := range personaSeeds {
+		id := uuidString()
+		res, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO personas
+			   (id, tenant_id, name, status, created_by_user_id, approved_by_user_id, approved_at, created_at)
+			 VALUES (?, ?, ?, 'approved', ?, ?, ?, ?)`,
+			id, *tenantID, name, systemID, systemID, now, now)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "admin seed-fixtures: insert persona %q: %v\n", name, err)
+			return 1
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			personasIns++
+		}
+	}
+
+	// 2. Canonical taxonomy — derive from existing projects' (product, path).
+	rows, err := tx.QueryContext(ctx,
+		`SELECT DISTINCT product, path FROM projects WHERE tenant_id = ? AND deleted_at IS NULL`,
+		*tenantID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "admin seed-fixtures: list projects: %v\n", err)
+		return 1
+	}
+	type pp struct{ product, path string }
+	var paths []pp
+	for rows.Next() {
+		var p pp
+		if err := rows.Scan(&p.product, &p.path); err != nil {
+			rows.Close()
+			fmt.Fprintf(os.Stderr, "admin seed-fixtures: scan project: %v\n", err)
+			return 1
+		}
+		paths = append(paths, p)
+	}
+	rows.Close()
+	taxonomyIns := 0
+	for i, p := range paths {
+		// Insert both the product root (path="") and the leaf path so the tree
+		// renders with the product as a parent. Order index follows insertion.
+		_, _ = tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO canonical_taxonomy
+			   (tenant_id, product, path, promoted_by, promoted_at, order_index)
+			 VALUES (?, ?, '', ?, ?, ?)`,
+			*tenantID, p.product, systemID, now, i*10)
+		res, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO canonical_taxonomy
+			   (tenant_id, product, path, promoted_by, promoted_at, order_index)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			*tenantID, p.product, p.path, systemID, now, i*10+1)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "admin seed-fixtures: insert taxonomy %q/%q: %v\n", p.product, p.path, err)
+			return 1
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			taxonomyIns++
+		}
+	}
+
+	// 3. Notifications — NOT seeded. Real notifications come from real
+	// activity (audit_jobs producing violations, DRD edits, persona
+	// approvals). The /v1/inbox endpoint already streams audit-driven
+	// content (violations) without a notifications-table seed; mention
+	// notifications only fire when a real comment @-mentions a real user.
+	notifIns := 0
+
+	// 4. Notification preferences — defaults so /settings/notifications has
+	// rows to render rather than spinning on the loading state.
+	prefIns := 0
+	for _, ch := range []string{"slack", "email"} {
+		res, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO notification_preferences
+			   (user_id, channel, cadence, slack_webhook_url, email_address, user_tz, updated_at)
+			 VALUES (?, ?, 'off', '', ?, 'Asia/Kolkata', ?)`,
+			userID, ch, *userEmail, now)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "admin seed-fixtures: insert pref %q: %v\n", ch, err)
+			return 1
+		}
+		if r, _ := res.RowsAffected(); r > 0 {
+			prefIns++
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		fmt.Fprintf(os.Stderr, "admin seed-fixtures: commit: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("admin seed-fixtures: tenant=%s user=%s — personas=+%d taxonomy=+%d notifications=+%d prefs=+%d\n",
+		*tenantID, *userEmail, personasIns, taxonomyIns, notifIns, prefIns)
+	return 0
+}
+
+// uuidString returns a random UUIDv4 as a hex-with-dashes string. Inlined
+// here because the only other UUID dep in this binary is via db.Open's
+// transitive imports; pulling github.com/google/uuid for one call site
+// would bloat the cmd binary by ~80KB.
+func uuidString() string {
+	b := make([]byte, 16)
+	if _, err := cryptoRand.Read(b); err != nil {
+		// Last-resort fallback — time-based, not cryptographically random
+		// but adequate for fixture seeding which never goes to prod auth.
+		t := time.Now().UnixNano()
+		for i := 0; i < 16; i++ {
+			b[i] = byte(t >> (8 * (i % 8)))
+		}
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }

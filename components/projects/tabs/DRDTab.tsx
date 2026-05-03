@@ -104,6 +104,15 @@ export default function DRDTab({ slug, flowID, readOnly = false }: DRDTabProps) 
   // Debounced autosave on every editor change. Captures editor.document via
   // the latest closure on save-fire (not on change-fire), so the request body
   // always reflects the most recent edit.
+  //
+  // Pr13: cleanup MUST invoke `offChange()` and clear the pending debounce
+  // timer on every dep change, otherwise switching flows leaks listeners +
+  // can fire a stale persist into the new flow's DRD. The dep array
+  // includes `editor` because BlockNote's `useCreateBlockNote` returns a
+  // stable handle per-mount; a remount (or a future change to a hook that
+  // recreates editor) must trigger a re-bind. Defensive `typeof === function`
+  // check guards against older BlockNote versions whose `onChange` returned
+  // void.
   useEffect(() => {
     if (!loaded || !flowID) return;
     const offChange = editor.onChange(() => {
@@ -115,7 +124,17 @@ export default function DRDTab({ slug, flowID, readOnly = false }: DRDTabProps) 
     return () => {
       // BlockNote's onChange returns an unsubscribe; older versions may not.
       if (typeof offChange === "function") offChange();
-      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      // Pr29 — flush any pending debounced save BEFORE clearing the timer,
+      // otherwise tab-switch / unmount drops the user's last 1.5s of edits.
+      // persistNow reads `editor.document` synchronously so we capture the
+      // current state. Fire-and-forget — the network request runs after
+      // unmount, which is fine: the response is dropped by the inFlightSeq
+      // guard but the server-side write lands.
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+        debounceTimer.current = null;
+        void persistNow();
+      }
     };
     // We only re-bind when the editor or flow changes; latestRevision moves
     // through a ref so it isn't a dep.

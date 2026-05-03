@@ -221,6 +221,11 @@ function timeAgo(isoStr: string): string {
 }
 
 function EmptyState() {
+  // Audit C2: drop the "Sample file A/B/C" preview chips entirely. They
+  // looked like clickable file cards (matching FileCard styling) but
+  // resolved to no `/files/[slug]` route. Suppress the preview when no
+  // real files exist so users aren't lured into a 404. The empty-state
+  // copy now stands on its own.
   return (
     <>
       {/* id="all-files" stamped here too so the sidebar's "All files" anchor
@@ -228,37 +233,7 @@ function EmptyState() {
        *  about a missing DOM target. */}
       <div id="all-files" />
       <Hero count={0} />
-      <EmptyAuditState
-        scope="site"
-        preview={
-          <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-            {[
-              { name: "Sample file A", coverage: "94%" },
-              { name: "Sample file B", coverage: "82%" },
-              { name: "Sample file C", coverage: "67%" },
-            ].map((s, i) => (
-              <motion.div
-                key={s.name}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.15 + i * 0.1, duration: 0.4 }}
-                style={{
-                  width: 120,
-                  padding: 12,
-                  background: "var(--bg-surface)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  fontSize: 11,
-                  fontFamily: "var(--font-mono)",
-                }}
-              >
-                <div style={{ color: "var(--text-2)", marginBottom: 4 }}>{s.name}</div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: "var(--accent)" }}>{s.coverage}</div>
-              </motion.div>
-            ))}
-          </div>
-        }
-      />
+      <EmptyAuditState scope="site" />
     </>
   );
 }

@@ -27,6 +27,7 @@ export default function BulkActionBar({
   const [templateID, setTemplateID] = useState<string>("");
   const [reason, setReason] = useState<string>("");
   const reasonRef = useRef<HTMLTextAreaElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
 
   // Reset the form whenever the selection clears or the user closes the
   // dropdown — prevents stale reason text from leaking into the next bulk.
@@ -36,6 +37,15 @@ export default function BulkActionBar({
       setTemplateID("");
       setReason("");
     }
+  }, [selectedCount]);
+
+  // S12 — when a row is selected (selectedCount transitions 0 → ≥1), scroll
+  // the action bar into view so a designer who selected a row deep in a long
+  // inbox doesn't have to hunt for the Acknowledge/Dismiss controls. block:
+  // "nearest" no-ops when the bar is already in view.
+  useEffect(() => {
+    if (selectedCount === 0) return;
+    barRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [selectedCount]);
 
   if (selectedCount === 0) return null;
@@ -62,6 +72,7 @@ export default function BulkActionBar({
     <div
       role="region"
       aria-label="Bulk action bar"
+      ref={barRef}
       style={{
         position: "sticky",
         bottom: 16,

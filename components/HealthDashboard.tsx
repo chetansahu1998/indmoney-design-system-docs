@@ -16,6 +16,13 @@ import {
 } from "@/lib/tokens/loader";
 import { hasAuditData, auditedFiles, provenanceLine } from "@/lib/audit";
 
+// S23 — captured at module evaluation time so it reflects the build,
+// matching the surface's static-data nature. NEXT_PUBLIC_BUILD_AT can be
+// set in CI for a precise timestamp; otherwise we fall back to the
+// module-eval moment, which is the build for the static page.
+const BUILD_AT =
+  process.env.NEXT_PUBLIC_BUILD_AT ?? new Date().toISOString();
+
 /**
  * HealthDashboard — design-system vital signs.
  *
@@ -57,10 +64,23 @@ export default function HealthDashboard() {
         <h1 style={{ fontSize: 48, fontWeight: 700, letterSpacing: "-1.5px", color: "var(--text-1)", marginBottom: 12, lineHeight: 1.05 }}>
           Health
         </h1>
-        <p style={{ fontSize: 15, color: "var(--text-2)", lineHeight: 1.65, maxWidth: 640, marginBottom: 24 }}>
-          Vital signs of INDmoney's Glyph. Everything below is real data extracted from the
+        <p style={{ fontSize: 15, color: "var(--text-2)", lineHeight: 1.65, maxWidth: 640, marginBottom: 12 }}>
+          Vital signs of INDmoney&rsquo;s Glyph. Everything below is real data extracted from the
           live system — no synthetic numbers, no placeholders. If a section is empty,
-          that data hasn't been captured yet.
+          that data hasn&rsquo;t been captured yet.
+        </p>
+        {/* S23 — surface the build/computed timestamp so operators know how
+          * fresh these numbers are. The dashboard is statically computed at
+          * build time; this line is the honest signal of "as of when". */}
+        <p
+          style={{
+            fontSize: 11,
+            color: "var(--text-3)",
+            fontFamily: "var(--font-mono)",
+            margin: "0 0 24px",
+          }}
+        >
+          Last computed: {new Date(BUILD_AT).toLocaleString()} (build-time static)
         </p>
 
         <div
@@ -82,12 +102,24 @@ export default function HealthDashboard() {
             hint={audited.length > 0 ? "files audited" : "none yet"}
             tone={audited.length > 0 ? "success" : "muted"}
           />
-          <StatCard
-            label="Bound fills"
-            value={binding.fillsTotal > 0 ? `${Math.round((binding.fillsBound / binding.fillsTotal) * 100)}%` : "—"}
-            hint={`${binding.fillsBound}/${binding.fillsTotal}`}
-            tone="success"
-          />
+          {/* S15 — tone is now conditional on coverage % so a 30% bound rate
+            * doesn't read as "success". ≥80 success / ≥50 warning / <50 danger.
+            * Falls back to muted when there are no fills to measure. */}
+          {(() => {
+            const pct = binding.fillsTotal > 0
+              ? Math.round((binding.fillsBound / binding.fillsTotal) * 100)
+              : null;
+            const tone: "success" | "warning" | "danger" | "muted" =
+              pct == null ? "muted" : pct >= 80 ? "success" : pct >= 50 ? "warning" : "danger";
+            return (
+              <StatCard
+                label="Bound fills"
+                value={pct == null ? "—" : `${pct}%`}
+                hint={`${binding.fillsBound}/${binding.fillsTotal}`}
+                tone={tone}
+              />
+            );
+          })()}
         </div>
       </motion.section>
 
@@ -98,9 +130,16 @@ export default function HealthDashboard() {
           <Card title="Color">
             <KV label="Semantic pairs" value={String(semanticPairs.length)} />
             <KV label="Base palette" value={String(basePalette.length)} />
+            {/* S16 — when the extractor omits file_name, render the kind
+              * alone instead of "kind:?". The trailing :? leaked extractor
+              * implementation detail into the operator-facing card. */}
             <KV
               label="Source"
-              value={(meta.sources ?? []).map((s) => `${s.kind}:${s.file_name ?? "?"}`).join(", ") || "—"}
+              value={
+                (meta.sources ?? [])
+                  .map((s) => (s.file_name ? `${s.kind}:${s.file_name}` : s.kind))
+                  .join(", ") || "—"
+              }
               mono
             />
             <KV label="Last sync" value={meta.extracted_at ? new Date(meta.extracted_at).toLocaleString() : "—"} mono />
@@ -452,21 +491,80 @@ function PipelineRow({ name, cmd, lastRun }: { name: string; cmd: string; lastRu
 /* ── Drift block — reads spacing-observed sidecar if present ─────────── */
 
 function DriftBlock() {
-  // The sidecar lives at lib/audit/spacing-observed.json. We can't import it
-  // synchronously since it may not exist on first build; treat absence as
-  // empty state. (Static import of an optional file is awkward in Next; we
-  // rely on the build having a valid path or render the empty state.)
+  // S14 — distinguish "no audits run yet" (sidecar file missing — the
+  // `require` throws MODULE_NOT_FOUND) from "audit ran but the manifest is
+  // malformed" (require succeeded, parse threw, schema mismatch). Both used
+  // to silently fall through to the empty state, which masked real
+  // pipeline failures from the operator. Now: missing → calm empty state
+  // ("no audits yet"); load error → small error chip with the underlying
+  // message so the failure is visible.
   let drift: Array<{ value: number; count: number; snap_to: number; on_grid: boolean }> = [];
+  let loadError: string | null = null;
+  let sidecarFound = false;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const sidecar = require("../lib/audit/spacing-observed.json");
-    const all = [...(sidecar.spacing ?? []), ...(sidecar.padding ?? [])];
-    drift = all
-      .filter((d: { on_grid: boolean }) => d.on_grid === false)
-      .sort((a: { count: number }, b: { count: number }) => b.count - a.count)
-      .slice(0, 10);
-  } catch {
-    // Sidecar missing — empty state below.
+    sidecarFound = true;
+    try {
+      const all = [...(sidecar.spacing ?? []), ...(sidecar.padding ?? [])];
+      drift = all
+        .filter((d: { on_grid: boolean }) => d.on_grid === false)
+        .sort((a: { count: number }, b: { count: number }) => b.count - a.count)
+        .slice(0, 10);
+    } catch (err) {
+      loadError = err instanceof Error ? err.message : String(err);
+    }
+  } catch (err) {
+    // MODULE_NOT_FOUND is the expected "no audits run yet" path; any other
+    // require error is a real load failure worth surfacing.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/Cannot find module|MODULE_NOT_FOUND/.test(msg)) {
+      loadError = msg;
+      sidecarFound = true; // we tried to load it, it errored — treat as found-but-broken
+    }
+  }
+
+  if (loadError) {
+    return (
+      <div
+        role="status"
+        style={{
+          padding: 22,
+          border: "1px solid var(--danger)",
+          background: "color-mix(in srgb, var(--danger) 8%, transparent)",
+          borderRadius: 10,
+          color: "var(--text-1)",
+          fontSize: 13,
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+        }}
+      >
+        <div style={{ fontWeight: 600, color: "var(--danger)", display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              padding: "2px 6px",
+              border: "1px solid var(--danger)",
+              borderRadius: 4,
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+            }}
+          >
+            error
+          </span>
+          Drift sidecar failed to load
+        </div>
+        <code style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-2)", lineHeight: 1.5 }}>
+          {loadError}
+        </code>
+        <div style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.5 }}>
+          Inspect <code style={{ fontFamily: "var(--font-mono)" }}>lib/audit/spacing-observed.json</code> —
+          the file exists but couldn&rsquo;t be loaded. Re-run the extractor to regenerate.
+        </div>
+      </div>
+    );
   }
 
   if (drift.length === 0) {
@@ -484,11 +582,11 @@ function DriftBlock() {
         }}
       >
         <div style={{ color: "var(--text-1)", fontWeight: 600, marginBottom: 4 }}>
-          No drift recorded
+          {sidecarFound ? "No drift recorded" : "No audits yet"}
         </div>
         <div style={{ lineHeight: 1.55 }}>
           Run <code style={{ fontFamily: "var(--font-mono)" }}>go run ./cmd/variables --source manifest</code> to
-          aggregate off-grid spacing across product files. Until then, designers' raw values aren't surfaced here.
+          aggregate off-grid spacing across product files. Until then, designers&rsquo; raw values aren&rsquo;t surfaced here.
         </div>
       </div>
     );

@@ -45,6 +45,12 @@ export function FilterChips({ filters, onChange, reducedMotion }: Props) {
         onClick={() => set({ decisions: !filters.decisions })}
         reducedMotion={reducedMotion}
       />
+      <Chip
+        label="Personas"
+        active={filters.personas}
+        onClick={() => set({ personas: !filters.personas })}
+        reducedMotion={reducedMotion}
+      />
       <style jsx>{`
         .chips {
           position: fixed;
@@ -54,8 +60,8 @@ export function FilterChips({ filters, onChange, reducedMotion }: Props) {
           display: flex;
           gap: 8px;
           padding: 8px;
-          background: rgba(0, 0, 0, 0.4);
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          background: var(--bg-overlay);
+          border: 1px solid var(--border-subtle);
           border-radius: 999px;
           backdrop-filter: blur(12px);
           z-index: 10;
@@ -90,25 +96,25 @@ function Chip({ label, active, disabled, reducedMotion, onClick }: ChipProps) {
         .chip {
           padding: 6px 14px;
           border-radius: 999px;
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          background: rgba(255, 255, 255, 0.02);
-          color: rgba(255, 255, 255, 0.65);
+          border: 1px solid var(--border);
+          background: transparent;
+          color: var(--text-2);
           font-family: var(--font-sans, "Inter Variable", sans-serif);
           font-size: 12px;
           letter-spacing: 0.02em;
           cursor: pointer;
         }
         .chip.active {
-          background: rgba(123, 159, 255, 0.18);
-          border-color: rgba(123, 159, 255, 0.4);
-          color: #c8d6ff;
+          background: var(--accent-soft);
+          border-color: var(--accent);
+          color: var(--text-1);
         }
         .chip.disabled {
           cursor: default;
           opacity: 0.7;
         }
         .chip:focus-visible {
-          outline: 2px solid #7b9fff;
+          outline: 2px solid var(--accent);
           outline-offset: 2px;
         }
       `}</style>

@@ -110,10 +110,10 @@ export function SavedViewShareButton({ platform, focusedNodeID, filters }: Props
           gap: 6px;
           padding: 8px 14px;
           border-radius: 999px;
-          background: rgba(0, 0, 0, 0.4);
-          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: var(--bg-overlay);
+          border: 1px solid var(--border);
           backdrop-filter: blur(12px);
-          color: rgba(255, 255, 255, 0.85);
+          color: var(--text-1);
           font-family: var(--font-sans, "Inter Variable", sans-serif);
           font-size: 12px;
           font-weight: 500;
@@ -121,11 +121,11 @@ export function SavedViewShareButton({ platform, focusedNodeID, filters }: Props
           z-index: 10;
         }
         .share-btn:hover {
-          background: rgba(123, 159, 255, 0.18);
-          color: #c8d6ff;
+          background: var(--accent-soft);
+          color: var(--accent);
         }
         .share-btn:focus-visible {
-          outline: 2px solid #7b9fff;
+          outline: 2px solid var(--accent);
           outline-offset: 2px;
         }
         .toast {
@@ -133,8 +133,8 @@ export function SavedViewShareButton({ platform, focusedNodeID, filters }: Props
           bottom: 80px;
           right: 24px;
           padding: 8px 16px;
-          background: rgba(31, 216, 150, 0.92);
-          color: #002f1d;
+          background: var(--success);
+          color: var(--bg-canvas);
           border-radius: 8px;
           font-family: var(--font-sans, "Inter Variable", sans-serif);
           font-size: 12px;

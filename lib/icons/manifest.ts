@@ -231,18 +231,94 @@ export function slugifyCategory(c: IconCategory): string {
     .replace(/^-+|-+$/g, "") || "uncategorized";
 }
 
+/**
+ * Audit C14: per-slug manual category override. The Figma extractor lands
+ * a handful of named product icons (instacash, alpca, coin-swap, …) under
+ * "uncategorized" because the source frame in Figma sits on the Icons
+ * Fresh page without a category sub-frame. Until the source is reorganised,
+ * remap them at consumer-time so they bin into a meaningful "Products"
+ * section in the sidebar instead of getting buried in the OTHER pile.
+ *
+ * Add new slugs here as the team identifies more product icons that drift
+ * into uncategorized. Keep the list short and curated — bulk re-categorisation
+ * belongs upstream in the Figma file itself.
+ */
+const KNOWN_PRODUCT_CATEGORY_OVERRIDES: Record<string, string> = {
+  instacash: "Products",
+  alpca: "Products",
+  "coin-swap": "Products",
+  "coinswap": "Products",
+};
+
+/** Resolve the effective category for an entry, applying audit C14 overrides. */
+function effectiveCategory(entry: IconEntry): IconCategory {
+  const override = KNOWN_PRODUCT_CATEGORY_OVERRIDES[entry.slug];
+  if (override) return override;
+  return entry.category || "uncategorized";
+}
+
+/**
+ * Audit C3: title-case the prettiest representation of a category whose
+ * raw string was inconsistently cased / whitespaced in Figma. Used by
+ * the dedupe pass below so the sidebar shows "Logos" + "Bank" instead
+ * of "Logo" + "Logos" + "logos" + lowercase "bank".
+ */
+function prettifyCategory(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "Uncategorized";
+  // Preserve all-caps acronyms ("UI", "NVIDIA") — only re-case mixed/lower.
+  if (trimmed === trimmed.toUpperCase() && trimmed.length <= 6) return trimmed;
+  return trimmed
+    .split(/\s+/)
+    .map((w) => (w.length === 0 ? w : w[0].toUpperCase() + w.slice(1).toLowerCase()))
+    .join(" ");
+}
+
+// Audit C25 — categories with fewer than this many entries are folded into
+// "Other" instead of cluttering the sidebar with one-off taxonomy leftovers
+// (Cold, Footer, Toast Messages, Primary Title, etc.). Tunable; 3 picks up
+// genuine micro-categories without surfacing every typo.
+const MIN_CATEGORY_SIZE = 3;
+
 export function iconsByCategory(kind?: AssetKind): Map<IconCategory, IconEntry[]> {
-  const map = new Map<IconCategory, IconEntry[]>();
+  // Audit C3: group by a normalized key (trim + lowercase) so categories
+  // that drift across designer files ("Logo" vs "Logos" vs "logo") collapse
+  // into a single sidebar entry. The display label is derived from the first
+  // raw category seen, prettified to title-case so the rendered nav reads
+  // cleanly without mutating the manifest itself.
+  const grouped = new Map<string, { display: IconCategory; entries: IconEntry[] }>();
   const pool = kind ? iconsByKind(kind) : MANIFEST.icons;
   for (const icon of pool) {
-    const cat = icon.category || "uncategorized";
-    if (!map.has(cat)) map.set(cat, []);
-    map.get(cat)!.push(icon);
+    // Audit C14: route product icons (instacash/alpca/coin-swap/...) into
+    // "Products" instead of letting them sink into "uncategorized" / OTHER.
+    const raw = effectiveCategory(icon);
+    const key = raw.trim().toLowerCase() || "uncategorized";
+    let bucket = grouped.get(key);
+    if (!bucket) {
+      bucket = { display: prettifyCategory(raw), entries: [] };
+      grouped.set(key, bucket);
+    }
+    bucket.entries.push(icon);
   }
-  for (const list of map.values()) {
-    list.sort((a, b) => a.name.localeCompare(b.name));
+  // Audit C25 — fold tiny categories into "Other" so the sidebar isn't
+  // dominated by single-entry leftovers. Skip the fold for the kind-filtered
+  // mode where a small category may genuinely be the only one.
+  const otherBucket: IconEntry[] = [];
+  const out = new Map<IconCategory, IconEntry[]>();
+  for (const { display, entries } of grouped.values()) {
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    if (!kind && entries.length < MIN_CATEGORY_SIZE) {
+      otherBucket.push(...entries);
+    } else {
+      out.set(display, entries);
+    }
   }
-  return map;
+  if (otherBucket.length > 0) {
+    otherBucket.sort((a, b) => a.name.localeCompare(b.name));
+    const existing = out.get("Other") ?? [];
+    out.set("Other", [...existing, ...otherBucket]);
+  }
+  return out;
 }
 
 export interface IconManifest {

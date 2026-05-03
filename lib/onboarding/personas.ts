@@ -1,6 +1,28 @@
 /**
  * lib/onboarding/personas.ts — Phase 3 U10 — per-persona day-1 content.
  *
+ * S20 — NAMING COLLISION NOTE.
+ * --------------------------------------------------------------------
+ * The word "personas" appears in two unrelated places in this repo:
+ *
+ *   1. THIS FILE (`lib/onboarding/personas.ts`) — product-onboarding
+ *      personas. Hard-coded TS array of role-based day-1 walkthroughs
+ *      (Designer / PM / Engineer / DS-lead / Admin) shown on the
+ *      `/onboarding` route. Static content, no DB.
+ *
+ *   2. The DB `personas` table (used by Atlas + admin/personas + the
+ *      project chips) — design-system *user personas* attached to flows
+ *      and components (e.g. UX writer, accessibility reviewer, brand
+ *      designer). Sourced from `services/ds-service` migrations.
+ *
+ * The two namespaces never share rows, IDs, or types. If you're touching
+ * onboarding content, stay in this file. If you're touching the Atlas
+ * persona chips, look at `services/ds-service/internal/personas/*` and
+ * `app/atlas/admin/personas/*`. Renaming was considered and rejected —
+ * both names are the right word in their own context; the cost of
+ * renaming the DB table outweighs the disambiguation benefit.
+ * --------------------------------------------------------------------
+ *
  * The /onboarding route renders one section per persona. Each section
  * embeds a screen-recording GIF (deferred polish — gifs not committed in
  * the U10 ship; the section falls back gracefully to title + description

@@ -11,6 +11,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import EmptyState from "@/components/empty-state/EmptyState";
+import { severityColor } from "@/lib/severity-colors";
 import {
   fetchDashboardSummary,
   type DashboardSummary,
@@ -105,7 +106,7 @@ export default function DashboardShell() {
                 borderRadius: 999,
                 border: `1px solid ${weeks === w ? "var(--accent)" : "var(--border)"}`,
                 background: weeks === w ? "var(--accent)" : "transparent",
-                color: weeks === w ? "var(--bg-base, #fff)" : "var(--text-2)",
+                color: weeks === w ? "var(--bg-canvas)" : "var(--text-2)",
                 cursor: "pointer",
               }}
               aria-pressed={weeks === w}
@@ -173,17 +174,6 @@ export default function DashboardShell() {
   );
 }
 
-function severityTint(sev: string): string {
-  switch (sev) {
-    case "critical":
-      return "#dc2626";
-    case "high":
-      return "#ea580c";
-    case "medium":
-      return "#ca8a04";
-    case "low":
-      return "#2563eb";
-    default:
-      return "#64748b";
-  }
-}
+// Use the shared severityColor() helper so DashboardShell shows the same
+// color for a given severity as HoverSignalCard and the rules admin page.
+const severityTint = severityColor;

@@ -63,6 +63,11 @@ type Flow struct {
 	DeletedAt *time.Time
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// Pr31 — caller's effective role on this flow, computed at response
+	// time from flow_grants × claims.Role. Empty when no ACL is enforced
+	// on the flow (default-allow). Frontend uses this to gate write
+	// affordances (DRD save, decision create, violation acknowledge).
+	EffectiveRole FlowRole `json:",omitempty"`
 }
 
 // Persona mirrors the personas table (org-wide library, tenant-scoped).

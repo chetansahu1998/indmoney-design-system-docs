@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 
 import { useAuth } from "@/lib/auth-client";
+import PageShell from "@/components/PageShell";
 
 import { adminFetchJSON } from "../../atlas/admin/_lib/adminFetch";
 
@@ -94,17 +95,36 @@ export default function NotificationPrefsPage() {
 
   if (!token) {
     return (
-      <main className="page">
-        <div className="card">
-          <h1>Sign in to manage notifications</h1>
-          <p>You need to be signed in to view your preferences.</p>
-        </div>
-        <PageStyles />
-      </main>
+      <PageShell>
+        <main className="page">
+          <div className="card">
+            <h1>Sign in to manage notifications</h1>
+            <p>You need to be signed in to view your preferences.</p>
+            <p style={{ marginTop: 16 }}>
+              <a
+                href="/login?next=/settings/notifications"
+                style={{
+                  display: "inline-block",
+                  padding: "8px 16px",
+                  background: "var(--accent)",
+                  color: "#fff",
+                  borderRadius: 8,
+                  fontWeight: 600,
+                  textDecoration: "none",
+                }}
+              >
+                Sign in
+              </a>
+            </p>
+          </div>
+          <PageStyles />
+        </main>
+      </PageShell>
     );
   }
 
   return (
+    <PageShell>
     <main className="page">
       <header>
         <h1>Notifications</h1>
@@ -175,6 +195,7 @@ export default function NotificationPrefsPage() {
       )}
       <PageStyles />
     </main>
+    </PageShell>
   );
 }
 
@@ -244,7 +265,7 @@ function ChannelCard({
           padding: 24px;
           border: 1px solid var(--border);
           border-radius: 12px;
-          background: var(--surface-1, rgba(255, 255, 255, 0.02));
+          background: var(--bg-surface);
           display: flex;
           flex-direction: column;
           gap: 14px;
@@ -281,7 +302,7 @@ function ChannelCard({
         }
         .field input {
           padding: 8px 12px;
-          background: var(--bg);
+          background: var(--bg-canvas);
           border: 1px solid var(--border);
           border-radius: 8px;
           color: var(--text-1);
@@ -292,7 +313,7 @@ function ChannelCard({
           display: inline-flex;
           gap: 4px;
           padding: 4px;
-          background: var(--bg);
+          background: var(--bg-canvas);
           border: 1px solid var(--border);
           border-radius: 999px;
           width: fit-content;
@@ -308,8 +329,8 @@ function ChannelCard({
           cursor: pointer;
         }
         .seg button.active {
-          background: var(--accent, #7b9fff);
-          color: var(--bg);
+          background: var(--accent);
+          color: var(--bg-canvas);
         }
         .seg button:disabled {
           opacity: 0.5;
@@ -324,7 +345,7 @@ function PageStyles() {
     <style jsx global>{`
       .page {
         min-height: 100vh;
-        background: var(--bg);
+        background: var(--bg-canvas);
         color: var(--text-1);
         font-family: var(--font-sans, "Inter Variable", sans-serif);
         padding: 32px 32px 64px;

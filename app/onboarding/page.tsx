@@ -16,6 +16,8 @@
 import Link from "next/link";
 import { PERSONAS } from "@/lib/onboarding/personas";
 import PersonaSection from "@/components/onboarding/PersonaSection";
+import PageShell from "@/components/PageShell";
+import { EXTERNAL_LINKS } from "@/lib/links";
 
 export const metadata = {
   title: "Day-1 onboarding — Projects · Flow Atlas",
@@ -25,6 +27,7 @@ export const metadata = {
 
 export default function OnboardingPage() {
   return (
+    <PageShell>
     <main style={mainStyle}>
       <header style={heroStyle}>
         <h1 style={heroTitleStyle}>Day 1 with Projects · Flow Atlas</h1>
@@ -55,7 +58,7 @@ export default function OnboardingPage() {
         <p>
           Need something else? File a request in{" "}
           <Link
-            href="https://github.com/indmoney/design-system-docs/issues"
+            href={EXTERNAL_LINKS.githubIssues}
             style={footerLinkStyle}
           >
             GitHub issues
@@ -64,6 +67,7 @@ export default function OnboardingPage() {
         </p>
       </footer>
     </main>
+    </PageShell>
   );
 }
 

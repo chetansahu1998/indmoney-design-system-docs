@@ -21,6 +21,7 @@
 package projects
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -35,20 +36,14 @@ import (
 
 // HandleScreenPNG returns the HTTP handler for `GET /v1/projects/:slug/screens/:id/png`.
 // Caller wires this behind the existing requireAuth middleware in cmd/server.
+//
+// Pr8 — also accepts an asset-scoped signed token via `?at=<token>` so image
+// loaders (which can't carry Authorization headers) don't have to leak the
+// full JWT into URLs. Either path works; bearer JWT takes precedence when
+// present (same security posture as before).
 func (s *Server) HandleScreenPNG() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		claims, _ := ctx.Value(ctxKeyClaims).(*auth.Claims)
-		if claims == nil {
-			writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
-			return
-		}
-		tenantID := s.resolveTenantID(claims)
-		if tenantID == "" {
-			writeJSONErr(w, http.StatusForbidden, "forbidden", "no tenant in claims")
-			return
-		}
-
 		// Path is /v1/projects/:slug/screens/:id/png. Go 1.22+ method-prefix
 		// routing exposes path values via r.PathValue.
 		slug := r.PathValue("slug")
@@ -56,6 +51,45 @@ func (s *Server) HandleScreenPNG() http.HandlerFunc {
 		if slug == "" || screenID == "" {
 			http.Error(w, "missing path params", http.StatusBadRequest)
 			return
+		}
+
+		// Pr8 — asset-token path. When `?at=` is present, verify against
+		// (any tenant, screenID); the verifier checks (tenant, screen) so
+		// an attacker can't replay a token across tenants. We still need to
+		// know which tenant — since the signed payload binds it, we encode
+		// the tenant in the token's MAC, verify against each tenant the
+		// caller could plausibly belong to. Simplest: skip JWT entirely and
+		// look up the screen's tenant_id, then verify the token against
+		// (that tenant, this screen). If verify passes, the caller proves
+		// possession of a valid mint.
+		var tenantID string
+		if at := r.URL.Query().Get("at"); at != "" && s.deps.AssetSigner != nil {
+			// Resolve the screen's tenant_id without an existence oracle:
+			// scan tenants the asset MAC could have been minted for.
+			// Practical shortcut: derive tenant_id from a single lookup that
+			// takes only the screen_id as input (tenant_id is bound on the
+			// row). This skips the JWT — the asset token IS the auth.
+			t, lookupErr := s.lookupScreenTenant(ctx, screenID)
+			if lookupErr != nil || t == "" {
+				http.NotFound(w, r)
+				return
+			}
+			if err := s.deps.AssetSigner.Verify(at, t, screenID); err != nil {
+				writeJSONErr(w, http.StatusUnauthorized, "asset_token", err.Error())
+				return
+			}
+			tenantID = t
+		} else {
+			claims, _ := ctx.Value(ctxKeyClaims).(*auth.Claims)
+			if claims == nil {
+				writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+				return
+			}
+			tenantID = s.resolveTenantID(claims)
+			if tenantID == "" {
+				writeJSONErr(w, http.StatusForbidden, "forbidden", "no tenant in claims")
+				return
+			}
 		}
 
 		// Repo enforces tenant scoping. Cross-tenant reads return ErrNotFound
@@ -85,7 +119,9 @@ func (s *Server) HandleScreenPNG() http.HandlerFunc {
 		// reject any path that escapes the screens base dir. filepath.Clean
 		// resolves "..", and HasPrefix on the absolute path catches symlink
 		// shenanigans (in case operator places a symlink inside data/screens/).
-		baseDir, err := filepath.Abs(filepath.Join(s.deps.DataDir, "screens"))
+		// png_storage_key already begins with "screens/" (set by Pipeline.persistPNG),
+		// so the base must be DataDir alone — joining "screens" would give "screens/screens/...".
+		baseDir, err := filepath.Abs(s.deps.DataDir)
 		if err != nil {
 			slog.Error("png handler: abs base dir", "err", err)
 			http.Error(w, "internal", http.StatusInternalServerError)
@@ -209,7 +245,9 @@ func (s *Server) HandleScreenKTX2() http.HandlerFunc {
 			return
 		}
 
-		baseDir, err := filepath.Abs(filepath.Join(s.deps.DataDir, "screens"))
+		// png_storage_key already begins with "screens/" (set by Pipeline.persistPNG),
+		// so the base must be DataDir alone — joining "screens" would give "screens/screens/...".
+		baseDir, err := filepath.Abs(s.deps.DataDir)
 		if err != nil {
 			slog.Error("ktx2 handler: abs base dir", "err", err)
 			http.Error(w, "internal", http.StatusInternalServerError)
@@ -295,4 +333,66 @@ func applyLODSuffix(storageKey, tier, extSuffix string) string {
 		return base + infix + extSuffix
 	}
 	return storageKey
+}
+
+// lookupScreenTenant resolves the tenant_id that owns a given screen_id. Used
+// by the asset-token path to avoid requiring the caller to supply tenant_id
+// in the URL (which would be an existence oracle: "this screen belongs to
+// tenant X" leaks via 200/404). Returns ("", ErrNotFound) when no row exists
+// — the handler maps that to a generic 404. The asset token's HMAC then
+// proves the caller knew the right tenant_id when minting.
+func (s *Server) lookupScreenTenant(ctx context.Context, screenID string) (string, error) {
+	var tenantID string
+	err := s.deps.DB.DB.QueryRowContext(ctx,
+		`SELECT tenant_id FROM screens WHERE id = ?`, screenID,
+	).Scan(&tenantID)
+	if err != nil {
+		return "", err
+	}
+	return tenantID, nil
+}
+
+// HandleMintAssetToken returns the handler for `POST /v1/projects/:slug/screens/:id/png-url`.
+// Authenticated via JWT (existing requireAuth). Mints a short-lived asset
+// token bound to (tenant, screen) and returns the full URL with `?at=`.
+// The frontend uses the returned URL on <img src> / texture loaders so the
+// JWT never enters the URL.
+func (s *Server) HandleMintAssetToken() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		claims, _ := ctx.Value(ctxKeyClaims).(*auth.Claims)
+		if claims == nil {
+			writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+			return
+		}
+		tenantID := s.resolveTenantID(claims)
+		if tenantID == "" {
+			writeJSONErr(w, http.StatusForbidden, "forbidden", "no tenant in claims")
+			return
+		}
+		if s.deps.AssetSigner == nil {
+			writeJSONErr(w, http.StatusServiceUnavailable, "asset_signer", "not configured")
+			return
+		}
+		slug := r.PathValue("slug")
+		screenID := r.PathValue("id")
+		if slug == "" || screenID == "" {
+			http.Error(w, "missing path params", http.StatusBadRequest)
+			return
+		}
+		// Tenant scoping — confirm the screen belongs to this tenant before
+		// minting a token for it. Returns 404 cross-tenant (no oracle).
+		repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+		info, err := repo.GetScreenForServe(ctx, slug, screenID)
+		if err != nil || info == nil {
+			http.NotFound(w, r)
+			return
+		}
+		token := s.deps.AssetSigner.Mint(tenantID, screenID, auth.AssetTokenTTL)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"url":        fmt.Sprintf("/v1/projects/%s/screens/%s/png?at=%s", slug, screenID, token),
+			"ktx2_url":   fmt.Sprintf("/v1/projects/%s/screens/%s/ktx2?at=%s", slug, screenID, token),
+			"expires_in": int(auth.AssetTokenTTL.Seconds()),
+		})
+	}
 }

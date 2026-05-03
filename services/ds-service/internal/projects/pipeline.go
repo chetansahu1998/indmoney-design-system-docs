@@ -340,9 +340,15 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 // fail is the centralized failure path. Marks the version failed, writes the
 // audit log row, and publishes ProjectExportFailed.
 func (p *Pipeline) fail(ctx context.Context, in PipelineInputs, err error) {
+	// Audit B4 — extract the failed stage from the wrapping prefix so the
+	// log carries a structured `stage=...` field. Operators can grep for
+	// `stage=render_pngs` or `stage=download_png` instead of pattern-
+	// matching the freeform error message.
+	stage := pipelineStageFromError(err)
 	if p.Log != nil {
 		p.Log.Error("pipeline failed",
-			"version_id", in.VersionID, "trace_id", in.TraceID, "err", err.Error())
+			"version_id", in.VersionID, "trace_id", in.TraceID,
+			"stage", stage, "err", err.Error())
 	}
 	if rerr := p.Repo.RecordFailed(ctx, in.VersionID, err.Error()); rerr != nil && p.Log != nil {
 		p.Log.Error("pipeline failure: cannot mark version failed",
@@ -555,11 +561,41 @@ func NewHTTPFigmaRenderer(pat string) *HTTPFigmaRenderer {
 	}
 }
 
-// RenderPNGs implements FigmaImageRenderer.
+// figmaRenderChunkSize bounds the number of node IDs per /v1/images call.
+// Figma fails large batches with 400 "Render timeout, try requesting fewer
+// or smaller images". 25 is conservative for typical mobile frames; on 400
+// for an individual chunk we recursively halve.
+const figmaRenderChunkSize = 25
+
+// RenderPNGs implements FigmaImageRenderer. Chunks node IDs to stay under
+// Figma's per-request render budget; on a render-timeout 400 for a chunk,
+// recursively halves the chunk before giving up.
 func (r *HTTPFigmaRenderer) RenderPNGs(ctx context.Context, fileKey string, nodeIDs []string) (map[string]string, error) {
 	if len(nodeIDs) == 0 {
 		return nil, fmt.Errorf("RenderPNGs: empty nodeIDs")
 	}
+	out := make(map[string]string, len(nodeIDs))
+	for i := 0; i < len(nodeIDs); i += figmaRenderChunkSize {
+		j := i + figmaRenderChunkSize
+		if j > len(nodeIDs) {
+			j = len(nodeIDs)
+		}
+		chunk := nodeIDs[i:j]
+		images, err := r.renderChunk(ctx, fileKey, chunk)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range images {
+			out[k] = v
+		}
+	}
+	return out, nil
+}
+
+// renderChunk hits /v1/images for a single chunk. On a 400 render-timeout
+// (Figma's "fewer or smaller images" response), splits the chunk in half
+// and retries each half; gives up at single-frame chunks that still 400.
+func (r *HTTPFigmaRenderer) renderChunk(ctx context.Context, fileKey string, nodeIDs []string) (map[string]string, error) {
 	csv := strings.Join(nodeIDs, ",")
 	url := fmt.Sprintf("%s/v1/images/%s?ids=%s&format=png&scale=2", figmaImagesAPIBase, fileKey, csv)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -576,6 +612,22 @@ func (r *HTTPFigmaRenderer) RenderPNGs(ctx context.Context, fileKey string, node
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return nil, fmt.Errorf("figma images: 429 rate limit")
+	}
+	if resp.StatusCode == http.StatusBadRequest && len(nodeIDs) > 1 && strings.Contains(string(body), "Render timeout") {
+		// Halve and retry — one of the frames is too heavy on its own.
+		mid := len(nodeIDs) / 2
+		left, err := r.renderChunk(ctx, fileKey, nodeIDs[:mid])
+		if err != nil {
+			return nil, err
+		}
+		right, err := r.renderChunk(ctx, fileKey, nodeIDs[mid:])
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range right {
+			left[k] = v
+		}
+		return left, nil
 	}
 	if resp.StatusCode/100 != 2 {
 		return nil, fmt.Errorf("figma images: %d %s", resp.StatusCode, string(body))
@@ -616,4 +668,48 @@ func (r *HTTPFigmaRenderer) DownloadPNG(ctx context.Context, url string) ([]byte
 		return nil, err
 	}
 	return bs, nil
+}
+
+// pipelineStageFromError maps the freeform error message to a structured
+// stage label so logs / dashboards can group by failure stage. Each runStages
+// `return fmt.Errorf("<prefix>: %w", err)` site has a unique prefix; this
+// table mirrors them. Returns "unknown" when no prefix matches so the field
+// is always populated.
+func pipelineStageFromError(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	msg := err.Error()
+	switch {
+	case strings.HasPrefix(msg, "pipeline: no frames"):
+		return "validate_input"
+	case strings.HasPrefix(msg, "figma nodes:"):
+		return "fetch_nodes"
+	case strings.HasPrefix(msg, "figma images:"):
+		return "render_pngs"
+	case strings.HasPrefix(msg, "figma rendered no URL"):
+		return "render_pngs_partial"
+	case strings.HasPrefix(msg, "download png"):
+		return "download_png"
+	case strings.HasPrefix(msg, "downsample png"):
+		return "downsample_png"
+	case strings.HasPrefix(msg, "persist png"):
+		return "persist_png"
+	case strings.HasPrefix(msg, "update screen png_key"):
+		return "update_png_key"
+	case strings.HasPrefix(msg, "begin tx"):
+		return "stage6_tx_begin"
+	case strings.HasPrefix(msg, "insert canonical tree"):
+		return "insert_canonical_tree"
+	case strings.HasPrefix(msg, "insert screen_modes"):
+		return "insert_screen_modes"
+	case strings.HasPrefix(msg, "flip view_ready"):
+		return "flip_view_ready"
+	case strings.HasPrefix(msg, "enqueue audit"):
+		return "enqueue_audit_job"
+	case strings.HasPrefix(msg, "commit:"):
+		return "stage6_tx_commit"
+	default:
+		return "unknown"
+	}
 }

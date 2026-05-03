@@ -36,6 +36,8 @@ interface CacheEntry {
   texture: THREE.Texture;
   /** Approximate decoded byte count once the image has loaded. */
   bytes: number;
+  /** Last access timestamp (ms) for LRU eviction (Pr30). */
+  lastAccessAt: number;
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -103,6 +105,7 @@ export function getTexture(
 ): THREE.Texture {
   const existing = cache.get(url);
   if (existing) {
+    existing.lastAccessAt = Date.now();
     if (existing.texture.image && onLoad) {
       // Image already decoded — fire onLoad on next microtask so callers can
       // treat the path uniformly (always async).
@@ -122,7 +125,12 @@ export function getTexture(
       const w = img?.naturalWidth ?? img?.width ?? 0;
       const h = img?.naturalHeight ?? img?.height ?? 0;
       const entry = cache.get(url);
-      if (entry) entry.bytes = w * h * 4;
+      if (entry) {
+        entry.bytes = w * h * 4;
+        // Pr30 — once size is known, evict oldest entries past the budget.
+        // Cheap (linear in cache size) and only runs after a real load.
+        enforceTextureBudget();
+      }
       // Color-space hint: PNGs are sRGB-encoded; tagging avoids gamma drift.
       loaded.colorSpace = THREE.SRGBColorSpace;
       onLoad?.(loaded);
@@ -135,7 +143,7 @@ export function getTexture(
     },
   );
 
-  cache.set(url, { texture: tex, bytes: 0 });
+  cache.set(url, { texture: tex, bytes: 0, lastAccessAt: Date.now() });
   return tex;
 }
 
@@ -192,7 +200,8 @@ export async function getTextureKTX2OrPNG(
     const img = (tex.image as { width?: number; height?: number } | null) ?? null;
     const w = img?.width ?? 0;
     const h = img?.height ?? 0;
-    cache.set(ktx2URL, { texture: tex, bytes: w * h * 4 });
+    cache.set(ktx2URL, { texture: tex, bytes: w * h * 4, lastAccessAt: Date.now() });
+    enforceTextureBudget();
     onLoad?.(tex);
     return tex;
   } catch (ktx2Err) {
@@ -268,6 +277,37 @@ export function totalBytes(): number {
 
 /** Phase 1 budget — plan caps at 200 MB. Exported for tests + warnings. */
 export const TEXTURE_BUDGET_BYTES = 200 * 1024 * 1024;
+
+/**
+ * Pr30 — LRU eviction. Called automatically after each successful load
+ * once the texture's byte size is known. Walks entries by `lastAccessAt`
+ * ascending and disposes the oldest ones until the budget is satisfied.
+ *
+ * Pinned entries (those touched within the last 200ms) are skipped so a
+ * just-loaded texture isn't evicted before its first frame paints. The
+ * eviction loop also exits early after one pass to bound worst-case
+ * cost to O(n log n) on a single load — chronic over-budget situations
+ * resolve over multiple loads, not in a single tight loop.
+ */
+function enforceTextureBudget(): void {
+  if (totalBytes() <= TEXTURE_BUDGET_BYTES) return;
+  const PIN_WINDOW_MS = 200;
+  const now = Date.now();
+  const candidates = Array.from(cache.entries())
+    .filter(([, e]) => now - e.lastAccessAt > PIN_WINDOW_MS && e.bytes > 0)
+    .sort(([, a], [, b]) => a.lastAccessAt - b.lastAccessAt);
+  for (const [url] of candidates) {
+    disposeTexture(url);
+    if (totalBytes() <= TEXTURE_BUDGET_BYTES) return;
+  }
+}
+
+/** Pr30 — exposed for callers that want to force a budget pass (e.g. on
+ *  tab change to /projects/<other-slug>). The automatic pass after each
+ *  load covers steady-state; manual calls are for hard pivots. */
+export function evictToBudget(): void {
+  enforceTextureBudget();
+}
 
 /**
  * Internal escape hatch for tests — clears the cache. Production code should

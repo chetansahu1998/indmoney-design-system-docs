@@ -24,7 +24,9 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useLayoutEffect, useState } from "react";
 
-import { hasWebGL2, useReducedMotion } from "./reducedMotion";
+import { useReducedMotion } from "@/lib/animations/context";
+
+import { hasWebGL2 } from "./reducedMotion";
 import type { GraphPlatform } from "./types";
 
 const BrainGraph = dynamic(() => import("./BrainGraph"), {
@@ -128,7 +130,7 @@ function AtlasInner() {
           left: 0;
           right: 0;
           bottom: 0;
-          background: var(--bg-canvas, var(--bg-page));
+          background: var(--bg-canvas);
           overflow: hidden;
           color: var(--text-1);
           font-family: var(--font-sans, "Inter Variable", sans-serif);
@@ -152,7 +154,7 @@ function BrainGraphSkeleton() {
           bottom: 0;
           display: grid;
           place-items: center;
-          background: var(--bg-canvas, var(--bg-page));
+          background: var(--bg-canvas);
           color: var(--text-3);
           font-family: var(--font-sans, "Inter Variable", sans-serif);
           font-size: 13px;
@@ -239,7 +241,7 @@ function FallbackStyles() {
         bottom: 0;
         display: grid;
         place-items: center;
-        background: var(--bg-canvas, var(--bg-page));
+        background: var(--bg-canvas);
         color: var(--text-1);
         font-family: var(--font-sans, "Inter Variable", sans-serif);
         padding: 24px;

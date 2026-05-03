@@ -11,6 +11,8 @@
 
 import { useEffect, useState } from "react";
 
+import { SEVERITY_COLORS } from "@/lib/severity-colors";
+
 import { AdminShell } from "../_lib/AdminShell";
 import { adminFetchJSON } from "../_lib/adminFetch";
 
@@ -31,13 +33,9 @@ const SEVERITY_OPTIONS: Rule["default_severity"][] = [
   "info",
 ];
 
-const SEVERITY_COLOR: Record<Rule["default_severity"], string> = {
-  critical: "#FF6B6B",
-  high: "#FFB347",
-  medium: "#FFD93D",
-  low: "#9F8FFF",
-  info: "#7B9FFF",
-};
+// Use the shared SEVERITY_COLORS map from lib/severity-colors so this page
+// stays in sync with HoverSignalCard and DashboardShell.
+const SEVERITY_COLOR = SEVERITY_COLORS;
 
 export default function AdminRulesPage() {
   const [rules, setRules] = useState<Rule[]>([]);

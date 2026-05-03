@@ -16,7 +16,7 @@ import { useAuth } from "@/lib/auth-client";
 import { useLenisProvider } from "@/lib/animations/context";
 import DashboardShell from "@/components/dashboard/DashboardShell";
 
-const LOGIN_REDIRECT = "/";
+const LOGIN_REDIRECT = "/login";
 
 export default function AtlasAdminPage() {
   const token = useAuth((s) => s.token);

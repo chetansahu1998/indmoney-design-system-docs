@@ -39,7 +39,7 @@ import {
   atlasBloomBuildUp,
   ATLAS_BLOOM_FINAL_INTENSITY,
 } from "@/lib/animations/timelines/atlasBloomBuildUp";
-import { useReducedMotion } from "./reducedMotion";
+import { useReducedMotion } from "@/lib/animations/context";
 import { useGraphAggregate } from "./useGraphAggregate";
 import { useGraphView } from "./useGraphView";
 import { useSignalHold } from "./useSignalHold";
@@ -110,6 +110,7 @@ interface BrainGraphProps {
     components: boolean;
     tokens: boolean;
     decisions: boolean;
+    personas?: boolean;
   } | null;
   /**
    * Phase 9 U3 — reverse-morph source slug. When the user back-navigates
@@ -159,6 +160,7 @@ export default function BrainGraph({
       components: initialFilters.components,
       tokens: initialFilters.tokens,
       decisions: initialFilters.decisions,
+      personas: initialFilters.personas ?? false,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -620,9 +622,27 @@ export default function BrainGraph({
           cam.position.set(targetPx, targetPy, targetPz);
           cam.lookAt(node.x, node.y, node.z);
         } else {
+          // A20 — small-distance overshoot. The default spring (tension 170,
+          // friction 26) under-damps short hops: clicking a satellite that's
+          // ~20% across the viewport overshoots, then snaps back. Compute
+          // distance and pick a critically-damped config when the move is
+          // smaller than ~30% of the current zoom radius.
+          const dx = targetPx - cam.position.x;
+          const dy = targetPy - cam.position.y;
+          const dz = targetPz - cam.position.z;
+          const moveDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          const camRadius = Math.max(1, cam.position.length());
+          const isShortHop = moveDist < camRadius * 0.3;
+          // Critically-damped: friction = 2 * sqrt(tension * mass), mass=1.
+          // tension 170 → friction ≈ 26 (the default — under-damped at 26
+          // because the implementation treats it as below-critical). For
+          // short hops we bump friction so the settle is direct, no overshoot.
           cameraSpringApi.start({
             from: { px: cam.position.x, py: cam.position.y, pz: cam.position.z },
             to: { px: targetPx, py: targetPy, pz: targetPz },
+            ...(isShortHop
+              ? { config: { tension: 220, friction: 32 } }
+              : {}),
           });
         }
       }
@@ -917,12 +937,38 @@ function isAncestorOrSelf(
 }
 
 function EmptyState({ platform }: { platform: GraphPlatform }) {
+  const otherPlatform = platform === "mobile" ? "web" : "mobile";
   return (
     <div className="empty">
-      <h1>No flows yet</h1>
+      <h1>No {platform} flows yet</h1>
       <p>
-        The {platform === "mobile" ? "mobile" : "web"} mind graph is empty.
-        Export from the Figma plugin to seed it.
+        The {platform} mind graph is empty. Try the{" "}
+        <button
+          type="button"
+          // The platform toggle in /atlas chrome reads the same querystring
+          // / store; emit the click event the toggle subscribes to.
+          onClick={() => {
+            if (typeof window !== "undefined") {
+              window.dispatchEvent(
+                new CustomEvent("atlas:platform-toggle", {
+                  detail: { platform: otherPlatform },
+                }),
+              );
+            }
+          }}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--accent)",
+            cursor: "pointer",
+            padding: 0,
+            font: "inherit",
+            textDecoration: "underline",
+          }}
+        >
+          {otherPlatform} graph
+        </button>
+        {" "}or export new flows from the Figma plugin to seed this one.
       </p>
       <style jsx>{`
         .empty {
@@ -930,7 +976,7 @@ function EmptyState({ platform }: { platform: GraphPlatform }) {
           inset: 0;
           display: grid;
           place-items: center;
-          color: rgba(255, 255, 255, 0.62);
+          color: var(--text-2);
           font-family: var(--font-sans, "Inter Variable", sans-serif);
           text-align: center;
         }
@@ -941,7 +987,7 @@ function EmptyState({ platform }: { platform: GraphPlatform }) {
         p {
           margin: 0;
           font-size: 14px;
-          color: rgba(255, 255, 255, 0.42);
+          color: var(--text-3);
         }
       `}</style>
     </div>
@@ -960,7 +1006,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
           inset: 0;
           display: grid;
           place-items: center;
-          color: rgba(255, 255, 255, 0.85);
+          color: var(--text-1);
           font-family: var(--font-sans, "Inter Variable", sans-serif);
           text-align: center;
         }
@@ -970,20 +1016,20 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
         }
         p {
           margin: 0 0 20px;
-          color: rgba(255, 175, 175, 0.7);
+          color: var(--danger);
           font-size: 13px;
         }
         button {
           padding: 8px 16px;
-          border: 1px solid rgba(255, 255, 255, 0.18);
-          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid var(--border);
+          background: var(--bg-surface);
           color: inherit;
           border-radius: 8px;
           cursor: pointer;
           font: inherit;
         }
         button:hover {
-          background: rgba(255, 255, 255, 0.08);
+          background: var(--bg-surface-2);
         }
       `}</style>
     </div>

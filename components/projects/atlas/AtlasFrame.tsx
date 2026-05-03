@@ -144,6 +144,13 @@ export default function AtlasFrame({
   useFrame(() => {
     const m = meshRef.current;
     if (!m) return;
+    // Pr25 — when this frame is the active selection, the parent owns the
+    // scale via the click-dolly spring. Fighting that here causes the
+    // first-click flicker: hover lerp pulls toward 1.015 while the spring
+    // pulls toward whatever zoom-in scale the camera dolly targets, so the
+    // mesh visibly snaps. Skip the hover lerp during selection — restored
+    // when the user picks another frame.
+    if (selected) return;
     const target = hovered ? HOVER_SCALE : 1;
     const next = THREE.MathUtils.lerp(m.scale.x, target, SCALE_LERP);
     m.scale.set(next, next, 1);

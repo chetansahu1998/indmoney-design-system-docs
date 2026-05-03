@@ -23,6 +23,7 @@
  */
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import type { Persona, Project, ProjectVersion } from "@/lib/projects/types";
 import {
   useProjectView,
@@ -102,6 +103,11 @@ export default function ProjectToolbar({
 }: ProjectToolbarProps) {
   const theme = useProjectView((s) => s.theme);
   const setTheme = useProjectView((s) => s.setTheme);
+  // Pr15 / A32 — read the source flow ID from `?ft=<flow_uuid>` so the
+  // View-Transitions destination name matches the right source leaf even
+  // when the project has multiple flows (slug alone would collide).
+  const searchParams = useSearchParams();
+  const sourceFlowID = searchParams?.get("ft") || null;
 
   const resolvedFlowName = flowName ?? project.Name;
 
@@ -192,12 +198,49 @@ export default function ProjectToolbar({
           data-tour="project-title"
           style={{
             color: "var(--text-1)",
-            viewTransitionName: `flow-${slug}-label`,
+            // Match the source leaf's discriminator when arriving via the
+            // morph (Pr15/A32). Falls back to slug-based for direct loads
+            // where no `?ft=` is present — the transition just won't fire,
+            // which is the correct degraded behavior.
+            viewTransitionName: sourceFlowID
+              ? `flow-${sourceFlowID}-label`
+              : `flow-${slug}-label`,
           }}
         >
           {resolvedFlowName}
         </span>
       </nav>
+
+      {/* Pr23 — version-position chip. When the project has multiple
+          versions, surface "v{index} of {total}" so users know which
+          slice of history they're viewing without opening the version
+          dropdown. Hidden when there's only one version (no choice to
+          communicate). */}
+      {versions.length > 1 && activeVersionID ? (() => {
+        const active = versions.find((v) => v.ID === activeVersionID);
+        if (!active) return null;
+        return (
+          <span
+            data-testid="version-position-chip"
+            title={`Viewing v${active.VersionIndex} of ${versions.length}`}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "3px 8px",
+              fontSize: 11,
+              fontFamily: "var(--font-mono)",
+              color: "var(--text-2)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              background: "var(--bg-surface-2, var(--bg-surface))",
+            }}
+          >
+            <span style={{ color: "var(--text-1)" }}>v{active.VersionIndex}</span>
+            <span style={{ color: "var(--text-3)" }}>of {versions.length}</span>
+          </span>
+        );
+      })() : null}
 
       {/* Phase 9 U5 — audit-state badge. Renders next to the breadcrumb
           so the user has an at-a-glance answer to "is the audit still
@@ -440,12 +483,18 @@ function AuditStateBadge({
 
   if (state.kind === "complete") {
     const count = state.finalCount;
+    // Pr12: distinguish "audit never ran" from "audit ran clean".
+    //   - finalCount undefined → no audit_job exists for this version → "Audit not run"
+    //   - finalCount === 0 → audit ran successfully with no violations → "Audit clean"
+    //   - finalCount > 0 → "N violations"
     const text =
       typeof count === "number"
-        ? count === 1
-          ? "1 violation"
-          : `${count} violations`
-        : "Audit complete";
+        ? count === 0
+          ? "Audit clean"
+          : count === 1
+            ? "1 violation"
+            : `${count} violations`
+        : "Audit not run";
     return (
       <span
         data-testid="audit-badge-complete"

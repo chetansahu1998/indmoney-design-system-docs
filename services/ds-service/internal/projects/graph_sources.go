@@ -199,10 +199,22 @@ func BuildFlowRows(ctx context.Context, db *sql.DB, tenantID, platform string, n
 	if tenantID == "" {
 		return nil, errors.New("graph_sources: tenant_id required")
 	}
+	// Pull the latest view_ready version per project alongside the flow row
+	// so open_url can be qualified with ?v=<version_id>. Without the version
+	// qualifier deep-links from /atlas always land on whatever happens to be
+	// the most recent version at click-time, even if the leaf was rendered
+	// against an older one (audit finding A4).
 	rows, err := db.QueryContext(ctx,
 		`SELECT f.id, f.name, f.persona_id,
 		        f.updated_at,
-		        p.product, p.path, p.slug
+		        p.product, p.path, p.slug,
+		        COALESCE((
+		          SELECT v.id FROM project_versions v
+		           WHERE v.project_id = p.id
+		             AND v.status = 'view_ready'
+		           ORDER BY v.version_index DESC
+		           LIMIT 1
+		        ), '') AS latest_version_id
 		   FROM flows f
 		   JOIN projects p ON p.id = f.project_id
 		  WHERE f.tenant_id = ?
@@ -217,20 +229,21 @@ func BuildFlowRows(ctx context.Context, db *sql.DB, tenantID, platform string, n
 	defer rows.Close()
 
 	type flowRec struct {
-		ID         string
-		Label      string
-		PersonaID  string
-		UpdatedAt  time.Time
-		Product    string
-		Path       string
-		Slug       string
+		ID              string
+		Label           string
+		PersonaID       string
+		UpdatedAt       time.Time
+		Product         string
+		Path            string
+		Slug            string
+		LatestVersionID string
 	}
 	var flows []flowRec
 	for rows.Next() {
 		var f flowRec
 		var personaID sql.NullString
 		var updatedAt string
-		if err := rows.Scan(&f.ID, &f.Label, &personaID, &updatedAt, &f.Product, &f.Path, &f.Slug); err != nil {
+		if err := rows.Scan(&f.ID, &f.Label, &personaID, &updatedAt, &f.Product, &f.Path, &f.Slug, &f.LatestVersionID); err != nil {
 			return nil, fmt.Errorf("scan flow: %w", err)
 		}
 		if personaID.Valid {
@@ -278,7 +291,7 @@ func BuildFlowRows(ctx context.Context, db *sql.DB, tenantID, platform string, n
 			SeverityLow:      counts.Low,
 			SeverityInfo:     counts.Info,
 			LastUpdatedAt:    f.UpdatedAt,
-			OpenURL:          "/projects/" + f.Slug,
+			OpenURL:          flowOpenURL(f.Slug, f.LatestVersionID),
 			SourceKind:       GraphSourceFlows,
 			SourceRef:        f.ID,
 			MaterializedAt:   now,
@@ -972,4 +985,16 @@ func splitNonEmpty(s, sep string) []string {
 		out = append(out, p)
 	}
 	return out
+}
+
+// flowOpenURL builds the deep-link a flow leaf renders for in /atlas. Always
+// includes ?v=<latest_version> when a view_ready version exists so the user
+// lands on the same revision the leaf's signal was computed against. Falls
+// back to the slug-only URL when no version has reached view_ready (the
+// project's first export is mid-pipeline or every version failed). Audit A4.
+func flowOpenURL(slug, latestVersionID string) string {
+	if latestVersionID == "" {
+		return "/projects/" + slug
+	}
+	return "/projects/" + slug + "?v=" + latestVersionID
 }

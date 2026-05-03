@@ -59,18 +59,36 @@ export default function ComponentCanvas({ entries }: { entries: IconEntry[] }) {
   const [query, setQuery] = useState("");
   const canvasRef = useRef<HTMLDivElement>(null);
 
-  // Group entries by category, preserve insertion order from manifest sort.
+  // Group entries by category. Audit C15: emit bands in the documented
+  // atomic-design tier order (Atoms → Molecules → Organisms → Templates →
+  // Pages) so the canvas reads top-down the way the team conceptualises
+  // the system, not by how many components live in each category.
   const grouped = useMemo(() => {
-    const map = new Map<string, IconEntry[]>();
+    const TIER_ORDER = ["Atoms", "Molecules", "Organisms", "Templates", "Pages"];
+    const tierIndex = (cat: string) => {
+      const i = TIER_ORDER.findIndex((t) => t.toLowerCase() === cat.toLowerCase());
+      return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+    };
+    const buckets = new Map<string, IconEntry[]>();
     const q = query.trim().toLowerCase();
     for (const e of entries) {
       if (q && !e.name.toLowerCase().includes(q) && !e.slug.includes(q)) continue;
       const cat = e.category || "uncategorized";
-      if (!map.has(cat)) map.set(cat, []);
-      map.get(cat)!.push(e);
+      if (!buckets.has(cat)) buckets.set(cat, []);
+      buckets.get(cat)!.push(e);
     }
-    for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
-    return map;
+    for (const list of buckets.values()) list.sort((a, b) => a.name.localeCompare(b.name));
+    // Re-emit in tier order, alphabetical fallback for unknowns.
+    const ordered = new Map<string, IconEntry[]>();
+    Array.from(buckets.keys())
+      .sort((a, b) => {
+        const ai = tierIndex(a);
+        const bi = tierIndex(b);
+        if (ai !== bi) return ai - bi;
+        return a.localeCompare(b);
+      })
+      .forEach((k) => ordered.set(k, buckets.get(k)!));
+    return ordered;
   }, [entries, query]);
 
   const total = useMemo(
@@ -351,9 +369,18 @@ function CategoryBand({
   openSlug: string | null;
   onOpen: (slug: string) => void;
 }) {
+  // Audit C5: stamp the section with a matching id= as well as data-cat.
+  // Sidebar links built in app/components/page.tsx are `#cat-<slug>`, and
+  // useActiveSection / FilesShell sectionIds expect a DOM id to query.
+  // Without the id, the sidebar anchors (`cat-design-system`, `cat-masthead`,
+  // etc) were dead targets — the canvas hashchange handler used data-cat
+  // for its own pan, but scroll-spy / direct anchor jumps had nothing to
+  // bind to. Pairing both keeps the canvas pan AND the sidebar happy.
+  const slug = slugifyCategory(cat);
   return (
     <section
-      data-cat={slugifyCategory(cat)}
+      id={`cat-${slug}`}
+      data-cat={slug}
       style={{
         flexShrink: 0,
         alignSelf: "flex-start",
@@ -451,8 +478,14 @@ function ComponentCard({
 }) {
   const variants = entry.variants ?? [];
   const defaultV = useMemo(() => defaultVariantOf(entry), [entry]);
+  // Audit C11: previously capped at 12 variants with a non-functional
+  // "+N" placeholder. The strip is already overflow-x:auto, so just
+  // hand it the full list — the user can scroll laterally inside the
+  // card to see every variant, and the inspector overlay still shows
+  // the canonical full grid. Cap removed; placeholder chip below also
+  // dropped (audit C23 — the "+7" used a non-token grey background).
   const otherVariants = useMemo(
-    () => variants.filter((v) => v.variant_id !== defaultV?.variant_id).slice(0, 12),
+    () => variants.filter((v) => v.variant_id !== defaultV?.variant_id),
     [variants, defaultV],
   );
 
@@ -584,27 +617,6 @@ function ComponentCard({
           {otherVariants.map((v) => (
             <VariantThumb key={v.variant_id} variant={v} />
           ))}
-          {variants.length - 1 > 12 && (
-            <div
-              style={{
-                width: VAR_THUMB,
-                height: VAR_THUMB,
-                background: "var(--bg-surface-2)",
-                border: "1px dashed var(--border)",
-                borderRadius: 6,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontFamily: "var(--font-mono)",
-                fontSize: 11,
-                color: "var(--text-3)",
-                flexShrink: 0,
-              }}
-              title={`${variants.length - 1 - 12} more — open inspector`}
-            >
-              +{variants.length - 1 - 12}
-            </div>
-          )}
         </div>
       )}
     </motion.div>
@@ -1183,6 +1195,12 @@ function CategoryJump({
 }
 
 function CanvasHelp() {
+  // Audit C19: condensed from 4 hints (wheel pan / space+drag / ←→ step /
+  // esc) to 2. The four-chip strip was visually crowded and most of the
+  // hints duplicate intuitive native gestures (mouse wheel, arrow keys).
+  // We keep the two with the highest discoverability payoff: drag-to-pan
+  // (which beats trackpad-only users having to know to two-finger swipe)
+  // and esc-to-close (the non-obvious dismiss for the inspector overlay).
   return (
     <div
       style={{
@@ -1194,9 +1212,7 @@ function CanvasHelp() {
         flexWrap: "wrap",
       }}
     >
-      <Hint k="wheel" v="pan canvas" />
-      <Hint k="space + drag" v="grab to pan" />
-      <Hint k="←  →" v="step pan" />
+      <Hint k="drag" v="to pan" />
       <Hint k="esc" v="close" />
     </div>
   );

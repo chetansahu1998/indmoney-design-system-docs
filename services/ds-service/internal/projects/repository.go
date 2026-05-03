@@ -305,6 +305,49 @@ func (t *TenantRepo) UpsertFlow(ctx context.Context, f Flow) (Flow, error) {
 	return f, nil
 }
 
+// ListFlowsByProject returns all active (non-deleted) flows for a project,
+// scoped to the caller's tenant. Used by the project payload assembler so
+// the frontend can render a flow selector instead of hardcoding screens[0].
+func (t *TenantRepo) ListFlowsByProject(ctx context.Context, projectID string) ([]Flow, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	rows, err := t.r.db.QueryContext(ctx,
+		`SELECT id, project_id, file_id, section_id, name, persona_id, created_at, updated_at
+		   FROM flows
+		  WHERE project_id = ? AND tenant_id = ? AND deleted_at IS NULL
+		  ORDER BY created_at ASC`,
+		projectID, t.tenantID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Flow
+	for rows.Next() {
+		var f Flow
+		var sectionID, personaID sql.NullString
+		var createdAt, updatedAt string
+		if err := rows.Scan(&f.ID, &f.ProjectID, &f.FileID, &sectionID, &f.Name,
+			&personaID, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		f.TenantID = t.tenantID
+		if sectionID.Valid {
+			s := sectionID.String
+			f.SectionID = &s
+		}
+		if personaID.Valid {
+			p := personaID.String
+			f.PersonaID = &p
+		}
+		f.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		f.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // InsertScreens persists a batch of empty screen rows (no canonical_tree, no
 // png_storage_key yet). Pipeline will fill in PNG keys after render.
 func (t *TenantRepo) InsertScreens(ctx context.Context, screens []Screen) error {

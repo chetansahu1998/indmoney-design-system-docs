@@ -1,17 +1,12 @@
 /**
- * Phase 6 — Reduced-motion gate for the mind graph.
+ * Phase 6 — Atlas-only WebGL capability gate.
  *
- * Re-exports the existing Phase 1 hook so atlas-specific code can import
- * from a co-located module without crossing the lib/animations boundary
- * for a single hook. The signal-animation layer (U11) and bloom drift (U6)
- * both branch on this.
- *
- * The Phase 1 implementation lives at lib/animations/context.ts — that's
- * the SSR-safe matchMedia subscriber + Lenis singleton. Phase 6 doesn't
- * extend it, just consumes.
+ * Reduced-motion handling now lives exclusively in `@/lib/animations/context`
+ * (per atlas runbook §2.8 single-source rule). Atlas callers should import
+ * `useReducedMotion` from there directly. This file kept only for the
+ * `hasWebGL2()` capability check used by `app/atlas/page.tsx` to decide
+ * whether to mount the r3f canvas vs render the EmptyState fallback.
  */
-
-export { useReducedMotion, getPrefersReducedMotion } from "@/lib/animations/context";
 
 /**
  * WebGL2 capability check. Run on mount before instantiating r3f Canvas.

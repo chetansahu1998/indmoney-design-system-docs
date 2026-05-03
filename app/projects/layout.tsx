@@ -13,11 +13,8 @@
  * which Phase 1 doesn't ship. This layout therefore short-circuits the
  * children render until hydration confirms an auth token exists.
  *
- * Login redirect target: `/?next=<encoded path>` so a future login page can
- * round-trip the user back. Today the closest thing to a login UI is the
- * SyncModal in `RootClient`; we point at `/` (it's the entry point users
- * reach the SyncModal from). When a dedicated `/login` route lands, swap
- * the constant in one place.
+ * Login redirect target: `/login?next=<encoded path>` round-trips the user
+ * back to the originally requested route after sign-in.
  */
 
 import { useEffect, useState } from "react";
@@ -25,7 +22,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-client";
 import { useLenisProvider } from "@/lib/animations/context";
 
-const LOGIN_REDIRECT = "/";
+const LOGIN_REDIRECT = "/login";
 
 export default function ProjectsLayout({
   children,

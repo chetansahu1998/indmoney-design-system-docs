@@ -38,6 +38,24 @@ type AuditExportEvent struct {
 	UserAgent   string
 	TraceID     string
 	Error       string // populated when Action == AuditActionExportFailed
+	// Audit finding B5 — preserve the (frame_id, x, y, w, h) tuples so a
+	// failed pipeline can be replayed without re-walking the Figma file.
+	// Caller passes the slice from the export request body; nil/empty when
+	// the caller doesn't have it (e.g. a re-audit fanout job).
+	Frames      []ExportAuditFrame
+}
+
+// ExportAuditFrame is the minimal per-frame snapshot the audit_log persists
+// so a future recovery cmd can rebuild PipelineInputs.Frames without having
+// to re-walk the full Figma file. Mirrors PipelineFrame's identity fields.
+type ExportAuditFrame struct {
+	ScreenID     string  `json:"screen_id"`
+	FigmaFrameID string  `json:"figma_frame_id"`
+	FlowID       string  `json:"flow_id"`
+	X            float64 `json:"x"`
+	Y            float64 `json:"y"`
+	Width        float64 `json:"width"`
+	Height       float64 `json:"height"`
 }
 
 // WriteExport writes one audit_log row for a project.export event. Failures to
@@ -60,6 +78,9 @@ func (a *AuditLogger) WriteExport(ctx context.Context, ev AuditExportEvent) erro
 	}
 	if ev.Error != "" {
 		details["error"] = ev.Error
+	}
+	if len(ev.Frames) > 0 {
+		details["frames"] = ev.Frames
 	}
 	bs, _ := json.Marshal(details)
 	entry := db.AuditEntry{

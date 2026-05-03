@@ -17,12 +17,18 @@ export default function AssetGallery({
   entries,
   layout = "square",
   emptyHint,
+  searchPlaceholder,
+  footerHint,
 }: {
   title: string;
   subtitle: string;
   entries: IconEntry[];
   layout?: Layout;
   emptyHint?: string;
+  /** Audit C20: page-specific placeholder ("Search illustrations…"). */
+  searchPlaceholder?: string;
+  /** Audit C26: optional footer node — surfaces /tokens cross-link. */
+  footerHint?: React.ReactNode;
 }) {
   const [query, setQuery] = useState("");
   const isMobile = useIsMobile();
@@ -73,7 +79,13 @@ export default function AssetGallery({
         </p>
       </div>
 
-      <SearchBar value={query} onChange={setQuery} total={entries.length} matches={filtered.length} />
+      <SearchBar
+        value={query}
+        onChange={setQuery}
+        total={entries.length}
+        matches={filtered.length}
+        placeholder={searchPlaceholder ?? "Search…"}
+      />
 
       {q ? (
         <Grid entries={filtered} layout={layout} tileMin={tileMin} emptyHint={emptyHint} />
@@ -115,6 +127,21 @@ export default function AssetGallery({
           </div>
         ))
       )}
+
+      {footerHint && (
+        <div
+          style={{
+            marginTop: 48,
+            paddingTop: 20,
+            borderTop: "1px solid var(--border)",
+            fontSize: 12,
+            color: "var(--text-3)",
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          {footerHint}
+        </div>
+      )}
     </>
   );
 }
@@ -124,11 +151,13 @@ function SearchBar({
   onChange,
   total,
   matches,
+  placeholder = "Search…",
 }: {
   value: string;
   onChange: (v: string) => void;
   total: number;
   matches: number;
+  placeholder?: string;
 }) {
   return (
     <div
@@ -150,7 +179,7 @@ function SearchBar({
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Search…"
+        placeholder={placeholder}
         style={{
           flex: 1,
           background: "none",
@@ -227,6 +256,12 @@ function Grid({
 function Tile({ entry, layout }: { entry: IconEntry; layout: Layout }) {
   const aspect = layout === "wide" ? entry.height / Math.max(entry.width, 1) : 1;
   const previewHeight = layout === "wide" ? Math.min(120, Math.max(48, aspect * 280)) : 80;
+  // Audit C10: white-on-white logos (Amex, Mastercard, Visa, Apple Pay)
+  // disappeared into the dark surface in dark mode. Use the stronger
+  // border token + a faint inset to give every logo tile a visible edge
+  // in either theme. Applies to all kinds for visual consistency — the
+  // strong border still reads cleanly behind icons + illustrations.
+  const isLogo = entry.kind === "logo";
 
   return (
     <div
@@ -238,8 +273,9 @@ function Tile({ entry, layout }: { entry: IconEntry; layout: Layout }) {
         gap: 8,
         padding: 12,
         background: "var(--bg-surface)",
-        border: "1px solid var(--border)",
+        border: `1px solid ${isLogo ? "var(--border-strong)" : "var(--border)"}`,
         borderRadius: 8,
+        boxShadow: isLogo ? "inset 0 0 0 1px var(--border-subtle)" : undefined,
         transition: "transform 140ms ease, box-shadow 140ms ease",
       }}
       onMouseEnter={(ev) => {
@@ -278,14 +314,23 @@ function Tile({ entry, layout }: { entry: IconEntry; layout: Layout }) {
         />
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+        {/* Audit C9: long names ("3D · Car - Front", "Profile - Wallet pill")
+         *  truncated at ~8 chars on the narrow tile. Allow up to two lines of
+         *  wrap before clamping with line-clamp, and keep the explicit
+         *  title= so hover reveals the full name on every browser even when
+         *  the OS tooltip is the only fallback. */}
         <span
+          title={entry.name}
           style={{
             fontSize: 11,
             fontWeight: 600,
             color: "var(--text-1)",
             overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            wordBreak: "break-word",
+            lineHeight: 1.3,
           }}
         >
           {entry.name}

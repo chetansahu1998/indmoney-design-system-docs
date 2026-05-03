@@ -103,14 +103,26 @@ func main() {
 	// Transcode call short-circuits gracefully.
 	ktx2 := projects.NewKTX2Transcoder(log)
 	pipelineFactory := func(ctx context.Context, tenantID string, repo *projects.TenantRepo) (*projects.Pipeline, error) {
-		// Decrypt per-tenant Figma PAT.
+		// Decrypt per-tenant Figma PAT. When decrypt fails it usually means
+		// the row was encrypted under a different ENCRYPTION_KEY (typical
+		// after an ephemeral-key restart). Surface that explicitly so the
+		// admin UI can prompt re-upload instead of silently failing the
+		// whole pipeline (audit finding B6). Falls back to FIGMA_PAT env
+		// var when set so cmd-line workflows keep working during recovery.
 		rec, err := dbConn.GetFigmaToken(ctx, tenantID)
 		if err != nil {
 			return nil, fmt.Errorf("get figma token: %w", err)
 		}
 		pat, err := cfg.EncryptionKey.Decrypt(rec.EncryptedToken)
 		if err != nil {
-			return nil, fmt.Errorf("decrypt figma token: %w", err)
+			if envPAT := os.Getenv("FIGMA_PAT"); envPAT != "" {
+				log.Warn("figma token decrypt failed; falling back to FIGMA_PAT env var (please re-upload via admin UI to clear this)",
+					"tenant", tenantID, "key_version", rec.KeyVersion, "err", err.Error())
+				pat = []byte(envPAT)
+			} else {
+				return nil, fmt.Errorf("decrypt figma token (tenant=%s key_version=%d — re-upload via admin UI): %w",
+					tenantID, rec.KeyVersion, err)
+			}
 		}
 		fc := client.New(string(pat))
 		renderer := projects.NewHTTPFigmaRenderer(string(pat))
@@ -146,6 +158,21 @@ func main() {
 		return string(pat), nil
 	}
 
+	// Pr8 / D1 — asset-token signer for PNG/KTX2 image-loader auth. Derives
+	// the HMAC key from the encryption key (already 32 bytes, persisted in
+	// .env.local, rotates with the same operator workflow). Falls back to
+	// nil when EncryptionKey isn't configured — the handler then rejects
+	// `?at=` requests and the legacy `?token=<jwt>` fallback continues.
+	var assetSigner *auth.AssetTokenSigner
+	if cfg.EncryptionKey != nil {
+		s, err := auth.NewAssetTokenSigner(cfg.EncryptionKey[:])
+		if err == nil {
+			assetSigner = s
+		} else {
+			log.Warn("asset signer init failed; PNG/KTX2 will require JWT bearer", "err", err.Error())
+		}
+	}
+
 	projectsServer := projects.NewServer(projects.ServerDeps{
 		DB:              dbConn,
 		Broker:          broker,
@@ -157,6 +184,7 @@ func main() {
 		DataDir:         dataDir,
 		PipelineFactory: pipelineFactory,
 		FigmaPATResolver: figmaPATResolver,
+		AssetSigner:     assetSigner,
 		Log:             log,
 	})
 
@@ -188,26 +216,13 @@ func main() {
 	// can apply per-mode bindings). See loaders.go header comment.
 	compositeRunner := rules.NewTenantAwareRunner(dbConn.DB, auditCoreRunner, nil)
 	workerPoolSize := workerPoolSizeFromEnv(log)
-	workerPool := &projects.WorkerPool{
-		Size:          workerPoolSize,
-		Repo:          workerRepo,
-		Runner:        compositeRunner,
-		Broker:        broker,
-		Notifications: auditEnqueuer.Notifications(),
-		Log:           log,
-	}
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
-	if err := workerPool.Start(workerCtx); err != nil {
-		log.Error("worker pool start", "err", err)
-		os.Exit(1)
-	}
 
 	// Phase 6 — RebuildGraphIndex worker materialises the mind-graph
-	// `graph_index` table from upstream sources. Pool size from env
-	// `GRAPH_INDEX_REBUILD_WORKERS` (default 1) per Phase 1 learning #6.
-	// Tenant list is auto-discovered from the `tenants` table; manifest +
-	// tokens paths default relative to RepoDir for local dev.
+	// `graph_index` table from upstream sources. Constructed BEFORE the
+	// audit WorkerPool so we can wire the audit-complete → graph-rebuild
+	// hook with a real reference instead of a forward-declared closure.
 	graphRebuildPool := &projects.GraphRebuildPool{
 		Size:      graphRebuildWorkersFromEnv(log),
 		DB:        dbConn.DB,
@@ -220,6 +235,29 @@ func main() {
 		},
 		Publisher: &projects.SSEGraphPublisher{Broker: broker},
 		Log:       log,
+	}
+
+	workerPool := &projects.WorkerPool{
+		Size:          workerPoolSize,
+		Repo:          workerRepo,
+		Runner:        compositeRunner,
+		Broker:        broker,
+		Notifications: auditEnqueuer.Notifications(),
+		Log:           log,
+		// Audit findings A5 / D3 — when an audit job marks done, refresh the
+		// graph_index for both platforms of the affected tenant so the mind
+		// graph's flow severity counts reflect the freshly-persisted
+		// violations without waiting for the safety-net poll cycle.
+		OnAuditComplete: func(tenantID, _versionID string) {
+			for _, platform := range []string{"mobile", "web"} {
+				graphRebuildPool.EnqueueIncremental(tenantID, platform,
+					projects.GraphSourceFlows, "")
+			}
+		},
+	}
+	if err := workerPool.Start(workerCtx); err != nil {
+		log.Error("worker pool start", "err", err)
+		os.Exit(1)
 	}
 	if err := graphRebuildPool.Start(workerCtx); err != nil {
 		log.Error("graph rebuild pool start", "err", err)
@@ -491,6 +529,11 @@ func (s *server) routes(mux *http.ServeMux) {
 	// route streams them with Cache-Control: private and tenant-isolation
 	// returning 404 (no existence oracle). Phase 8 swaps to S3 signed URLs
 	// without changing the route shape.
+	// Pr8 — image-loader-friendly asset token. Authenticated mint endpoint
+	// returns a short-lived `?at=<token>` URL the frontend can paste into
+	// <img src> / TextureLoader without leaking the JWT into URLs.
+	mux.HandleFunc("POST /v1/projects/{slug}/screens/{id}/png-url",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleMintAssetToken())))
 	mux.HandleFunc("GET /v1/projects/{slug}/screens/{id}/png",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleScreenPNG())))
 	// Phase 3.5 U2 — KTX2 sidecar route. Returns 404 when basisu wasn't
@@ -782,6 +825,15 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		// CloudFront signed URLs / Vercel image-signing tokens.
 		if token == "" && r.Method == http.MethodGet {
 			token = r.URL.Query().Get("token")
+		}
+		// Pr8 — asset-token path: when the caller supplies `?at=<token>`
+		// on a GET, skip JWT verification at the middleware. The downstream
+		// handler verifies the asset MAC against the resolved (tenant, screen)
+		// pair before serving any bytes. Restricted to GET so state-changing
+		// routes still demand a real JWT.
+		if token == "" && r.Method == http.MethodGet && r.URL.Query().Get("at") != "" {
+			next.ServeHTTP(w, r)
+			return
 		}
 		if token == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "missing bearer token"})

@@ -124,6 +124,13 @@ type WorkerPool struct {
 	HeartbeatInterval time.Duration
 	SafetyNet         time.Duration
 
+	// OnAuditComplete fires after a job successfully transitions to 'done'.
+	// Used by cmd/server/main.go to enqueue a graph_index rebuild for the
+	// affected tenant + platform pair so the mind-graph severity counts
+	// reflect the freshly-persisted violations (audit findings A5 / D3).
+	// Optional — nil means no post-completion hook fires.
+	OnAuditComplete func(tenantID, versionID string)
+
 	// now is injectable for time-sensitive tests; nil → time.Now.
 	now func() time.Time
 
@@ -347,6 +354,11 @@ func (p *WorkerPool) claimAndProcess(ctx context.Context, workerID string) (bool
 			Tenant:         claim.TenantID,
 			ViolationCount: len(violations),
 		})
+	}
+	// Notify any post-completion hook so downstream materialisers (e.g. the
+	// graph_index rebuilder) can refresh derived state without polling.
+	if p.OnAuditComplete != nil {
+		p.OnAuditComplete(claim.TenantID, claim.VersionID)
 	}
 	p.Log.Info("worker: job done",
 		"job_id", claim.JobID, "version_id", claim.VersionID,

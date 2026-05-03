@@ -3,6 +3,9 @@ import FilesIndex from "@/components/files/FilesIndex";
 import { auditedFiles, hasAuditData } from "@/lib/audit";
 import type { NavGroup } from "@/components/Sidebar";
 
+// Audit C27: per-route metadata.
+export const metadata = { title: "Files · INDmoney DS" };
+
 /**
  * /files — landing page listing every audited Figma file as a card.
  * The sidebar mirrors the cards: one entry per audited file plus a top

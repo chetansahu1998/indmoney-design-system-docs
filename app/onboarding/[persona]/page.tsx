@@ -16,6 +16,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { PERSONAS, getPersonaBySlug } from "@/lib/onboarding/personas";
 import PersonaSection from "@/components/onboarding/PersonaSection";
+import PageShell from "@/components/PageShell";
 
 export function generateStaticParams() {
   return PERSONAS.map((p) => ({ persona: p.slug }));
@@ -45,14 +46,16 @@ export default async function PersonaOnboardingPage({ params }: Props) {
   }
 
   return (
-    <main style={mainStyle}>
-      <nav aria-label="Onboarding navigation" style={navStyle}>
-        <Link href="/onboarding" style={navLinkStyle}>
-          ← All personas
-        </Link>
-      </nav>
-      <PersonaSection persona={spec} />
-    </main>
+    <PageShell>
+      <main style={mainStyle}>
+        <nav aria-label="Onboarding navigation" style={navStyle}>
+          <Link href="/onboarding" style={navLinkStyle}>
+            ← All personas
+          </Link>
+        </nav>
+        <PersonaSection persona={spec} />
+      </main>
+    </PageShell>
   );
 }
 

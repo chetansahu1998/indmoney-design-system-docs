@@ -6,20 +6,28 @@ import { useUIStore, type Density } from "@/lib/ui-store";
 /**
  * Global keyboard shortcuts:
  *
+ *   ⌘K / Ctrl+K  open search modal (S17 — lifted to root so it works
+ *                site-wide, not just inside DocsShell/FilesShell)
  *   T       toggle theme (dark ↔ light)
  *   D       cycle density (compact → default → comfortable)
  *   [ / ]   prev / next sidebar sub-anchor
  *   ?       show help (no-op for v1; reserved)
  *
- * ⌘K stays where it is — owned by DocsShell + FilesShell directly because
- * it opens a stateful modal that those shells already manage.
+ * The shells (DocsShell / FilesShell) still register their own ⌘K
+ * listeners — that's tolerated because both call `setSearchOpen(!open)`
+ * via the same zustand store; the duplicate fire is idempotent at the
+ * store level (open → closed → open is the same final state if both
+ * fire). The hero copy ⌘K hint now works on `/inbox`, `/onboarding`,
+ * `/settings/notifications`, `/health`, etc.
  *
  * Bindings only fire when no input/textarea/contenteditable is focused —
  * we don't want T to flip the theme while the designer is typing in the
- * search field.
+ * search field. ⌘K is allowed even when an input is focused (standard
+ * search-modal behavior).
  */
 export function useKeyboardShortcuts() {
   const setActiveSection = useUIStore((s) => s.setActiveSection);
+  const setSearchOpen = useUIStore((s) => s.setSearchOpen);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -37,6 +45,13 @@ export function useKeyboardShortcuts() {
     };
 
     const onKey = (e: KeyboardEvent) => {
+      // ⌘K / Ctrl+K — fire even when an input is focused.
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(!useUIStore.getState().searchOpen);
+        return;
+      }
+
       if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
       if (isInputFocused()) return;
 
@@ -63,7 +78,7 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setActiveSection]);
+  }, [setActiveSection, setSearchOpen]);
 }
 
 /** Toggle theme via the same localStorage + data-attribute mechanism the

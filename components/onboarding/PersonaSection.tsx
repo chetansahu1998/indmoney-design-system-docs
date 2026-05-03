@@ -60,16 +60,27 @@ export default function PersonaSection({ persona, anchorID }: Props) {
       </ol>
 
       {persona.gif ? (
-        <figure style={gifFigureStyle}>
+        <figure
+          style={gifFigureStyle}
+          // S5 fix — when the gif is missing (404), hide the entire figure
+          // instead of leaving a broken image icon. The asset isn't critical
+          // path; it's a follow-up polish that hasn't shipped yet.
+          data-gif-figure
+        >
           {/* eslint-disable-next-line @next/next/no-img-element -- the gif
               files live under public/onboarding/ when committed; they're a
-              follow-up polish. The img tag falls through gracefully when
-              the file is missing (browser shows alt text). */}
+              follow-up polish. */}
           <img
             src={`/onboarding/${persona.gif}`}
             alt={`${persona.name} day-1 walkthrough`}
             style={gifImgStyle}
             loading="lazy"
+            onError={(e) => {
+              const fig = (e.currentTarget as HTMLImageElement).closest<HTMLElement>(
+                "figure[data-gif-figure]",
+              );
+              if (fig) fig.style.display = "none";
+            }}
           />
           <figcaption style={gifCaptionStyle}>
             {persona.name} — day-1 walkthrough

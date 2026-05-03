@@ -824,6 +824,11 @@ function VariantRow({ variant }: { variant: VariantEntry }) {
     : variant.properties.map((p) => [p.name, p.value] as [string, string]);
   return (
     <div
+      // C17 — anchor the DEFAULT badge to the outer variant card's top-right
+      // corner rather than the inner image preview frame. Previously the badge
+      // floated inside the image well, which made it look attached to the
+      // *image* (and clip behind tall renderings) instead of being a marker
+      // on the variant card as a whole.
       style={{
         display: "flex",
         flexDirection: "column",
@@ -832,8 +837,30 @@ function VariantRow({ variant }: { variant: VariantEntry }) {
         background: "var(--bg-surface-2)",
         border: `1px solid ${variant.is_default ? "var(--accent)" : "var(--border)"}`,
         borderRadius: 8,
+        position: "relative",
       }}
     >
+      {variant.is_default && (
+        <span
+          title="Default variant"
+          style={{
+            position: "absolute",
+            top: 6,
+            right: 6,
+            fontSize: 9,
+            fontWeight: 700,
+            color: "var(--accent)",
+            background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+            padding: "2px 6px",
+            borderRadius: 4,
+            fontFamily: "var(--font-mono)",
+            letterSpacing: "0.04em",
+            zIndex: 1,
+          }}
+        >
+          ★ DEFAULT
+        </span>
+      )}
       <div
         style={{
           minHeight: 80,
@@ -844,29 +871,8 @@ function VariantRow({ variant }: { variant: VariantEntry }) {
           border: "1px solid var(--border)",
           borderRadius: 6,
           padding: 8,
-          position: "relative",
         }}
       >
-        {variant.is_default && (
-          <span
-            title="Default variant"
-            style={{
-              position: "absolute",
-              top: 6,
-              right: 6,
-              fontSize: 9,
-              fontWeight: 700,
-              color: "var(--accent)",
-              background: "color-mix(in srgb, var(--accent) 14%, transparent)",
-              padding: "2px 6px",
-              borderRadius: 4,
-              fontFamily: "var(--font-mono)",
-              letterSpacing: "0.04em",
-            }}
-          >
-            ★ DEFAULT
-          </span>
-        )}
         <img
           src={url}
           alt={variant.name}

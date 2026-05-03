@@ -35,10 +35,15 @@ interface JSONTabProps {
   screenModes: ScreenMode[];
 }
 
-// Session-scoped cache keyed by screen_id. Cleared when the user navigates
-// away from /projects/[slug] (component unmount → no useRef survives), but
-// preserved across tab switches within the same project view.
+// Session-scoped cache keyed by `<project_slug>:<version_id>:<screen_id>` so
+// re-export of the same screen (which keeps the screen_id but bumps the
+// version_id) doesn't return the stale tree (Pr26). Module-scoped on
+// purpose — survives tab switches within the project view, lost on
+// navigation away.
 const treeCache = new Map<string, unknown>();
+function treeCacheKey(slug: string, screenID: string, versionID: string | undefined): string {
+  return `${slug}:${versionID ?? ""}:${screenID}`;
+}
 
 export default function JSONTab({ slug, screens, screenModes }: JSONTabProps) {
   const selectedScreenID = useProjectView((s) => s.selectedScreenID);
@@ -75,14 +80,22 @@ export default function JSONTab({ slug, screens, screenModes }: JSONTabProps) {
     return makeResolver(activeMode, modeBindings);
   }, [selectedScreenID, activeMode, modeBindings]);
 
-  // Lazy fetch. Triggered on screen-ID change; cached by screen.
+  // Lazy fetch. Triggered on screen-ID change; cached by (slug, version, screen).
+  // The selected screen carries its own VersionID so we key the cache on it —
+  // a re-exported version of the same Figma frame keeps `screen_id` but bumps
+  // `version_id`, and the cache must not return the prior tree.
+  const selectedVersionID = useMemo(
+    () => screens.find((s) => s.ID === selectedScreenID)?.VersionID,
+    [selectedScreenID, screens],
+  );
   useEffect(() => {
     if (!selectedScreenID) {
       setTree(null);
       setError(null);
       return;
     }
-    const cached = treeCache.get(selectedScreenID);
+    const cacheKey = treeCacheKey(slug, selectedScreenID, selectedVersionID);
+    const cached = treeCache.get(cacheKey);
     if (cached !== undefined) {
       setTree(cached);
       setError(null);
@@ -98,7 +111,7 @@ export default function JSONTab({ slug, screens, screenModes }: JSONTabProps) {
           setError(res.error || "Failed to fetch canonical_tree");
           return;
         }
-        treeCache.set(selectedScreenID, res.data.canonical_tree);
+        treeCache.set(cacheKey, res.data.canonical_tree);
         setTree(res.data.canonical_tree);
       })
       .finally(() => {
@@ -107,7 +120,7 @@ export default function JSONTab({ slug, screens, screenModes }: JSONTabProps) {
     return () => {
       cancelled = true;
     };
-  }, [selectedScreenID, slug]);
+  }, [selectedScreenID, slug, selectedVersionID]);
 
   if (!selectedScreenID) {
     return (

@@ -14,6 +14,8 @@
 
 import { motion } from "framer-motion";
 
+import { SEVERITY_COLORS } from "@/lib/severity-colors";
+
 import type { GraphNode, GraphSeverityCounts } from "./types";
 
 interface Props {
@@ -22,19 +24,32 @@ interface Props {
 }
 
 export function HoverSignalCard({ node, anchor }: Props) {
-  // Clamp to viewport: card is 280px × ~140px; flip to left of cursor when
-  // we'd overflow the right edge.
+  // Clamp to viewport on all four edges. Default position: 16px right + below
+  // the cursor. Flip to the opposite side when overflow would push us off any
+  // edge. After flipping, also clamp to keep at least `margin` of breathing
+  // room — handles the diagonal-corner case where flipping alone still puts
+  // the card past the orthogonal edge.
   const cardW = 280;
   const cardH = 160;
   const margin = 12;
   let left = anchor.x + 16;
   let top = anchor.y + 16;
   if (typeof window !== "undefined") {
+    // Right edge → flip to left
     if (left + cardW > window.innerWidth - margin) {
       left = anchor.x - cardW - 16;
     }
+    // Bottom edge → flip to above
     if (top + cardH > window.innerHeight - margin) {
       top = anchor.y - cardH - 16;
+    }
+    // Left edge (after flip, or if anchor is near origin) → clamp
+    if (left < margin) {
+      left = margin;
+    }
+    // Top edge → clamp
+    if (top < margin) {
+      top = margin;
     }
   }
 
@@ -100,11 +115,11 @@ function SeverityRow({ counts }: { counts: GraphSeverityCounts }) {
     );
   return (
     <div className="sev">
-      {tier(counts.critical, "#FF6B6B", "Critical")}
-      {tier(counts.high, "#FFB347", "High")}
-      {tier(counts.medium, "#FFD93D", "Medium")}
-      {tier(counts.low, "#9F8FFF", "Low")}
-      {tier(counts.info, "#7B9FFF", "Info")}
+      {tier(counts.critical, SEVERITY_COLORS.critical, "Critical")}
+      {tier(counts.high, SEVERITY_COLORS.high, "High")}
+      {tier(counts.medium, SEVERITY_COLORS.medium, "Medium")}
+      {tier(counts.low, SEVERITY_COLORS.low, "Low")}
+      {tier(counts.info, SEVERITY_COLORS.info, "Info")}
     </div>
   );
 }
@@ -134,10 +149,10 @@ function CardStyles() {
         width: 280px;
         padding: 14px 16px;
         border-radius: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        background: rgba(10, 14, 24, 0.92);
+        border: 1px solid var(--border-subtle);
+        background: var(--bg-overlay);
         backdrop-filter: blur(12px);
-        color: rgba(255, 255, 255, 0.92);
+        color: var(--text-1);
         font-family: var(--font-sans, "Inter Variable", sans-serif);
         font-size: 12px;
         z-index: 20;
@@ -153,17 +168,17 @@ function CardStyles() {
         font-size: 10px;
         text-transform: uppercase;
         letter-spacing: 0.08em;
-        color: rgba(255, 255, 255, 0.5);
+        color: var(--text-2);
         font-weight: 600;
       }
       .type-product {
-        color: #c8d6ff;
+        color: var(--accent);
       }
       .type-flow {
-        color: #9f8fff;
+        color: var(--info);
       }
       .type-decision {
-        color: #ffb347;
+        color: var(--warning);
       }
       h2 {
         margin: 0;
@@ -177,7 +192,7 @@ function CardStyles() {
         margin-bottom: 10px;
       }
       .sev-empty {
-        color: rgba(255, 255, 255, 0.42);
+        color: var(--text-3);
         font-size: 11px;
         margin-bottom: 10px;
       }
@@ -200,15 +215,15 @@ function CardStyles() {
         font-size: 11px;
       }
       dt {
-        color: rgba(255, 255, 255, 0.42);
+        color: var(--text-3);
       }
       dd {
         margin: 0;
-        color: rgba(255, 255, 255, 0.85);
+        color: var(--text-1);
       }
       .cta {
         display: inline-block;
-        color: #7b9fff;
+        color: var(--accent);
         font-size: 12px;
         text-decoration: none;
       }

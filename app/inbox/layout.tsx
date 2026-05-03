@@ -12,7 +12,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-client";
 import { useLenisProvider } from "@/lib/animations/context";
 
-const LOGIN_REDIRECT = "/";
+const LOGIN_REDIRECT = "/login";
 
 export default function InboxLayout({
   children,

@@ -84,7 +84,15 @@ export function SearchInput({ onMatchChange, reducedMotion }: Props) {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
+        onBlur={() => {
+          setFocused(false);
+          // Defensive: if the user emptied the input via backspace and then
+          // blurred, force-clear the dim state. The keyed effect already
+          // does this when `query` flips to "" but if useSearch is mid-
+          // debounce the dim can persist. This guarantees blur with empty
+          // query always lifts the dim.
+          if (query.trim() === "") onMatchChange(null);
+        }}
         aria-label="Search the mind graph"
       />
       {query !== "" && status === "ready" && (
@@ -101,8 +109,8 @@ export function SearchInput({ onMatchChange, reducedMotion }: Props) {
           align-items: center;
           gap: 8px;
           padding: 4px 12px;
-          background: rgba(0, 0, 0, 0.4);
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          background: var(--bg-overlay);
+          border: 1px solid var(--border-subtle);
           border-radius: 999px;
           backdrop-filter: blur(12px);
           z-index: 10;
@@ -113,12 +121,12 @@ export function SearchInput({ onMatchChange, reducedMotion }: Props) {
           padding: 6px 4px;
           background: transparent;
           border: none;
-          color: rgba(255, 255, 255, 0.92);
+          color: var(--text-1);
           font-size: 12px;
           letter-spacing: 0.01em;
         }
         .search-input input::placeholder {
-          color: rgba(255, 255, 255, 0.42);
+          color: var(--text-3);
         }
         .search-input input:focus-visible {
           outline: none;
@@ -129,7 +137,7 @@ export function SearchInput({ onMatchChange, reducedMotion }: Props) {
         }
         .count {
           font-size: 10px;
-          color: rgba(255, 255, 255, 0.42);
+          color: var(--text-3);
           font-variant-numeric: tabular-nums;
         }
       `}</style>

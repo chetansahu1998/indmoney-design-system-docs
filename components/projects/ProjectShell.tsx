@@ -47,6 +47,7 @@ import {
   fetchProject,
 } from "@/lib/projects/client";
 import type {
+  Flow,
   Persona,
   Project,
   ProjectVersion,
@@ -78,6 +79,12 @@ import DRDTabCollab from "./tabs/DRDTabCollab";
 // REST flow. Read at module scope so the choice is stable per
 // deployment. The cutover is per-deploy so production can flip the flag
 // once the sidecar is healthy without a code change.
+//
+// Pr16: defaults to OFF because DRDTabCollab depends on a Hocuspocus
+// sidecar at the URL resolved in `lib/drd/collab.ts` (default
+// `ws://localhost:8090`). Until that sidecar ships in the standard local
+// dev bring-up, opt-in via env keeps the single-author REST DRDTab as the
+// safe default. See `.env.example` for the documented flag.
 const DRD_COLLAB_ENABLED = process.env.NEXT_PUBLIC_DRD_COLLAB === "1";
 import DecisionsTab from "./tabs/DecisionsTab";
 import JSONTab from "./tabs/JSONTab";
@@ -138,6 +145,9 @@ interface ProjectShellProps {
   initialVersions: ProjectVersion[];
   /** Initial active version (defaults to versions[0]). */
   initialActiveVersionID?: string;
+  /** Initial flows for the project — drives the per-tab flow selector
+   *  (DRD, Violations, Decisions are flow-scoped). */
+  initialFlows?: Flow[];
   /** Initial screens (used for the placeholder atlas grid). */
   initialScreens: Screen[];
   /** Initial persona library scoped to the active version. */
@@ -154,6 +164,7 @@ export default function ProjectShell({
   initialProject,
   initialVersions,
   initialActiveVersionID,
+  initialFlows,
   initialScreens,
   initialPersonas,
   initialScreenModes,
@@ -162,12 +173,28 @@ export default function ProjectShell({
   // ─── State ──────────────────────────────────────────────────────────────
   const [project] = useState<Project>(initialProject);
   const [versions, setVersions] = useState<ProjectVersion[]>(initialVersions);
+  const [flows] = useState<Flow[]>(initialFlows ?? []);
   const [screens, setScreens] = useState<Screen[]>(initialScreens);
   const [personas, setPersonas] = useState<Persona[]>(initialPersonas);
   const [screenModes, setScreenModes] = useState<ScreenMode[]>(initialScreenModes);
   const [activeVersionID, setActiveVersionID] = useState<string | undefined>(
     initialActiveVersionID ?? initialVersions[0]?.ID,
   );
+  // Flow selector — defaults to first flow; falls back to screens[0] when
+  // the project payload omits flows (older ds-service versions).
+  // Pr9: sort by ID to defend against ds-service `ListScreensByVersion`
+  // ordering by `created_at` only (non-deterministic within a single second).
+  // Same defensive sort applies to flows so the default is stable across
+  // page loads even if the server returns rows in different orders.
+  const [selectedFlowID, setSelectedFlowID] = useState<string | null>(() => {
+    const sortedFlows = initialFlows
+      ? [...initialFlows].sort((a, b) => a.ID.localeCompare(b.ID))
+      : [];
+    const sortedScreens = [...initialScreens].sort((a, b) =>
+      a.ID.localeCompare(b.ID),
+    );
+    return sortedFlows[0]?.ID ?? sortedScreens[0]?.FlowID ?? null;
+  });
 
   // Active tab + persona derived from URL hash on mount and on hashchange.
   const [activeTab, setActiveTab] = useState<ProjectTab>(DEFAULT_TAB);
@@ -256,11 +283,23 @@ export default function ProjectShell({
 
   // Phase 9 U5 — slow-render affordance. When the user opens a project
   // page that's still in `pending` (fresh export waiting on view_ready)
-  // and the SSE event hasn't arrived after 15s, we surface a "Slow to
-  // render — refresh?" affordance. Implemented as a piece of local state
-  // (not a reducer kind) because it's strictly cosmetic — the underlying
+  // and the SSE event hasn't arrived, we surface a "Slow to render —
+  // refresh?" affordance. Implemented as a piece of local state (not a
+  // reducer kind) because it's strictly cosmetic — the underlying
   // machine state is still `pending` and a refresh is the user's choice,
   // not a state transition.
+  //
+  // Pr19: bumped 15s → 60s. Large exports (>100 frames) legitimately
+  // take 30-60s end-to-end through Stage 3 (Figma image render) +
+  // Stage 5 (canonical_trees) + Stage 7 (audit). Surfacing "slow to
+  // render" too early trains users to refresh into a half-baked
+  // pipeline. Configurable via `NEXT_PUBLIC_PROJECT_SLOW_RENDER_MS`
+  // for environments that need a tighter SLA.
+  const SLOW_RENDER_MS = (() => {
+    const raw = process.env.NEXT_PUBLIC_PROJECT_SLOW_RENDER_MS;
+    const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+  })();
   const [slowRender, setSlowRender] = useState(false);
   useEffect(() => {
     if (machineState.kind !== "pending") {
@@ -269,9 +308,9 @@ export default function ProjectShell({
     }
     const handle = window.setTimeout(() => {
       setSlowRender(true);
-    }, 15_000);
+    }, SLOW_RENDER_MS);
     return () => window.clearTimeout(handle);
-  }, [machineState.kind]);
+  }, [machineState.kind, SLOW_RENDER_MS]);
 
   // ─── GSAP context (shared scope for every component-scoped tween). ──────
   const ctx = useGSAPContext(scopeRef);
@@ -334,21 +373,40 @@ export default function ProjectShell({
   }, [pendingTab, activeTab, ctx]);
 
   // ─── URL hash sync (read on mount + hashchange). ────────────────────────
+  // Pr14: hash-driven tab changes go through the same pendingTab lock as
+  // click-driven changes. If a swap is already in flight (`pendingTab !==
+  // null`), drop the hashchange — the next user gesture or a fresh
+  // hashchange after the lock clears will resolve. This avoids two
+  // tabSwitch timelines fighting over the same DOM.
   useEffect(() => {
     if (typeof window === "undefined") return;
+    // Pr28 — first hash apply (initial mount) bypasses the tabSwitch
+    // animation: jump straight to the URL-encoded tab without playing
+    // the curtain wipe. Without this guard a fresh /projects/<slug>#tab=drd
+    // load shows a flash of "violations" → curtain wipe → drd, instead of
+    // landing on drd silently. Subsequent hashchanges still animate.
+    let isFirstApply = true;
     const apply = () => {
       const { tab, persona } = parseHash(window.location.hash);
       if (tab) {
-        // U14b — route hash-driven tab changes through pendingTab so the
-        // paired-curtain animation runs. If the hash matches the current
-        // active or already-pending target, no-op.
-        setActiveTab((curr) => {
-          if (curr === tab) return curr;
-          setPendingTab((p) => (p === tab ? p : tab));
-          return curr;
-        });
+        if (isFirstApply) {
+          // Snap directly to the hash tab — no pendingTab, no animation.
+          setActiveTab(tab);
+        } else {
+          setActiveTab((curr) => {
+            if (curr === tab) return curr;
+            setPendingTab((p) => {
+              // Lock: if a swap is already pending, don't overwrite it.
+              // The lock matches changeTab()'s `if (pendingTab) return;` guard.
+              if (p !== null) return p;
+              return tab;
+            });
+            return curr;
+          });
+        }
       }
       setActivePersonaName(persona);
+      isFirstApply = false;
     };
     apply();
     window.addEventListener("hashchange", apply);
@@ -356,10 +414,21 @@ export default function ProjectShell({
   }, []);
 
   // ─── Theme: apply to documentElement — mirrors FilesShell pattern. ──────
+  // Pr27 — restore the prior data-theme on unmount so the project view's
+  // override doesn't leak into other routes (e.g. /atlas which has its own
+  // theme bootstrap reading the same attribute). The root layout's inline
+  // bootstrap script set the initial value from localStorage; we snapshot
+  // it on mount and restore on unmount.
   useEffect(() => {
     if (typeof document === "undefined") return;
+    const prior = document.documentElement.getAttribute("data-theme");
     const concrete = resolveTheme(theme);
     document.documentElement.setAttribute("data-theme", concrete);
+    return () => {
+      if (prior !== null) {
+        document.documentElement.setAttribute("data-theme", prior);
+      }
+    };
   }, [theme]);
 
   // Re-evaluate Auto on system change so toggling the OS-level dark mode
@@ -421,11 +490,20 @@ export default function ProjectShell({
       if (now - firedAt < 300) return;
       firedAt = now;
       e.preventDefault();
-      router.back();
+      // Honor `?from=<flow_id>` (set by LeafMorphHandoff during the morph).
+      // When present, navigate explicitly to /atlas with the source flow
+      // as a focus hint — deterministic, deep-link-safe. Falls back to
+      // router.back() when no marker exists (e.g., direct URL load).
+      const fromFlow = searchParams.get("from");
+      if (fromFlow) {
+        router.push(`/atlas?focus=${encodeURIComponent(fromFlow)}`);
+      } else {
+        router.back();
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [router]);
+  }, [router, searchParams]);
 
   // ─── Refresh on version change. Re-fetches the project payload. ─────────
   useEffect(() => {
@@ -484,14 +562,25 @@ export default function ProjectShell({
   }, [machineState, versions]);
 
   // ─── SSE subscription. ──────────────────────────────────────────────────
+  // Pr11: only open the EventSource when there's actually something to wait
+  // for — either a `pending` version (in-flight pipeline) or an explicit
+  // trace ID (fresh export deeplink). Passive views over `view_ready`
+  // versions previously held an idle EventSource open per tab; they now
+  // skip subscription entirely.
+  const traceFromQuery = searchParams.get("trace");
+  const sseShouldOpen =
+    machineState.kind === "pending" ||
+    Boolean(initialTraceID) ||
+    Boolean(traceFromQuery);
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!sseShouldOpen) return;
     // Use the URL-supplied trace ID when present (fresh export deeplink), or
     // a synthetic one for passive views. A synthetic trace gets only heart-
     // beats from the broker (no events match), which is fine for U6.
     const traceID =
       initialTraceID ??
-      searchParams.get("trace") ??
+      traceFromQuery ??
       (typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
         : `trace-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -549,7 +638,7 @@ export default function ProjectShell({
       }
     });
     return unsubscribe;
-  }, [slug, initialTraceID, searchParams]);
+  }, [slug, initialTraceID, traceFromQuery, sseShouldOpen]);
 
   // ─── Persona deeplink → write to hash so reload preserves it. ────────────
   function changePersona(name: string | null): void {
@@ -587,7 +676,10 @@ export default function ProjectShell({
     // Strip any prior violation highlight so the inverse cross-link
     // (Decisions → Violations) doesn't fire on this navigation.
     params.delete("violation");
-    router.replace(`/projects/${slug}?${params.toString()}`);
+    // Pr17: use router.push (not replace) so back-button returns the
+    // user to the prior tab/highlight state. The cross-link is a real
+    // navigation gesture; replace was eating history.
+    router.push(`/projects/${slug}?${params.toString()}`);
     if (activeTab !== "decisions") {
       changeTab("decisions");
     }
@@ -603,7 +695,8 @@ export default function ProjectShell({
     const params = new URLSearchParams(searchParams.toString());
     params.set("violation", violationID);
     params.delete("decision");
-    router.replace(`/projects/${slug}?${params.toString()}`);
+    // Pr17: router.push so back-button restores the prior tab/state.
+    router.push(`/projects/${slug}?${params.toString()}`);
     if (activeTab !== "violations") {
       changeTab("violations");
     }
@@ -619,16 +712,16 @@ export default function ProjectShell({
   // outgoing was already gone by the time the GSAP timeline ran.
   function renderTabBody(tab: ProjectTab) {
     if (tab === "drd") {
-      return DRD_COLLAB_ENABLED && screens[0]?.FlowID ? (
+      return DRD_COLLAB_ENABLED && selectedFlowID ? (
         <DRDTabCollab
           slug={slug}
-          flowID={screens[0].FlowID}
+          flowID={selectedFlowID}
           readOnly={isReadOnly(machineState)}
         />
       ) : (
         <DRDTab
           slug={slug}
-          flowID={screens[0]?.FlowID ?? null}
+          flowID={selectedFlowID}
           readOnly={isReadOnly(machineState)}
         />
       );
@@ -638,7 +731,7 @@ export default function ProjectShell({
         <ViolationsTab
           slug={slug}
           versionID={activeVersionID}
-          flowID={screens[0]?.FlowID ?? null}
+          flowID={selectedFlowID}
           filters={
             activePersonaName
               ? {
@@ -659,7 +752,7 @@ export default function ProjectShell({
       return (
         <DecisionsTab
           slug={slug}
-          flowID={screens[0]?.FlowID ?? null}
+          flowID={selectedFlowID}
           readOnly={isReadOnly(machineState)}
           onViewViolation={viewViolationFromDecision}
         />
@@ -687,15 +780,23 @@ export default function ProjectShell({
 
   // Filtered screens by active persona name. Persona resolution from name to
   // ID is done by matching against the persona library; if no match, no filter.
+  //
+  // Pr18: real filtering via screens → flows.PersonaID join. Screens don't
+  // carry a persona linkage directly — it lives on the parent flow. We
+  // build a Set of flow IDs whose `PersonaID` matches the active persona,
+  // then keep only screens whose `FlowID` is in that set. When a flow has
+  // no PersonaID assigned, it's excluded from the filtered view (the
+  // persona toggle is exclusive — "no persona" means "all").
   const filteredScreens = useMemo(() => {
     if (!activePersonaName) return screens;
     const persona = personas.find((p) => p.Name === activePersonaName);
     if (!persona) return screens;
-    // Phase 1 placeholder: screens carry no persona linkage yet (it lives on
-    // the parent flow). We keep all screens for now; U7 wires real filtering
-    // when the GET response surfaces flow → persona joins.
-    return screens;
-  }, [screens, personas, activePersonaName]);
+    const flowIDsForPersona = new Set(
+      flows.filter((f) => f.PersonaID === persona.ID).map((f) => f.ID),
+    );
+    if (flowIDsForPersona.size === 0) return screens;
+    return screens.filter((s) => flowIDsForPersona.has(s.FlowID));
+  }, [screens, personas, activePersonaName, flows]);
 
   // Phase 3 U7: top-level state-machine render branches. Five non-shell
   // states each map to a dedicated EmptyState variant; shell-rendering
@@ -710,7 +811,7 @@ export default function ProjectShell({
         ) : null}
 
         {machineState.kind === "pending" ? (
-          // U5 — slow-render affordance. After 15s in `pending` (the
+          // U5 — slow-render affordance. After SLOW_RENDER_MS in `pending` (the
           // SSE view_ready event hasn't arrived), surface a manual-
           // refresh CTA so the user has a way out if the backend is
           // genuinely stuck. We don't auto-refresh because the
@@ -916,6 +1017,67 @@ export default function ProjectShell({
           flexDirection: "column",
         }}
       >
+        {flows.length > 1 && (
+          <div
+            role="radiogroup"
+            aria-label="Active flow"
+            style={{
+              display: "flex",
+              gap: 6,
+              padding: "8px 16px 4px",
+              alignItems: "center",
+              background: "var(--bg-surface)",
+              flexWrap: "wrap",
+            }}
+          >
+            <span
+              style={{
+                fontSize: 11,
+                fontFamily: "var(--font-mono)",
+                color: "var(--text-3)",
+                marginRight: 4,
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+              }}
+            >
+              Flow:
+            </span>
+            {flows.map((f) => {
+              const isActive = f.ID === selectedFlowID;
+              const screenCount = screens.filter((s) => s.FlowID === f.ID).length;
+              return (
+                <button
+                  key={f.ID}
+                  type="button"
+                  role="radio"
+                  aria-checked={isActive}
+                  onClick={() => setSelectedFlowID(f.ID)}
+                  style={{
+                    padding: "4px 10px",
+                    fontSize: 12,
+                    fontFamily: "var(--font-mono)",
+                    background: isActive ? "var(--text-1)" : "transparent",
+                    color: isActive ? "var(--bg-canvas)" : "var(--text-2)",
+                    border: `1px solid ${isActive ? "var(--text-1)" : "var(--border)"}`,
+                    borderRadius: 999,
+                    cursor: "pointer",
+                  }}
+                >
+                  {f.Name}{" "}
+                  <span
+                    style={{
+                      opacity: 0.6,
+                      marginLeft: 4,
+                      fontSize: 10,
+                    }}
+                  >
+                    {screenCount}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div
           data-anim="tab-strip"
           role="tablist"
@@ -965,6 +1127,18 @@ export default function ProjectShell({
             the same container, so the GSAP tabSwitch timeline animates
             real DOM for both fade tracks. On timeline complete, pendingTab
             is promoted into activeTab and the outgoing pane unmounts. */}
+        {/* Pr22: outer keeps `position:relative` + `min-height:0` so the
+            inner pane can scroll inside the bottom-half flex slot. When a
+            tab swap is in flight (`pendingTab` set), BOTH panes need to
+            occupy the same box for the paired-curtain timeline; we
+            switch the outgoing pane to absolute positioning ONLY in that
+            window. In the steady state (single pane mounted) the
+            outgoing pane uses `position: relative; height: 100%` so long
+            DRD / JSON content sizes naturally and scrolls inside the
+            bordered slot rather than getting clipped by `overflow:hidden`.
+            `overflow:hidden` stays on the outer container so the
+            absolute-positioned incoming pane can't bleed past the slot
+            during the swap fade. */}
         <div
           data-anim="tab-content"
           style={{
@@ -972,6 +1146,8 @@ export default function ProjectShell({
             minHeight: 0,
             overflow: "hidden",
             position: "relative",
+            display: "flex",
+            flexDirection: "column",
           }}
         >
           <div
@@ -979,15 +1155,26 @@ export default function ProjectShell({
             role="tabpanel"
             id={`tabpanel-${activeTab}`}
             aria-labelledby={`tab-${activeTab}`}
-            style={{
-              position: "absolute",
-              inset: 0,
-              overflow: "auto",
-              padding: 16,
-              // Outgoing is fading out — block clicks so users can't
-              // interact with the about-to-disappear tab during the swap.
-              pointerEvents: pendingTab ? "none" : "auto",
-            }}
+            style={
+              pendingTab
+                ? {
+                    position: "absolute",
+                    inset: 0,
+                    overflow: "auto",
+                    padding: 16,
+                    // Outgoing is fading out — block clicks so users
+                    // can't interact with the about-to-disappear tab
+                    // during the swap.
+                    pointerEvents: "none",
+                  }
+                : {
+                    position: "relative",
+                    flex: 1,
+                    minHeight: 0,
+                    overflow: "auto",
+                    padding: 16,
+                  }
+            }
           >
             {renderTabBody(activeTab)}
           </div>

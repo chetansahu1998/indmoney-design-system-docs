@@ -60,8 +60,8 @@ export function PlatformToggle({ value, onChange, reducedMotion }: Props) {
           right: 24px;
           display: flex;
           padding: 4px;
-          background: rgba(0, 0, 0, 0.4);
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          background: var(--bg-overlay);
+          border: 1px solid var(--border-subtle);
           border-radius: 999px;
           backdrop-filter: blur(12px);
           z-index: 10;
@@ -72,7 +72,7 @@ export function PlatformToggle({ value, onChange, reducedMotion }: Props) {
           padding: 6px 16px;
           border: none;
           background: transparent;
-          color: rgba(255, 255, 255, 0.55);
+          color: var(--text-2);
           font-family: var(--font-sans, "Inter Variable", sans-serif);
           font-size: 12px;
           letter-spacing: 0.02em;
@@ -80,10 +80,10 @@ export function PlatformToggle({ value, onChange, reducedMotion }: Props) {
           border-radius: 999px;
         }
         .tab.active {
-          color: #ffffff;
+          color: var(--text-1);
         }
         .tab:focus-visible {
-          outline: 2px solid #7b9fff;
+          outline: 2px solid var(--accent);
           outline-offset: 2px;
         }
         .indicator {
@@ -92,8 +92,8 @@ export function PlatformToggle({ value, onChange, reducedMotion }: Props) {
           bottom: 4px;
           width: calc(50% - 4px);
           border-radius: 999px;
-          background: rgba(123, 159, 255, 0.18);
-          border: 1px solid rgba(123, 159, 255, 0.4);
+          background: var(--accent-soft);
+          border: 1px solid var(--accent);
           z-index: 0;
         }
       `}</style>

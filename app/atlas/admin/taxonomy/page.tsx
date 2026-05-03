@@ -16,10 +16,12 @@
  *   GET  /v1/atlas/admin/taxonomy
  *   POST /v1/atlas/admin/taxonomy/promote        body {product, path}
  *   POST /v1/atlas/admin/taxonomy/archive        body {product, path}
+ *   POST /v1/atlas/admin/taxonomy/reorder        body {product, paths[]}
  *
- * Drag-to-reorder is deferred — taxonomy ordering is alphabetical for
- * v1 (folders display sorted), and reorder requires an order_index
- * column that didn't ship in migration 0010.
+ * Drag-to-reorder ships via framer's Reorder.Group (see saveReorder below);
+ * the `order_index` column landed in migration 0010 and the canonical
+ * rows are persisted in their new sequence on drop. Extended rows can't
+ * be reordered because they have no canonical row to update.
  */
 
 import { AnimatePresence, motion, Reorder } from "framer-motion";
@@ -261,7 +263,7 @@ export default function AdminTaxonomyPage() {
           margin-bottom: 4px;
         }
         .msg.err {
-          color: #ffb347;
+          color: var(--warning);
         }
         .msg.err button {
           margin-left: 8px;
@@ -314,11 +316,11 @@ function ProductBranch({
   let stateChip: { label: string; color: string } | null = null;
   if (!isProductRoot) {
     if (node.archived) {
-      stateChip = { label: "Archived", color: "#888" };
+      stateChip = { label: "Archived", color: "var(--text-3)" };
     } else if (node.canonical) {
-      stateChip = { label: "Canonical", color: "#1FD896" };
+      stateChip = { label: "Canonical", color: "var(--success)" };
     } else {
-      stateChip = { label: "Extended", color: "#FFB347" };
+      stateChip = { label: "Extended", color: "var(--warning)" };
     }
   }
 
@@ -607,15 +609,15 @@ function Legend() {
   return (
     <div className="legend">
       <span>
-        <em style={{ color: "#1FD896" }}>●</em> Canonical — in the authoritative
+        <em style={{ color: "var(--success)" }}>●</em> Canonical — in the authoritative
         tree; appears in the plugin&apos;s autocomplete.
       </span>
       <span>
-        <em style={{ color: "#FFB347" }}>●</em> Extended — designers have used
+        <em style={{ color: "var(--warning)" }}>●</em> Extended — designers have used
         this path; promote it to make it canonical.
       </span>
       <span>
-        <em style={{ color: "#888" }}>●</em> Archived — retired but kept for
+        <em style={{ color: "var(--text-3)" }}>●</em> Archived — retired but kept for
         audit. Existing flows under it stay readable.
       </span>
       <style jsx>{`

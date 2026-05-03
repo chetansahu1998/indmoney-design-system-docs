@@ -22,6 +22,7 @@ import { notFound, useRouter } from "next/navigation";
 import ProjectShell from "@/components/projects/ProjectShell";
 import { fetchProject } from "@/lib/projects/client";
 import type {
+  Flow,
   Persona,
   Project,
   ProjectVersion,
@@ -41,6 +42,7 @@ type LoadState =
       status: "ok";
       project: Project;
       versions: ProjectVersion[];
+      flows: Flow[];
       screens: Screen[];
       screenModes: ScreenMode[];
       personas: Persona[];
@@ -82,6 +84,7 @@ export default function ProjectShellLoader({
         status: "ok",
         project: r.data.project,
         versions: r.data.versions ?? [],
+        flows: r.data.flows ?? [],
         screens: r.data.screens ?? [],
         screenModes: r.data.screen_modes ?? [],
         personas: r.data.available_personas ?? [],
@@ -99,7 +102,7 @@ export default function ProjectShellLoader({
   // Bounce on 401 — the JWT expired mid-session.
   useEffect(() => {
     if (state.status !== "unauthorized") return;
-    router.replace(`/?next=${encodeURIComponent(`/projects/${slug}`)}`);
+    router.replace(`/login?next=${encodeURIComponent(`/projects/${slug}`)}`);
   }, [state.status, router, slug]);
 
   // Render Next's notFound() UI for 404s — keeps the URL intact and surfaces
@@ -148,6 +151,7 @@ export default function ProjectShellLoader({
       initialProject={state.project}
       initialVersions={state.versions}
       initialActiveVersionID={state.activeVersionID}
+      initialFlows={state.flows}
       initialScreens={state.screens}
       initialPersonas={state.personas}
       initialScreenModes={state.screenModes}

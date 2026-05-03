@@ -7,6 +7,8 @@ import { brandLabel, currentBrand, BRANDS } from "@/lib/brand";
 import { useUIStore, type Density } from "@/lib/ui-store";
 import { useIsMobile } from "@/lib/use-mobile";
 import { getExtractionMeta } from "@/lib/tokens/loader";
+import { fetchInbox } from "@/lib/inbox/client";
+import { getToken } from "@/lib/auth-client";
 
 const DENSITY_LABEL: Record<Density, string> = {
   compact: "S",
@@ -206,7 +208,10 @@ export default function Header({
           />
         </svg>
         <span className="search-text-label" style={{ color: "var(--text-3)" }}>
-          Search tokens…
+          {/* Audit C28: search indexes more than tokens (flows, decisions,
+           *  DRDs, components). "Search docs…" communicates broader scope
+           *  without overpromising "tokens". */}
+          Search docs…
         </span>
         <kbd
           className="search-kbd"
@@ -393,7 +398,8 @@ export default function Header({
  */
 function PageNav() {
   const pathname = usePathname() ?? "/";
-  const items = [
+  const inboxUnread = useInboxUnreadBadge();
+  const items: { href: string; label: string; badge?: number }[] = [
     { href: "/",              label: "Foundations" },
     { href: "/atlas",         label: "Atlas" },
     { href: "/projects",      label: "Projects" },
@@ -401,9 +407,11 @@ function PageNav() {
     { href: "/icons",         label: "Icons" },
     { href: "/illustrations", label: "Illustrations" },
     { href: "/logos",         label: "Logos" },
-    { href: "/inbox",         label: "Inbox" },
+    { href: "/inbox",         label: "Inbox", badge: inboxUnread },
+    { href: "/onboarding",    label: "Onboarding" },
     { href: "/files",         label: "Files" },
     { href: "/health",        label: "Health" },
+    { href: "/settings/notifications", label: "Settings" },
   ];
   return (
     <LayoutGroup id="topnav">
@@ -446,13 +454,67 @@ function PageNav() {
                   transition={{ type: "spring", stiffness: 380, damping: 30 }}
                 />
               )}
-              <span style={{ position: "relative" }}>{item.label}</span>
+              <span style={{ position: "relative", display: "inline-flex", alignItems: "center", gap: 5 }}>
+                {item.label}
+                {item.badge && item.badge > 0 ? (
+                  <span
+                    aria-label={`${item.badge} unread`}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      minWidth: 16,
+                      height: 16,
+                      padding: "0 5px",
+                      background: "var(--accent)",
+                      color: "#fff",
+                      borderRadius: 999,
+                      fontSize: 10,
+                      fontWeight: 700,
+                      lineHeight: 1,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {item.badge > 99 ? "99+" : item.badge}
+                  </span>
+                ) : null}
+              </span>
             </Link>
           );
         })}
       </nav>
     </LayoutGroup>
   );
+}
+
+/**
+ * S10 — Inbox unread badge. Polls /v1/inbox every 60s for the active-row
+ * count when the user is signed in. Lightweight (no SSE, no websocket);
+ * the inbox itself owns the SSE subscription. Returns 0 when unauthed
+ * or when the fetch fails — silent degradation rather than a noisy badge.
+ */
+function useInboxUnreadBadge(): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const poll = async () => {
+      if (!getToken()) {
+        if (!cancelled) setCount(0);
+        return;
+      }
+      const r = await fetchInbox({ limit: 1 });
+      if (cancelled) return;
+      if (r.ok) setCount(r.data.total ?? 0);
+    };
+    void poll();
+    timer = setInterval(() => void poll(), 60_000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, []);
+  return count;
 }
 
 function SyncChip({ tokens, baseColors }: { tokens: number; baseColors: number }) {

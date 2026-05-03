@@ -118,9 +118,18 @@ export function SignalAnimationLayer({
     const scene = fgRef.current.scene();
 
     // Pre-allocate the particle pool. InstancedMesh keeps draw calls to 1.
+    // WebGL can't read CSS vars natively, so resolve --accent at mount time.
+    // Falls back to the design-system blue if the var isn't defined yet (SSR
+    // or pre-hydrate). A26 sweep — last hardcoded hex in atlas surface.
+    const accentHex =
+      typeof window !== "undefined"
+        ? getComputedStyle(document.documentElement)
+            .getPropertyValue("--accent")
+            .trim() || "#7B9FFF"
+        : "#7B9FFF";
     const geom = new THREE.SphereGeometry(PARTICLE_RADIUS, 8, 8);
     const mat = new THREE.MeshBasicMaterial({
-      color: new THREE.Color("#7B9FFF"),
+      color: new THREE.Color(accentHex),
       transparent: true,
       opacity: 0.85,
     });
