@@ -163,6 +163,17 @@ export function getTexture(
  * TextureLoader uses doesn't apply. This function returns a Promise<
  * Texture> instead — callers (AtlasFrame) use it inside useEffect.
  */
+// Gate the KTX2 attempt on an opt-in env flag. Default OFF: today no
+// .ktx2 sidecars exist on any deployed backend (basisu isn't installed
+// in the Fly image and the local dev binary skips KTX2 generation), so
+// every KTX2 GET 404s, clutters DevTools, and forces a PNG retry. Flip
+// NEXT_PUBLIC_ENABLE_KTX2=1 once basisu is shipped + a backfill has
+// produced sidecars; the runtime path is otherwise unchanged.
+const KTX2_ENABLED =
+  (typeof process !== "undefined" &&
+    (process as { env?: Record<string, string | undefined> }).env
+      ?.NEXT_PUBLIC_ENABLE_KTX2) === "1";
+
 export async function getTextureKTX2OrPNG(
   pngURL: string,
   onLoad?: (tex: THREE.Texture) => void,
@@ -185,29 +196,33 @@ export async function getTextureKTX2OrPNG(
     return cachedPNG.texture;
   }
 
-  // Try KTX2 first.
-  try {
-    const k = getKTX2Loader();
-    const tex = await new Promise<THREE.Texture>((resolve, reject) => {
-      k.load(
-        ktx2URL,
-        (t) => resolve(t),
-        undefined,
-        (err) => reject(err),
-      );
-    });
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const img = (tex.image as { width?: number; height?: number } | null) ?? null;
-    const w = img?.width ?? 0;
-    const h = img?.height ?? 0;
-    cache.set(ktx2URL, { texture: tex, bytes: w * h * 4, lastAccessAt: Date.now() });
-    enforceTextureBudget();
-    onLoad?.(tex);
-    return tex;
-  } catch (ktx2Err) {
-    // Fall through to PNG. Don't surface the KTX2 error to onError —
-    // the PNG path is the canonical fallback, not a user-facing failure.
-    void ktx2Err;
+  // Try KTX2 first when enabled. Skipping the attempt when sidecars
+  // don't exist saves a network round-trip per frame + the 404 console
+  // noise, with no functional cost — PNG is the canonical fallback.
+  if (KTX2_ENABLED) {
+    try {
+      const k = getKTX2Loader();
+      const tex = await new Promise<THREE.Texture>((resolve, reject) => {
+        k.load(
+          ktx2URL,
+          (t) => resolve(t),
+          undefined,
+          (err) => reject(err),
+        );
+      });
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const img = (tex.image as { width?: number; height?: number } | null) ?? null;
+      const w = img?.width ?? 0;
+      const h = img?.height ?? 0;
+      cache.set(ktx2URL, { texture: tex, bytes: w * h * 4, lastAccessAt: Date.now() });
+      enforceTextureBudget();
+      onLoad?.(tex);
+      return tex;
+    } catch (ktx2Err) {
+      // Fall through to PNG. Don't surface the KTX2 error to onError —
+      // the PNG path is the canonical fallback, not a user-facing failure.
+      void ktx2Err;
+    }
   }
 
   // PNG fallback via the existing TextureLoader path. We re-use the
