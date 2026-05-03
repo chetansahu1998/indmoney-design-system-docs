@@ -29,20 +29,22 @@ RUN go mod download
 # fully static and the runtime image stays slim.
 COPY services/ds-service/ ./
 ENV CGO_ENABLED=0 GOOS=linux
-RUN go build -trimpath -ldflags="-s -w" -o /out/ds-service    ./cmd/server
-RUN go build -trimpath -ldflags="-s -w" -o /out/revoke-token  ./cmd/revoke-token
-RUN go build -trimpath -ldflags="-s -w" -o /out/mint-tokens   ./cmd/mint-tokens
-RUN go build -trimpath -ldflags="-s -w" -o /out/backfill-lod  ./cmd/backfill-lod
+RUN go build -trimpath -ldflags="-s -w" -o /out/ds-service          ./cmd/server
+RUN go build -trimpath -ldflags="-s -w" -o /out/revoke-token        ./cmd/revoke-token
+RUN go build -trimpath -ldflags="-s -w" -o /out/mint-tokens         ./cmd/mint-tokens
+RUN go build -trimpath -ldflags="-s -w" -o /out/backfill-lod        ./cmd/backfill-lod
+RUN go build -trimpath -ldflags="-s -w" -o /out/set-version-status  ./cmd/set-version-status
 
 # ─── Stage 2: runtime ────────────────────────────────────────────────────────
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /repo
-COPY --from=build /out/ds-service    /usr/local/bin/ds-service
-COPY --from=build /out/revoke-token  /usr/local/bin/revoke-token
-COPY --from=build /out/mint-tokens   /usr/local/bin/mint-tokens
-COPY --from=build /out/backfill-lod  /usr/local/bin/backfill-lod
+COPY --from=build /out/ds-service          /usr/local/bin/ds-service
+COPY --from=build /out/revoke-token        /usr/local/bin/revoke-token
+COPY --from=build /out/mint-tokens         /usr/local/bin/mint-tokens
+COPY --from=build /out/backfill-lod        /usr/local/bin/backfill-lod
+COPY --from=build /out/set-version-status  /usr/local/bin/set-version-status
 
 # Ship the parts of the repo cmd/server reads at runtime. Everything not
 # listed here is excluded by .dockerignore — keeps the image small.
