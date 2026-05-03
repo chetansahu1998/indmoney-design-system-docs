@@ -1,0 +1,59 @@
+# fly.toml — ds-service backend for indmoney-design-system-docs.
+#
+# After `fly launch --no-deploy --copy-config`, set the following secrets
+# (these are NOT in the repo for obvious reasons — pull from .env.local
+# on first run):
+#
+#   fly secrets set \
+#     JWT_SIGNING_KEY="..." \
+#     JWT_PUBLIC_KEY="..." \
+#     ENCRYPTION_KEY="..." \
+#     FIGMA_PAT="..." \
+#     FIGMA_FILE_KEY_INDMONEY_GLYPH="..." \
+#     FIGMA_NODE_ID_INDMONEY_GLYPH="..." \
+#     BOOTSTRAP_TOKEN="..." \
+#     CORS_ALLOW_ORIGIN="https://indmoney-design-system-docs.vercel.app"
+#
+# Then `fly deploy`. SQLite db + screen PNG cache persist on the
+# `ds_service_data` volume, mounted at /repo/services/ds-service/data.
+
+app = "indmoney-ds-service"
+primary_region = "bom"   # Mumbai — closest to the user, low latency for atlas thumbnails
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  REPO_DIR = "/repo"
+  # SQLITE_PATH defaults to REPO_DIR/services/ds-service/data/ds.db, which
+  # lands on the mounted volume — no override needed.
+
+[[mounts]]
+  source = "ds_service_data"
+  destination = "/repo/services/ds-service/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
