@@ -1513,9 +1513,11 @@
         <h3>Audit server</h3>
         <div class="field">
           <label>URL</label>
-          <input id="server-url" value="http://localhost:7474" autocomplete="off" spellcheck="false" />
+          <input id="server-url" value="https://indmoney-audit-server.fly.dev" autocomplete="off" spellcheck="false" />
           <div class="help">
-            Run <code>npm run audit:serve</code> in the docs repo. The plugin polls
+            Default points at the Fly-hosted audit-server (JWT-protected).
+            For local dev set this to <code>http://localhost:7474</code> after
+            running <code>npm run audit:serve</code>. The plugin polls
             <code>/__health</code> every 5s and re-binds variables via the
             team library.
           </div>

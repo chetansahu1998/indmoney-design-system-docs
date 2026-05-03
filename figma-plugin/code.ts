@@ -99,7 +99,7 @@ const send = (msg: MessageToUI) => figma.ui.postMessage(msg);
 
 /* ── State ──────────────────────────────────────────────────────────── */
 
-let auditServerURL = "http://localhost:7474";
+let auditServerURL = "https://indmoney-audit-server.fly.dev";
 let docsURL = "https://indmoney-design-system-docs.vercel.app";
 // Phase 7.8 — docs-site auth token used by the projects.send POST. The
 // user pastes their JWT into the plugin's "Settings" once; we persist

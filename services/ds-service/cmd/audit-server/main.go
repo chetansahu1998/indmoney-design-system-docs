@@ -1,13 +1,14 @@
-// Command audit-server is the slim HTTP host for the Figma plugin's
-// /v1/audit/run endpoint. Designers run this on their laptop:
+// Command audit-server hosts the Figma plugin's /v1/audit/run, /v1/publish,
+// and /v1/projects/export proxy endpoints.
 //
-//	npm run audit:serve   # → cd services/ds-service && go run ./cmd/audit-server
-//
-// The plugin POSTs the active selection / page / file to localhost:7474,
-// the server runs the audit core, and returns the structured AuditResult.
-//
-// Zero-auth, single-user, single-process. The full multi-tenant
-// services/ds-service/cmd/server is a different beast and stays decoupled.
+// Originally a laptop-side single-user service. Now deployable to Fly: when
+// REQUIRE_AUTH=1, every POST endpoint demands a valid ds-service JWT, supplied
+// either as `Authorization: Bearer <token>` header OR as `body._auth` (the
+// latter is the Figma plugin's preflight-bypass shape — Figma's `Origin: null`
+// iframes can't send custom headers cross-origin without a preflight, so the
+// plugin embeds the token in the JSON body instead). REQUIRE_AUTH=0 (default)
+// keeps the historical zero-auth behaviour for `npm run audit:serve` on a dev
+// laptop.
 package main
 
 import (
@@ -27,6 +28,7 @@ import (
 	"time"
 
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/audit"
+	dsauth "github.com/indmoney/design-system-docs/services/ds-service/internal/auth"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/repo"
 )
 
@@ -63,16 +65,37 @@ func main() {
 
 	dsServiceURL := getenv("DS_SERVICE_URL", "http://localhost:8080")
 
+	requireAuth := getenv("REQUIRE_AUTH", "0") == "1"
+	var verifier *dsauth.SigningKey
+	if requireAuth {
+		var err error
+		verifier, err = dsauth.LoadSigningKey(
+			os.Getenv("JWT_SIGNING_KEY"),
+			os.Getenv("JWT_PUBLIC_KEY"),
+		)
+		if err != nil {
+			log.Error("REQUIRE_AUTH=1 but JWT keys unset/invalid", "err", err)
+			os.Exit(1)
+		}
+		log.Info("auth enabled — every POST requires a valid ds-service JWT")
+	} else {
+		log.Info("auth disabled — set REQUIRE_AUTH=1 + JWT_SIGNING_KEY/JWT_PUBLIC_KEY for public deployments")
+	}
+
+	authMW := withAuth(verifier, requireAuth)
+
 	mux := http.NewServeMux()
-	mux.Handle("POST /v1/audit/run", audit.HandleAudit(cfg))
-	mux.Handle("POST /v1/publish", audit.HandlePublish(cfg))
+	mux.Handle("POST /v1/audit/run", authMW(audit.HandleAudit(cfg)))
+	mux.Handle("POST /v1/publish", authMW(audit.HandlePublish(cfg)))
 	// Plugin → ds-service forwarder. Exists because Figma plugin sandbox
 	// (Origin: null iframe) cannot POST cross-origin to HTTPS Vercel
 	// even with CORS-simple requests — the browser treats `null` origins
 	// as opaque even when the response says ACAO: null. POST to localhost
 	// works fine, so we route the projects.send pipeline through here.
 	// Auth comes from body._auth (plugin's preflight-bypass shape) and we
-	// forward as a Bearer header to ds-service.
+	// forward as a Bearer header to ds-service. proxyExport keeps its own
+	// _auth handling so the Bearer extraction + relay logic stays one place;
+	// it is not wrapped by authMW.
 	mux.Handle("POST /v1/projects/export", proxyExport(dsServiceURL))
 	build := buildID()
 	mux.HandleFunc("GET /__health", func(w http.ResponseWriter, r *http.Request) {
@@ -187,6 +210,64 @@ func proxyExport(dsServiceURL string) http.Handler {
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(respBody)
 	})
+}
+
+// withAuth returns a middleware that requires a valid ds-service JWT on
+// every wrapped request when `enabled` is true. When false it is a no-op.
+//
+// Token resolution order:
+//  1. body._auth (Figma plugin's preflight-bypass shape; stripped from body
+//     before the inner handler sees it so payload schemas stay clean)
+//  2. Authorization: Bearer <token> header (regular HTTP clients)
+//
+// The body is buffered (capped at 50 MB to mirror proxyExport) so the inner
+// handler still gets a fresh io.Reader; Content-Length is updated when _auth
+// is removed so request validators downstream don't choke on the size delta.
+func withAuth(verifier *dsauth.SigningKey, enabled bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if !enabled {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			raw, err := io.ReadAll(io.LimitReader(r.Body, 50<<20))
+			if err != nil {
+				httpJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "read_body", "detail": err.Error()})
+				return
+			}
+			_ = r.Body.Close()
+
+			token := ""
+			rewritten := raw
+			if len(raw) > 0 {
+				var body map[string]any
+				if err := json.Unmarshal(raw, &body); err == nil {
+					if t, ok := body["_auth"].(string); ok && t != "" {
+						token = t
+						delete(body, "_auth")
+						rewritten, _ = json.Marshal(body)
+					}
+				}
+			}
+			if token == "" {
+				if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+					token = strings.TrimPrefix(h, "Bearer ")
+				}
+			}
+			if token == "" {
+				httpJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "unauth", "detail": "missing _auth body field or Authorization: Bearer header"})
+				return
+			}
+			if _, err := verifier.VerifyAccessToken(token); err != nil {
+				httpJSON(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid_token", "detail": err.Error()})
+				return
+			}
+
+			r.Body = io.NopCloser(bytes.NewReader(rewritten))
+			r.ContentLength = int64(len(rewritten))
+			r.Header.Set("Content-Length", fmt.Sprintf("%d", len(rewritten)))
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func httpJSON(w http.ResponseWriter, status int, payload any) {

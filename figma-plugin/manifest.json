@@ -10,6 +10,8 @@
     "allowedDomains": [
       "https://api.figma.com",
       "https://indmoney-design-system-docs.vercel.app",
+      "https://indmoney-ds-service.fly.dev",
+      "https://indmoney-audit-server.fly.dev",
       "https://ds-service.indmoney.com",
       "http://localhost:3001",
       "http://localhost:7474",

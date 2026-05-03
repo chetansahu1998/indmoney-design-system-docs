@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1.7
+# audit-server container image — second Fly app for the Figma plugin's
+# audit/run, publish, and projects/export proxy endpoints.
+#
+# Stateless: no volume, nothing to persist. Only the Go binary + the audit
+# rule sources baked in (services/ds-service/internal/audit reads them via
+# RepoRoot at request time).
+
+# ─── Stage 1: build ──────────────────────────────────────────────────────────
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+
+COPY services/ds-service/go.mod services/ds-service/go.sum ./services/ds-service/
+WORKDIR /src/services/ds-service
+RUN go mod download
+
+COPY services/ds-service/ ./
+ENV CGO_ENABLED=0 GOOS=linux
+RUN go build -trimpath -ldflags="-s -w" -o /out/audit-server ./cmd/audit-server
+
+# ─── Stage 2: runtime ────────────────────────────────────────────────────────
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /repo
+COPY --from=build /out/audit-server /usr/local/bin/audit-server
+
+# Ship the parts of the repo audit rules read at runtime. The audit core
+# (internal/audit) walks these via repo.Root(); REPO_DIR=/repo points it here.
+COPY lib ./lib
+COPY public/icons/glyph/manifest.json ./public/icons/glyph/manifest.json
+
+ENV REPO_DIR=/repo \
+    AUDIT_SERVER_PORT=7474 \
+    REQUIRE_AUTH=1
+EXPOSE 7474
+
+CMD ["audit-server"]

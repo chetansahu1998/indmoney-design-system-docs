@@ -1,24 +1,21 @@
-# fly.toml app configuration file generated for indmoney-ds-service on 2026-05-03T18:08:53+05:30
+# fly.toml app configuration file generated for indmoney-audit-server on 2026-05-03T20:25:51+05:30
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'indmoney-ds-service'
+app = 'indmoney-audit-server'
 primary_region = 'bom'
 
 [build]
-  dockerfile = 'Dockerfile'
+  dockerfile = 'Dockerfile.audit-server'
 
 [env]
-  PORT = '8080'
+  AUDIT_SERVER_PORT = '7474'
   REPO_DIR = '/repo'
-
-[[mounts]]
-  source = 'ds_service_data'
-  destination = '/repo/services/ds-service/data'
+  REQUIRE_AUTH = '1'
 
 [http_service]
-  internal_port = 8080
+  internal_port = 7474
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
@@ -27,8 +24,8 @@ primary_region = 'bom'
 
   [http_service.concurrency]
     type = 'requests'
-    hard_limit = 100
-    soft_limit = 50
+    hard_limit = 50
+    soft_limit = 25
 
   [[http_service.checks]]
     interval = '30s'
