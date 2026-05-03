@@ -229,15 +229,20 @@ export default function ProjectShell({
   // 9 plan states collapse into 6 top-level kinds (audit running/complete/
   // failed all map to view_ready with an `audit` discriminator). See
   // lib/projects/view-machine.ts for the full state diagram.
-  const initialActiveStatus =
-    initialVersions.find((v) => v.ID === initialActiveVersionID)?.Status ??
-    initialVersions[0]?.Status ??
-    "view_ready";
+  const initialActiveVersion =
+    initialVersions.find((v) => v.ID === initialActiveVersionID) ??
+    initialVersions[0];
+  const initialActiveStatus = initialActiveVersion?.Status ?? "view_ready";
   const [machineState, dispatch] = useReducer(
     projectViewReducer,
     {
       initialVersions,
       activeVersionStatus: initialActiveStatus,
+      // T4 — feed the failed version's `Error` column + ID to the
+      // initialState branch so the export_failed kind can render the
+      // retry CTA with a real error message.
+      activeVersionError: initialActiveVersion?.Error ?? "",
+      activeVersionID: initialActiveVersion?.ID ?? "",
       permissionDeniedFromQuery:
         searchParams.get("read_only_preview") === "1",
     },
@@ -531,15 +536,15 @@ export default function ProjectShell({
       if (r.data.screen_modes) setScreenModes(r.data.screen_modes);
       if (r.data.available_personas)
         setPersonas(r.data.available_personas);
-      // Pass the active version's status into the reducer so it lands in
-      // pending / view_ready / view_ready+audit_failed correctly.
-      const activeStatus =
-        r.data.versions?.find((v) => v.ID === activeVersionID)?.Status ??
-        "view_ready";
+      // Pass the active version's status + error into the reducer so it
+      // lands in pending / view_ready / export_failed correctly.
+      const av = r.data.versions?.find((v) => v.ID === activeVersionID);
       dispatch({
         type: "fetch_succeeded",
         versions: r.data.versions ?? [],
-        activeVersionStatus: activeStatus,
+        activeVersionStatus: av?.Status ?? "view_ready",
+        activeVersionError: av?.Error ?? "",
+        activeVersionID: av?.ID ?? "",
         readOnly: searchParams.get("read_only_preview") === "1",
       });
     });
@@ -877,12 +882,15 @@ export default function ProjectShell({
                 if (r.data.screen_modes) setScreenModes(r.data.screen_modes);
                 if (r.data.available_personas)
                   setPersonas(r.data.available_personas);
+                const av = r.data.versions?.find(
+                  (v) => v.ID === activeVersionID,
+                );
                 dispatch({
                   type: "fetch_succeeded",
                   versions: r.data.versions ?? [],
-                  activeVersionStatus:
-                    r.data.versions?.find((v) => v.ID === activeVersionID)
-                      ?.Status ?? "view_ready",
+                  activeVersionStatus: av?.Status ?? "view_ready",
+                  activeVersionError: av?.Error ?? "",
+                  activeVersionID: av?.ID ?? "",
                   readOnly: searchParams.get("read_only_preview") === "1",
                 });
               } else {
@@ -890,6 +898,68 @@ export default function ProjectShell({
               }
             }}
             offline={machineState.statusCode === 0}
+          />
+        ) : null}
+
+        {machineState.kind === "export_failed" ? (
+          <RetryableError
+            title="Render failed"
+            detail={
+              machineState.error
+                ? `Pipeline error: ${machineState.error}`
+                : "The Figma render pipeline failed for this version. Click retry to re-run it; the original frame snapshot is reused, so no plugin re-export needed."
+            }
+            onRetry={async () => {
+              if (!machineState.versionID) {
+                throw new Error("missing version_id");
+              }
+              dispatch({ type: "retry" });
+              const dsURL =
+                process.env.NEXT_PUBLIC_DS_SERVICE_URL || "http://localhost:8080";
+              const token =
+                typeof window !== "undefined"
+                  ? JSON.parse(
+                      localStorage.getItem("indmoney-ds-auth") || "{}",
+                    )?.state?.token
+                  : "";
+              const retryRes = await fetch(
+                `${dsURL}/v1/projects/${slug}/versions/${machineState.versionID}/retry`,
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                  },
+                },
+              );
+              if (!retryRes.ok) {
+                const body = await retryRes.text().catch(() => "");
+                throw new Error(`retry failed (${retryRes.status}): ${body}`);
+              }
+              // Pipeline runs async on the backend. Re-fetch the project
+              // payload — the version's status will now be `pending`, and
+              // the SSE listener already wired in this shell will flip the
+              // machine to view_ready when the pipeline lands `view_ready`.
+              const r = await fetchProject(slug, activeVersionID);
+              if (r.ok) {
+                if (r.data.versions) setVersions(r.data.versions);
+                if (r.data.screens) setScreens(r.data.screens);
+                if (r.data.screen_modes) setScreenModes(r.data.screen_modes);
+                if (r.data.available_personas)
+                  setPersonas(r.data.available_personas);
+                const av = r.data.versions?.find(
+                  (v) => v.ID === activeVersionID,
+                );
+                dispatch({
+                  type: "fetch_succeeded",
+                  versions: r.data.versions ?? [],
+                  activeVersionStatus: av?.Status ?? "pending",
+                  activeVersionError: av?.Error ?? "",
+                  activeVersionID: av?.ID ?? "",
+                  readOnly: searchParams.get("read_only_preview") === "1",
+                });
+              }
+            }}
           />
         ) : null}
       </div>
@@ -948,13 +1018,13 @@ export default function ProjectShell({
           void fetchProject(slug, activeVersionID).then((r) => {
             if (!r.ok) return;
             if (r.data.versions) setVersions(r.data.versions);
-            const activeStatus =
-              r.data.versions?.find((v) => v.ID === activeVersionID)
-                ?.Status ?? "view_ready";
+            const av = r.data.versions?.find((v) => v.ID === activeVersionID);
             dispatch({
               type: "fetch_succeeded",
               versions: r.data.versions ?? [],
-              activeVersionStatus: activeStatus,
+              activeVersionStatus: av?.Status ?? "view_ready",
+              activeVersionError: av?.Error ?? "",
+              activeVersionID: av?.ID ?? "",
               readOnly: searchParams.get("read_only_preview") === "1",
             });
           });

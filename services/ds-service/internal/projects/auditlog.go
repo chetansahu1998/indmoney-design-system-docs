@@ -58,6 +58,40 @@ type ExportAuditFrame struct {
 	Height       float64 `json:"height"`
 }
 
+// LatestExportEvent reads back the most-recent project.export row for the
+// given version_id and decodes its persisted Frames slice. Used by T4's
+// retry handler — when a designer asks to re-render a failed version, we
+// rebuild the pipeline's input from the audit-log snapshot instead of
+// asking them to re-walk Figma.
+//
+// Returns ErrNotFound when no successful export event exists for the
+// version (e.g. the original export wrote project.export.failed only —
+// rare; means the failure happened before frames were captured).
+func (a *AuditLogger) LatestExportEvent(ctx context.Context, tenantID, versionID string) ([]ExportAuditFrame, string, error) {
+	if a == nil || a.DB == nil {
+		return nil, "", ErrNotFound
+	}
+	var detailsRaw string
+	err := a.DB.QueryRowContext(ctx,
+		`SELECT details FROM audit_log
+		  WHERE tenant_id = ? AND event_type = ?
+		    AND json_extract(details, '$.version_id') = ?
+		  ORDER BY ts DESC LIMIT 1`,
+		tenantID, AuditActionExport, versionID,
+	).Scan(&detailsRaw)
+	if err != nil {
+		return nil, "", ErrNotFound
+	}
+	var parsed struct {
+		FileID string             `json:"file_id"`
+		Frames []ExportAuditFrame `json:"frames"`
+	}
+	if err := json.Unmarshal([]byte(detailsRaw), &parsed); err != nil {
+		return nil, "", err
+	}
+	return parsed.Frames, parsed.FileID, nil
+}
+
 // WriteExport writes one audit_log row for a project.export event. Failures to
 // persist are returned but should not block the pipeline — caller may log and
 // move on. The details column is JSON for forward extensibility.

@@ -64,7 +64,14 @@ export type ProjectViewMachineState =
   | { kind: "pending"; landingSince: number }
   | { kind: "permission_denied"; reason: "preview" | "acl" }
   | { kind: "version_not_found"; requestedVersionID: string }
-  | { kind: "error"; message: string; statusCode: number };
+  | { kind: "error"; message: string; statusCode: number }
+  /** Plan 2026-05-03-001 / T4. Pipeline render failed (Figma timeout, basisu
+   *  crash, etc.). The atlas can't render — screens have NULL png_storage_key
+   *  and the PNG handler 404s them. ProjectShell hides the shell entirely
+   *  and shows a retry CTA that POSTs `/v1/projects/:slug/versions/:vid/retry`.
+   *  Pre-T4 a failed version landed in `view_ready/audit:failed` which kept
+   *  the shell mounted on top of broken data. */
+  | { kind: "export_failed"; versionID: string; error: string };
 
 // ─── Actions ────────────────────────────────────────────────────────────────
 
@@ -74,6 +81,8 @@ export type ProjectViewMachineAction =
       type: "fetch_succeeded";
       versions: ProjectVersion[];
       activeVersionStatus?: "pending" | "view_ready" | "failed";
+      activeVersionError?: string;
+      activeVersionID?: string;
       readOnly: boolean;
     }
   /** GET /v1/projects/:slug failed. Triggers `error`, `version_not_found`,
@@ -101,7 +110,7 @@ export type ProjectViewMachineAction =
   /** SSE: project.audit_failed. */
   | { type: "audit_failed"; error: string }
   /** SSE: project.export_failed mid-pending. */
-  | { type: "export_failed"; error: string }
+  | { type: "export_failed"; error: string; versionID?: string }
   /** Query param ?read_only_preview=1 → simulate Phase 7 ACL denial.
    *  Phase 7 will replace this with a server-resolved ACL flag. */
   | { type: "permission_denied_detected"; reason: "preview" | "acl" }
@@ -122,6 +131,10 @@ export function initialState(opts: {
   initialVersions: ProjectVersion[];
   /** Active version's status — drives audit sub-state on hydration. */
   activeVersionStatus: "pending" | "view_ready" | "failed";
+  /** Active version's `error` column (for the export_failed branch). */
+  activeVersionError?: string;
+  /** Active version's ID — needed by the retry CTA target. */
+  activeVersionID?: string;
   /** ?read_only_preview=1 → start in permission_denied. */
   permissionDeniedFromQuery: boolean;
 }): ProjectViewMachineState {
@@ -132,10 +145,13 @@ export function initialState(opts: {
     return { kind: "pending", landingSince: Date.now() };
   }
   if (opts.activeVersionStatus === "failed") {
+    // T4 — explicit export_failed state. Pre-T4 we routed failed versions
+    // to view_ready/audit:failed which still rendered the shell on top of
+    // broken data; the atlas would 404 every screen PNG forever.
     return {
-      kind: "view_ready",
-      audit: { kind: "failed", error: "Export failed; see audit logs." },
-      readOnly: false,
+      kind: "export_failed",
+      versionID: opts.activeVersionID ?? "",
+      error: opts.activeVersionError || "Export failed.",
     };
   }
   // view_ready (the most common cold-start path).
@@ -168,10 +184,13 @@ export function reducer(
         return { kind: "pending", landingSince: Date.now() };
       }
       if (action.activeVersionStatus === "failed") {
+        // T4 — export_failed kind so ProjectShell hides the shell and
+        // surfaces the retry CTA instead of rendering on top of broken
+        // (NULL png_storage_key) data.
         return {
-          kind: "view_ready",
-          audit: { kind: "failed", error: "Export failed." },
-          readOnly: action.readOnly,
+          kind: "export_failed",
+          versionID: action.activeVersionID ?? "",
+          error: action.activeVersionError || "Export failed.",
         };
       }
       return {
@@ -268,18 +287,15 @@ export function reducer(
       };
     }
     case "export_failed": {
-      // Mid-pending failure: bail to error so the retry path works.
-      if (state.kind === "pending") {
-        return { kind: "error", message: action.error, statusCode: 500 };
-      }
-      // Otherwise treat as audit_failed (best approximation).
-      if (state.kind === "view_ready") {
-        return {
-          ...state,
-          audit: { kind: "failed", error: action.error },
-        };
-      }
-      return state;
+      // T4 — explicit export_failed kind. Pre-T4 we mapped this to error
+      // (mid-pending) or audit:failed (post-mount). Both kept the shell
+      // mounted; the new kind hides it and shows a retry CTA. Carries the
+      // version_id so the CTA can target the retry endpoint.
+      return {
+        kind: "export_failed",
+        versionID: action.versionID ?? "",
+        error: action.error,
+      };
     }
     case "permission_denied_detected": {
       return { kind: "permission_denied", reason: action.reason };

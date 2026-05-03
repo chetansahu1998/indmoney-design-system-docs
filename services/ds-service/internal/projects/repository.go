@@ -709,6 +709,40 @@ func (t *TenantRepo) RecordFailed(ctx context.Context, versionID, errMsg string)
 	return nil
 }
 
+// SetVersionStatus flips a version's status (pending|view_ready|failed) and
+// optionally the error column. Used by T4's retry handler to send a failed
+// version back to pending before re-spawning the pipeline. ErrNotFound when
+// the row doesn't exist or belongs to a different tenant.
+func (t *TenantRepo) SetVersionStatus(ctx context.Context, versionID, status, errMsg string) error {
+	if t.tenantID == "" {
+		return errors.New("projects: tenant_id required")
+	}
+	if status != "pending" && status != "view_ready" && status != "failed" {
+		return fmt.Errorf("invalid status: %s", status)
+	}
+	now := t.now().UTC()
+	res, err := t.r.db.ExecContext(ctx,
+		`UPDATE project_versions
+		    SET status = ?,
+		        error = ?,
+		        pipeline_started_at   = CASE WHEN ? = 'pending' THEN ? ELSE pipeline_started_at END,
+		        pipeline_heartbeat_at = CASE WHEN ? = 'pending' THEN ? ELSE pipeline_heartbeat_at END
+		  WHERE id = ? AND tenant_id = ?`,
+		status, errMsg,
+		status, rfc3339(now),
+		status, rfc3339(now),
+		versionID, t.tenantID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // HeartbeatVersion refreshes the pipeline_heartbeat_at column. Called by the
 // heartbeat goroutine inside RunFastPreview every 5s.
 func (t *TenantRepo) HeartbeatVersion(ctx context.Context, versionID string) error {

@@ -526,6 +526,10 @@ func (s *server) routes(mux *http.ServeMux) {
 	claimsReader := func(r *http.Request) *auth.Claims { return claimsFrom(r) }
 	mux.HandleFunc("POST /v1/projects/export",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleExport)))
+	// T4 — retry a failed version's render pipeline. Re-uses the original
+	// export's audit-log frame snapshot; no Figma re-walk required.
+	mux.HandleFunc("POST /v1/projects/{slug}/versions/{version_id}/retry",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleVersionRetry)))
 	mux.HandleFunc("GET /v1/projects",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectList)))
 	mux.HandleFunc("GET /v1/projects/{slug}",

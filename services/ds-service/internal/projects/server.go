@@ -525,6 +525,141 @@ func validateExport(req ExportRequest) error {
 	return nil
 }
 
+// HandleVersionRetry serves POST /v1/projects/{slug}/versions/{version_id}/retry.
+//
+// Plan 2026-05-03-001 / T4. When a designer's export fell over mid-render
+// (Figma render timeout, transient API error, basisu hiccup), the version
+// stays in `failed` and the project page shows screens with NULL
+// png_storage_key that 404 in the browser forever. Pre-T4 the only
+// recovery was to re-walk Figma + re-export — slow, manual, lossy.
+//
+// This handler reuses the original export's audit-log snapshot
+// (project.export details.frames) to rebuild PipelineInputs.Frames, flips
+// the version back to `pending`, and re-spawns the pipeline goroutine.
+// Successful retries land the version in `view_ready`; another failure
+// leaves it `failed` again (the FE can retry once more).
+//
+// Auth: same as HandleExport — JWT bearer, single-tenant.
+// Idempotency: not enforced. The pipeline itself is idempotent on
+// (tenant, version) — re-running against an already-`view_ready` version
+// is a no-op except for fresh PNG writes.
+func (s *Server) HandleVersionRetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	versionID := r.PathValue("version_id")
+	if slug == "" || versionID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
+		return
+	}
+
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+
+	project, err := repo.GetProjectBySlug(r.Context(), slug)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+		return
+	}
+	version, err := repo.GetVersion(r.Context(), versionID)
+	if err != nil || version.ProjectID != project.ID {
+		writeJSONErr(w, http.StatusNotFound, "version_not_found", "")
+		return
+	}
+
+	// Only failed versions are retriable. `pending` is already running
+	// (a second retry would race with the in-flight pipeline goroutine);
+	// `view_ready` is already done (no-op).
+	if version.Status != "failed" {
+		writeJSONErr(w, http.StatusConflict, "not_retriable",
+			"version is not in failed state (current="+version.Status+")")
+		return
+	}
+
+	// Reconstruct PipelineFrames from the audit-log snapshot of the
+	// original export. Audit finding B5 was added precisely for this
+	// path — recovery without re-walking the Figma file.
+	frames, fileID, err := s.deps.AuditLogger.LatestExportEvent(r.Context(), tenantID, versionID)
+	if err != nil || len(frames) == 0 {
+		writeJSONErr(w, http.StatusFailedDependency, "no_export_snapshot",
+			"original export's frame snapshot is missing; re-export from the plugin")
+		return
+	}
+	pipelineFrames := make([]PipelineFrame, 0, len(frames))
+	for _, fr := range frames {
+		pipelineFrames = append(pipelineFrames, PipelineFrame{
+			ScreenID:     fr.ScreenID,
+			FigmaFrameID: fr.FigmaFrameID,
+			X:            fr.X,
+			Y:            fr.Y,
+			Width:        fr.Width,
+			Height:       fr.Height,
+		})
+	}
+
+	// Flip status pending so the FE's view-machine + SSE listeners pick
+	// up "running again" and so a second concurrent retry hits the
+	// `not_retriable` guard above.
+	if err := repo.SetVersionStatus(r.Context(), versionID, "pending", ""); err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "set_pending", err.Error())
+		return
+	}
+
+	traceID := uuid.NewString()
+
+	// 202 immediately so the FE's retry button feels responsive; the
+	// pipeline goroutine completes asynchronously and SSE-bus updates
+	// the view-machine.
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"version_id": versionID,
+		"trace_id":   traceID,
+		"status":     "pending",
+	})
+
+	// Spawn pipeline. Same shape as HandleExport's launch; uses the
+	// reconstructed frames + the persisted file_id.
+	if s.deps.PipelineFactory != nil {
+		go func() {
+			ctx := context.Background()
+			pipeline, err := s.deps.PipelineFactory(ctx, tenantID, repo)
+			if err != nil {
+				s.deps.Log.Error("retry pipeline factory", "err", err, "version_id", versionID)
+				_ = repo.RecordFailed(ctx, versionID, "pipeline factory: "+err.Error())
+				return
+			}
+			_ = pipeline.RunFastPreview(ctx, PipelineInputs{
+				VersionID:   versionID,
+				ProjectID:   project.ID,
+				ProjectSlug: project.Slug,
+				TenantID:    tenantID,
+				UserID:      claims.Sub,
+				FileID:      fileID,
+				TraceID:     traceID,
+				IP:          clientIP(r),
+				UserAgent:   r.UserAgent(),
+				Frames:      pipelineFrames,
+			})
+		}()
+	}
+}
+
 // HandleProjectGet serves GET /v1/projects/{slug}.
 func (s *Server) HandleProjectGet(w http.ResponseWriter, r *http.Request) {
 	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
