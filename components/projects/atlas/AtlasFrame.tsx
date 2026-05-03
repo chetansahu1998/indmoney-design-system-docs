@@ -65,7 +65,17 @@ export default function AtlasFrame({
   // threshold.
   const { camera, gl } = useThree();
   const [tier, setTier] = useState<LODTier>("full");
-  const resolvedURL = useMemo(() => lodURL(pngUrl, tier), [pngUrl, tier]);
+  // Locks tier to "full" after a downsampled tier 404s on disk — pickLOD's
+  // doc promises this fallback. Cleared when pngUrl changes (new screen).
+  const [forceFull, setForceFull] = useState(false);
+  const effectiveTier = forceFull ? "full" : tier;
+  const resolvedURL = useMemo(
+    () => lodURL(pngUrl, effectiveTier),
+    [pngUrl, effectiveTier],
+  );
+  useEffect(() => {
+    setForceFull(false);
+  }, [pngUrl]);
   // Phase 3.5 follow-up #3: HOT/WARM viewport ring. cold frames skip
   // texture load + don't render; warm frames pre-load + render at
   // opacity 0; hot frames render normally. Adopted from DesignBrain's
@@ -93,7 +103,12 @@ export default function AtlasFrame({
         setLoaded(true);
       },
       () => {
-        if (!cancelled) setErrored(true);
+        if (cancelled) return;
+        if (effectiveTier !== "full") {
+          setForceFull(true);
+          return;
+        }
+        setErrored(true);
       },
     ).catch((err) => {
       void err;
