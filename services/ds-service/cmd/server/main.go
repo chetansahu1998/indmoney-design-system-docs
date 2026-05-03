@@ -743,8 +743,9 @@ func (s *server) routes(mux *http.ServeMux) {
 func (s *server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		for _, allowed := range s.cfg.CORSAllowOrigin {
-			if origin == strings.TrimSpace(allowed) {
+		for _, raw := range s.cfg.CORSAllowOrigin {
+			allowed := strings.TrimSpace(raw)
+			if originMatchesAllowed(origin, allowed) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Set("Vary", "Origin")
@@ -759,6 +760,39 @@ func (s *server) cors(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// originMatchesAllowed compares an origin against an allow-list entry.
+// Supports a single leading-glob `https://*.vercel.app` so Vercel preview
+// deployments (which mint a unique hash per build) don't have to be added
+// one-by-one. The glob position is fixed: only the host's leftmost label
+// can be `*` — `https://*.vercel.app` matches `https://foo.vercel.app`
+// but NOT `https://foo.bar.vercel.app` (no nested wildcards) and NOT
+// `https://vercel.app` (the wildcard requires at least one label).
+func originMatchesAllowed(origin, allowed string) bool {
+	if origin == allowed {
+		return true
+	}
+	// Glob pattern: scheme://*.suffix
+	idx := strings.Index(allowed, "://*.")
+	if idx == -1 {
+		return false
+	}
+	scheme := allowed[:idx+3]              // "https://"
+	suffix := allowed[idx+5:]              // "vercel.app"
+	if !strings.HasPrefix(origin, scheme) {
+		return false
+	}
+	host := origin[len(scheme):]
+	// Reject a bare suffix (no subdomain) so the wildcard can't match
+	// the apex domain.
+	if !strings.HasSuffix(host, "."+suffix) {
+		return false
+	}
+	// And reject nested subdomains so a single `*` doesn't match
+	// arbitrarily-deep hosts.
+	prefix := strings.TrimSuffix(host, "."+suffix)
+	return prefix != "" && !strings.Contains(prefix, ".")
 }
 
 func (s *server) requestLog(next http.Handler) http.Handler {
