@@ -140,6 +140,8 @@ figma.ui.onmessage = async (msg) => {
                     payload: { ok: true, info: "Token saved." },
                 });
                 send({ type: "docs-token-state", payload: { hasToken: true } });
+                // P6 — re-broadcast the decoded designer info for the chip.
+                send({ type: "designer.info", payload: decodeDesignerFromJWT(docsAuthToken) });
                 return;
             }
             case "set-server-url":
@@ -176,6 +178,63 @@ figma.ui.onmessage = async (msg) => {
                 return;
             case "projects.refresh-detection":
                 return runProjectsDetection();
+            case "personas.fetch": {
+                // P7 — proxy GET /v1/personas?status=approved using the saved JWT.
+                // ds-service is in the manifest's allowedDomains so the sandbox
+                // can fetch it directly (no audit-server hop needed for GETs).
+                await ensureDocsToken();
+                if (!docsAuthToken) {
+                    send({ type: "personas.list", payload: { ok: false, error: "no_token", personas: [] } });
+                    return;
+                }
+                try {
+                    const dsURL = (await figma.clientStorage.getAsync("ds_service_url"));
+                    const base = dsURL || "https://indmoney-ds-service.fly.dev";
+                    const res = await fetch(`${base}/v1/personas?status=approved`, {
+                        method: "GET",
+                        headers: { Authorization: `Bearer ${docsAuthToken}` },
+                    });
+                    if (!res.ok) {
+                        send({ type: "personas.list", payload: { ok: false, error: `http_${res.status}`, personas: [] } });
+                        return;
+                    }
+                    const body = (await res.json());
+                    send({ type: "personas.list", payload: { ok: true, personas: body.personas || [] } });
+                }
+                catch (err) {
+                    const e = err;
+                    send({ type: "personas.list", payload: { ok: false, error: e.message, personas: [] } });
+                }
+                return;
+            }
+            case "projects.list-existing": {
+                // P3 — proxy GET /v1/projects so the UI can populate the
+                // "Add to existing project" dropdown.
+                await ensureDocsToken();
+                if (!docsAuthToken) {
+                    send({ type: "projects.list-existing-result", payload: { ok: false, error: "no_token", projects: [] } });
+                    return;
+                }
+                try {
+                    const dsURL = (await figma.clientStorage.getAsync("ds_service_url"));
+                    const base = dsURL || "https://indmoney-ds-service.fly.dev";
+                    const res = await fetch(`${base}/v1/projects?limit=200`, {
+                        method: "GET",
+                        headers: { Authorization: `Bearer ${docsAuthToken}` },
+                    });
+                    if (!res.ok) {
+                        send({ type: "projects.list-existing-result", payload: { ok: false, error: `http_${res.status}`, projects: [] } });
+                        return;
+                    }
+                    const body = (await res.json());
+                    send({ type: "projects.list-existing-result", payload: { ok: true, projects: body.projects || [] } });
+                }
+                catch (err) {
+                    const e = err;
+                    send({ type: "projects.list-existing-result", payload: { ok: false, error: e.message, projects: [] } });
+                }
+                return;
+            }
             case "projects.send":
                 // Phase 7.8 — real export wiring. POSTs to the docs-site proxy at
                 // /api/projects/export which forwards to ds-service's HandleExport.
@@ -325,7 +384,50 @@ figma.on("selectionchange", () => {
     // Tell the UI whether we've already restored a token, so the
     // Settings entry-point dot reflects reality on first paint.
     send({ type: "docs-token-state", payload: { hasToken: !!docsAuthToken } });
+    // P6 — broadcast decoded designer info so the Projects view chip can
+    // render before the user clicks anything. Empty payload when no token.
+    send({ type: "designer.info", payload: decodeDesignerFromJWT(docsAuthToken) });
 })();
+/**
+ * Lazy-read the saved JWT from clientStorage. The boot IIFE does this
+ * once at startup, but if a UI handler runs before that promise
+ * resolves we get a null. ensureDocsToken closes the race.
+ */
+async function ensureDocsToken() {
+    if (docsAuthToken)
+        return;
+    const tok = (await figma.clientStorage.getAsync("docs_auth_token"));
+    if (tok)
+        docsAuthToken = tok;
+}
+/**
+ * Decode the decoded user info from a JWT (middle segment is base64-
+ * encoded JSON claims). Returns {email, sub, role} or empty when token
+ * is missing/malformed. The roster lookup happens UI-side so we don't
+ * have to ship the 9-designer map twice.
+ */
+function decodeDesignerFromJWT(token) {
+    if (!token)
+        return { email: "", sub: "", role: "" };
+    try {
+        const parts = token.split(".");
+        if (parts.length < 2)
+            return { email: "", sub: "", role: "" };
+        // Base64url → base64
+        const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        const padded = b64 + "==".slice(0, (4 - (b64.length % 4)) % 4);
+        const json = atob(padded);
+        const claims = JSON.parse(json);
+        return {
+            email: typeof claims.email === "string" ? claims.email : "",
+            sub: typeof claims.sub === "string" ? claims.sub : "",
+            role: typeof claims.role === "string" ? claims.role : "",
+        };
+    }
+    catch (_a) {
+        return { email: "", sub: "", role: "" };
+    }
+}
 // Direct menu commands.
 if (figma.command === "auditFile")
     runAudit("file").catch(() => { });

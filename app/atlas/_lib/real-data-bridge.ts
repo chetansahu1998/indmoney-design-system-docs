@@ -41,10 +41,20 @@ function snapshot() {
   return useAtlas.getState();
 }
 
+// Real-data-only mode: when the live store is hydrated, we never return
+// mock seeded data. This guarantees the right inspector reflects what's
+// actually in ds-service — even during the brief window before a leaf's
+// overlay slot finishes loading. Falling back to mocks before would
+// render fake "Aanya P. edited DRD 2h ago" rows that look real but are
+// invented; users couldn't tell the difference.
+function inLiveMode(): boolean {
+  return typeof window !== "undefined" && !!(window as any).__ATLAS_DATA_READY;
+}
+
 // ─── Bridge: builders ────────────────────────────────────────────────────────
 
 function bridgeBuildLeafCanvas(leaf: any) {
-  if (!leaf) return originalBuildLeafCanvas?.(leaf) ?? { frames: [], edges: [] };
+  if (!leaf) return inLiveMode() ? { frames: [], edges: [] } : (originalBuildLeafCanvas?.(leaf) ?? { frames: [], edges: [] });
   const slot = snapshot().leafSlots[leaf.id];
   if (slot && slot.frames.length > 0) {
     return {
@@ -55,9 +65,6 @@ function bridgeBuildLeafCanvas(leaf: any) {
         y: f.y,
         w: f.w,
         h: f.h,
-        // `kind` carries through to PhoneFrame for legacy compat — we
-        // attach pngUrl so the PhoneFrame wrapper below renders the real
-        // image regardless of what `kind` says.
         kind: "real",
         label: f.label,
         pngUrl: f.pngUrl,
@@ -65,68 +72,63 @@ function bridgeBuildLeafCanvas(leaf: any) {
       edges: slot.edges,
     };
   }
+  // Live mode + slot still loading → return empty (renderer shows skeleton).
+  // Standalone preview → keep showing the mock so the HTML stays demo-able.
+  if (inLiveMode()) return { frames: [], edges: [] };
   return originalBuildLeafCanvas?.(leaf) ?? { frames: [], edges: [] };
 }
 
 function bridgeBuildViolations(leaf: any) {
-  if (!leaf) return originalBuildViolations?.(leaf) ?? [];
-  const slot = snapshot().leafSlots[leaf.id];
-  if (slot && slot.overlays.violations.length >= 0 && slot.loadedAt > 0) {
-    return slot.overlays.violations.map((v) => ({
-      id: v.id,
-      severity: v.severity,
-      rule: v.rule,
-      ruleId: v.ruleId,
-      layer: v.layer,
-      frameIdx: v.frameIdx,
-      status: v.status,
-      detail: v.detail,
-      ago: v.ago,
-    }));
+  if (!leaf || inLiveMode()) {
+    const slot = leaf ? snapshot().leafSlots[leaf.id] : null;
+    if (slot && slot.loadedAt > 0) {
+      return slot.overlays.violations.map((v) => ({
+        id: v.id, severity: v.severity, rule: v.rule, ruleId: v.ruleId,
+        layer: v.layer, frameIdx: v.frameIdx, status: v.status,
+        detail: v.detail, ago: v.ago,
+      }));
+    }
+    return []; // live mode never returns mocks
   }
   return originalBuildViolations?.(leaf) ?? [];
 }
 
 function bridgeBuildDecisions(leaf: any) {
-  if (!leaf) return originalBuildDecisions?.(leaf) ?? [];
-  const slot = snapshot().leafSlots[leaf.id];
-  if (slot && slot.loadedAt > 0) {
-    return slot.overlays.decisions.map((d) => ({
-      id: d.id,
-      title: d.title,
-      body: d.body,
-      author: d.author,
-      ago: d.ago,
-      linksTo: d.linksTo,
-    }));
+  if (!leaf || inLiveMode()) {
+    const slot = leaf ? snapshot().leafSlots[leaf.id] : null;
+    if (slot && slot.loadedAt > 0) {
+      return slot.overlays.decisions.map((d) => ({
+        id: d.id, title: d.title, body: d.body, author: d.author,
+        ago: d.ago, linksTo: d.linksTo,
+      }));
+    }
+    return [];
   }
   return originalBuildDecisions?.(leaf) ?? [];
 }
 
 function bridgeBuildActivity(leaf: any) {
-  if (!leaf) return originalBuildActivity?.(leaf) ?? [];
-  const slot = snapshot().leafSlots[leaf.id];
-  if (slot && slot.loadedAt > 0) {
-    return slot.overlays.activity.map((a) => ({
-      who: a.who,
-      what: a.what,
-      ago: a.ago,
-      kind: a.kind,
-    }));
+  if (!leaf || inLiveMode()) {
+    const slot = leaf ? snapshot().leafSlots[leaf.id] : null;
+    if (slot && slot.loadedAt > 0) {
+      return slot.overlays.activity.map((a) => ({
+        who: a.who, what: a.what, ago: a.ago, kind: a.kind,
+      }));
+    }
+    return [];
   }
   return originalBuildActivity?.(leaf) ?? [];
 }
 
 function bridgeBuildComments(leaf: any) {
-  if (!leaf) return originalBuildComments?.(leaf) ?? [];
-  const slot = snapshot().leafSlots[leaf.id];
-  if (slot && slot.loadedAt > 0) {
-    return slot.overlays.comments.map((c) => ({
-      who: c.who,
-      body: c.body,
-      ago: c.ago,
-      reactions: c.reactions,
-    }));
+  if (!leaf || inLiveMode()) {
+    const slot = leaf ? snapshot().leafSlots[leaf.id] : null;
+    if (slot && slot.loadedAt > 0) {
+      return slot.overlays.comments.map((c) => ({
+        who: c.who, body: c.body, ago: c.ago, reactions: c.reactions,
+      }));
+    }
+    return [];
   }
   return originalBuildComments?.(leaf) ?? [];
 }

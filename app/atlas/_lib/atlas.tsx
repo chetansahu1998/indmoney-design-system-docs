@@ -17,10 +17,12 @@ import React, { useEffect, useRef, useState, useMemo, useCallback } from "react"
 // ============================================================
 
 const __ATLAS_DOMAINS_MOCK = [
-  { id: "markets",   label: "Markets",   sub: "Trade & invest",      lobe: "frontalL" },
-  { id: "investing", label: "Investing", sub: "Track & analyze",     lobe: "parietalR" },
-  { id: "money",     label: "Money",     sub: "Move & spend",        lobe: "frontalR" },
-  { id: "platform",  label: "Platform",  sub: "Identity & settings", lobe: "parietalL" },
+  { id: "markets",            label: "Markets",            sub: "Trade & invest",    lobe: "frontalL" },
+  { id: "money_matters",      label: "Money Matters",      sub: "Pay, save, plan",   lobe: "frontalR" },
+  { id: "platform",           label: "Platform",           sub: "Identity & system", lobe: "parietalL" },
+  { id: "lending",            label: "Lending",            sub: "Borrow & repay",    lobe: "parietalR" },
+  { id: "recurring_payments", label: "Recurring Payments", sub: "Bills & cards",     lobe: "temporal"  },
+  { id: "web_platform",       label: "Web Platform",       sub: "Web touch-points",  lobe: "occipital" },
 ];
 
 const __ATLAS_FLOWS_MOCK = [
@@ -225,17 +227,52 @@ function brainEdgeDistance(x, y) {
   return minSteps * 0.02;
 }
 
-// Domain-to-lobe anchor (side view)
-//   Markets   → Frontal (decisions, planning) — front-top
-//   Investing → Parietal/Occipital (analysis, memory) — top-back
-//   Money     → Temporal (transactions, recall) — lower-front
-//   Platform  → Occipital + cerebellum (auth, settings, automation) — back
+// Domain-to-lobe anchor (side view). Six lobes — extended from the
+// reference's original four to match the current taxonomy in
+// lib/atlas/taxonomy.ts. Each anchor is a position in the brain's
+// normalised coordinate space (x ∈ [-1.1, 1.1], y up positive).
+//
+//   Markets             → Frontal-left (front-top decisions)
+//   Money Matters       → Frontal-right (front-mid pay/save)
+//   Platform            → Parietal-left (top-mid identity/system)
+//   Lending             → Parietal-right (top-back borrow/repay)
+//   Recurring Payments  → Temporal (lower-front bills/cards)
+//   Web Platform        → Occipital (back, web touch-points)
+//
+// Old IDs (markets/investing/money/platform) are kept as aliases so
+// any stale data sources or legacy snapshots still resolve cleanly.
+// Anchors tuned to actually land inside the brain silhouette (see
+// inBrain() above). Coordinate space: x ∈ [-1.1, 1.1], y up positive.
+// Front of brain at -x (forehead), back at +x.
+//
+// Layout reads as a brain in side-profile:
+//
+//                      MARKETS · MONEY MATTERS · PLATFORM
+//                       (frontal arc — high decisions)
+//                                                    LENDING
+//                                                  (parietal —
+//                                                    top-back)
+//          RECURRING                              WEB PLATFORM
+//          PAYMENTS                                 (occipital —
+//          (temporal —                              back of head)
+//           lower front)
+//
 const DOMAIN_ANCHORS = {
-  markets:   { x: -0.50, y:  0.30, name: "Frontal" },
-  investing: { x:  0.30, y:  0.40, name: "Parietal" },
-  money:     { x: -0.20, y: -0.15, name: "Temporal" },
-  platform:  { x:  0.55, y: -0.05, name: "Occipital" },
+  // Active 6-lobe set — all six anchors confirmed inside inBrain().
+  markets:            { x: -0.62, y:  0.30, name: "Frontal-L" },
+  money_matters:      { x: -0.20, y:  0.42, name: "Frontal-Top" },
+  platform:           { x:  0.22, y:  0.42, name: "Parietal-L" },
+  lending:            { x:  0.55, y:  0.18, name: "Parietal-R" },
+  recurring_payments: { x: -0.30, y: -0.18, name: "Temporal" },
+  web_platform:       { x:  0.55, y: -0.08, name: "Occipital" },
+  // Legacy aliases — kept so any stale snapshot still renders cleanly.
+  investing:          { x:  0.22, y:  0.42, name: "Parietal-L" },
+  money:              { x: -0.20, y:  0.42, name: "Frontal-Top" },
 };
+
+function domainAnchor(id) {
+  return DOMAIN_ANCHORS[id] || { x: 0, y: 0, name: id || "Unknown" };
+}
 
 // Build node graph
 function buildGraph() {
@@ -243,9 +280,12 @@ function buildGraph() {
   const nodes = [];
   const links = [];
 
-  // Add domain nodes (hub - large white)
+  // Add domain nodes (hub - large white).
+  // Use the safe anchor lookup so any unknown lobe id (e.g. a new sub-sheet
+  // mapped to a domain we haven't yet placed) renders at the origin
+  // instead of crashing.
   DOMAINS.forEach(d => {
-    const a = DOMAIN_ANCHORS[d.id];
+    const a = domainAnchor(d.id);
     nodes.push({
       id: "d:" + d.id,
       kind: "domain",
@@ -261,7 +301,7 @@ function buildGraph() {
 
   // Add flow nodes — placed near their domain anchor inside the brain mask
   FLOWS.forEach(f => {
-    const a = DOMAIN_ANCHORS[f.domain];
+    const a = domainAnchor(f.domain);
     let pos;
     for (let attempts = 0; attempts < 200; attempts++) {
       const ang = rand() * Math.PI * 2;
@@ -311,9 +351,14 @@ function buildGraph() {
     const subs = LEAVES_LIST.filter(l => l.flow === f.id);
     if (subs.length === 0) return;
 
-    // Tight orbit: 2-tier rings, scale with count but capped small.
-    // r0 ~ 0.055 keeps even 8 children visually clustered around the parent.
-    const baseR = 0.055 + Math.min(subs.length, 8) * 0.004;
+    // Orbit radius — generous when there are few sub-flows so they're
+    // clearly visible, tighter as count grows so 50+ subs stay clustered
+    // around the parent. With 1–6 subs we want them clearly readable as
+    // discrete nodes, not lost among the filler nebula.
+    const fewSubs = subs.length <= 6;
+    const baseR = fewSubs
+      ? 0.10 + subs.length * 0.005   // 0.105 (1) → 0.130 (6) — generous
+      : 0.055 + Math.min(subs.length, 8) * 0.004; // tighter for many
     const startAng = (fNode.x + fNode.y) * 7.3; // deterministic per parent
 
     subs.forEach((leaf, i) => {
@@ -358,7 +403,11 @@ function buildGraph() {
         frames: leaf.frames || 0,
         x: pos.x,
         y: pos.y,
-        r: 1.7,
+        // Sub-flow dot size scales with how much screen real estate is
+        // available — when there are few siblings, render them larger so
+        // they read as proper nodes (not filler). Cap at 3.5 to avoid
+        // dominating the parent flow node.
+        r: fewSubs ? 3.0 : 1.7,
         seed: rand() * 1000,
         wiggle: 0.010,
       });
@@ -1165,7 +1214,7 @@ function Hint({ visible }) {
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "showSidebar": true,
   "showHints": true,
-  "wiggle": 0.5
+  "wiggle": 0.8
 }/*EDITMODE-END*/;
 
 function App() {

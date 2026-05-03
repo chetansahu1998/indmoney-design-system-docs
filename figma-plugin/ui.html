@@ -435,6 +435,58 @@
     margin-top: 3px;
     line-height: 1.4;
   }
+  /* Inline subtle hint shown next to a field label — used by P4 to flag
+     auto-suggested values ("auto from 'INDstocks-V2'"). Designer can
+     hover for the full reason; clicking the select still overrides. */
+  .field-hint {
+    color: var(--text-3, #888);
+    font-size: 10px;
+    font-weight: 400;
+    margin-left: 6px;
+  }
+  /* Designer identity chip in the Projects view header (P6). Decoded
+     from the JWT, matched against the 9-designer roster. */
+  .designer-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    background: var(--bg-surface-2, #f5f5f5);
+    border: 1px solid var(--border-subtle, #e0e0e0);
+    border-radius: 999px;
+    font-size: 11px;
+    color: var(--text-2, #555);
+    cursor: pointer;
+  }
+  .designer-chip:hover { background: var(--bg-surface-3, #ebebeb); }
+  .designer-chip-avatar {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: var(--accent, #5fd28e);
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 600;
+  }
+  .designer-chip-unknown { background: var(--bg-surface-3, #f0e0e0); color: var(--danger, #d33); }
+  .designer-chip-unknown .designer-chip-avatar { background: var(--danger, #d33); }
+  /* Inferred metadata badge, shown next to a select to indicate the
+     value came from a heuristic (file name, frame width). Clicking the
+     select still allows full override. */
+  .inferred-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    background: rgba(95, 210, 142, 0.15);
+    color: var(--accent, #5fd28e);
+    border: 1px solid rgba(95, 210, 142, 0.3);
+    border-radius: 999px;
+    font-size: 9.5px;
+    font-weight: 500;
+    margin-left: 6px;
+    line-height: 1.4;
+  }
 
   /* ── Disconnect / staleness banner ──────────────────────────────── */
   .banner {
@@ -1330,7 +1382,10 @@
     <div class="card elevated">
       <div class="card-header">
         <span class="card-title">Projects</span>
-        <span class="card-meta" id="projects-meta"></span>
+        <div style="display:flex; align-items:center; gap:8px; margin-left:auto;">
+          <span class="designer-chip" id="projects-designer-chip" title="Click to swap account in Settings" hidden></span>
+          <span class="card-meta" id="projects-meta"></span>
+        </div>
       </div>
       <div class="card-body">
         <div class="card-meta" style="line-height: 1.55;">
@@ -1344,6 +1399,8 @@
     </div>
 
     <div id="projects-warnings-host"></div>
+    <!-- P2: project-level metadata card (mode toggle + existing-project picker) -->
+    <div id="projects-file-card-host"></div>
     <div id="projects-groups-host"></div>
 
     <div class="card" id="projects-empty">
@@ -2298,16 +2355,147 @@ function formatUptime(isoStr) {
    Projects mode (U3) — smart-grouping preview + send placeholder
    ════════════════════════════════════════════════════════════════════ */
 
-// 9 curated products (per plan)
-const PROJECTS_PRODUCTS = [
-  "Plutus", "Tax", "Indian Stocks", "US Stocks", "Mutual Funds",
-  "Social", "Dashboard", "Search & Watchlist", "Notifications",
+// Products grouped by brain lobe — must stay in sync with
+// lib/atlas/taxonomy.ts (subSheetToLobe + LEGACY_PRODUCT_PATTERNS).
+// Adding a new product here is the same as adding a new sub-sheet to
+// the Google Sheet — the brain auto-places it on the matching lobe.
+//
+// `aliases` are the strings the file-name heuristic (P4) matches on:
+// the file is named "INDstocks-V2" → matches "INDstocks" alias →
+// auto-suggests product "INDstocks". Keep aliases lowercase, no spaces.
+const PROJECTS_PRODUCT_GROUPS = [
+  { lobe: "Markets", products: [
+    { name: "INDstocks",       aliases: ["indstocks", "indstock", "indianstocks"] },
+    { name: "Mutual Funds",    aliases: ["mutualfunds", "mf", "mfs"] },
+    { name: "US Stocks",       aliases: ["usstocks", "usstock"] },
+    { name: "F&O",             aliases: ["fno", "f&o", "futuresoptions"] },
+    { name: "Fixed Deposit",   aliases: ["fixeddeposit", "fd"] },
+  ]},
+  { lobe: "Money Matters", products: [
+    { name: "Plutus",          aliases: ["plutus"] },
+    { name: "Neobanking",      aliases: ["neobanking", "neobank"] },
+    { name: "Insurance",       aliases: ["insurance"] },
+    { name: "Goals",           aliases: ["goals"] },
+    { name: "Tax",             aliases: ["tax", "taxcenter", "taxfiling"] },
+  ]},
+  { lobe: "Lending", products: [
+    { name: "Insta Cash",      aliases: ["instacash"] },
+    { name: "Insta Plus",      aliases: ["instaplus"] },
+    { name: "NBFC",            aliases: ["nbfc"] },
+  ]},
+  { lobe: "Recurring Payments", products: [
+    { name: "BBPS & TPAP",     aliases: ["bbps", "tpap", "billpay"] },
+    { name: "Credit Card",     aliases: ["creditcard", "cc"] },
+  ]},
+  { lobe: "Platform", products: [
+    { name: "Onboarding KYC",  aliases: ["onboarding", "kyc", "onboardingfederal", "onboarding-3"] },
+    { name: "Platform & Global Search", aliases: ["platform", "globalsearch", "search", "platformv2"] },
+    { name: "Referral",        aliases: ["referral"] },
+    { name: "Chatbot",         aliases: ["chatbot"] },
+    { name: "Social",          aliases: ["social", "socialproject"] },
+    { name: "INDlearn",        aliases: ["indlearn", "learn"] },
+    { name: "Profile / My Profile", aliases: ["myprofile", "profile"] },
+    { name: "Dashboard",       aliases: ["dashboard", "home"] },
+    { name: "Notifications",   aliases: ["notifications"] },
+  ]},
+  { lobe: "Web Platform", products: [
+    { name: "INDWeb",          aliases: ["indweb", "web"] },
+  ]},
 ];
-// Curated personas (per plan) + free-text "Other"
-const PROJECTS_PERSONAS = [
-  "Default", "New User", "Logged-out", "KYC-pending", "KYC-verified",
-  "F&O-activated", "MTF-enabled", "Plutus", "Returning",
+// Flat list — preserved for back-compat with the rest of the projects
+// view that does `e.product` string comparison.
+const PROJECTS_PRODUCTS = PROJECTS_PRODUCT_GROUPS.flatMap(g => g.products.map(p => p.name));
+
+// Personas now load from /v1/personas at Projects-tab-open. Until the
+// fetch lands we render an empty list with a "Loading…" placeholder.
+// Hardcoded fallback (used only on fetch failure or in the standalone
+// preview) — keeps the dropdown populated so the form is still usable.
+let PROJECTS_PERSONAS = [];
+const PROJECTS_PERSONAS_FALLBACK = [
+  "Designer (in-product)", "DS Lead", "PM", "Engineer",
 ];
+let PROJECTS_PERSONAS_LOADED = false;
+
+// P6 — known designer roster (mirrors mint-tokens output, memory 3522).
+// Email → display name. Unknown emails fall through to email-derived
+// "Anon" formatting; chip renders as "unknown" variant.
+const DESIGNER_ROSTER = {
+  "ashish@indmoney.com":     "Ashish Kashyap",
+  "dhairya@indmoney.com":    "Dhairya Shah",
+  "garvdeep@indmoney.com":   "Garvdeep Singh",
+  "laxmi@indmoney.com":      "Laxmi Mishra",
+  "omeshwari@indmoney.com":  "Omeshwari Dharpure",
+  "sahaj@indmoney.com":      "Sahaj Tyagi",
+  "saksham@indmoney.com":    "Saksham Jamwal",
+  "shivam@indmoney.com":     "Shivam Kumar",
+  "vikash@indmoney.com":     "Vikash Thakur",
+  // Lead account
+  "chetan.sahu@indmoney.com": "Chetan Sahu",
+  "chetan.daylight@gmail.com": "Chetan Sahu",
+};
+
+let DESIGNER_INFO = { email: "", sub: "", role: "", display: "" };
+
+// P3 — list of existing projects in this tenant. Loaded once on
+// designer.info arrival; used by the project-card "Add to existing
+// project" dropdown.
+let EXISTING_PROJECTS = [];        // [{ID, Slug, Name, Product, Platform, Path}]
+let EXISTING_PROJECTS_LOADED = false;
+
+function loadExistingProjects() {
+  if (EXISTING_PROJECTS_LOADED) return;
+  EXISTING_PROJECTS_LOADED = true;
+  post("projects.list-existing", null);
+}
+
+function prettifyEmail(email) {
+  if (!email) return "Anon";
+  const local = (email.split("@")[0] || "").trim();
+  if (!local) return "Anon";
+  return local
+    .split(/[._-]/)
+    .filter(Boolean)
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(" ");
+}
+
+/**
+ * P7 — request approved personas from ds-service via code.ts proxy.
+ * Idempotent — multiple calls dedupe on PROJECTS_PERSONAS_LOADED.
+ */
+function loadPersonasFromAPI() {
+  if (PROJECTS_PERSONAS_LOADED) return;
+  PROJECTS_PERSONAS_LOADED = true; // pessimistic — re-set false on error
+  post("personas.fetch", null);
+}
+
+function renderDesignerChip() {
+  const chip = $("projects-designer-chip");
+  if (!chip) return;
+  const email = (DESIGNER_INFO.email || "").toLowerCase();
+  if (!email) {
+    chip.hidden = true;
+    return;
+  }
+  const known = DESIGNER_ROSTER[email];
+  const display = known || prettifyEmail(email);
+  DESIGNER_INFO.display = display;
+  const initials = (display.split(" ").map((p) => p[0]).join("").slice(0, 2)).toUpperCase();
+  chip.hidden = false;
+  chip.classList.toggle("designer-chip-unknown", !known);
+  chip.innerHTML = `
+    <span class="designer-chip-avatar">${escapeHtml(initials)}</span>
+    <span>${escapeHtml(display)}</span>
+  `;
+  chip.title = known
+    ? `Signed in as ${display} (${email}) — click to swap account in Settings`
+    : `Email '${email}' is not in the designer roster — click to update token in Settings`;
+  // Click → switch to Settings (the existing button on the topbar)
+  chip.onclick = () => {
+    const btn = $("open-settings");
+    if (btn) btn.click();
+  };
+}
 // Path autocomplete dataset — minimal seed; expanded later via DS taxonomy.
 const PROJECTS_PATH_AUTOCOMPLETE = [
   "/learn", "/learn/touchpoints", "/dashboard", "/portfolio",
@@ -2333,7 +2521,120 @@ const projectsState = {
   detected: null,        // ProjectsDetectedGroupsPayload
   edits: {},              // { [group_key]: { name, platform, product, path, persona, persona_other } }
   sendInFlight: false,
+  // P2/P3 — file-level state. `mode` is "new" (default) or "existing".
+  // `existingProjectID` is set when mode is "existing"; the per-group
+  // cards then inherit Product/Platform/Path from the picked project.
+  fileLevel: {
+    mode: "new",                  // "new" | "existing"
+    existingProjectID: null,      // Project.ID
+  },
 };
+
+/**
+ * P2 — render the project-level "This file" card. Shown above the
+ * per-group cards. Holds the mode toggle (new vs existing) and the
+ * existing-project picker.
+ */
+function renderFileLevelCard() {
+  const host = $("projects-file-card-host");
+  if (!host) return;
+  const d = projectsState.detected;
+  if (!d) { host.innerHTML = ""; return; }
+  const fl = projectsState.fileLevel;
+  const sortedExisting = EXISTING_PROJECTS
+    .slice()
+    .sort((a, b) => (a.Name || "").localeCompare(b.Name || ""));
+  const inferred = inferProductFromFileName(d.file_name);
+  const platformsSeen = (d.groups || []).map(inferPlatformFromGroup).filter(Boolean);
+  const platformGuess = platformsSeen.length > 0
+    ? (platformsSeen.every(p => p === platformsSeen[0]) ? platformsSeen[0] : "mixed")
+    : "";
+  const existingPicked = fl.mode === "existing" && fl.existingProjectID
+    ? sortedExisting.find(p => p.ID === fl.existingProjectID)
+    : null;
+
+  host.innerHTML = `
+    <div class="card elevated" style="margin-bottom:8px;">
+      <div class="card-header">
+        <span class="card-title">This file</span>
+        <span class="card-meta">${escapeHtml(d.file_name || "?")} · ${d.total_frames} frame${d.total_frames === 1 ? "" : "s"}</span>
+      </div>
+      <div class="card-body" style="display:flex; flex-direction:column; gap:10px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          ${inferred.reason ? `<span class="inferred-badge" title="Matched the file name against product alias '${escapeHtml(inferred.reason)}'">📋 ${escapeHtml(inferred.product)}</span>` : ""}
+          ${platformGuess && platformGuess !== "mixed" ? `<span class="inferred-badge" title="Inferred from frame widths">📱 ${escapeHtml(platformGuess)}</span>` : ""}
+          ${platformGuess === "mixed" ? `<span class="inferred-badge" style="background:rgba(255,180,120,0.18); color:#c47a35; border-color:rgba(255,180,120,0.4);" title="Detected sections span both mobile and web sizes — pick per group below">⚠ mixed platform</span>` : ""}
+        </div>
+        <div style="display:flex; gap:14px; align-items:center;">
+          <label style="display:inline-flex; gap:5px; align-items:center; cursor:pointer;">
+            <input type="radio" name="file-mode" value="new" ${fl.mode === "new" ? "checked" : ""} data-k="file-mode" />
+            <span>Create new project</span>
+          </label>
+          <label style="display:inline-flex; gap:5px; align-items:center; cursor:pointer;">
+            <input type="radio" name="file-mode" value="existing" ${fl.mode === "existing" ? "checked" : ""} data-k="file-mode" />
+            <span>Add to existing</span>
+          </label>
+        </div>
+        ${fl.mode === "existing" ? `
+          <div>
+            <label>Existing project</label>
+            ${sortedExisting.length === 0 ? `
+              <div class="card-meta" style="line-height:1.5;">No existing projects in this tenant. Create one with the first export.</div>
+            ` : `
+              <select data-k="existing-project">
+                <option value="">— pick a project —</option>
+                ${sortedExisting.map(p => `<option value="${escapeHtml(p.ID)}" ${p.ID === fl.existingProjectID ? "selected" : ""}>${escapeHtml(p.Name)} · ${escapeHtml(p.Product || "—")} · ${escapeHtml(p.Platform || "—")}</option>`).join("")}
+              </select>
+              ${existingPicked ? `
+                <div class="card-meta" style="margin-top:6px; line-height:1.5;">
+                  Will append a new <b>version</b> to <b>${escapeHtml(existingPicked.Name)}</b>.
+                  Inherits Product=<b>${escapeHtml(existingPicked.Product || "—")}</b>, Platform=<b>${escapeHtml(existingPicked.Platform || "—")}</b>, Path=<b>${escapeHtml(existingPicked.Path || "—")}</b>.
+                </div>
+              ` : ""}
+            `}
+          </div>
+        ` : `
+          <div class="card-meta" style="line-height:1.5;">
+            Each section below becomes a flow under a new project. Product / Platform / Path defaults are auto-suggested above; override per-section if needed.
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+
+  // Wire mode toggle
+  host.querySelectorAll('input[name="file-mode"]').forEach(r => {
+    r.addEventListener("change", (e) => {
+      projectsState.fileLevel.mode = e.target.value;
+      // When switching to existing, clear stale ID
+      if (e.target.value === "new") projectsState.fileLevel.existingProjectID = null;
+      renderFileLevelCard();
+      renderProjectsGroups();
+    });
+  });
+  // Wire existing-project picker
+  const ePick = host.querySelector('select[data-k="existing-project"]');
+  if (ePick) {
+    ePick.addEventListener("change", (e) => {
+      projectsState.fileLevel.existingProjectID = e.target.value || null;
+      // Cascade the picked project's metadata into every per-group edit
+      // so the send payload reflects the inheritance.
+      const picked = EXISTING_PROJECTS.find(p => p.ID === e.target.value);
+      if (picked) {
+        for (const g of (projectsState.detected.groups || [])) {
+          const ed = projectsState.edits[g.group_key] || getOrInitEdits(g);
+          ed.product = picked.Product || ed.product;
+          ed.platform = picked.Platform || ed.platform;
+          ed.path = picked.Path || ed.path;
+          ed.product_inferred_from = "existing-project";
+          projectsState.edits[g.group_key] = ed;
+        }
+      }
+      renderFileLevelCard();
+      renderProjectsGroups();
+    });
+  }
+}
 
 function renderProjectsGroups() {
   const host = $("projects-groups-host");
@@ -2384,17 +2685,65 @@ function renderProjectsGroups() {
   for (const g of d.groups) {
     host.appendChild(renderGroupCard(g));
   }
+  // P2 — render the file-level card after the per-group cards' edits
+  // are initialised (so the cascade-from-existing logic can mutate
+  // them in place).
+  renderFileLevelCard();
+}
+
+/**
+ * P4 — file-name → product heuristic.
+ * Normalize the Figma file name (lowercase, strip non-alphanumerics) and
+ * match against the alias list of every product. First match wins, falls
+ * through to the first product when nothing matches. Returns both the
+ * resolved product AND the matched alias so the UI can show "auto-
+ * suggested from 'INDstocks-V2' → INDstocks".
+ */
+function inferProductFromFileName(fileName) {
+  const norm = (fileName || "").toLowerCase().replace(/[^a-z0-9&]/g, "");
+  if (!norm) return { product: PROJECTS_PRODUCTS[0], reason: null };
+  for (const group of PROJECTS_PRODUCT_GROUPS) {
+    for (const p of group.products) {
+      for (const alias of (p.aliases || [])) {
+        const a = alias.toLowerCase().replace(/[^a-z0-9&]/g, "");
+        if (a && norm.indexOf(a) !== -1) {
+          return { product: p.name, reason: alias };
+        }
+      }
+    }
+  }
+  return { product: PROJECTS_PRODUCTS[0], reason: null };
+}
+
+/**
+ * P5 — platform auto-detect from frame widths.
+ * Median of all detected frames in this group: ≤480 → mobile, ≥1280 →
+ * web, mixed → blank (designer must pick). Honors `platform_default` from
+ * code.ts when present (the sandbox already does its own detection on
+ * frame.width which is more accurate than ours).
+ */
+function inferPlatformFromGroup(g) {
+  if (g.platform_default) return g.platform_default;
+  const widths = (g.frames || []).map(f => f.width || 0).filter(w => w > 0);
+  if (widths.length === 0) return "";
+  widths.sort((a, b) => a - b);
+  const median = widths[Math.floor(widths.length / 2)];
+  if (median <= 480) return "mobile";
+  if (median >= 1280) return "web";
+  return ""; // mixed — let designer pick
 }
 
 function getOrInitEdits(g) {
   let e = projectsState.edits[g.group_key];
   if (!e) {
+    const inferred = inferProductFromFileName(projectsState.detected && projectsState.detected.file_name);
     e = {
       name: g.default_name,
-      platform: g.platform_default || "",
-      product: PROJECTS_PRODUCTS[0],
+      platform: inferPlatformFromGroup(g),
+      product: inferred.product,
+      product_inferred_from: inferred.reason, // null if hand-pick
       path: "",
-      persona: PROJECTS_PERSONAS[0],
+      persona: PROJECTS_PERSONAS[0] || PROJECTS_PERSONAS_FALLBACK[0],
       persona_other: "",
     };
     projectsState.edits[g.group_key] = e;
@@ -2435,9 +2784,13 @@ function renderGroupCard(g) {
         </select>
       </div>
       <div>
-        <label>Product</label>
+        <label>Product${e.product_inferred_from ? ` <span class="field-hint" title="Inferred from the Figma file name. Click to override.">· auto from "${escapeHtml(e.product_inferred_from)}"</span>` : ""}</label>
         <select data-k="product">
-          ${PROJECTS_PRODUCTS.map((p) => `<option ${p === e.product ? "selected" : ""}>${escapeHtml(p)}</option>`).join("")}
+          ${PROJECTS_PRODUCT_GROUPS.map((g) => `
+            <optgroup label="${escapeHtml(g.lobe)}">
+              ${g.products.map((p) => `<option ${p.name === e.product ? "selected" : ""}>${escapeHtml(p.name)}</option>`).join("")}
+            </optgroup>
+          `).join("")}
         </select>
       </div>
       <div class="field-full">
@@ -2872,6 +3225,46 @@ window.onmessage = (event) => {
       // We use it to gate the orange attention dot on the Settings cog.
       const dot = $("settings-attention-dot");
       if (dot) dot.hidden = !!(msg.payload && msg.payload.hasToken);
+      break;
+    }
+    case "designer.info": {
+      // P6 — code decoded the JWT and shipped {email, sub, role}. We
+      // match against the local roster and render the identity chip.
+      // Empty payload means no token; chip stays hidden.
+      DESIGNER_INFO = Object.assign(
+        { email: "", sub: "", role: "", display: "" },
+        msg.payload || {},
+      );
+      renderDesignerChip();
+      // Once we have a known designer, kick off the personas fetch (P7)
+      // and the existing-projects fetch (P3).
+      if (DESIGNER_INFO.email) {
+        loadPersonasFromAPI();
+        loadExistingProjects();
+      }
+      break;
+    }
+    case "personas.list": {
+      // P7 — code returned the approved personas list (or an error). On
+      // success replace PROJECTS_PERSONAS and re-render the groups so
+      // existing select dropdowns repopulate. On failure fall back to
+      // the bundled list so the form still works offline.
+      const p = msg.payload || {};
+      if (p.ok && Array.isArray(p.personas) && p.personas.length > 0) {
+        PROJECTS_PERSONAS = p.personas.map((x) => x.name);
+      } else {
+        PROJECTS_PERSONAS = PROJECTS_PERSONAS_FALLBACK.slice();
+        PROJECTS_PERSONAS_LOADED = false; // allow retry
+      }
+      renderProjectsGroups();
+      break;
+    }
+    case "projects.list-existing-result": {
+      // P3 — code returned the list of existing projects in this tenant.
+      EXISTING_PROJECTS = (msg.payload && msg.payload.ok && Array.isArray(msg.payload.projects))
+        ? msg.payload.projects
+        : [];
+      renderProjectsGroups();
       break;
     }
     case "projects.firstrun-status": {

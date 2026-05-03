@@ -18,13 +18,13 @@ import type { ViolationSeverity } from "../projects/types";
 // ─── Brain graph ─────────────────────────────────────────────────────────────
 
 export type LobeID =
-  | "frontalL"
-  | "frontalR"
-  | "parietalL"
-  | "parietalR"
-  | "temporal"
-  | "occipital"
-  | "cerebellum";
+  | "frontalL"     // Markets
+  | "frontalR"     // Money Matters
+  | "parietalL"    // Platform
+  | "parietalR"    // Lending
+  | "temporal"     // Recurring Payments
+  | "occipital"    // Web Platform
+  | "cerebellum";  // (reserved)
 
 export interface Domain {
   /** Stable identifier — used by the canvas hit-test and by SYNAPSES grouping. */
@@ -236,7 +236,7 @@ export interface AtlasTweaks {
 export const ATLAS_TWEAK_DEFAULTS: AtlasTweaks = {
   showSidebar: true,
   showHints: true,
-  wiggle: 0.5,
+  wiggle: 0.8,
 };
 
 // ─── Top-level atlas state ───────────────────────────────────────────────────

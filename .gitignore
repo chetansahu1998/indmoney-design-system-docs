@@ -11,6 +11,13 @@ node_modules/
 .env.local
 .env.*.local
 
+# Service-account keys, OAuth tokens, downloaded credentials
+.secrets/
+*-sa.json
+*service-account*.json
+gen-lang-client-*.json
+google-sheets-sa.json
+
 # Generated tokens (built per-brand at deploy time)
 lib/tokens/.generated/
 lib/tokens-generated/
