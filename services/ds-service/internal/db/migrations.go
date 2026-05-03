@@ -132,6 +132,18 @@ func (d *DB) loadAppliedVersions(ctx context.Context) (map[int]bool, error) {
 }
 
 func (d *DB) applyOne(ctx context.Context, f migrationFile) error {
+	// Migrations whose filename contains `.no_tx.` (e.g.
+	// `0015_tenant_fk_constraints.no_tx.up.sql`) opt out of the wrapping
+	// transaction so they can issue PRAGMA statements that SQLite forbids
+	// inside a tx — most importantly `PRAGMA foreign_keys = OFF`, required
+	// for the SQLite "rebuild table" technique used to add FK constraints
+	// to existing tables (T7 / plan 2026-05-03-001). The migration body
+	// is responsible for its own atomicity (typically with an explicit
+	// BEGIN/COMMIT inside the SQL).
+	if strings.Contains(f.Name, ".no_tx.") {
+		return d.applyOneNoTx(ctx, f)
+	}
+
 	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -152,6 +164,36 @@ func (d *DB) applyOne(ctx context.Context, f migrationFile) error {
 		return fmt.Errorf("record applied: %w", err)
 	}
 	return tx.Commit()
+}
+
+// applyOneNoTx runs a migration body without wrapping it in a transaction.
+// The body must contain its own BEGIN/COMMIT if it wants atomicity. Used
+// for migrations that need PRAGMA statements that are no-ops or errors
+// inside a tx (foreign_keys, journal_mode).
+//
+// Critical: pins to a single sql.Conn for the whole body. The DSN sets
+// foreign_keys=ON per connection, so without pinning a `PRAGMA foreign_
+// keys = OFF` issued on one pool connection wouldn't carry over to the
+// next ExecContext, which might land on a different connection with
+// foreign_keys=ON re-applied. The test suite reproducer hit exactly this
+// failure mode (error code 1811 mid-migration).
+func (d *DB) applyOneNoTx(ctx context.Context, f migrationFile) error {
+	conn, err := d.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire conn (no-tx): %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, f.SQL); err != nil {
+		return fmt.Errorf("exec migration body (no-tx): %w", err)
+	}
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)`,
+		f.Version, f.Name, time.Now().UTC().Format(time.RFC3339),
+	); err != nil {
+		return fmt.Errorf("record applied (no-tx): %w", err)
+	}
+	return nil
 }
 
 // AppliedMigrations returns the list of versions recorded in schema_migrations,
