@@ -25,8 +25,16 @@ type repo struct {
 
 // TenantRepo is the only public way to read or write project rows. It carries
 // a tenant_id captured from auth.Claims and injects it into every query.
+//
+// When .tx is nil (the default), every Exec/Query/QueryRow runs against
+// t.r.db directly — autocommit, one statement per round-trip, current
+// behavior. Callers that need atomicity across multiple writes (e.g.
+// HandleExport, plan 2026-05-03-001 / T2) get a tx-bound clone via
+// WithTx(tx); every subsequent write on the clone runs through the tx,
+// so a Rollback rolls them all back as one unit.
 type TenantRepo struct {
 	r        *repo
+	tx       *sql.Tx // optional; non-nil binds writes to a single tx
 	tenantID string
 	now      func() time.Time // injectable for tests
 }
@@ -35,6 +43,57 @@ type TenantRepo struct {
 // tests can substitute a bare connection without going through migrations.
 func NewTenantRepo(db *sql.DB, tenantID string) *TenantRepo {
 	return &TenantRepo{r: &repo{db: db}, tenantID: tenantID, now: time.Now}
+}
+
+// WithTx returns a clone of the repo whose writes go through `tx` instead of
+// the base *sql.DB. The clone shares the same *repo, tenantID, and clock —
+// only the tx field changes, so callers can mix tx-bound and unbound clones
+// in the same handler if a particular query is intentionally outside the
+// transaction.
+func (t *TenantRepo) WithTx(tx *sql.Tx) *TenantRepo {
+	cp := *t
+	cp.tx = tx
+	return &cp
+}
+
+// dbtx is the read+write surface common to *sql.DB and *sql.Tx. The exec /
+// query / queryRow helpers below pick one or the other based on whether
+// WithTx has been called.
+type dbtx interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (t *TenantRepo) handle() dbtx {
+	if t.tx != nil {
+		return t.tx
+	}
+	return t.r.db
+}
+
+// beginOrJoin lets a write method participate in either:
+//   - the caller's transaction (when t.tx != nil) — returns owned=false so
+//     the method does NOT defer-rollback or call Commit; the caller owns
+//     the lifecycle.
+//   - a fresh per-method transaction (when t.tx == nil) — returns owned=true
+//     so the method must defer tx.Rollback() and explicitly tx.Commit() at
+//     success. Identical to the previous behavior of CreateVersion /
+//     InsertScreens / etc.
+//
+// Why not always open a sub-transaction: SQLite supports SAVEPOINTs but
+// modernc.org/sqlite's driver doesn't expose nested *sql.Tx; you'd have
+// to issue raw SAVEPOINT statements. Joining the parent tx is simpler
+// and atomic for the caller's whole sequence (HandleExport's intent).
+func (t *TenantRepo) beginOrJoin(ctx context.Context) (owned bool, tx *sql.Tx, err error) {
+	if t.tx != nil {
+		return false, t.tx, nil
+	}
+	tx, err = t.r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, nil, err
+	}
+	return true, tx, nil
 }
 
 // withNow returns a copy with the clock overridden — only tests reach for this.
@@ -71,7 +130,7 @@ func (t *TenantRepo) UpsertProject(ctx context.Context, p Project) (Project, err
 		return Project{}, errors.New("projects: tenant_id required")
 	}
 	// Look up existing first.
-	row := t.r.db.QueryRowContext(ctx,
+	row := t.handle().QueryRowContext(ctx,
 		`SELECT id, slug, name, platform, product, path, owner_user_id, created_at, updated_at
 		   FROM projects
 		  WHERE tenant_id = ? AND product = ? AND platform = ? AND path = ? AND deleted_at IS NULL`,
@@ -87,7 +146,7 @@ func (t *TenantRepo) UpsertProject(ctx context.Context, p Project) (Project, err
 		existing.UpdatedAt = parseTime(updatedAt)
 		// Bump updated_at + name (designers may rename)
 		now := t.now().UTC()
-		_, err := t.r.db.ExecContext(ctx,
+		_, err := t.handle().ExecContext(ctx,
 			`UPDATE projects SET name = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`,
 			p.Name, rfc3339(now), existing.ID, t.tenantID)
 		if err != nil {
@@ -112,7 +171,7 @@ func (t *TenantRepo) UpsertProject(ctx context.Context, p Project) (Project, err
 	p.CreatedAt = now
 	p.UpdatedAt = now
 	p.TenantID = t.tenantID
-	_, err = t.r.db.ExecContext(ctx,
+	_, err = t.handle().ExecContext(ctx,
 		`INSERT INTO projects (id, slug, name, platform, product, path, owner_user_id, tenant_id, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Slug, p.Name, p.Platform, p.Product, p.Path, p.OwnerUserID, t.tenantID,
@@ -133,7 +192,7 @@ func (t *TenantRepo) UpsertProject(ctx context.Context, p Project) (Project, err
 			// Pre-Phase 6 this path recursed on the public method, which
 			// could loop forever for case (b). The fix below is bounded:
 			// at most one retry, and only for case (b).
-			row := t.r.db.QueryRowContext(ctx,
+			row := t.handle().QueryRowContext(ctx,
 				`SELECT id, slug, name, platform, product, path, owner_user_id, created_at, updated_at
 				   FROM projects
 				  WHERE tenant_id = ? AND product = ? AND platform = ? AND path = ? AND deleted_at IS NULL`,
@@ -157,7 +216,7 @@ func (t *TenantRepo) UpsertProject(ctx context.Context, p Project) (Project, err
 			// platform to disambiguate, regenerate IDs, retry ONCE.
 			p.Slug = makeSlug(p.Product, p.Path) + "-" + strings.ToLower(p.Platform)
 			p.ID = uuid.NewString()
-			retryErr := t.r.db.QueryRowContext(ctx,
+			retryErr := t.handle().QueryRowContext(ctx,
 				`INSERT INTO projects (id, slug, name, platform, product, path, owner_user_id, tenant_id, created_at, updated_at)
 				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				 RETURNING id`,
@@ -180,11 +239,13 @@ func (t *TenantRepo) CreateVersion(ctx context.Context, projectID, createdByUser
 	if t.tenantID == "" {
 		return ProjectVersion{}, errors.New("projects: tenant_id required")
 	}
-	tx, err := t.r.db.BeginTx(ctx, nil)
+	owned, tx, err := t.beginOrJoin(ctx)
 	if err != nil {
 		return ProjectVersion{}, err
 	}
-	defer tx.Rollback()
+	if owned {
+		defer tx.Rollback()
+	}
 
 	// Compute next version_index under the same transaction so concurrent
 	// inserts don't collide on UNIQUE(project_id, version_index).
@@ -221,8 +282,10 @@ func (t *TenantRepo) CreateVersion(ctx context.Context, projectID, createdByUser
 	if err != nil {
 		return ProjectVersion{}, fmt.Errorf("insert version: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return ProjectVersion{}, err
+	if owned {
+		if err := tx.Commit(); err != nil {
+			return ProjectVersion{}, err
+		}
 	}
 	return v, nil
 }
@@ -257,7 +320,7 @@ func (t *TenantRepo) UpsertFlow(ctx context.Context, f Flow) (Flow, error) {
 		q += ` AND persona_id = ?`
 		args = append(args, *f.PersonaID)
 	}
-	row := t.r.db.QueryRowContext(ctx, q, args...)
+	row := t.handle().QueryRowContext(ctx, q, args...)
 	var existing Flow
 	var sectionID, personaID sql.NullString
 	var createdAt, updatedAt string
@@ -282,7 +345,7 @@ func (t *TenantRepo) UpsertFlow(ctx context.Context, f Flow) (Flow, error) {
 		// Skipping this would silently freeze the original name forever.
 		if f.Name != "" && f.Name != existing.Name {
 			now := t.now().UTC()
-			if _, uerr := t.r.db.ExecContext(ctx,
+			if _, uerr := t.handle().ExecContext(ctx,
 				`UPDATE flows SET name = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`,
 				f.Name, rfc3339(now), existing.ID, t.tenantID,
 			); uerr != nil {
@@ -305,7 +368,7 @@ func (t *TenantRepo) UpsertFlow(ctx context.Context, f Flow) (Flow, error) {
 	f.CreatedAt = now
 	f.UpdatedAt = now
 	f.TenantID = t.tenantID
-	_, err = t.r.db.ExecContext(ctx,
+	_, err = t.handle().ExecContext(ctx,
 		`INSERT INTO flows (id, project_id, tenant_id, file_id, section_id, name, persona_id, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		f.ID, f.ProjectID, t.tenantID, f.FileID, nullString(f.SectionID), f.Name,
@@ -373,11 +436,13 @@ func (t *TenantRepo) InsertScreens(ctx context.Context, screens []Screen) error 
 	if len(screens) == 0 {
 		return nil
 	}
-	tx, err := t.r.db.BeginTx(ctx, nil)
+	owned, tx, err := t.beginOrJoin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	if owned {
+		defer tx.Rollback()
+	}
 	stmt, err := tx.PrepareContext(ctx,
 		`INSERT INTO screens (id, version_id, flow_id, tenant_id, x, y, width, height, screen_logical_id, png_storage_key, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -405,7 +470,10 @@ func (t *TenantRepo) InsertScreens(ctx context.Context, screens []Screen) error 
 			return fmt.Errorf("insert screen %s: %w", s.ID, err)
 		}
 	}
-	return tx.Commit()
+	if owned {
+		return tx.Commit()
+	}
+	return nil
 }
 
 // UpsertPersona finds an approved persona by name in the tenant, or creates a
@@ -430,7 +498,7 @@ func (t *TenantRepo) UpsertPersonaTracked(ctx context.Context, name, createdByUs
 		return Persona{}, false, errors.New("projects: tenant_id required")
 	}
 	// Try approved first.
-	row := t.r.db.QueryRowContext(ctx,
+	row := t.handle().QueryRowContext(ctx,
 		`SELECT id, name, status, created_by_user_id, created_at
 		   FROM personas
 		  WHERE tenant_id = ? AND name = ? AND status = 'approved' AND deleted_at IS NULL`,
@@ -445,7 +513,7 @@ func (t *TenantRepo) UpsertPersonaTracked(ctx context.Context, name, createdByUs
 	}
 
 	// Try pending — return existing pending row if the same designer suggested.
-	row = t.r.db.QueryRowContext(ctx,
+	row = t.handle().QueryRowContext(ctx,
 		`SELECT id, name, status, created_by_user_id, created_at
 		   FROM personas
 		  WHERE tenant_id = ? AND name = ? AND status = 'pending' AND deleted_at IS NULL AND created_by_user_id = ?
@@ -463,7 +531,7 @@ func (t *TenantRepo) UpsertPersonaTracked(ctx context.Context, name, createdByUs
 	// fail UNIQUE and we re-read.
 	id := uuid.NewString()
 	now := t.now().UTC()
-	_, err := t.r.db.ExecContext(ctx,
+	_, err := t.handle().ExecContext(ctx,
 		`INSERT INTO personas (id, tenant_id, name, status, created_by_user_id, created_at)
 		 VALUES (?, ?, ?, 'pending', ?, ?)
 		 ON CONFLICT(tenant_id, name) WHERE status = 'approved' AND deleted_at IS NULL DO NOTHING`,

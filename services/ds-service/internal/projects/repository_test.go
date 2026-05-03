@@ -522,3 +522,127 @@ func TestRepo_PrototypeLinks_CascadeOnScreenDelete(t *testing.T) {
 		t.Errorf("expected 0 links after CASCADE delete; got %d", len(got))
 	}
 }
+
+// TestRepo_TxWrap_RollbackUndoesAllWrites verifies plan 2026-05-03-001 / T2:
+// when a transaction wrapping UpsertProject + CreateVersion + UpsertFlow +
+// InsertScreens is rolled back, NONE of those rows survive. Pre-T2 each method
+// had its own autocommit, so a partial-export failure left orphan rows that
+// the export idempotency cache then re-served on retry.
+func TestRepo_TxWrap_RollbackUndoesAllWrites(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	tx, err := repo.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	txRepo := repo.WithTx(tx)
+
+	project, err := txRepo.UpsertProject(ctx, Project{
+		Name: "Rollback target", Platform: "mobile", Product: "TxTest",
+		Path: "RollbackPath", OwnerUserID: uA,
+	})
+	if err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+	version, err := txRepo.CreateVersion(ctx, project.ID, uA)
+	if err != nil {
+		t.Fatalf("create version: %v", err)
+	}
+	flow, err := txRepo.UpsertFlow(ctx, Flow{
+		ProjectID: project.ID,
+		FileID:    "fk-rollback",
+		Name:      "RollbackFlow",
+	})
+	if err != nil {
+		t.Fatalf("upsert flow: %v", err)
+	}
+	if err := txRepo.InsertScreens(ctx, []Screen{{
+		VersionID: version.ID, FlowID: flow.ID,
+		X: 0, Y: 0, Width: 375, Height: 667,
+	}}); err != nil {
+		t.Fatalf("insert screens: %v", err)
+	}
+
+	// Simulate mid-handler failure — roll back instead of committing.
+	if err := tx.Rollback(); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+
+	// Every assertion below would have failed pre-T2; the autocommit per
+	// method would have left the rows behind.
+	if _, err := repo.GetProjectBySlug(ctx, project.Slug); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("project survived rollback (slug=%s, err=%v)", project.Slug, err)
+	}
+	if _, err := repo.GetVersion(ctx, version.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("version survived rollback (id=%s, err=%v)", version.ID, err)
+	}
+	flows, err := repo.ListFlowsByProject(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("list flows: %v", err)
+	}
+	if len(flows) != 0 {
+		t.Fatalf("expected 0 flows after rollback; got %d", len(flows))
+	}
+}
+
+// TestRepo_TxWrap_CommitPersistsAllWrites is the happy path counterpart —
+// the same write sequence, but tx.Commit() instead of Rollback. All rows
+// must be queryable after the commit. Catches regressions in our
+// beginOrJoin-style pattern that would silently double-tx.
+func TestRepo_TxWrap_CommitPersistsAllWrites(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	tx, err := repo.BeginTx(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	txRepo := repo.WithTx(tx)
+
+	project, err := txRepo.UpsertProject(ctx, Project{
+		Name: "Commit target", Platform: "mobile", Product: "TxTest",
+		Path: "CommitPath", OwnerUserID: uA,
+	})
+	if err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+	version, err := txRepo.CreateVersion(ctx, project.ID, uA)
+	if err != nil {
+		t.Fatalf("create version: %v", err)
+	}
+	flow, err := txRepo.UpsertFlow(ctx, Flow{
+		ProjectID: project.ID,
+		FileID:    "fk-commit",
+		Name:      "CommitFlow",
+	})
+	if err != nil {
+		t.Fatalf("upsert flow: %v", err)
+	}
+	if err := txRepo.InsertScreens(ctx, []Screen{{
+		VersionID: version.ID, FlowID: flow.ID,
+		X: 0, Y: 0, Width: 375, Height: 667,
+	}}); err != nil {
+		t.Fatalf("insert screens: %v", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	if _, err := repo.GetProjectBySlug(ctx, project.Slug); err != nil {
+		t.Fatalf("project missing after commit: %v", err)
+	}
+	if _, err := repo.GetVersion(ctx, version.ID); err != nil {
+		t.Fatalf("version missing after commit: %v", err)
+	}
+	flows, err := repo.ListFlowsByProject(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("list flows: %v", err)
+	}
+	if len(flows) != 1 {
+		t.Fatalf("expected 1 flow after commit; got %d", len(flows))
+	}
+}

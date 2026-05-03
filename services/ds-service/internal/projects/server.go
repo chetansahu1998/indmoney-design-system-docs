@@ -226,11 +226,33 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 	traceID := uuid.NewString()
 	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
 
+	// Plan 2026-05-03-001 / T2 — wrap every write below in a single tx so
+	// a failure on flow N (e.g. UpsertFlow returns an error mid-loop) rolls
+	// back the project + version + previously-inserted flows + screens.
+	// Pre-T2 these were autocommit-per-method, so a partial export left
+	// orphan rows that the idempotency cache then preserved on retry.
+	//
+	// Persona insertions are ALSO inside the tx (UpsertPersonaTracked uses
+	// t.handle() so it joins). Persona SSE publish stays outside — it
+	// fires only after the tx commits successfully.
+	tx, err := repo.BeginTx(r.Context())
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "begin_tx", err.Error())
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	txRepo := repo.WithTx(tx)
+
 	// Phase 1 keeps it simple: one flow per export → one project + one version.
 	// The plan permits up to 20 flows, so we treat the first flow as the
 	// driver and create one version that holds every flow's screens.
 	first := req.Flows[0]
-	project, err := repo.UpsertProject(r.Context(), Project{
+	project, err := txRepo.UpsertProject(r.Context(), Project{
 		Name:        first.Name,
 		Platform:    first.Platform,
 		Product:     first.Product,
@@ -241,38 +263,35 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusInternalServerError, "upsert_project", err.Error())
 		return
 	}
-	version, err := repo.CreateVersion(r.Context(), project.ID, claims.Sub)
+	version, err := txRepo.CreateVersion(r.Context(), project.ID, claims.Sub)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "create_version", err.Error())
 		return
 	}
+
+	// Persona-pending SSE events get queued to fire ONLY after the tx
+	// commits — otherwise a rollback would leave subscribers staring at a
+	// notification for a row that no longer exists.
+	type pendingPersonaPub struct{ persona Persona }
+	var personaPubs []pendingPersonaPub
 
 	// Iterate flows. Each gets a flow row; each frame becomes a screen row.
 	var pipelineFrames []PipelineFrame
 	for _, flow := range req.Flows {
 		var personaID *string
 		if flow.PersonaName != "" {
-			persona, wasNew, err := repo.UpsertPersonaTracked(r.Context(), flow.PersonaName, claims.Sub)
+			persona, wasNew, err := txRepo.UpsertPersonaTracked(r.Context(), flow.PersonaName, claims.Sub)
 			if err != nil {
 				writeJSONErr(w, http.StatusInternalServerError, "upsert_persona", err.Error())
 				return
 			}
 			id := persona.ID
 			personaID = &id
-			// Phase 7.6 — fire a `persona.pending` SSE event when a fresh
-			// pending row was created so the admin's bell badge updates
-			// without polling. inbox:<tenant_id> is the channel admins
-			// already subscribe to (Phase 4 inbox).
 			if wasNew && s.deps.Broker != nil {
-				s.deps.Broker.Publish(inboxBroadcastChannel(tenantID), sse.PersonaPending{
-					Tenant:          tenantID,
-					PersonaID:       persona.ID,
-					Name:            persona.Name,
-					CreatedByUserID: persona.CreatedByUserID,
-				})
+				personaPubs = append(personaPubs, pendingPersonaPub{persona: persona})
 			}
 		}
-		f, err := repo.UpsertFlow(r.Context(), Flow{
+		f, err := txRepo.UpsertFlow(r.Context(), Flow{
 			ProjectID: project.ID,
 			FileID:    req.FileID,
 			SectionID: flow.SectionID,
@@ -295,7 +314,7 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 				Height:    fr.Height,
 			})
 		}
-		if err := repo.InsertScreens(r.Context(), screens); err != nil {
+		if err := txRepo.InsertScreens(r.Context(), screens); err != nil {
 			writeJSONErr(w, http.StatusInternalServerError, "insert_screens", err.Error())
 			return
 		}
@@ -315,6 +334,22 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 				ExplicitVariableModesJSON: fr.ExplicitVariableModesJSON,
 			})
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "commit", err.Error())
+		return
+	}
+	committed = true
+
+	// Persona SSE — fire only now that the rows are durable.
+	for _, pp := range personaPubs {
+		s.deps.Broker.Publish(inboxBroadcastChannel(tenantID), sse.PersonaPending{
+			Tenant:          tenantID,
+			PersonaID:       pp.persona.ID,
+			Name:            pp.persona.Name,
+			CreatedByUserID: pp.persona.CreatedByUserID,
+		})
 	}
 
 	// audit_log row (always — success or failure). Persist the per-frame
