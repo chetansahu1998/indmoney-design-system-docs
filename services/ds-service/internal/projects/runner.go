@@ -198,9 +198,13 @@ func NewDBVersionScreenLoader(db *sql.DB) VersionScreenLoader {
 }
 
 // LoadScreensWithTrees implements VersionScreenLoader.
+//
+// T8 — reads both canonical_tree (legacy) and canonical_tree_gz; the
+// ResolveCanonicalTree helper picks whichever is populated. New rows
+// stored gzipped, old rows stored plain — transparent to the caller.
 func (l *dbVersionScreenLoader) LoadScreensWithTrees(ctx context.Context, versionID string) ([]ScreenWithTree, error) {
 	rows, err := l.db.QueryContext(ctx,
-		`SELECT s.id, s.flow_id, COALESCE(t.canonical_tree, '')
+		`SELECT s.id, s.flow_id, COALESCE(t.canonical_tree, ''), t.canonical_tree_gz
 		   FROM screens s
 		   LEFT JOIN screen_canonical_trees t ON t.screen_id = s.id
 		  WHERE s.version_id = ?
@@ -214,9 +218,16 @@ func (l *dbVersionScreenLoader) LoadScreensWithTrees(ctx context.Context, versio
 	var out []ScreenWithTree
 	for rows.Next() {
 		var sc ScreenWithTree
-		if err := rows.Scan(&sc.ScreenID, &sc.FlowID, &sc.CanonicalTree); err != nil {
+		var legacy string
+		var gz []byte
+		if err := rows.Scan(&sc.ScreenID, &sc.FlowID, &legacy, &gz); err != nil {
 			return nil, err
 		}
+		tree, err := ResolveCanonicalTree(legacy, gz)
+		if err != nil {
+			return nil, fmt.Errorf("decompress tree for screen %s: %w", sc.ScreenID, err)
+		}
+		sc.CanonicalTree = tree
 		out = append(out, sc)
 	}
 	return out, rows.Err()

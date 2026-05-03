@@ -101,7 +101,7 @@ func (l *dbTouchTargetLoader) LoadScreenTrees(ctx context.Context, versionID str
 		return nil, errors.New("rules: tenant_id required for production loader")
 	}
 	rows, err := l.db.QueryContext(ctx,
-		`SELECT s.id, COALESCE(t.canonical_tree, '{}')
+		`SELECT s.id, COALESCE(t.canonical_tree, ''), t.canonical_tree_gz
 		   FROM screens s
 		   LEFT JOIN screen_canonical_trees t ON t.screen_id = s.id
 		  WHERE s.version_id = ? AND s.tenant_id = ?
@@ -114,9 +114,14 @@ func (l *dbTouchTargetLoader) LoadScreenTrees(ctx context.Context, versionID str
 	defer rows.Close()
 	var out []TouchTargetScreenTree
 	for rows.Next() {
-		var screenID, treeJSON string
-		if err := rows.Scan(&screenID, &treeJSON); err != nil {
+		var screenID, legacy string
+		var gz []byte
+		if err := rows.Scan(&screenID, &legacy, &gz); err != nil {
 			return nil, err
+		}
+		treeJSON, err := projects.ResolveCanonicalTree(legacy, gz)
+		if err != nil {
+			return nil, fmt.Errorf("touch_target loader: decompress %s: %w", screenID, err)
 		}
 		out = append(out, TouchTargetScreenTree{
 			ScreenID:      screenID,
@@ -148,7 +153,7 @@ func (l *dbScreenModeLoader) LoadScreenModesForVersion(ctx context.Context, vers
 	}
 	rows, err := l.db.QueryContext(ctx,
 		`SELECT s.id, m.mode_label, m.explicit_variable_modes_json,
-		        COALESCE(t.canonical_tree, '{}')
+		        COALESCE(t.canonical_tree, ''), t.canonical_tree_gz
 		   FROM screens s
 		   JOIN screen_modes m       ON m.screen_id = s.id
 		   LEFT JOIN screen_canonical_trees t ON t.screen_id = s.id
@@ -172,9 +177,14 @@ func (l *dbScreenModeLoader) LoadScreenModesForVersion(ctx context.Context, vers
 	bySID := map[string]*screenAccum{}
 	order := []string{}
 	for rows.Next() {
-		var screenID, modeLabel, varJSON, treeJSON string
-		if err := rows.Scan(&screenID, &modeLabel, &varJSON, &treeJSON); err != nil {
+		var screenID, modeLabel, varJSON, legacy string
+		var gz []byte
+		if err := rows.Scan(&screenID, &modeLabel, &varJSON, &legacy, &gz); err != nil {
 			return nil, err
+		}
+		treeJSON, err := projects.ResolveCanonicalTree(legacy, gz)
+		if err != nil {
+			return nil, fmt.Errorf("screen_mode loader: decompress %s: %w", screenID, err)
 		}
 		acc, ok := bySID[screenID]
 		if !ok {
@@ -238,7 +248,7 @@ func (l *dbResolvedTreeLoader) LoadResolvedScreens(ctx context.Context, versionI
 	}
 	rows, err := l.db.QueryContext(ctx,
 		`SELECT s.id, m.mode_label, m.explicit_variable_modes_json,
-		        COALESCE(t.canonical_tree, '{}')
+		        COALESCE(t.canonical_tree, ''), t.canonical_tree_gz
 		   FROM screens s
 		   JOIN screen_modes m       ON m.screen_id = s.id
 		   LEFT JOIN screen_canonical_trees t ON t.screen_id = s.id
@@ -260,9 +270,14 @@ func (l *dbResolvedTreeLoader) LoadResolvedScreens(ctx context.Context, versionI
 	bySID := map[string]*screenAccum{}
 	order := []string{}
 	for rows.Next() {
-		var screenID, modeLabel, varJSON, treeJSON string
-		if err := rows.Scan(&screenID, &modeLabel, &varJSON, &treeJSON); err != nil {
+		var screenID, modeLabel, varJSON, legacy string
+		var gz []byte
+		if err := rows.Scan(&screenID, &modeLabel, &varJSON, &legacy, &gz); err != nil {
 			return nil, err
+		}
+		treeJSON, err := projects.ResolveCanonicalTree(legacy, gz)
+		if err != nil {
+			return nil, fmt.Errorf("resolved_tree loader: decompress %s: %w", screenID, err)
 		}
 		acc, ok := bySID[screenID]
 		if !ok {
@@ -394,7 +409,7 @@ func (l *dbScreensWithFlowsLoader) LoadScreensWithFlows(ctx context.Context, ver
 		return nil, errors.New("rules: tenant_id required for production loader")
 	}
 	rows, err := l.db.QueryContext(ctx,
-		`SELECT s.id, s.flow_id, COALESCE(t.canonical_tree, '{}')
+		`SELECT s.id, s.flow_id, COALESCE(t.canonical_tree, ''), t.canonical_tree_gz
 		   FROM screens s
 		   LEFT JOIN screen_canonical_trees t ON t.screen_id = s.id
 		  WHERE s.version_id = ? AND s.tenant_id = ?
@@ -408,9 +423,16 @@ func (l *dbScreensWithFlowsLoader) LoadScreensWithFlows(ctx context.Context, ver
 	var out []ScreenWithFlow
 	for rows.Next() {
 		var sw ScreenWithFlow
-		if err := rows.Scan(&sw.ScreenID, &sw.FlowID, &sw.CanonicalTree); err != nil {
+		var legacy string
+		var gz []byte
+		if err := rows.Scan(&sw.ScreenID, &sw.FlowID, &legacy, &gz); err != nil {
 			return nil, err
 		}
+		tree, err := projects.ResolveCanonicalTree(legacy, gz)
+		if err != nil {
+			return nil, fmt.Errorf("screens_with_flows loader: decompress %s: %w", sw.ScreenID, err)
+		}
+		sw.CanonicalTree = tree
 		out = append(out, sw)
 	}
 	return out, rows.Err()
@@ -437,7 +459,7 @@ func (l *dbFlowGraphLoader) LoadScreensForFlowGraph(ctx context.Context, version
 		return nil, errors.New("rules: tenant_id required for production loader")
 	}
 	rows, err := l.db.QueryContext(ctx,
-		`SELECT s.id, s.flow_id, f.file_id, COALESCE(t.canonical_tree, '{}')
+		`SELECT s.id, s.flow_id, f.file_id, COALESCE(t.canonical_tree, ''), t.canonical_tree_gz
 		   FROM screens s
 		   JOIN flows f ON f.id = s.flow_id
 		   LEFT JOIN screen_canonical_trees t ON t.screen_id = s.id
@@ -452,9 +474,16 @@ func (l *dbFlowGraphLoader) LoadScreensForFlowGraph(ctx context.Context, version
 	var out []ScreenForFlowGraph
 	for rows.Next() {
 		var s ScreenForFlowGraph
-		if err := rows.Scan(&s.ScreenID, &s.FlowID, &s.FileID, &s.CanonicalTree); err != nil {
+		var legacy string
+		var gz []byte
+		if err := rows.Scan(&s.ScreenID, &s.FlowID, &s.FileID, &legacy, &gz); err != nil {
 			return nil, err
 		}
+		tree, err := projects.ResolveCanonicalTree(legacy, gz)
+		if err != nil {
+			return nil, fmt.Errorf("flow_graph loader: decompress %s: %w", s.ScreenID, err)
+		}
+		s.CanonicalTree = tree
 		out = append(out, s)
 	}
 	return out, rows.Err()

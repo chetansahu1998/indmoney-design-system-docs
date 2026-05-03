@@ -976,21 +976,28 @@ func (t *TenantRepo) GetCanonicalTree(ctx context.Context, projectSlug, screenID
 	}
 	var res CanonicalTreeResult
 	var hash sql.NullString
+	var legacy string
+	var gz []byte
 	err := t.r.db.QueryRowContext(ctx,
-		`SELECT s.id, sct.canonical_tree, sct.hash
+		`SELECT s.id, sct.canonical_tree, sct.canonical_tree_gz, sct.hash
 		 FROM screens s
 		 JOIN project_versions v ON v.id = s.version_id
 		 JOIN projects p ON p.id = v.project_id
 		 JOIN screen_canonical_trees sct ON sct.screen_id = s.id
 		 WHERE p.slug = ? AND p.tenant_id = ? AND p.deleted_at IS NULL AND s.id = ?`,
 		projectSlug, t.tenantID, screenID,
-	).Scan(&res.ScreenID, &res.Tree, &hash)
+	).Scan(&res.ScreenID, &legacy, &gz, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	tree, err := ResolveCanonicalTree(legacy, gz)
+	if err != nil {
+		return nil, fmt.Errorf("decompress canonical tree: %w", err)
+	}
+	res.Tree = tree
 	if hash.Valid {
 		res.Hash = hash.String
 	}
@@ -1077,16 +1084,30 @@ func (t *TenantRepo) InsertScreenModes(ctx context.Context, tx *sql.Tx, modes []
 }
 
 // InsertCanonicalTree is called inside the pipeline transaction; takes a *sql.Tx.
+//
+// T8 — gzips the tree into canonical_tree_gz; the legacy canonical_tree
+// column is written as empty string so readers' COALESCE / NULLIF
+// expressions correctly defer to the gz column. Once the cmd/compress-
+// trees backfill has nulled out every legacy row a follow-up migration
+// will drop the column entirely.
 func (t *TenantRepo) InsertCanonicalTree(ctx context.Context, tx *sql.Tx, screenID, tree, hash string) error {
 	if t.tenantID == "" {
 		return errors.New("projects: tenant_id required")
 	}
+	gz, err := CompressTree(tree)
+	if err != nil {
+		return fmt.Errorf("compress tree: %w", err)
+	}
 	now := t.now().UTC()
-	_, err := tx.ExecContext(ctx,
-		`INSERT INTO screen_canonical_trees (screen_id, canonical_tree, hash, updated_at)
-		 VALUES (?, ?, ?, ?)
-		 ON CONFLICT(screen_id) DO UPDATE SET canonical_tree = excluded.canonical_tree, hash = excluded.hash, updated_at = excluded.updated_at`,
-		screenID, tree, hash, rfc3339(now),
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO screen_canonical_trees (screen_id, canonical_tree, canonical_tree_gz, hash, updated_at)
+		 VALUES (?, '', ?, ?, ?)
+		 ON CONFLICT(screen_id) DO UPDATE SET
+		     canonical_tree    = '',
+		     canonical_tree_gz = excluded.canonical_tree_gz,
+		     hash              = excluded.hash,
+		     updated_at        = excluded.updated_at`,
+		screenID, gz, hash, rfc3339(now),
 	)
 	return err
 }
