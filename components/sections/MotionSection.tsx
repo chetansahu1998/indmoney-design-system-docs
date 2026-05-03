@@ -130,12 +130,6 @@ function PressDemo() {
   );
 }
 
-const principles = [
-  { icon: "⚡", title: "Fast",     desc: "Animations never feel slow or heavy. Spring presets keep interactions under ~0.55s." },
-  { icon: "🌿", title: "Natural",  desc: "Spring physics mirror real-world momentum — elements decelerate the way objects do." },
-  { icon: "🔗", title: "Cohesive", desc: "All surfaces share the same three spring presets and one opacity curve." },
-];
-
 export default function MotionSection() {
   const isMobile = useIsMobile();
   const springs = springPresets();
@@ -169,26 +163,6 @@ export default function MotionSection() {
           Edit there to update; CSS variables and platform code samples will follow.
         </div>
       )}
-
-      {/* ── Principles ── */}
-      <motion.div
-        variants={stagger} initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-40px" }}
-        style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 16, marginBottom: 48 }}
-      >
-        {principles.map((p) => (
-          <motion.div
-            key={p.title}
-            variants={itemFadeUp}
-            whileHover={{ y: -3, boxShadow: "0 8px 24px rgba(0,0,0,0.1)" }}
-            transition={{ type: "spring", stiffness: 300, damping: 22 }}
-            style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, padding: 20 }}
-          >
-            <div style={{ fontSize: 20, marginBottom: 10 }}>{p.icon}</div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)", marginBottom: 4 }}>{p.title}</div>
-            <div style={{ fontSize: 12, color: "var(--text-3)", lineHeight: 1.55 }}>{p.desc}</div>
-          </motion.div>
-        ))}
-      </motion.div>
 
       {/* ── Spring presets ── */}
       <div id="motion-spring" style={{ marginBottom: 48, scrollMarginTop: "calc(var(--header-h) + 32px)" }}>

@@ -1,6 +1,6 @@
 import ComponentCanvas from "@/components/ComponentCanvas";
 import FilesShell from "@/components/files/FilesShell";
-import { parentComponents, slugifyCategory } from "@/lib/icons/manifest";
+import { iconsByKind, slugifyCategory } from "@/lib/icons/manifest";
 import type { NavGroup } from "@/components/Sidebar";
 
 // Audit C27: per-route metadata.
@@ -30,14 +30,13 @@ export const metadata = { title: "Components · INDmoney DS" };
  * and is independent of this page-level layout choice.
  */
 export default function ComponentsPage() {
-  // Audit C22: drop entries whose category is "Design System 🌟". The
-  // extractor stamps these as kind=component because they're top-level
-  // master frames on the DS page — but they're token-master sheets and
-  // pattern overviews, not composable organism components users can
-  // browse. Filtering here (rather than upstream in parentComponents)
-  // keeps the manifest data lossless while the UI surface shows only
-  // real shipped components.
-  const entries = parentComponents().filter(
+  // Show every kind=component entry from Glyph regardless of atomic-design
+  // tier (atom / molecule / parent). The previous parent-only filter dropped
+  // 105 atoms + 11 molecules — i.e. the actual building blocks (Buttons,
+  // Input Field, Bottom Nav, Bottom Sheet, etc.) — leaving only 2 entries
+  // on screen. We still drop "Design System 🌟" since those are token-sheet
+  // master frames, not composable components.
+  const entries = iconsByKind("component").filter(
     (e) => (e.category ?? "").trim() !== "Design System 🌟",
   );
 

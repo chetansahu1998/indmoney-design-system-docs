@@ -7,10 +7,12 @@ import {
   slugifyCategory,
   axisMatrix,
   defaultVariantOf,
+  resolveComposition,
   type IconEntry,
   type VariantEntry,
   type ComponentProperty,
   type LayoutInfo,
+  type CompositionRef,
 } from "@/lib/icons/manifest";
 import { useIsMobile } from "@/lib/use-mobile";
 import DataGapPreview from "@/components/ui/DataGapPreview";
@@ -887,6 +889,9 @@ function VariantRow({ variant }: { variant: VariantEntry }) {
           axisEntries.map(([k, v]) => <PropChip key={k} k={k} v={v} />)
         )}
       </div>
+      {(variant.composes?.length ?? 0) > 0 && (
+        <BuiltFromStrip composes={variant.composes!} />
+      )}
       <div
         style={{
           display: "flex",
@@ -1021,3 +1026,66 @@ function CategoryHeader({ label, count }: { label: string; count: number }) {
     </div>
   );
 }
+
+
+/* ── Built from strip — atoms this variant composes (data: variant.composes from
+ *  cmd/variants composition extraction) ──────────────────────────────────── */
+
+function BuiltFromStrip({ composes }: { composes: CompositionRef[] }) {
+  return (
+    <div>
+      <div
+        style={{
+          fontSize: 9,
+          fontWeight: 600,
+          color: "var(--text-3)",
+          textTransform: "uppercase",
+          letterSpacing: "0.07em",
+          marginBottom: 4,
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        Built from · {composes.length}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+        {composes.map((ref, i) => (
+          <BuiltFromChip key={ref.component_id + i} ref={ref} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BuiltFromChip({ ref }: { ref: CompositionRef }) {
+  const atom = resolveComposition(ref);
+  const label = ref.resolved_name || ref.instance_name || ref.atom_slug || "atom";
+  const inner = (
+    <span
+      title={ref.path || label}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "2px 6px",
+        fontSize: 10,
+        fontFamily: "var(--font-mono)",
+        color: atom ? "var(--text-2)" : "var(--text-3)",
+        background: atom ? "var(--bg-surface)" : "transparent",
+        border: `1px solid ${atom ? "var(--border)" : "color-mix(in srgb, var(--warn, #ca8a04) 30%, transparent)"}`,
+        borderRadius: 4,
+        textDecoration: "none",
+        cursor: atom ? "pointer" : "default",
+      }}
+    >
+      {label}
+    </span>
+  );
+  return atom ? (
+    <Link href={`/components/${atom.slug}`} style={{ textDecoration: "none" }}>
+      {inner}
+    </Link>
+  ) : (
+    inner
+  );
+}
+

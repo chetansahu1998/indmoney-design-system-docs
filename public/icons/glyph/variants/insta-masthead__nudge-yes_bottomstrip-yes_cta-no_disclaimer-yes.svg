@@ -1,7 +1,7 @@
 <svg width="375" height="437" viewBox="0 0 375 437" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <path d="M0 360H375V417C375 428.046 366.046 437 355 437H20C8.95431 437 0 428.046 0 417V360Z" fill="#017AFF"/>
 <g clip-path="url(#clip0_3322_59624)">
-<path d="M24 421.833V411.167M24 411.167L20 415.167M24 411.167L28 415.167" stroke="#FFFFFE" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M24 421.833V411.167M28 415.167L24 411.167L20 415.167" stroke="#FFFFFE" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 <text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="40.1377" y="421.504">Start tracking your external portfolio</tspan></text>
 <text fill="#FFFFFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="14" letter-spacing="0px"><tspan x="283.15" y="421.504">Set alert</tspan></text>

@@ -1,7 +1,7 @@
 <svg width="311" height="88" viewBox="0 0 311 88" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M0 0.5H311" stroke="#EFEFEF"/>
 <g clip-path="url(#clip0_840_11079)">
-<path d="M4 58.2422C2.79401 57.435 2 56.0602 2 54.5C2 52.1564 3.79151 50.2313 6.07974 50.0194C6.54781 47.1721 9.02024 45 12 45C14.9798 45 17.4522 47.1721 17.9203 50.0194C20.2085 50.2313 22 52.1564 22 54.5C22 56.0602 21.206 57.435 20 58.2422M8 59L12 63M12 63L16 59M12 63V54" stroke="#5E6063" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M4 58.2422C2.79401 57.435 2 56.0602 2 54.5C2 52.1564 3.79151 50.2313 6.07974 50.0194C6.54781 47.1721 9.02024 45 12 45C14.9798 45 17.4522 47.1721 17.9203 50.0194C20.2085 50.2313 22 52.1564 22 54.5C22 56.0602 21.206 57.435 20 58.2422M16 59L12 63L8 59M12 63V54" stroke="#5E6063" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
 <text fill="#5E6063" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="36" y="32.2891">Overline </tspan></text>
 <text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="15" letter-spacing="0px"><tspan x="36" y="58.3394">Heading</tspan></text>

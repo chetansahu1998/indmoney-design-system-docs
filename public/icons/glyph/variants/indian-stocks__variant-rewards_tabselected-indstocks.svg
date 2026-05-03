@@ -2,7 +2,7 @@
 <g filter="url(#filter0_d_1528_5813)">
 <rect width="375" height="72" transform="translate(17 21)" fill="white"/>
 <rect width="24" height="24" transform="translate(41.5 32)" fill="white"/>
-<path d="M53.5 40L49.5 44M49.5 44L53.5 48M49.5 44H57.5M63.5 44C63.5 49.5228 59.0228 54 53.5 54C47.9772 54 43.5 49.5228 43.5 44C43.5 38.4772 47.9772 34 53.5 34C59.0228 34 63.5 38.4772 63.5 44Z" stroke="#223466" stroke-width="1.71429" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M53.5 48L49.5 44L53.5 40M49.5 44H57.5M63.5 44C63.5 49.5228 59.0228 54 53.5 54C47.9772 54 43.5 49.5228 43.5 44C43.5 38.4772 47.9772 34 53.5 34C59.0228 34 63.5 38.4772 63.5 44Z" stroke="#223466" stroke-width="1.71429" stroke-linecap="round" stroke-linejoin="round"/>
 <text fill="#223466" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="36.9531" y="71.7715">Home</tspan></text>
 <line x1="86.5" y1="32" x2="86.5" y2="74" stroke="#88898A"/>
 <text fill="#017AFE" style="white-space: pre" xml:space="preserve" font-family="Basier Circle" font-size="12" letter-spacing="0px"><tspan x="101.795" y="71.7715">INDstocks</tspan></text>
