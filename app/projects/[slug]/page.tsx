@@ -1,34 +1,38 @@
 /**
- * `/projects/[slug]` — server component shell.
+ * /projects/[slug] — Figma-plugin deeplink target.
  *
- * Phase 1 caveat: ds-service auth is JWT-in-localStorage (lib/auth-client.ts);
- * a server component cannot read it without a cookie, and Phase 1 doesn't
- * ship cookie auth. So the heavy lifting (project fetch, GSAP timelines, SSE)
- * lives in `<ProjectShellLoader>` — a client component that runs after the
- * `app/projects/layout.tsx` auth gate succeeds.
+ * The plugin sends users here after a successful export. We forward to the
+ * new spatial shell at /atlas, preserving every searchParam (?v, ?trace,
+ * ?persona, …) so the inspector lands on the right state. The slug
+ * becomes ?project=<slug>; if the URL targets a specific flow that route
+ * lives entirely in /atlas's URL state machine.
  *
- * The server component still owns the route-shape contract: it awaits the
- * dynamic params + searchParams Promises (Next 16 default) and forwards
- * stable string props to the client. This keeps the page indexed by Next's
- * router and lets later phases drop in cookie-auth without a refactor.
+ * Server-side redirect — keeps the round-trip to one HTTP hop and avoids
+ * a client-side flash of the old ProjectShell. The legacy implementation
+ * is preserved at page.tsx.legacy.bak; Phase 8 deletes it once a release
+ * with the new shell ships.
  */
 
-import ProjectShellLoader from "./ProjectShellLoader";
+import { redirect } from "next/navigation";
 
-export default async function ProjectDetailPage({
-  params,
-  searchParams,
-}: {
+interface ProjectPageProps {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ v?: string; trace?: string }>;
-}) {
-  const { slug } = await params;
-  const { v: versionID, trace: traceID } = await searchParams;
-  return (
-    <ProjectShellLoader
-      slug={slug}
-      initialVersionID={versionID}
-      initialTraceID={traceID}
-    />
-  );
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+export default async function ProjectPage(props: ProjectPageProps): Promise<never> {
+  const { slug } = await props.params;
+  const search = await props.searchParams;
+
+  const qs = new URLSearchParams();
+  qs.set("project", slug);
+  for (const [k, v] of Object.entries(search)) {
+    if (v == null) continue;
+    const value = Array.isArray(v) ? v[0] : v;
+    if (typeof value === "string" && value.length > 0) {
+      qs.set(k, value);
+    }
+  }
+
+  redirect(`/atlas?${qs.toString()}`);
 }

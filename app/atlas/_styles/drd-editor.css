@@ -1,0 +1,426 @@
+/* ============================================================
+   drd-editor.css — Notion-grade theme overlay for BlockNote.
+   Mounted inside `.lc-ins-drd-host` so styles only affect the
+   atlas DRD editor, never bleed into other BlockNote instances.
+
+   Design language matches `INDmoney Docs/leafcanvas.css`:
+     - Inter typography, 12.5–14px base
+     - `--bg-2` panel surface, `--text-0/1/2/3` hierarchy
+     - `--accent` (#5fd28e) for inline highlights
+     - `--select` (#7eb8ff) for cursor + selection
+     - JetBrains Mono for code, `--bg-3` background
+     - Subtle borders: `--line`, hover: `--line-strong`
+     - 6px radius cards, 10px radius popovers
+   ============================================================ */
+
+/* ── Editor host (chrome around BlockNote) ────────────────── */
+
+.lc-ins-drd-host {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: transparent;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--text-0);
+}
+
+.lc-ins-drd-host .lc-drd-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 12px 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 14px;
+}
+
+.lc-ins-drd-host .lc-drd-title {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.lc-ins-drd-host .lc-drd-savestate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-2);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: 0.02em;
+}
+.lc-ins-drd-host .lc-drd-savestate::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+  display: inline-block;
+}
+.lc-ins-drd-host .lc-drd-savestate--idle::before    { background: var(--text-3); }
+.lc-ins-drd-host .lc-drd-savestate--saving::before  { background: var(--select); animation: drdPulse 1s ease-in-out infinite; }
+.lc-ins-drd-host .lc-drd-savestate--saved::before   { background: var(--accent); }
+.lc-ins-drd-host .lc-drd-savestate--conflict::before{ background: #ffb478; }
+.lc-ins-drd-host .lc-drd-savestate--error::before   { background: #ff8a8a; }
+@keyframes drdPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.lc-ins-drd-host .lc-drd-editor-host {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 -10px;
+  padding: 0 10px;
+}
+.lc-ins-drd-host .lc-drd-editor-host::-webkit-scrollbar { width: 6px; }
+.lc-ins-drd-host .lc-drd-editor-host::-webkit-scrollbar-thumb {
+  background: var(--line-strong); border-radius: 3px;
+}
+
+/* Loading skeleton */
+.lc-drd--loading {
+  height: 100%;
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.02) 0%,
+    rgba(255,255,255,0.04) 50%,
+    rgba(255,255,255,0.02) 100%);
+  background-size: 200% 100%;
+  animation: drdSkeleton 1.4s linear infinite;
+  border-radius: 6px;
+}
+@keyframes drdSkeleton { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ── BlockNote root container ─────────────────────────────── */
+
+.lc-ins-drd-host .bn-container,
+.lc-ins-drd-host .bn-editor,
+.lc-ins-drd-host .ProseMirror {
+  background: transparent !important;
+  color: var(--text-0) !important;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif !important;
+  font-size: 13.5px !important;
+  line-height: 1.6 !important;
+  padding: 4px 0 60px 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  caret-color: var(--select);
+}
+
+.lc-ins-drd-host .ProseMirror::selection,
+.lc-ins-drd-host .ProseMirror *::selection {
+  background: rgba(126, 184, 255, 0.22);
+}
+
+/* ── Block typography ─────────────────────────────────────── */
+
+.lc-ins-drd-host .bn-block-content[data-content-type="heading"][data-level="1"] h1,
+.lc-ins-drd-host .bn-block-content h1 {
+  font-size: 22px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em !important;
+  color: var(--text-0) !important;
+  margin: 22px 0 8px !important;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.lc-ins-drd-host .bn-block-content[data-content-type="heading"][data-level="2"] h2,
+.lc-ins-drd-host .bn-block-content h2 {
+  font-size: 17px !important;
+  font-weight: 600 !important;
+  color: var(--text-0) !important;
+  margin: 18px 0 6px !important;
+}
+.lc-ins-drd-host .bn-block-content[data-content-type="heading"][data-level="3"] h3,
+.lc-ins-drd-host .bn-block-content h3 {
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  color: var(--text-0) !important;
+  margin: 14px 0 4px !important;
+  letter-spacing: 0.01em;
+}
+
+.lc-ins-drd-host .bn-block-content[data-content-type="paragraph"] p,
+.lc-ins-drd-host .bn-block-content p {
+  margin: 0 !important;
+  color: var(--text-1) !important;
+  font-size: 13.5px !important;
+  line-height: 1.6 !important;
+}
+
+.lc-ins-drd-host .bn-block { margin: 1px 0 !important; }
+.lc-ins-drd-host .bn-block-outer { padding: 1px 0; }
+
+.lc-ins-drd-host .bn-block-content a {
+  color: var(--select) !important;
+  text-decoration: none !important;
+  border-bottom: 1px solid rgba(126, 184, 255, 0.3);
+  transition: border-color 0.12s ease;
+}
+.lc-ins-drd-host .bn-block-content a:hover {
+  border-bottom-color: var(--select);
+}
+
+/* Inline emphasis */
+.lc-ins-drd-host .bn-block-content strong { color: var(--text-0); font-weight: 600; }
+.lc-ins-drd-host .bn-block-content em { color: var(--text-1); font-style: italic; }
+.lc-ins-drd-host .bn-block-content u { text-decoration-color: rgba(126,184,255,0.5); }
+.lc-ins-drd-host .bn-block-content s { color: var(--text-3); }
+
+/* Inline code */
+.lc-ins-drd-host .bn-block-content code {
+  font-family: "JetBrains Mono", ui-monospace, monospace !important;
+  font-size: 11.5px !important;
+  background: rgba(255,255,255,0.05) !important;
+  padding: 1.5px 5px !important;
+  border-radius: 3px !important;
+  color: var(--accent) !important;
+  border: 1px solid var(--line);
+}
+
+/* ── Lists ────────────────────────────────────────────────── */
+
+.lc-ins-drd-host .bn-block-content[data-content-type="bulletListItem"],
+.lc-ins-drd-host .bn-block-content[data-content-type="numberedListItem"],
+.lc-ins-drd-host .bn-block-content[data-content-type="checkListItem"] {
+  color: var(--text-1) !important;
+}
+
+.lc-ins-drd-host .bn-block-content[data-content-type="bulletListItem"]::before {
+  color: var(--text-2) !important;
+}
+.lc-ins-drd-host .bn-block-content[data-content-type="numberedListItem"]::before {
+  color: var(--text-2) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.lc-ins-drd-host input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px; height: 14px;
+}
+
+/* ── Code blocks ──────────────────────────────────────────── */
+
+.lc-ins-drd-host .bn-block-content[data-content-type="codeBlock"],
+.lc-ins-drd-host pre {
+  background: var(--bg-3) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 8px !important;
+  padding: 12px 14px !important;
+  margin: 8px 0 !important;
+  overflow-x: auto;
+}
+.lc-ins-drd-host .bn-block-content[data-content-type="codeBlock"] pre,
+.lc-ins-drd-host .bn-block-content[data-content-type="codeBlock"] code {
+  font-family: "JetBrains Mono", ui-monospace, monospace !important;
+  font-size: 11.5px !important;
+  line-height: 1.55 !important;
+  color: var(--text-0) !important;
+  background: transparent !important;
+  border: 0 !important;
+  padding: 0 !important;
+  white-space: pre;
+}
+
+/* ── Quote / blockquote ───────────────────────────────────── */
+
+.lc-ins-drd-host blockquote,
+.lc-ins-drd-host .bn-block-content[data-content-type="quote"] {
+  border-left: 2px solid var(--select) !important;
+  padding: 4px 12px !important;
+  margin: 8px 0 !important;
+  color: var(--text-1) !important;
+  font-style: italic;
+  background: rgba(126, 184, 255, 0.04);
+  border-radius: 0 4px 4px 0;
+}
+
+/* ── Tables ───────────────────────────────────────────────── */
+
+.lc-ins-drd-host table {
+  border-collapse: collapse;
+  margin: 8px 0;
+  width: 100%;
+  font-size: 12.5px;
+}
+.lc-ins-drd-host th, .lc-ins-drd-host td {
+  border: 1px solid var(--line) !important;
+  padding: 6px 10px !important;
+  color: var(--text-1) !important;
+  background: rgba(255,255,255,0.01);
+}
+.lc-ins-drd-host th {
+  background: rgba(255,255,255,0.04) !important;
+  color: var(--text-0) !important;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ── Side menu (drag handle + add button) ─────────────────── */
+
+.lc-ins-drd-host .bn-side-menu,
+.lc-ins-drd-host .mantine-ActionIcon-root.bn-side-menu {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.lc-ins-drd-host .bn-block-outer:hover .bn-side-menu,
+.lc-ins-drd-host .bn-side-menu:hover {
+  opacity: 1;
+}
+.lc-ins-drd-host .bn-side-menu button {
+  color: var(--text-3) !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 4px !important;
+  padding: 2px 4px !important;
+}
+.lc-ins-drd-host .bn-side-menu button:hover {
+  color: var(--text-0) !important;
+  background: rgba(255,255,255,0.06) !important;
+}
+
+/* ── Slash menu / suggestion popover ──────────────────────── */
+
+.lc-ins-drd-host ~ .bn-suggestion-menu,
+.bn-suggestion-menu,
+.bn-formatting-toolbar,
+.bn-link-toolbar {
+  background: var(--bg-3) !important;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.55), 0 2px 6px rgba(0,0,0,0.35) !important;
+  padding: 4px !important;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif !important;
+  color: var(--text-0) !important;
+}
+.bn-suggestion-menu-item {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 6px 8px !important;
+  border-radius: 6px !important;
+  color: var(--text-1) !important;
+  font-size: 12.5px !important;
+  cursor: pointer;
+}
+.bn-suggestion-menu-item:hover,
+.bn-suggestion-menu-item[data-hovered="true"] {
+  background: rgba(126, 184, 255, 0.12) !important;
+  color: var(--text-0) !important;
+}
+.bn-suggestion-menu-item-title { font-weight: 500; }
+.bn-suggestion-menu-item-subtitle {
+  color: var(--text-3) !important;
+  font-size: 11px !important;
+  margin-left: 4px;
+}
+.bn-suggestion-menu-item-icon {
+  color: var(--text-2) !important;
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+  padding: 2px;
+}
+
+/* ── Bubble / formatting toolbar ──────────────────────────── */
+
+.bn-formatting-toolbar button,
+.bn-link-toolbar button {
+  background: transparent !important;
+  color: var(--text-1) !important;
+  border: 0 !important;
+  padding: 4px 6px !important;
+  border-radius: 4px !important;
+  font-size: 12px !important;
+}
+.bn-formatting-toolbar button:hover,
+.bn-link-toolbar button:hover {
+  background: rgba(255,255,255,0.08) !important;
+  color: var(--text-0) !important;
+}
+.bn-formatting-toolbar button[data-active="true"] {
+  background: rgba(126, 184, 255, 0.18) !important;
+  color: var(--select) !important;
+}
+.bn-formatting-toolbar [role="separator"] {
+  background: var(--line) !important;
+  width: 1px;
+  margin: 2px 4px;
+}
+
+/* ── Drag preview / drop indicator ────────────────────────── */
+
+.bn-drop-cursor {
+  background: var(--select) !important;
+  height: 2px !important;
+  border-radius: 1px;
+}
+
+/* ── Mention chip ─────────────────────────────────────────── */
+
+.lc-ins-drd-host .bn-inline-content[data-inline-content-type="mention"],
+.lc-ins-drd-host .bn-mention {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: rgba(126, 184, 255, 0.12);
+  color: var(--select);
+  font-weight: 500;
+  font-size: 12.5px;
+}
+
+/* ── Image embeds ─────────────────────────────────────────── */
+
+.lc-ins-drd-host .bn-block-content img {
+  max-width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  margin: 6px 0;
+}
+
+/* ── Empty state placeholder ──────────────────────────────── */
+
+.lc-ins-drd-host .ProseMirror p.is-editor-empty:first-child::before,
+.lc-ins-drd-host .bn-block-content p[data-is-empty-and-focused]::before {
+  content: 'Type "/" for commands, or start writing the design requirement…';
+  color: var(--text-3) !important;
+  font-style: italic;
+  pointer-events: none;
+  height: 0;
+  float: left;
+}
+
+/* ── Collab cursor labels ─────────────────────────────────── */
+
+.lc-ins-drd-host .collaboration-cursor__caret {
+  border-left: 2px solid;
+  margin-left: -1px;
+  margin-right: -1px;
+  pointer-events: none;
+  position: relative;
+}
+.lc-ins-drd-host .collaboration-cursor__label {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px 3px 3px 0;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* ── Placeholder fallback DRD (when editor not loaded) ───── */
+
+.lc-drd--placeholder {
+  padding: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
