@@ -31,11 +31,10 @@ export const metadata = { title: "Components · INDmoney DS" };
  */
 export default function ComponentsPage() {
   // Show every kind=component entry from Glyph regardless of atomic-design
-  // tier (atom / molecule / parent). The previous parent-only filter dropped
-  // 105 atoms + 11 molecules — i.e. the actual building blocks (Buttons,
-  // Input Field, Bottom Nav, Bottom Sheet, etc.) — leaving only 2 entries
-  // on screen. We still drop "Design System 🌟" since those are token-sheet
-  // master frames, not composable components.
+  // tier. The "Design System 🌟" category contains token-sheet master frames
+  // (color swatches, type ramps, etc.) that the extractor stamps as
+  // kind=component for catalog completeness; they aren't composable
+  // components users browse, so they're filtered out here.
   const entries = iconsByKind("component").filter(
     (e) => (e.category ?? "").trim() !== "Design System 🌟",
   );

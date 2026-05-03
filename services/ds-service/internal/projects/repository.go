@@ -275,6 +275,22 @@ func (t *TenantRepo) UpsertFlow(ctx context.Context, f Flow) (Flow, error) {
 		}
 		existing.CreatedAt = parseTime(createdAt)
 		existing.UpdatedAt = parseTime(updatedAt)
+		// If the designer renamed the Figma section between exports, the
+		// (file_id, section_id, persona_id) tuple still matches this row,
+		// but `f.Name` will differ from `existing.Name`. UPDATE so the UI
+		// (project shell flow selector, atlas labels) reflects the rename.
+		// Skipping this would silently freeze the original name forever.
+		if f.Name != "" && f.Name != existing.Name {
+			now := t.now().UTC()
+			if _, uerr := t.r.db.ExecContext(ctx,
+				`UPDATE flows SET name = ?, updated_at = ? WHERE id = ? AND tenant_id = ?`,
+				f.Name, rfc3339(now), existing.ID, t.tenantID,
+			); uerr != nil {
+				return Flow{}, fmt.Errorf("rename flow: %w", uerr)
+			}
+			existing.Name = f.Name
+			existing.UpdatedAt = now
+		}
 		return existing, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
