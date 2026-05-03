@@ -102,6 +102,15 @@ type ServerDeps struct {
 	// the legacy `?token=<jwt>` query-string fallback continues to work.
 	AssetSigner *auth.AssetTokenSigner
 
+	// GraphRebuildPool — plan 2026-05-03-001 / T3. Mutating handlers
+	// (export, decision create, violation patch, persona approve/reject,
+	// taxonomy archive) call s.enqueueGraphRebuild() after their commit so
+	// the atlas /v1/projects/graph aggregate reflects edits within the
+	// pool's 200 ms debounce window instead of waiting up to an hour for
+	// the safety-net ticker. nil-tolerant: tests omit it without affecting
+	// handler logic.
+	GraphRebuildPool *GraphRebuildPool
+
 	Log *slog.Logger
 }
 
@@ -157,6 +166,27 @@ func (s *Server) requireAdminTenant(w http.ResponseWriter, r *http.Request) (str
 		return "", false
 	}
 	return tenantID, true
+}
+
+// enqueueGraphRebuild fires an EnqueueIncremental for both mobile + web
+// platforms so atlas slices stay coherent regardless of which one the
+// caller's row sits on. nil-tolerant — when ServerDeps.GraphRebuildPool
+// isn't wired (test wiring, ds-service mode without graph), the call is
+// a no-op so handlers don't have to nil-guard at every call site.
+//
+// `kind` matches graph_index.source_kind for the table that just changed
+// (projects/flows/personas/decisions/manifest/tokens/derived). `ref` is
+// the source row's primary key for targeted invalidation, or "" to
+// trigger a full slice rebuild.
+//
+// Plan 2026-05-03-001 / T3.
+func (s *Server) enqueueGraphRebuild(tenantID string, kind GraphSourceKind, ref string) {
+	if s.deps.GraphRebuildPool == nil {
+		return
+	}
+	for _, platform := range []string{"mobile", "web"} {
+		s.deps.GraphRebuildPool.EnqueueIncremental(tenantID, platform, kind, ref)
+	}
 }
 
 // HandleExport serves POST /v1/projects/export.
@@ -350,6 +380,16 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 			Name:            pp.persona.Name,
 			CreatedByUserID: pp.persona.CreatedByUserID,
 		})
+	}
+
+	// T3 — atlas freshness. Project rows + flow rows just changed; enqueue
+	// rebuilds for both source kinds. Personas only enqueued when the
+	// export actually created pending personas (otherwise the personas
+	// slice is unchanged from the last rebuild).
+	s.enqueueGraphRebuild(tenantID, GraphSourceProjects, project.ID)
+	s.enqueueGraphRebuild(tenantID, GraphSourceFlows, project.ID)
+	if len(personaPubs) > 0 {
+		s.enqueueGraphRebuild(tenantID, GraphSourcePersonas, "")
 	}
 
 	// audit_log row (always — success or failure). Persist the per-frame
@@ -1419,6 +1459,13 @@ func (s *Server) HandlePatchViolation(w http.ResponseWriter, r *http.Request) {
 		s.deps.Broker.Publish(inboxBroadcastChannel(tenantID), ev)
 	}
 
+	// T3 — atlas freshness. graph_index.flow rows denormalize per-flow
+	// severity counters from the violations table; a status transition
+	// (active→acknowledged etc.) shifts those counters. ViolationLifecycle
+	// Result doesn't carry the flow_id directly (only the version), so a
+	// tenant-scoped flows rebuild is the simplest correct trigger.
+	s.enqueueGraphRebuild(tenantID, GraphSourceFlows, "")
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"violation_id": current.ViolationID,
 		"from":         transition.From,
@@ -1610,6 +1657,14 @@ func (s *Server) HandleBulkAcknowledge(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// T3 — atlas freshness. Severity counters on every flow that owned a
+	// changed violation just shifted; a single tenant-scoped flows
+	// rebuild covers them all (the pool's debounce coalesces redundant
+	// per-flow enqueues into one rebuild pass).
+	if len(summary.Updated) > 0 {
+		s.enqueueGraphRebuild(tenantID, GraphSourceFlows, "")
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"bulk_id": bulkID,
 		"updated": summary.Updated,
@@ -1776,6 +1831,11 @@ func (s *Server) HandleDecisionCreate(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+
+	// T3 — atlas freshness. Decision rows + supersedes edges are part of
+	// graph_index; rebuild so the atlas reflects the new node + the
+	// predecessor's status flip within the pool's debounce window.
+	s.enqueueGraphRebuild(tenantID, GraphSourceDecisions, rec.ID)
 
 	writeJSON(w, http.StatusCreated, rec)
 }
@@ -2038,6 +2098,9 @@ func (s *Server) HandleAdminReactivateDecision(w http.ResponseWriter, r *http.Re
 				PreviousSupersededByID: outcome.PreviousSupersededByID,
 			})
 		}
+		// T3 — supersession chain just changed; atlas decision-edges need
+		// a rebuild so the dropped edge to PreviousSupersededByID disappears.
+		s.enqueueGraphRebuild(tenantID, GraphSourceDecisions, id)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"decision_id":                id,

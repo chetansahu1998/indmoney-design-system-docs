@@ -173,20 +173,12 @@ func main() {
 		}
 	}
 
-	projectsServer := projects.NewServer(projects.ServerDeps{
-		DB:              dbConn,
-		Broker:          broker,
-		Tickets:         tickets,
-		RateLimiter:     rateLimiter,
-		Idempotency:     idempotencyCache,
-		AuditLogger:     projectsAuditLogger,
-		AuditEnqueuer:   auditEnqueuer,
-		DataDir:         dataDir,
-		PipelineFactory: pipelineFactory,
-		FigmaPATResolver: figmaPATResolver,
-		AssetSigner:     assetSigner,
-		Log:             log,
-	})
+	// projectsServer is constructed below, AFTER graphRebuildPool exists, so
+	// the T3 enqueueGraphRebuild hook can hold a real reference instead of
+	// a forward-declared closure. (`var projectsServer *projects.Server`
+	// would also work but defers the type check; the explicit ordering is
+	// easier to follow.)
+	var projectsServer *projects.Server
 
 	// Recovery sweeper — startup sweep + 60s loop. Background goroutine.
 	recoveryCtx, recoveryCancel := context.WithCancel(context.Background())
@@ -236,6 +228,27 @@ func main() {
 		Publisher: &projects.SSEGraphPublisher{Broker: broker},
 		Log:       log,
 	}
+
+	// Now that graphRebuildPool exists, build projectsServer with T3's
+	// post-commit enqueue dependency wired in. NewServer captures the
+	// ServerDeps by value, so subsequent changes to graphRebuildPool's
+	// fields (TenantIDs etc.) still take effect because we're handing it
+	// the same pointer.
+	projectsServer = projects.NewServer(projects.ServerDeps{
+		DB:               dbConn,
+		Broker:           broker,
+		Tickets:          tickets,
+		RateLimiter:      rateLimiter,
+		Idempotency:      idempotencyCache,
+		AuditLogger:      projectsAuditLogger,
+		AuditEnqueuer:    auditEnqueuer,
+		DataDir:          dataDir,
+		PipelineFactory:  pipelineFactory,
+		FigmaPATResolver: figmaPATResolver,
+		AssetSigner:      assetSigner,
+		GraphRebuildPool: graphRebuildPool,
+		Log:              log,
+	})
 
 	workerPool := &projects.WorkerPool{
 		Size:          workerPoolSize,
@@ -606,6 +619,12 @@ func (s *server) routes(mux *http.ServeMux) {
 	// RebuildGraphIndex worker materialises rows out-of-band. SSE channel
 	// graph:<tenant>:<platform> emits GraphIndexUpdated whenever the
 	// worker flushes for that slice (read-after-write contract).
+	// Atlas brain-graph: per-project rolled-up counts (screens, flows,
+	// active violations) for the Canvas2D brain consumer at /atlas. Powers
+	// the FLOWS list in the reference UI; SYNAPSES come from the existing
+	// /v1/projects/graph aggregate (graph_index edges).
+	mux.HandleFunc("GET /v1/projects/atlas/brain-nodes",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAtlasBrainNodes)))
 	mux.HandleFunc("GET /v1/projects/graph",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleGraphAggregate)))
 	mux.HandleFunc("POST /v1/projects/graph/events/ticket",

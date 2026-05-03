@@ -123,7 +123,8 @@ func (s *Server) HandleAdminApprovePersona(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if _, ok := s.requireAdminTenant(w, r); !ok {
+	tenantID, ok := s.requireAdminTenant(w, r)
+	if !ok {
 		return
 	}
 	id := r.PathValue("id")
@@ -139,6 +140,10 @@ func (s *Server) HandleAdminApprovePersona(w http.ResponseWriter, r *http.Reques
 		writeJSONErr(w, http.StatusInternalServerError, "approve_failed", err.Error())
 		return
 	}
+	// T3 — atlas freshness. Persona just flipped to approved; the atlas
+	// renders only approved personas (BuildPersonaRows filters status), so
+	// the new node appears + its `uses` edges to scoped flows materialize.
+	s.enqueueGraphRebuild(tenantID, GraphSourcePersonas, id)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -148,7 +153,8 @@ func (s *Server) HandleAdminRejectPersona(w http.ResponseWriter, r *http.Request
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
 		return
 	}
-	if _, ok := s.requireAdminTenant(w, r); !ok {
+	tenantID, ok := s.requireAdminTenant(w, r)
+	if !ok {
 		return
 	}
 	id := r.PathValue("id")
@@ -164,5 +170,8 @@ func (s *Server) HandleAdminRejectPersona(w http.ResponseWriter, r *http.Request
 		writeJSONErr(w, http.StatusInternalServerError, "reject_failed", err.Error())
 		return
 	}
+	// T3 — atlas freshness. Rejected personas drop out of BuildPersonaRows
+	// (the filter is status='approved'); the rebuild removes the row.
+	s.enqueueGraphRebuild(tenantID, GraphSourcePersonas, id)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
