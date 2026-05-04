@@ -1,88 +1,63 @@
 "use client";
-import { brandLabel, currentBrand } from "@/lib/brand";
 
 /**
- * Slim shell used by /components, /illustrations, /logos. Provides the brand
- * mark and top-level page navigation without dragging in DocsShell's sidebar,
- * search modal, or sync UI (those are tied to the foundations page).
+ * Slim shell used by /onboarding, /settings, /inbox — pages that don't
+ * have a per-section left sidebar but still need the canonical top nav
+ * so users can switch tabs without the bar appearing/disappearing.
+ *
+ * Mounts the same `<Header />` component that DocsShell + FilesShell
+ * use, plus the SearchModal so ⌘K works on every page.
  */
+
+import { AnimatePresence } from "framer-motion";
+import { useEffect, useState } from "react";
+
+import Header from "@/components/Header";
+import SearchModal from "@/components/SearchModal";
+import { useUIStore } from "@/lib/ui-store";
+
 export default function PageShell({ children }: { children: React.ReactNode }) {
-  const brand = currentBrand();
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const searchOpen = useUIStore((s) => s.searchOpen);
+  const setSearchOpen = useUIStore((s) => s.setSearchOpen);
+  const setMobileMenuOpen = useUIStore((s) => s.setMobileMenuOpen);
+
+  // Hydrate theme from the bootstrap script's localStorage value.
+  useEffect(() => {
+    const saved = (localStorage.getItem("indmoney-ds-theme") as "dark" | "light" | null) ?? "dark";
+    setTheme(saved);
+  }, []);
+
+  // Persist theme + apply to <html data-theme>.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("indmoney-ds-theme", theme);
+  }, [theme]);
+
+  // ⌘K opens search.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(!searchOpen);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [searchOpen, setSearchOpen]);
+
   return (
     <>
-      <header
-        style={{
-          position: "sticky",
-          top: 0,
-          zIndex: 40,
-          background: "var(--bg-page)",
-          borderBottom: "1px solid var(--border)",
-          height: 56,
-          display: "flex",
-          alignItems: "center",
-          padding: "0 20px",
-          gap: 16,
-          backdropFilter: "saturate(180%) blur(8px)",
-        }}
-      >
-        <a
-          href="/"
-          style={{
-            fontWeight: 700,
-            letterSpacing: "-0.5px",
-            color: "var(--text-1)",
-            fontSize: 15,
-            textDecoration: "none",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {brandLabel(brand)} <span style={{ color: "var(--text-3)", fontWeight: 500 }}>DS</span>
-        </a>
-        <PageNav />
-      </header>
+      <Header
+        theme={theme}
+        onThemeToggle={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+        onSearchOpen={() => setSearchOpen(true)}
+        onMenuOpen={() => setMobileMenuOpen(true)}
+      />
+      <AnimatePresence>
+        {searchOpen && <SearchModal key="search" onClose={() => setSearchOpen(false)} />}
+      </AnimatePresence>
       {children}
     </>
-  );
-}
-
-function PageNav() {
-  const pathname = typeof window !== "undefined" ? window.location.pathname : "/";
-  const items = [
-    { href: "/",              label: "Foundations" },
-    { href: "/atlas",         label: "Atlas" },
-    { href: "/projects",      label: "Projects" },
-    { href: "/components",    label: "Components" },
-    { href: "/icons",         label: "Icons" },
-    { href: "/illustrations", label: "Illustrations" },
-    { href: "/logos",         label: "Logos" },
-    { href: "/inbox",         label: "Inbox" },
-    { href: "/onboarding",    label: "Onboarding" },
-    { href: "/files",         label: "Files" },
-    { href: "/settings/notifications", label: "Settings" },
-  ];
-  return (
-    <nav aria-label="Site sections" style={{ display: "inline-flex", gap: 4 }}>
-      {items.map((item) => {
-        const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-        return (
-          <a
-            key={item.href}
-            href={item.href}
-            style={{
-              padding: "4px 10px",
-              borderRadius: 6,
-              fontSize: 12,
-              fontWeight: active ? 600 : 500,
-              color: active ? "var(--text-1)" : "var(--text-3)",
-              background: active ? "var(--bg-surface-2)" : "transparent",
-              textDecoration: "none",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {item.label}
-          </a>
-        );
-      })}
-    </nav>
   );
 }

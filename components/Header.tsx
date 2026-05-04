@@ -402,7 +402,6 @@ function PageNav() {
   const items: { href: string; label: string; badge?: number }[] = [
     { href: "/",              label: "Foundations" },
     { href: "/atlas",         label: "Atlas" },
-    { href: "/projects",      label: "Projects" },
     { href: "/components",    label: "Components" },
     { href: "/icons",         label: "Icons" },
     { href: "/illustrations", label: "Illustrations" },

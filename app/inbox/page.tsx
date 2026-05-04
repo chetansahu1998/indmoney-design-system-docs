@@ -11,7 +11,12 @@
  */
 
 import InboxShell from "@/components/inbox/InboxShell";
+import PageShell from "@/components/PageShell";
 
 export default function InboxPage() {
-  return <InboxShell />;
+  return (
+    <PageShell>
+      <InboxShell />
+    </PageShell>
+  );
 }
