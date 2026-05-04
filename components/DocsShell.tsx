@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import Header from "@/components/Header";
 import Sidebar from "@/components/Sidebar";
-import Footer from "@/components/Footer";
 import SearchModal from "@/components/SearchModal";
 import TokenExportDialog from "@/components/extensions/TokenExportDialog";
 import SyncModal from "@/components/SyncModal";
@@ -233,7 +232,6 @@ export default function DocsShell() {
           </nav>
         </main>
       </div>
-      <Footer />
     </>
   );
 }

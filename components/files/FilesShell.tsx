@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Header from "@/components/Header";
 import Sidebar, { type NavGroup } from "@/components/Sidebar";
-import Footer from "@/components/Footer";
 import SearchModal from "@/components/SearchModal";
 import { AnimatePresence } from "framer-motion";
 import { useUIStore, applyDensityFromStore } from "@/lib/ui-store";
@@ -130,7 +129,6 @@ export default function FilesShell({
           {children}
         </main>
       </div>
-      <Footer />
     </>
   );
 }
