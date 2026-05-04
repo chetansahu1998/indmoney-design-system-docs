@@ -167,6 +167,11 @@ export const useAtlas = create<AtlasStoreState>()(
           domains: next.domains,
           flows,
           synapses: next.synapses,
+          // brain-products carries the per-product leaves (one per
+          // underlying project). Pre-populating short-circuits the
+          // loadLeavesForFlow → fetchProject(<product-slug>) path that
+          // would 404 because product slugs aren't real project rows.
+          leavesByFlow: next.leavesByFlow,
           brainNodesETag: next.brainNodesETag,
           graphAggregateETag: next.graphAggregateETag,
           hydrated: true,
@@ -189,13 +194,23 @@ export const useAtlas = create<AtlasStoreState>()(
           }
           return { ...next, appearedAt: now };
         });
-        set({ flows: merged, brainNodesETag: r.etag });
+        // Brain-products carries leaves alongside the flow rollup, so we
+        // refresh leavesByFlow in the same pass — keeps the orbit dots in
+        // sync with project add/delete without a per-flow round-trip.
+        set({
+          flows: merged,
+          leavesByFlow: { ...get().leavesByFlow, ...r.leavesByFlow },
+          brainNodesETag: r.etag,
+        });
       },
 
       // ─── Leaf loading ────────────────────────────────────────────────────
       loadLeavesForFlow: async (slug, versionID) => {
-        const existing = get().leavesByFlow[slug];
-        if (existing && existing.length > 0) return;
+        // Short-circuit when the brain-products hydrate already populated
+        // leaves for this flow — even if the array is empty, presence in
+        // the map signals "we know this product has no projects" and we
+        // shouldn't fall through to the legacy per-project fetch.
+        if (Object.prototype.hasOwnProperty.call(get().leavesByFlow, slug)) return;
         const leaves = await fetchLeavesForFlow(slug, versionID);
         // Mark all initially-loaded leaves with appearedAt=0 so they skip the
         // entrance animation; subsequent SSE-driven adds get stamped.
@@ -203,39 +218,44 @@ export const useAtlas = create<AtlasStoreState>()(
         set({ leavesByFlow: { ...get().leavesByFlow, [slug]: stamped } });
       },
 
-      openLeaf: async (flowID) => {
-        if (!flowID) {
+      openLeaf: async (leafID) => {
+        if (!leafID) {
           set({ selection: { ...get().selection, leafID: null, frameID: null } });
           return;
         }
-        // Resolve parent project slug from leavesByFlow.
+        // After the brain-products migration: leafID is a ds-service project
+        // slug; the parent flow on the brain is a taxonomy product. Walk the
+        // map to find which product owns this leaf so the URL/state stay
+        // consistent.
         const projects = Object.entries(get().leavesByFlow);
-        let parentSlug: string | undefined;
+        let parentProductSlug: string | undefined;
         let leaf: Leaf | undefined;
-        for (const [slug, leaves] of projects) {
-          const found = leaves.find((l) => l.id === flowID);
+        for (const [productSlug, leaves] of projects) {
+          const found = leaves.find((l) => l.id === leafID);
           if (found) {
-            parentSlug = slug;
+            parentProductSlug = productSlug;
             leaf = found;
             break;
           }
         }
-        if (!parentSlug || !leaf) {
+        if (!parentProductSlug || !leaf) {
           // Caller hasn't loaded the parent yet; bail out softly and update
           // selection so the URL still reflects intent.
-          set({ selection: { flowID: get().selection.flowID, leafID: flowID, frameID: null } });
+          set({ selection: { flowID: get().selection.flowID, leafID, frameID: null } });
           return;
         }
-        set({ selection: { flowID: parentSlug, leafID: flowID, frameID: null } });
+        set({ selection: { flowID: parentProductSlug, leafID, frameID: null } });
 
-        // Fetch canvas + overlays in parallel.
-        const versionID = get().flows.find((f) => f.id === parentSlug)?.latestVersionID;
-        const canvas = await fetchLeafCanvas(parentSlug, flowID, versionID);
+        // Fetch canvas + overlays from the LEAF's own project slug. flowID=""
+        // tells fetchLeafCanvas/Overlays to pull the whole project (all flows
+        // collapsed) rather than filter to one section.
+        const projectSlug = leaf.id;
+        const canvas = await fetchLeafCanvas(projectSlug, "", undefined);
         const framesByID = new Map(canvas.frames.map((f) => [f.id, f]));
         const overlays = await fetchLeafOverlays(
-          parentSlug,
-          flowID,
-          versionID,
+          projectSlug,
+          "",
+          undefined,
           framesByID,
           new Map(Object.entries(get().userDirectory)),
         );
@@ -245,7 +265,7 @@ export const useAtlas = create<AtlasStoreState>()(
           overlays,
           loadedAt: Date.now(),
         };
-        set({ leafSlots: { ...get().leafSlots, [flowID]: slot } });
+        set({ leafSlots: { ...get().leafSlots, [leafID]: slot } });
       },
 
       closeLeaf: () => {
@@ -281,19 +301,19 @@ export const useAtlas = create<AtlasStoreState>()(
           case "audit_progress": {
             // The leaf overlays will reflect new violations. If the affected
             // project's leaf slot is open, refresh the violation slice in
-            // the background.
+            // the background. Post brain-products: sel.leafID is the
+            // project slug; sel.flowID is the parent product slug. The SSE
+            // event reports the project slug too, so match on leafID.
             const sel = get().selection;
-            if (!sel.leafID || !sel.flowID) return;
-            const slug = sel.flowID;
-            if (slug !== evt.slug) return;
-            const versionID = get().flows.find((f) => f.id === slug)?.latestVersionID;
+            if (!sel.leafID) return;
+            if (sel.leafID !== evt.slug) return;
             const slot = get().leafSlots[sel.leafID];
             if (!slot) return;
             const framesByID = new Map(slot.frames.map((f) => [f.id, f]));
             void fetchLeafOverlays(
-              slug,
               sel.leafID,
-              versionID,
+              "",
+              undefined,
               framesByID,
               new Map(Object.entries(get().userDirectory)),
             ).then((next) => {
@@ -314,18 +334,18 @@ export const useAtlas = create<AtlasStoreState>()(
           case "decision.superseded":
           case "comment.created": {
             const sel = get().selection;
-            if (!sel.leafID || !sel.flowID) return;
-            if (evt.flowID !== sel.leafID) return;
-            // Same approach: refresh the relevant overlay slice.
-            const slug = sel.flowID;
-            const versionID = get().flows.find((f) => f.id === slug)?.latestVersionID;
+            if (!sel.leafID) return;
+            // Match the SSE event's flowID against the parent ds-service
+            // flow inside our open leaf project. Today we don't track which
+            // flow within the project the user is viewing, so refresh the
+            // whole project's overlays whenever any of its flows ping.
             const slot = get().leafSlots[sel.leafID];
             if (!slot) return;
             const framesByID = new Map(slot.frames.map((f) => [f.id, f]));
             void fetchLeafOverlays(
-              slug,
               sel.leafID,
-              versionID,
+              "",
+              undefined,
               framesByID,
               new Map(Object.entries(get().userDirectory)),
             ).then((next) => {

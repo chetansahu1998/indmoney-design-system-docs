@@ -629,6 +629,8 @@ func (s *server) routes(mux *http.ServeMux) {
 	// /v1/projects/graph aggregate (graph_index edges).
 	mux.HandleFunc("GET /v1/projects/atlas/brain-nodes",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAtlasBrainNodes)))
+	mux.HandleFunc("GET /v1/projects/atlas/brain-products",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAtlasBrainProducts)))
 	mux.HandleFunc("GET /v1/projects/graph",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleGraphAggregate)))
 	mux.HandleFunc("POST /v1/projects/graph/events/ticket",

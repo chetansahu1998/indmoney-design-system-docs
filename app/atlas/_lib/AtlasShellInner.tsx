@@ -200,6 +200,81 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
   const LeafInspector = getLeafInspector();
   const leaf = leafID ? getLeavesArray().find((l) => l.id === leafID) ?? null : null;
 
+  // Mount-with-transition: keep the leaf shell mounted long enough for the
+  // exit animation to complete. `leafSticky` is the leaf object that drives
+  // the rendered canvas/inspector during both entering and exiting phases.
+  // `phase` orchestrates the CSS animation.
+  const [phase, setPhase] = useState<"closed" | "entering" | "open" | "exiting">(
+    leaf ? "open" : "closed",
+  );
+  const [leafSticky, setLeafSticky] = useState(leaf);
+  useEffect(() => {
+    if (leaf && leaf.id !== leafSticky?.id) {
+      // New leaf opened (or first open). Promote sticky and play entry.
+      setLeafSticky(leaf);
+      setPhase("entering");
+      const id = window.setTimeout(() => setPhase("open"), 360);
+      return () => window.clearTimeout(id);
+    }
+    if (!leaf && leafSticky) {
+      // Closed — kick off exit; sticky drops once the animation ends.
+      setPhase("exiting");
+      const id = window.setTimeout(() => {
+        setPhase("closed");
+        setLeafSticky(null);
+      }, 280);
+      return () => window.clearTimeout(id);
+    }
+  }, [leaf, leafSticky]);
+  // No brain-side CSS effects — the reference UI keeps the brain visually
+  // untouched while the leaf overlay sits on top. Touching the brain's
+  // CSS (opacity/transform/touch-action) breaks its canvas wheel + pointer
+  // chain. Animation lives entirely on the leaf shell.
+
+  // ── Resizable right inspector — persisted to localStorage so designers
+  // who prefer a wider panel for DRD reading don't lose it across sessions.
+  // Width is applied via a CSS variable on the inspector wrap; the handle
+  // captures pointer events to drive the live resize.
+  const STORAGE_KEY = "atlas:inspector:width";
+  const MIN_WIDTH = 320;
+  const MAX_WIDTH = 760;
+  const [inspectorWidth, setInspectorWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return 460;
+    const v = window.localStorage?.getItem(STORAGE_KEY);
+    const n = v ? Number(v) : NaN;
+    return Number.isFinite(n) && n >= MIN_WIDTH && n <= MAX_WIDTH ? n : 460;
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try { window.localStorage.setItem(STORAGE_KEY, String(inspectorWidth)); } catch {}
+  }, [inspectorWidth]);
+
+  const onResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = inspectorWidth;
+    const handle = e.currentTarget;
+    handle.classList.add("is-dragging");
+    document.body.classList.add("atlas-inspector-dragging");
+    const move = (mv: PointerEvent) => {
+      // Right-anchored panel: dragging left widens it, dragging right shrinks.
+      const delta = startX - mv.clientX;
+      const next = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startW + delta));
+      setInspectorWidth(next);
+    };
+    const up = () => {
+      handle.classList.remove("is-dragging");
+      document.body.classList.remove("atlas-inspector-dragging");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  }, [inspectorWidth]);
+
   // Subscribe to the open leaf's slot version. Each SSE-driven overlay
   // refresh bumps `loadedAt` on the slot (live-store.applyEvent →
   // fetchLeafOverlays → set leafSlots[id]). LeafCanvas + LeafInspector
@@ -214,23 +289,43 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
   return (
     <AtlasShellProvider value={ctx}>
       <AtlasApp />
-      {leaf && LeafCanvas && LeafInspector ? (
-        <>
-          <LeafCanvas
-            key={`canvas-${leaf.id}-${slotVersion}`}
-            leaf={leaf}
-            onClose={closeLeaf}
-            onPickFrame={setSelectedFrameID}
-            selectedFrameId={selectedFrameID}
-          />
-          <LeafInspector
-            key={`inspector-${leaf.id}-${slotVersion}`}
-            leaf={leaf}
-            frameId={selectedFrameID}
-            onClose={closeLeaf}
-            onPickFrame={setSelectedFrameID}
-          />
-        </>
+      {leafSticky && LeafCanvas && LeafInspector ? (
+        <div
+          className="atlas-leaf-shell"
+          data-leaf-phase={phase}
+          style={{ ["--atlas-inspector-width" as any]: `${inspectorWidth}px` }}
+        >
+          <div className="atlas-leaf-canvas-wrap">
+            <LeafCanvas
+              key={`canvas-${leafSticky.id}-${slotVersion}`}
+              leaf={leafSticky}
+              onClose={closeLeaf}
+              onPickFrame={setSelectedFrameID}
+              selectedFrameId={selectedFrameID}
+            />
+          </div>
+          <div className="atlas-leaf-inspector-wrap">
+            <LeafInspector
+              key={`inspector-${leafSticky.id}-${slotVersion}`}
+              leaf={leafSticky}
+              frameId={selectedFrameID}
+              onClose={closeLeaf}
+              onPickFrame={setSelectedFrameID}
+            />
+            {/* Resize handle — sits on the LEFT edge of the inspector so
+               the user can drag it inward/outward to set width. Position
+               is computed off the inspector's right-anchored layout. */}
+            <div
+              className="atlas-inspector-resize-handle"
+              style={{ right: `${inspectorWidth}px` }}
+              onPointerDown={onResizeStart}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize inspector"
+              title="Drag to resize"
+            />
+          </div>
+        </div>
       ) : null}
     </AtlasShellProvider>
   );

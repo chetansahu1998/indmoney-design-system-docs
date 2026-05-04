@@ -727,3 +727,155 @@ body {
 .atlas-empty-btn--primary:hover {
   background: #2563eb;
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Atlas ↔ LeafCanvas transition
+ *
+ * Strict rules: only opacity changes. NO transform, NO filter, NO clip-path
+ * on the brain host — the canvas reads getBoundingClientRect() for hit-test
+ * and any CSS transform corrupts those coords. Leaf canvas + inspector get
+ * a tiny translateY for material feel, but the brain itself only fades.
+ *
+ * Linear, single-property animation across both directions; no bezier
+ * overshoot, no compound keyframes. 600ms entry / 480ms exit.
+ *
+ * Phases (data-leaf-phase):
+ *   closed   — leaf not visible; brain at rest.
+ *   entering — first 600ms after click; brain fades down, leaf fades in.
+ *   open     — steady state: leaf is on top, brain is dimmed behind.
+ *   exiting  — first 480ms after close; reverse fades.
+ * ────────────────────────────────────────────────────────────────────── */
+
+.atlas-leaf-shell {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 30;
+}
+/* CRITICAL: do NOT promote the whole wrap to pointer-events:auto. Both
+   wraps are inset:0 (full-screen), so a blanket `auto` rule turns either
+   wrap into a giant invisible event-eater that swallows wheel + pointer
+   events meant for the brain (when leaf is closed) or for the leaf canvas
+   (when the inspector wrap is on top of the canvas wrap in DOM order).
+   Pointer-events stay `none` on the wraps; the actual inspector / canvas
+   children re-enable them at their own visible bounds. */
+.atlas-leaf-canvas-wrap,
+.atlas-leaf-inspector-wrap {
+  pointer-events: none;
+}
+.atlas-leaf-canvas-wrap > *,
+.atlas-leaf-inspector-wrap > * {
+  pointer-events: auto;
+}
+.atlas-inspector-resize-handle { pointer-events: auto; }
+
+/* Leaf canvas — linear + incremental. Three properties layered (opacity,
+   translateY, scale) but each on the same linear timeline so they read as
+   one synchronized motion, not a stagger. Longer (800ms) so the user can
+   *feel* the transition build instead of snapping. */
+.atlas-leaf-canvas-wrap {
+  position: absolute;
+  inset: 0;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: center 55%;
+  will-change: opacity, transform;
+}
+.atlas-leaf-shell[data-leaf-phase="entering"] .atlas-leaf-canvas-wrap {
+  animation: atlas-leaf-enter 800ms linear forwards;
+}
+.atlas-leaf-shell[data-leaf-phase="exiting"] .atlas-leaf-canvas-wrap {
+  animation: atlas-leaf-exit 620ms linear forwards;
+}
+/* Linear keyframes — no overshoot, no bezier; every step is a straight
+   interpolation so the motion never doubles back or "lurches". */
+@keyframes atlas-leaf-enter {
+  0%   { opacity: 0;    transform: translateY(14px) scale(0.985); }
+  50%  { opacity: 0.55; transform: translateY(7px)  scale(0.992); }
+  100% { opacity: 1;    transform: translateY(0)    scale(1); }
+}
+@keyframes atlas-leaf-exit {
+  0%   { opacity: 1;    transform: translateY(0)    scale(1); }
+  50%  { opacity: 0.55; transform: translateY(4px)  scale(0.995); }
+  100% { opacity: 0;    transform: translateY(10px) scale(0.99); }
+}
+
+/* Inspector — fades in alongside, slightly delayed so the canvas reads
+   first. Same linear three-property layered pattern as the canvas. */
+.atlas-leaf-inspector-wrap {
+  position: absolute;
+  inset: 0;
+  opacity: 1;
+  transform: translateX(0) translateY(0);
+  will-change: opacity, transform;
+}
+.atlas-leaf-shell[data-leaf-phase="entering"] .atlas-leaf-inspector-wrap {
+  animation: atlas-inspector-enter 800ms linear 160ms forwards;
+}
+.atlas-leaf-shell[data-leaf-phase="exiting"] .atlas-leaf-inspector-wrap {
+  animation: atlas-inspector-exit 540ms linear forwards;
+}
+@keyframes atlas-inspector-enter {
+  0%   { opacity: 0; transform: translateX(22px) translateY(6px); }
+  50%  { opacity: 0.5; transform: translateX(11px) translateY(3px); }
+  100% { opacity: 1; transform: translateX(0) translateY(0); }
+}
+@keyframes atlas-inspector-exit {
+  0%   { opacity: 1; transform: translateX(0) translateY(0); }
+  100% { opacity: 0; transform: translateX(18px) translateY(4px); }
+}
+
+/* ────────── Resizable right panel ────────── */
+/* The inspector container honors --atlas-inspector-width, set by JS from
+   localStorage. The handle is the dragger. */
+.atlas-leaf-inspector-wrap .lc-ins {
+  width: var(--atlas-inspector-width, 460px);
+  min-width: 320px;
+  max-width: 760px;
+}
+.atlas-inspector-resize-handle {
+  /* Fixed to viewport so we escape any stacking context the leaf inspector
+     or DRD editor introduces. The right offset is set inline to mirror the
+     inspector's current width. z-index sits above any in-inspector elements
+     (BlockNote sticky toolbars, comment popovers, etc.). */
+  position: fixed;
+  top: var(--header-h, 0);
+  bottom: 0;
+  width: 8px;
+  margin-left: -4px;
+  cursor: col-resize;
+  z-index: 1000;
+  background: transparent;
+  transition: background 120ms linear;
+}
+.atlas-inspector-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: 2px;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  transition: background 120ms linear;
+}
+.atlas-inspector-resize-handle:hover::after,
+.atlas-inspector-resize-handle.is-dragging::after {
+  background: rgba(126, 184, 255, 0.55);
+}
+.atlas-inspector-resize-handle.is-dragging {
+  /* Keep the cursor consistent during drag — even when the cursor leaves
+     the handle (user drags fast), the body class below keeps it shown. */
+}
+body.atlas-inspector-dragging,
+body.atlas-inspector-dragging * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atlas-brain-host,
+  .atlas-leaf-canvas-wrap,
+  .atlas-leaf-inspector-wrap {
+    transition: opacity 160ms linear !important;
+    animation: none !important;
+    transform: none !important;
+  }
+}

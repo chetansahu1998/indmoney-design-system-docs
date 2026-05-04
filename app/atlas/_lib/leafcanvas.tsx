@@ -582,8 +582,11 @@ function DRDTab({ leaf, frame }) {
   // come from the leaf object: leaf.flow is the parent project slug, and
   // leaf.id is the flows.id row in our DB.
   const Editor = (typeof window !== "undefined" ? (window as any).__AtlasDRDEditor : null);
-  if (Editor && leaf?.flow && leaf?.id) {
-    return <Editor slug={leaf.flow} flowID={leaf.id} />;
+  if (Editor && leaf?.id) {
+    // Post brain-products: leaf.id is the ds-service project slug; the
+    // DRD endpoint is keyed by (project_slug, flow_uuid). The editor
+    // resolves the project's first flow itself when flowID is empty.
+    return <Editor slug={leaf.id} flowID="" />;
   }
   // Fallback skeleton — rendered for the standalone HTML preview (no
   // window.__AtlasDRDEditor injection) or if the editor module fails to
