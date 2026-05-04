@@ -26,6 +26,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { selectFlows, selectSelection, useAtlas } from "../../../lib/atlas/live-store";
 import { ATLAS_DOMAINS } from "../../../lib/atlas/taxonomy";
+import { track } from "../../../lib/telemetry";
 import NoPlatformFlows from "../NoPlatformFlows";
 import {
   buildAtlasURL,
@@ -129,7 +130,22 @@ export default function AtlasShell({ initialURL }: AtlasShellProps = {}) {
 
   // 1. Cold-load
   useEffect(() => {
-    if (!hydrated) void hydrateInitial();
+    if (!hydrated) {
+      track("info", "atlas.hydrate.start", { platform });
+      void hydrateInitial().then(() => {
+        const s = useAtlas.getState();
+        track("info", "atlas.hydrate.done", {
+          platform,
+          flows: s.flows.length,
+          synapses: s.synapses.length,
+        });
+      }).catch((err) => {
+        track("error", "atlas.hydrate.failed", {
+          platform,
+          message: (err as Error).message,
+        });
+      });
+    }
   }, [hydrated, hydrateInitial, platform]);
 
   // 2. Push real data into window globals SYNCHRONOUSLY in render — atlas.tsx

@@ -303,6 +303,12 @@ figma.ui.onmessage = async (msg) => {
                             },
                         });
                         toast(`Export failed (HTTP ${res.status}): ${body.detail || body.error || "unknown"}`, "error");
+                        void tel("error", "plugin.export.failed", {
+                            status: res.status,
+                            error: body.error || "http_error",
+                            detail: (body.detail || bodyText).slice(0, 300),
+                            file_name: figma.root.name,
+                        });
                         return;
                     }
                     send({
@@ -316,6 +322,12 @@ figma.ui.onmessage = async (msg) => {
                         },
                     });
                     toast(`Exported — project ${(_g = (_f = body.project_id) === null || _f === void 0 ? void 0 : _f.slice(0, 8)) !== null && _g !== void 0 ? _g : "?"}…`, "success");
+                    void tel("info", "plugin.export.ok", {
+                        project_id: body.project_id,
+                        version_id: body.version_id,
+                        trace_id: body.trace_id,
+                        file_name: figma.root.name,
+                    });
                 }
                 catch (err) {
                     // "Failed to fetch" is browser-speak for "request never made
@@ -386,7 +398,16 @@ figma.on("selectionchange", () => {
     send({ type: "docs-token-state", payload: { hasToken: !!docsAuthToken } });
     // P6 — broadcast decoded designer info so the Projects view chip can
     // render before the user clicks anything. Empty payload when no token.
-    send({ type: "designer.info", payload: decodeDesignerFromJWT(docsAuthToken) });
+    const designerInfo = decodeDesignerFromJWT(docsAuthToken);
+    send({ type: "designer.info", payload: designerInfo });
+    // Telemetry — record plugin-boot so cross-machine debug sessions know
+    // a designer launched the plugin.
+    void tel("info", "plugin.boot", {
+        has_token: !!docsAuthToken,
+        designer_email: designerInfo.email || null,
+        file_name: figma.root.name,
+        file_key: figma.fileKey || null,
+    });
 })();
 /**
  * Lazy-read the saved JWT from clientStorage. The boot IIFE does this
@@ -399,6 +420,40 @@ async function ensureDocsToken() {
     const tok = (await figma.clientStorage.getAsync("docs_auth_token"));
     if (tok)
         docsAuthToken = tok;
+}
+/**
+ * Fire-and-forget telemetry from the plugin sandbox. Posts to ds-service
+ * `/v1/telemetry/event` so cross-machine debug sessions can see what
+ * the plugin did via `fly logs -a indmoney-ds-service | grep telemetry`.
+ *
+ * Never throws — any network failure is swallowed. Session ID is the
+ * Figma file key so multiple events from one design session group.
+ */
+const PLUGIN_BUILD_TAG = "2026-05-04-designer-ux";
+async function tel(level, event, payload) {
+    try {
+        const dsURL = (await figma.clientStorage.getAsync("ds_service_url"));
+        const base = dsURL || "https://indmoney-ds-service.fly.dev";
+        const body = JSON.stringify({
+            source: "plugin",
+            level,
+            event,
+            payload,
+            session: figma.fileKey || figma.root.name || "unknown",
+            build: PLUGIN_BUILD_TAG,
+        });
+        // Plugin sandbox has no Authorization header to spare here; the
+        // endpoint is anonymous-allowed by design. We intentionally do not
+        // attach the JWT to telemetry — keeps the path light + privacy-friendly.
+        await fetch(`${base}/v1/telemetry/event`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+        });
+    }
+    catch (_a) {
+        // Best-effort. Never let telemetry break the plugin.
+    }
 }
 /**
  * Decode the decoded user info from a JWT (middle segment is base64-

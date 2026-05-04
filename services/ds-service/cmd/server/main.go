@@ -653,6 +653,12 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/personas",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleListPersonas)))
 
+	// Telemetry drop-zone — anonymous-allowed by design. Plugin + web
+	// post errors / lifecycle events here; we log them to stdout so
+	// `fly logs -a indmoney-ds-service | grep telemetry` produces a live
+	// stream. Used to debug cross-machine sessions.
+	mux.HandleFunc("POST /v1/telemetry/event", s.projectsServer.HandleTelemetryEvent)
+
 	// Phase 7 U4 — persona library approval queue.
 	mux.HandleFunc("GET /v1/atlas/admin/personas/pending",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAdminListPendingPersonas)))

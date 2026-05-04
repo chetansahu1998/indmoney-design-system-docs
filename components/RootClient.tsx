@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useScrollMemory } from "@/lib/use-scroll-memory";
 import { useKeyboardShortcuts } from "@/lib/use-keyboard-shortcuts";
 import { applyDensityFromStore, useUIStore } from "@/lib/ui-store";
+import { installGlobalTelemetry } from "@/lib/telemetry";
 import BackToTop from "@/components/ui/BackToTop";
 import SearchModal from "@/components/SearchModal";
 import { AnimatePresence } from "framer-motion";
@@ -31,6 +32,9 @@ export default function RootClient() {
   const setSearchOpen = useUIStore((s) => s.setSearchOpen);
   useEffect(() => {
     applyDensityFromStore();
+    // Install global error capture so cross-machine debug sessions can
+    // see what happened in `fly logs -a indmoney-ds-service | grep tel`.
+    installGlobalTelemetry();
   }, []);
 
   // S22 — Footer ?sync=open / ?export=open query-string actions.
