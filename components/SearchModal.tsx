@@ -39,7 +39,6 @@ const TOP_LEVEL: Item[] = [
   { id: "color",       title: "Color",       desc: "Glyph semantic tokens, paired light & dark",      section: "Section", href: "#color" },
   { id: "typography",  title: "Typography",  desc: "18 Glyph TEXT styles with full font metadata",    section: "Section", href: "#typography" },
   { id: "spacing",     title: "Spacing",     desc: "Pixel-literal scale + radius",                    section: "Section", href: "#spacing" },
-  { id: "motion",      title: "Motion",      desc: "Spring, opacity, and press-scale presets",        section: "Section", href: "#motion" },
   { id: "iconography", title: "Iconography", desc: "Glyph icon library — currentColor SVGs",          section: "Section", href: "#iconography" },
 ];
 

@@ -9,7 +9,6 @@ import SyncModal from "@/components/SyncModal";
 import TypographySection from "@/components/sections/TypographySection";
 import ColorSection from "@/components/sections/ColorSection";
 import SpacingSection from "@/components/sections/SpacingSection";
-import MotionSection from "@/components/sections/MotionSection";
 import EffectsSection from "@/components/sections/EffectsSection";
 import { useIsMobile } from "@/lib/use-mobile";
 import { useUIStore, applyDensityFromStore } from "@/lib/ui-store";
@@ -184,7 +183,6 @@ export default function DocsShell() {
           <ColorSection />
           <TypographySection />
           <SpacingSection />
-          <MotionSection />
           <EffectsSection />
 
           {/* Bottom nav */}

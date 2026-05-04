@@ -79,14 +79,6 @@ export const FOUNDATIONS_NAV: NavGroup[] = [
     ],
   },
   {
-    label: "Motion",
-    sub: [
-      { label: "Spring",  href: "#motion-spring" },
-      { label: "Opacity", href: "#motion-opacity" },
-      { label: "Scale",   href: "#motion-scale" },
-    ],
-  },
-  {
     label: "Effects",
     sub: [{ label: "Shadows", href: "#effects" }],
   },
