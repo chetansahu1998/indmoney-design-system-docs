@@ -163,3 +163,120 @@ func (s *Server) HandleAtlasBrainNodes(w http.ResponseWriter, r *http.Request) {
 
 // Compile-time guard: HandleAtlasBrainNodes is a stdlib http.Handler.
 var _ http.HandlerFunc = (*Server)(nil).HandleAtlasBrainNodes
+
+// AtlasBrainProduct is the aggregated wire shape for the brain — one row per
+// product (taxonomy entry), with constituent projects collapsed into the
+// `leaves` array. The reference design treats one PRODUCT (e.g. "INDstocks")
+// as a single brain node; multiple Figma files under that product become
+// orbiting leaves rather than disconnected primary nodes.
+type AtlasBrainProduct struct {
+	Product          string             `json:"product"`            // taxonomy product e.g. "INDstocks"
+	ProjectCount     int                `json:"project_count"`      // number of underlying ds-service projects
+	FlowCount        int                `json:"flow_count"`         // sum of flows across projects
+	ScreenCount      int                `json:"screen_count"`       // sum of screens at latest version across projects
+	ActiveViolations int                `json:"active_violations"`  // sum of active violations
+	UpdatedAt        string             `json:"updated_at"`         // most recent project.updated_at
+	Leaves           []AtlasBrainLeaf   `json:"leaves"`             // one per underlying project
+}
+
+// AtlasBrainLeaf is the per-project rollup that orbits its parent product node.
+type AtlasBrainLeaf struct {
+	ID               string `json:"id"`                 // project slug — the leaf's deeplink
+	Name             string `json:"name"`
+	ScreenCount      int    `json:"screen_count"`
+	FlowCount        int    `json:"flow_count"`
+	ActiveViolations int    `json:"active_violations"`
+	LatestVersionID  string `json:"latest_version_id,omitempty"`
+	UpdatedAt        string `json:"updated_at"`
+}
+
+// ListAtlasBrainProducts groups ListAtlasBrainNodes by product. Done in Go
+// rather than SQL because SQLite lacks json_agg and the projects-per-product
+// fanout is tiny (~36 rows on the 2026-05-05 backfill).
+func (t *TenantRepo) ListAtlasBrainProducts(ctx context.Context, platform string, limit int) ([]AtlasBrainProduct, error) {
+	nodes, err := t.ListAtlasBrainNodes(ctx, platform, limit)
+	if err != nil {
+		return nil, err
+	}
+	byProduct := make(map[string]*AtlasBrainProduct, 32)
+	order := make([]string, 0, 32)
+	for _, n := range nodes {
+		p, ok := byProduct[n.Product]
+		if !ok {
+			p = &AtlasBrainProduct{Product: n.Product}
+			byProduct[n.Product] = p
+			order = append(order, n.Product)
+		}
+		p.ProjectCount++
+		p.FlowCount += n.FlowCount
+		p.ScreenCount += n.ScreenCount
+		p.ActiveViolations += n.ActiveViolations
+		// Track most recent updated_at across the constituent projects.
+		if p.UpdatedAt == "" || n.UpdatedAt > p.UpdatedAt {
+			p.UpdatedAt = n.UpdatedAt
+		}
+		p.Leaves = append(p.Leaves, AtlasBrainLeaf{
+			ID:               n.Slug,
+			Name:             n.Name,
+			ScreenCount:      n.ScreenCount,
+			FlowCount:        n.FlowCount,
+			ActiveViolations: n.ActiveViolations,
+			LatestVersionID:  n.LatestVersionID,
+			UpdatedAt:        n.UpdatedAt,
+		})
+	}
+	out := make([]AtlasBrainProduct, 0, len(order))
+	for _, name := range order {
+		out = append(out, *byProduct[name])
+	}
+	return out, nil
+}
+
+// HandleAtlasBrainProducts serves GET /v1/projects/atlas/brain-products?platform=mobile|web.
+// Returns one row per product (taxonomy node) with a nested leaves array per
+// underlying project. Mirrors HandleAtlasBrainNodes auth + cache headers.
+func (s *Server) HandleAtlasBrainProducts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	platform := r.URL.Query().Get("platform")
+	if platform != GraphPlatformMobile && platform != GraphPlatformWeb {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_platform",
+			"platform must be 'mobile' or 'web'")
+		return
+	}
+	limit := 500
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			if n > 1000 {
+				n = 1000
+			}
+			limit = n
+		}
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	products, err := repo.ListAtlasBrainProducts(r.Context(), platform, limit)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "atlas_brain_products", err.Error())
+		return
+	}
+	w.Header().Set("Cache-Control", "private, max-age=15")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"products": products,
+		"count":    len(products),
+		"platform": platform,
+	})
+}
+
+var _ http.HandlerFunc = (*Server)(nil).HandleAtlasBrainProducts

@@ -42,7 +42,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "../../../lib/auth-client";
-import { fetchDRD, putDRD } from "../../../lib/projects/client";
+import { fetchDRD, fetchProject, putDRD } from "../../../lib/projects/client";
 import { createDRDProvider, mintDRDTicket, userColor } from "../../../lib/drd/collab";
 
 import "../_styles/drd-editor.css";
@@ -84,14 +84,47 @@ export default function AtlasDRDEditor({ slug, flowID }: AtlasDRDEditorProps) {
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [collabReady, setCollabReady] = useState<null | true | "failed">(null);
+  const [resolvedFlowID, setResolvedFlowID] = useState<string>(flowID);
   const collabBundleRef = useRef<ReturnType<typeof createDRDProvider> | null>(null);
   const saveTimer = useRef<number | null>(null);
 
-  // ─── 1. Load DRD content (REST) ────────────────────────────────────────────
+  // Post brain-products: callers pass flowID="" because the leaf is now a
+  // whole project. Resolve the project's first flow once on mount and use
+  // its UUID for every per-flow endpoint below. Independent of the leaf
+  // canvas's screens fetch — the DRD editor only needs (project, flow_id)
+  // and never blocks on canvas frame loading.
   useEffect(() => {
+    if (flowID) { setResolvedFlowID(flowID); return; }
     let cancelled = false;
     void (async () => {
-      const r = await fetchDRD(slug, flowID);
+      try {
+        const r = await fetchProject(slug);
+        if (cancelled) return;
+        if (r.ok && r.data.flows && r.data.flows.length > 0) {
+          const first = r.data.flows.find((f: any) => !f.DeletedAt) ?? r.data.flows[0];
+          setResolvedFlowID(first.ID);
+        } else {
+          // Project has no flows — stop spinning, render empty state.
+          // Without this `loaded` would never flip and the spinner would
+          // hang forever.
+          setLoaded(true);
+        }
+      } catch {
+        // Network blip — give up, render empty state. The user can refresh.
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [slug, flowID]);
+
+  // ─── 1. Load DRD content (REST) ────────────────────────────────────────────
+  // Re-fires whenever resolvedFlowID changes (was previously keyed on flowID
+  // which never changes after mount, causing a stale-closure DRD spin).
+  useEffect(() => {
+    if (!resolvedFlowID) return;
+    let cancelled = false;
+    void (async () => {
+      const r = await fetchDRD(slug, resolvedFlowID);
       if (cancelled) return;
       if (r.ok) {
         const raw = r.data.content;
@@ -103,19 +136,21 @@ export default function AtlasDRDEditor({ slug, flowID }: AtlasDRDEditorProps) {
         setInitialContent(Array.isArray(parsed) && parsed.length > 0 ? parsed : undefined);
         setRevision(r.data.revision);
       } else {
+        // 404 or error → empty doc. Still flip `loaded` so the spinner
+        // gives way to the editor / empty state.
         setInitialContent(undefined);
       }
       setLoaded(true);
     })();
     return () => { cancelled = true; };
-  }, [slug, flowID]);
+  }, [slug, resolvedFlowID]);
 
   // ─── 2. Mint collab ticket + provider ──────────────────────────────────────
   useEffect(() => {
-    if (!COLLAB_ENABLED || !loaded) return;
+    if (!COLLAB_ENABLED || !loaded || !resolvedFlowID) return;
     let cancelled = false;
     void (async () => {
-      const t = await mintDRDTicket(slug, flowID);
+      const t = await mintDRDTicket(slug, resolvedFlowID);
       if (cancelled || !t.ok) {
         setCollabReady("failed");
         return;
@@ -123,7 +158,7 @@ export default function AtlasDRDEditor({ slug, flowID }: AtlasDRDEditorProps) {
       const userID = auth?.email || "anon";
       try {
         const bundle = createDRDProvider({
-          flowID,
+          flowID: resolvedFlowID,
           ticket: t.data.ticket,
           user: {
             id: userID,
@@ -143,7 +178,7 @@ export default function AtlasDRDEditor({ slug, flowID }: AtlasDRDEditorProps) {
       collabBundleRef.current?.destroy();
       collabBundleRef.current = null;
     };
-  }, [slug, flowID, loaded, auth?.email]);
+  }, [slug, resolvedFlowID, loaded, auth?.email]);
 
   // ─── 3. Editor instance with full Notion-feature surface ───────────────────
   const editorOptions = useMemo(() => {
@@ -195,12 +230,13 @@ export default function AtlasDRDEditor({ slug, flowID }: AtlasDRDEditorProps) {
   useEffect(() => {
     if (!editor) return;
     if (COLLAB_ENABLED && collabReady === true) return;
+    if (!resolvedFlowID) return;
     const onChange = () => {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(async () => {
         setSaveState("saving");
         const blocks = editor.document;
-        const r = await putDRD(slug, flowID, blocks, revision);
+        const r = await putDRD(slug, resolvedFlowID, blocks, revision);
         if (r.ok) {
           setRevision(r.data.revision);
           setSaveState("saved");
@@ -218,7 +254,7 @@ export default function AtlasDRDEditor({ slug, flowID }: AtlasDRDEditorProps) {
       off?.();
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
     };
-  }, [editor, slug, flowID, revision, collabReady]);
+  }, [editor, slug, resolvedFlowID, revision, collabReady]);
 
   if (!loaded) {
     return (

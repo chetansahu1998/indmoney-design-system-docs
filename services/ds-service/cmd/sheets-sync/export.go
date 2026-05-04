@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,38 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
+
+// noScreensError signals "Figma resolve produced no screens for this row" —
+// the caller should record state (so we don't keep retrying) but not count
+// as an error.
+type noScreensError struct{ tab string; row int }
+
+func (e *noScreensError) Error() string {
+	return fmt.Sprintf("skip:no_screens (tab=%s row=%d)", e.tab, e.row)
+}
+
+// IsNoScreens reports whether err is a noScreensError — orchestrator uses
+// this to bucket the row as "skipped" rather than "failed".
+func IsNoScreens(err error) bool { _, ok := err.(*noScreensError); return ok }
+
+// allowlistSanitizeRegex mirrors the server-side `[\w \-_/&·]+` allowlist.
+// Anything not in the set becomes a space; runs of spaces collapse and the
+// result is trimmed. Empty after sanitize falls back to "(untitled)".
+var allowlistSanitizeRegex = regexp.MustCompile(`[^\w \-_/&·]+`)
+var multiSpaceRegex = regexp.MustCompile(`\s+`)
+
+func sanitizeAllowlist(s, fallback string) string {
+	v := allowlistSanitizeRegex.ReplaceAllString(s, " ")
+	v = multiSpaceRegex.ReplaceAllString(v, " ")
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return fallback
+	}
+	if len(v) > 256 {
+		v = v[:256]
+	}
+	return v
+}
 
 // export.go — POST a NormalizedRow to /v1/projects/export.
 //
@@ -90,6 +123,10 @@ func NewExporter(dsURL, bearer string, gdoc *GDocFetcher, dryRun bool) *Exporter
 // resolved Figma frames. Returns the new project_id + version_id, or an
 // error.
 func (e *Exporter) ExportRow(ctx context.Context, row NormalizedRow, screens []Screen) (*ExportResponse, error) {
+	if len(screens) == 0 {
+		return nil, &noScreensError{tab: row.Tab, row: row.RowIndex}
+	}
+
 	subSlug := slugify(row.Mapping.Product)
 	syntheticFileID := "sheet:" + subSlug
 
@@ -102,30 +139,29 @@ func (e *Exporter) ExportRow(ctx context.Context, row NormalizedRow, screens []S
 			Y:         s.Y,
 			Width:     s.Width,
 			Height:    s.Height,
-			Name:      s.Name,
+			Name:      sanitizeAllowlist(s.Name, "frame"),
 			ModeLabel: "default", // see "blank PNG" diagnosis — mode pair handling out of scope here
 		})
 		frameIDs = append(frameIDs, s.ID)
 	}
 
 	sectionID := row.NodeID // reuse node-id as the section identifier
-	flowName := row.Project
-	if flowName == "" {
-		flowName = "(untitled)"
-	}
-	platform := inferPlatformFromScreens(screens) // mobile|web|""
+	flowName := sanitizeAllowlist(row.Project, "untitled")
+	flowPath := flowName // path mirrors name; server allows the same allowlist for both
+	platform := inferPlatformFromScreens(screens) // mobile|web (defaults to mobile when ambiguous)
+	product := sanitizeAllowlist(row.Mapping.Product, "Unknown")
 
 	req := ExportRequest{
 		IdempotencyKey: idempotencyKey(row),
 		FileID:         row.FileID,            // real Figma file (per-flow)
-		FileName:       row.Mapping.Product,   // brain-level node name (the sub-sheet's product)
+		FileName:       product,               // brain-level node name (the sub-sheet's product)
 		Flows: []FlowPayload{{
 			SectionID:   &sectionID,
 			FrameIDs:    frameIDs,
 			Frames:      frames,
 			Platform:    platform,
-			Product:     row.Mapping.Product,
-			Path:        "",
+			Product:     product,
+			Path:        flowPath,
 			PersonaName: "",
 			Name:        flowName,
 			ModeGroups:  nil,
@@ -173,7 +209,10 @@ func (e *Exporter) ExportRow(ctx context.Context, row NormalizedRow, screens []S
 		_ = json.Unmarshal(respBody, &existing)
 		return &existing, nil
 	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+	// Server returns 200 (idempotent re-export), 201 (new project) or 202
+	// (accepted; pipeline still running). All three include the project_id
+	// in the body — treat them all as success.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
 		return nil, fmt.Errorf("export: HTTP %d: %s", resp.StatusCode, respBody[:min(len(respBody), 200)])
 	}
 	var out ExportResponse
@@ -223,10 +262,11 @@ func slugify(s string) string {
 // inferPlatformFromScreens checks median frame width.
 //   median ≤ 480 → mobile
 //   median ≥ 1280 → web
-//   mixed/empty → "" (let the server figure it out)
+//   ambiguous/empty → mobile (server requires non-empty; mobile is the
+//   safer default since the sheet skews mobile-heavy)
 func inferPlatformFromScreens(screens []Screen) string {
 	if len(screens) == 0 {
-		return ""
+		return "mobile"
 	}
 	widths := make([]float64, 0, len(screens))
 	for _, s := range screens {
@@ -245,7 +285,7 @@ func inferPlatformFromScreens(screens []Screen) string {
 	if median >= 1280 {
 		return "web"
 	}
-	return ""
+	return "mobile"
 }
 
 // ─── Tier-2 Google Doc fetch ───────────────────────────────────────────────

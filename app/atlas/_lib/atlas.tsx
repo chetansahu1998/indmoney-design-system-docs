@@ -549,6 +549,14 @@ function AtlasCanvas({
     // ---- interaction
     let dragging = false, lastX = 0, lastY = 0;
     let hoveredId = null;
+
+    // Per-node hover progress, eased toward 1 when hovered and 0 when not.
+    // Survives across frames so scale / ring / label / halo all share one
+    // smoothly-animated value instead of snapping. Re-checked every frame so
+    // un-hovering smoothly decays even when the cursor stops moving.
+    const hoverP = new Map();
+    const HOVER_LERP_IN = 0.22;   // snappy on enter
+    const HOVER_LERP_OUT = 0.10;  // gentler on leave (avoids flicker on edges)
     canvas.addEventListener("pointerdown", (e) => {
       dragging = true; lastX = e.clientX; lastY = e.clientY;
       canvas.setPointerCapture?.(e.pointerId);
@@ -585,7 +593,12 @@ function AtlasCanvas({
         if (n.kind === "filler") continue;
         const dx = n.x - wx, dy = n.y - wy;
         const d = dx * dx + dy * dy;
-        const hitR = (n.r + 4) / (scale * zoom);
+        // Subflow nodes are tiny (r≈1.7–3) and visually they live in the
+        // halo/orbit of a much bigger flow node. With only a 4px buffer they
+        // were nearly impossible to land the cursor on. Bump padding to 8px
+        // for subflows so the visible-ring effectively becomes the hit area.
+        const padding = n.kind === "subflow" ? 8 : 4;
+        const hitR = (n.r + padding) / (scale * zoom);
         if (d < hitR * hitR && d < bestD) { bestD = d; best = n.id; }
       }
       // also consider fillers but with smaller hit box
@@ -682,6 +695,25 @@ function AtlasCanvas({
       const frozenSet = focusedId
         ? new Set([focusedId, ...(adj.get(focusedId) || [])])
         : null;
+
+      // ── Eased per-node hover progress. Each node moves toward 1 when it's
+      // the active hover target and 0 otherwise. Used for scale, ring opacity,
+      // halo, label opacity — single value drives every visual response so
+      // they stay visually coherent.
+      for (const n of nodes) {
+        const target = n.id === hoveredId ? 1 : 0;
+        const cur = hoverP.get(n.id) ?? 0;
+        const lerp = target > cur ? HOVER_LERP_IN : HOVER_LERP_OUT;
+        const next = cur + (target - cur) * lerp;
+        hoverP.set(n.id, next);
+      }
+      // Parent ripple — when a flow node is hovered, every subflow whose
+      // parent is that flow gets a 40% boost (a soft "the family glows"
+      // effect). Uses the *eased* parent progress so the ripple breathes
+      // alongside the parent's own pulse instead of snapping.
+      const hoveredNode = hoveredId ? nodeById.get(hoveredId) : null;
+      const rippleParentId = hoveredNode?.kind === "flow" ? hoveredNode.id : null;
+      const rippleP = rippleParentId ? (hoverP.get(rippleParentId) ?? 0) : 0;
       // per-node eased multiplier (0 = frozen, 1 = full)
       if (!stateRef.current._wigByNode) stateRef.current._wigByNode = new Map();
       const wigByNode = stateRef.current._wigByNode;
@@ -756,8 +788,24 @@ function AtlasCanvas({
         const parentSelected =
           n.kind === "subflow" && stateRef.current.selected === "f:" + n.flow;
         const breathR = 1 + (isHover || isSel ? 0 : (n.kind === "domain" ? 0.06 : n.kind === "flow" ? 0.04 : 0.02) * (Math.sin(t * 1.4 + (n.seed || 0)) ));
-        let scale = isHover ? 1.55 : isSel ? 1.25 : breathR;
-        if (n.kind === "subflow" && parentSelected && !isHover && !isSel) scale = 1.25;
+        const hp = hoverP.get(n.id) ?? 0;
+        // Subflow under a hovered flow gets a fraction of that parent's eased
+        // hover (rippleP). Other kinds aren't part of a parent ripple.
+        const familyP =
+          n.kind === "subflow" && rippleParentId === ("f:" + n.flow)
+            ? rippleP * 0.45
+            : 0;
+        let scale;
+        if (n.kind === "subflow") {
+          // base = breath/parentSelected/sel; hover smoothly adds up to +0.95
+          // on top, ripple from parent adds up to +0.4. Result reads as a
+          // gentle pop on its own and a light brighten when the family is hot.
+          const base = isSel ? 1.25 : (parentSelected ? 1.25 : breathR);
+          scale = base + hp * 0.95 + familyP * 0.55;
+        } else {
+          // Flow / domain: eased to 1.55 over hp, fallback to old behaviour.
+          scale = 1 + hp * 0.55 + (isSel ? 0.25 : 0) + (hp || isSel ? 0 : (breathR - 1));
+        }
         const r = n.r * scale;
 
         // Color: white for primaries/domains, gray for the rest, accent for matches
@@ -766,10 +814,13 @@ function AtlasCanvas({
         else if (n.kind === "flow" && n.primary) fill = "#ffffff";
         else if (n.kind === "filler") fill = "#7d8699";
         else if (n.kind === "subflow") {
-          // Three states: idle / parent-active / hovered
-          if (isHover) fill = "#ffffff";
-          else if (parentSelected || isSel) fill = "#d6dde9";
-          else fill = "#9aa3b6";
+          // Smoothly cross-fade between idle/parent-active/hovered using hp.
+          // mixHex blends two hex colors at ratio 0..1.
+          const idle = "#9aa3b6";
+          const familyOn = "#d6dde9";
+          const hot = "#ffffff";
+          const familyMix = familyP > 0 ? mixHex(idle, familyOn, Math.min(1, familyP * 1.6)) : (parentSelected ? familyOn : idle);
+          fill = mixHex(familyMix, hot, hp);
         }
 
         if (isMatch) fill = "#5fd28e";   // green accent like Obsidian search highlight
@@ -777,11 +828,23 @@ function AtlasCanvas({
 
         ctx.globalAlpha = dim ? 0.18 : 1;
 
-        // Shadow ring on hover/selected (subtle, no glow)
-        if (isHover || isSel) {
+        // Animated halo — expands outward as hp ramps to 1, fades on the way
+        // back. Subflow gets a slightly tighter ring than flow/domain so it
+        // doesn't visually swallow the parent.
+        if (hp > 0.04) {
+          const haloOffset = (n.kind === "subflow" ? 4 : 5) + hp * (n.kind === "subflow" ? 5 : 7);
+          ctx.beginPath();
+          ctx.arc(sx, sy, r + haloOffset, 0, Math.PI * 2);
+          ctx.strokeStyle = isSel
+            ? `rgba(126,184,255,${0.55 * hp})`
+            : `rgba(255,255,255,${0.32 * hp})`;
+          ctx.lineWidth = 1 + hp * 0.8;
+          ctx.stroke();
+        } else if (isSel) {
+          // Persistent selection ring even when not hovered.
           ctx.beginPath();
           ctx.arc(sx, sy, r + 5, 0, Math.PI * 2);
-          ctx.strokeStyle = isSel ? "rgba(126,184,255,0.55)" : "rgba(255,255,255,0.18)";
+          ctx.strokeStyle = "rgba(126,184,255,0.55)";
           ctx.lineWidth = 1;
           ctx.stroke();
         }
@@ -909,6 +972,22 @@ function AtlasCanvas({
   }, [focusReq]);
 
   return <canvas ref={canvasRef} className="atlas-canvas" />;
+}
+
+// Linear interpolation between two #rrggbb hex strings. Used by the node
+// renderer so subflow color smoothly cross-fades between idle/family/hover
+// states alongside the eased hover progress, avoiding the previous palette
+// snap.
+function mixHex(a, b, t) {
+  const ai = parseInt(a.slice(1), 16);
+  const bi = parseInt(b.slice(1), 16);
+  const ar = (ai >> 16) & 255, ag = (ai >> 8) & 255, ab = ai & 255;
+  const br = (bi >> 16) & 255, bg = (bi >> 8) & 255, bb = bi & 255;
+  const tt = Math.max(0, Math.min(1, t));
+  const r = Math.round(ar + (br - ar) * tt);
+  const g = Math.round(ag + (bg - ag) * tt);
+  const bl = Math.round(ab + (bb - ab) * tt);
+  return "#" + ((r << 16) | (g << 8) | bl).toString(16).padStart(6, "0");
 }
 
 function roundRect(ctx, x, y, w, h, r) {

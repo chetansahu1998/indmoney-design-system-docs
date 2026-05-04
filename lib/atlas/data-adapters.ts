@@ -109,6 +109,31 @@ interface AtlasBrainNodesResponse {
   platform: string;
 }
 
+// AtlasBrainProductsResponse — server-side aggregation of projects by
+// taxonomy product. One row per product = one primary brain node, with the
+// constituent projects exposed as `leaves` orbiting that node.
+interface AtlasBrainProductsResponse {
+  products: Array<{
+    product: string;
+    project_count: number;
+    flow_count: number;
+    screen_count: number;
+    active_violations: number;
+    updated_at: string;
+    leaves: Array<{
+      id: string;        // project slug
+      name: string;
+      screen_count: number;
+      flow_count: number;
+      active_violations: number;
+      latest_version_id?: string;
+      updated_at: string;
+    }>;
+  }>;
+  count: number;
+  platform: string;
+}
+
 interface GraphAggregateResponse {
   nodes: Array<{ id: string; type: string; label: string; parent_id?: string }>;
   edges: Array<{ source: string; target: string; class: string }>;
@@ -172,9 +197,13 @@ export async function fetchInitialAtlasState(opts: {
 }): Promise<AtlasState> {
   const platform = opts.platform;
 
+  // brain-products is the server-side aggregation: one row per taxonomy
+  // product, with constituent projects collapsed into `leaves`. This replaces
+  // the older brain-nodes shape (one row per project) which produced too many
+  // primary nodes on the brain (e.g. INDstocks appearing 4 times).
   const [brain, graph] = await Promise.all([
-    getJSON<AtlasBrainNodesResponse>(
-      `/v1/projects/atlas/brain-nodes?platform=${platform}`,
+    getJSON<AtlasBrainProductsResponse>(
+      `/v1/projects/atlas/brain-products?platform=${platform}`,
       opts.brainNodesETag,
     ),
     getJSON<GraphAggregateResponse>(
@@ -183,34 +212,58 @@ export async function fetchInitialAtlasState(opts: {
     ),
   ]);
 
-  const flows: Flow[] = brain.ok ? brain.data.nodes.map(brainNodeToFlow) : [];
+  const flows: Flow[] = [];
+  const leavesByFlow: Record<string, Leaf[]> = {};
+  if (brain.ok) {
+    for (const p of brain.data.products) {
+      const f = productToFlow(p);
+      flows.push(f);
+      // Pre-populate the leavesByFlow map — one leaf per underlying project.
+      // The brain renderer can show these as orbit dots without a follow-up
+      // round-trip when the user zooms or hovers a product node.
+      leavesByFlow[f.id] = p.leaves.map((leaf) =>
+        productLeafToLeaf(leaf, f.id),
+      );
+    }
+  }
   const synapses: Synapse[] = graph.ok ? edgesToSynapses(graph.data.edges, flows) : [];
 
   return {
     domains: ATLAS_DOMAINS,
     flows,
     synapses,
-    leavesByFlow: {},
+    leavesByFlow,
     brainNodesETag: brain.ok ? brain.etag : opts.brainNodesETag,
     graphAggregateETag: graph.ok ? graph.etag : opts.graphAggregateETag,
     loadedAt: Date.now(),
   };
 }
 
-/** Refetch only the brain nodes (cheaper than full state). */
+/** Refetch only the brain nodes (cheaper than full state). Now also returns
+ *  the leavesByFlow map so SSE-driven refreshes don't lose the orbit data. */
 export async function refetchBrainNodes(
   platform: Platform,
   etag?: string,
-): Promise<{ flows: Flow[]; etag?: string } | { notModified: true }> {
-  const r = await getJSON<AtlasBrainNodesResponse>(
-    `/v1/projects/atlas/brain-nodes?platform=${platform}`,
+): Promise<
+  { flows: Flow[]; leavesByFlow: Record<string, Leaf[]>; etag?: string }
+  | { notModified: true }
+> {
+  const r = await getJSON<AtlasBrainProductsResponse>(
+    `/v1/projects/atlas/brain-products?platform=${platform}`,
     etag,
   );
   if (!r.ok) {
     if (r.notModified) return { notModified: true };
-    return { flows: [], etag };
+    return { flows: [], leavesByFlow: {}, etag };
   }
-  return { flows: r.data.nodes.map(brainNodeToFlow), etag: r.etag };
+  const flows: Flow[] = [];
+  const leavesByFlow: Record<string, Leaf[]> = {};
+  for (const p of r.data.products) {
+    const f = productToFlow(p);
+    flows.push(f);
+    leavesByFlow[f.id] = p.leaves.map((leaf) => productLeafToLeaf(leaf, f.id));
+  }
+  return { flows, leavesByFlow, etag: r.etag };
 }
 
 // ─── Leaf fetchers ───────────────────────────────────────────────────────────
@@ -269,36 +322,51 @@ export async function fetchLeafCanvas(
   if (!proj.ok || !proj.data.screens) return { frames: [], edges: [] };
 
   const token = getToken();
-  const screens = proj.data.screens
-    .filter((s) => s.FlowID === flowID)
+  // After the brain-products migration, a "leaf" is a whole ds-service
+  // project rather than a single flow row. Pass flowID="" to render the
+  // project's full screen catalogue; pass a UUID to filter to one section.
+  const screens = (flowID
+    ? proj.data.screens.filter((s) => s.FlowID === flowID)
+    : proj.data.screens)
     .sort((a, b) => (a.Y - b.Y) || (a.X - b.X));
 
   const frames: Frame[] = screens.map((s, idx) => screenToFrame(s, idx, slug, token));
 
-  // Walk canonical trees in parallel, but only for the first ~20 screens to
-  // keep the cold load tight; the leaf canvas can refine on demand later.
+  // Walk canonical trees, but probe the first screen serially first — when
+  // canonical_tree hasn't been built yet (sheet-sync imports skip the
+  // pipeline that fills the column), every screen 404s and we'd otherwise
+  // spam 20 requests' worth of console noise on every leaf open.
   const edges: LeafEdge[] = [];
   const sample = screens.slice(0, 20);
-  const trees = await Promise.allSettled(
-    sample.map((s) =>
-      getJSON<{ canonical_tree: unknown; hash: string | null }>(
-        `/v1/projects/${encodeURIComponent(slug)}/screens/${encodeURIComponent(s.ID)}/canonical-tree`,
-      ),
-    ),
-  );
   const screenIDs = new Set(screens.map((s) => s.ID));
-  trees.forEach((t, i) => {
-    if (t.status !== "fulfilled" || !t.value.ok) return;
-    const fromScreen = sample[i];
-    const targetIDs = collectNavigationTargets(t.value.data.canonical_tree, screenIDs);
-    targetIDs.forEach((toID, j) => {
-      edges.push({
-        from: fromScreen.ID,
-        to: toID,
-        kind: j === 0 ? "main" : "branch",
+  if (sample.length > 0) {
+    const probe = await getJSON<{ canonical_tree: unknown; hash: string | null }>(
+      `/v1/projects/${encodeURIComponent(slug)}/screens/${encodeURIComponent(sample[0].ID)}/canonical-tree`,
+    );
+    if (probe.ok) {
+      const targets = collectNavigationTargets(probe.data.canonical_tree, screenIDs);
+      targets.forEach((toID, j) => {
+        edges.push({ from: sample[0].ID, to: toID, kind: j === 0 ? "main" : "branch" });
       });
-    });
-  });
+      const trees = await Promise.allSettled(
+        sample.slice(1).map((s) =>
+          getJSON<{ canonical_tree: unknown; hash: string | null }>(
+            `/v1/projects/${encodeURIComponent(slug)}/screens/${encodeURIComponent(s.ID)}/canonical-tree`,
+          ),
+        ),
+      );
+      trees.forEach((t, i) => {
+        if (t.status !== "fulfilled" || !t.value.ok) return;
+        const fromScreen = sample[i + 1];
+        const targetIDs = collectNavigationTargets(t.value.data.canonical_tree, screenIDs);
+        targetIDs.forEach((toID, j) => {
+          edges.push({ from: fromScreen.ID, to: toID, kind: j === 0 ? "main" : "branch" });
+        });
+      });
+    }
+    // probe.ok === false → the project has no canonical trees built; skip
+    // the parallel walk to avoid 20 redundant 404s in the network panel.
+  }
 
   return { frames, edges };
 }
@@ -315,19 +383,37 @@ export async function fetchLeafOverlays(
   framesByID: ReadonlyMap<string, Frame>,
   userDirectory: ReadonlyMap<string, string>,
 ): Promise<LeafOverlays> {
+  // When the caller doesn't have a specific flow_id (post brain-products
+  // migration: a leaf is a whole project, not a single flow), pick the
+  // project's first flow as the context for per-flow endpoints. Project-
+  // wide aggregation can come later; this gives the inspector something
+  // meaningful to render today.
+  let resolvedFlowID = flowID;
+  if (!resolvedFlowID) {
+    const proj = await fetchProject(slug, versionID);
+    if (proj.ok && proj.data.flows && proj.data.flows.length > 0) {
+      const first = proj.data.flows.find((f) => !f.DeletedAt) ?? proj.data.flows[0];
+      resolvedFlowID = first.ID;
+    }
+  }
+  if (!resolvedFlowID) {
+    // No flow yet — surface empty overlays without 404-spamming the per-flow
+    // endpoints. The inspector renders empty state for each tab.
+    return { violations: [], decisions: [], activity: [], comments: [] };
+  }
   const [violations, decisions, activity, comments, drd] = await Promise.all([
     listViolations(slug, versionID),
     getJSON<{ decisions: DecisionRow[] }>(
-      `/v1/projects/${encodeURIComponent(slug)}/flows/${encodeURIComponent(flowID)}/decisions`,
+      `/v1/projects/${encodeURIComponent(slug)}/flows/${encodeURIComponent(resolvedFlowID)}/decisions`,
     ),
     getJSON<{ activity: FlowActivityRow[]; count: number }>(
-      `/v1/projects/${encodeURIComponent(slug)}/flows/${encodeURIComponent(flowID)}/activity?limit=50`,
+      `/v1/projects/${encodeURIComponent(slug)}/flows/${encodeURIComponent(resolvedFlowID)}/activity?limit=50`,
     ),
     getJSON<{ comments: CommentRow[] }>(
-      `/v1/projects/${encodeURIComponent(slug)}/comments?target_kind=flow&target_id=${encodeURIComponent(flowID)}`,
+      `/v1/projects/${encodeURIComponent(slug)}/comments?target_kind=flow&target_id=${encodeURIComponent(resolvedFlowID)}`,
     ),
     getJSON<DRDFetchResponse>(
-      `/v1/projects/${encodeURIComponent(slug)}/flows/${encodeURIComponent(flowID)}/drd`,
+      `/v1/projects/${encodeURIComponent(slug)}/flows/${encodeURIComponent(resolvedFlowID)}/drd`,
     ),
   ]);
 
@@ -386,6 +472,53 @@ export function brainNodeToFlow(n: AtlasBrainNodesResponse["nodes"][number]): Fl
     latestVersionID: n.latest_version_id,
     product: n.product,
   };
+}
+
+/**
+ * Convert a server-side product aggregation row into a brain-node `Flow`.
+ * The `id` is the product slug (kebab-case) so the leaf canvas + URL state
+ * survive server-side aggregation changes.
+ */
+export function productToFlow(
+  p: AtlasBrainProductsResponse["products"][number],
+): Flow {
+  const slug = productSlug(p.product);
+  return {
+    id: slug,
+    label: p.product,
+    domain: productToDomain(p.product),
+    count: p.screen_count,
+    primary: isPrimaryFlow(p.screen_count),
+    activeViolations: p.active_violations,
+    flowCount: p.flow_count,
+    latestVersionID: undefined, // product-level node — leaves carry per-project version IDs
+    product: p.product,
+  };
+}
+
+/**
+ * Convert a per-project leaf (under a product) into the `Leaf` shape the
+ * inspector + canvas consume. `frames` doubles as screen count at this
+ * stage; the leaf canvas re-fetches real frames on open.
+ */
+export function productLeafToLeaf(
+  leaf: AtlasBrainProductsResponse["products"][number]["leaves"][number],
+  parentFlowID: string,
+): Leaf {
+  return {
+    id: leaf.id,
+    flow: parentFlowID,
+    label: leaf.name,
+    frames: leaf.screen_count,
+    violations: leaf.active_violations,
+  };
+}
+
+function productSlug(product: string): string {
+  return product
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 export function edgesToSynapses(

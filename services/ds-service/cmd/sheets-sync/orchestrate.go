@@ -167,6 +167,14 @@ func runCycleImpl(ctx context.Context, cfg *config, dbPath string) error {
 
 		resp, eerr := exporter.ExportRow(ctx, row, screens)
 		if eerr != nil {
+			if IsNoScreens(eerr) {
+				summary["skipped_no_screens"]++
+				st.LastError = "skip:no_screens"
+				if !cfg.DryRun {
+					_ = PersistRow(ctx, db, st)
+				}
+				continue
+			}
 			summary["errors"]++
 			st.LastError = eerr.Error()
 			emitTelemetry(cfg, "error", "sheets.sync.export_failed", map[string]any{

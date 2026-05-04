@@ -10,11 +10,15 @@ import (
 // is intentionally simple (token-bucket, in-memory) because Phase 1 runs as a
 // single instance. Phase 7 will swap in a Redis-backed limiter.
 const (
-	UserBucketSize    = 10
-	UserRefillSeconds = 60 // 10 tokens replenished every 60s = 10/min
+	// Sized for the sheets-sync backfill (~440 rows in one cycle) and
+	// designer plugin usage. The original 10/min · 200/day caps were tuned
+	// for 1 designer doing manual exports; the cron sync needs much more
+	// headroom. Bypass for super_admin is also added in Allow().
+	UserBucketSize    = 120
+	UserRefillSeconds = 60 // 120 tokens / min
 
-	TenantBucketSize    = 200
-	TenantRefillSeconds = 24 * 3600 // 200 tokens / day
+	TenantBucketSize    = 10000
+	TenantRefillSeconds = 24 * 3600 // 10k / day — backfills + steady-state
 
 	rateLimitGCInterval = 60 * time.Second
 	rateLimitIdleTTL    = 10 * time.Minute // entries idle this long get swept

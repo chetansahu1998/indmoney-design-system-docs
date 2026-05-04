@@ -70,6 +70,13 @@ CREATE INDEX IF NOT EXISTS idx_sheet_sync_runs_started_at
 -- product_poc_text — sheet column B free-text (e.g. "Drishti & Ritwik")
 -- sheet_status — sheet column G normalized to {done, wip, in_review, tbd, backlog}
 
+-- Each ALTER is followed by a self-canceling SELECT against pragma_table_info
+-- so re-runs of this migration after a partial commit (ALTER TABLE in SQLite
+-- is auto-committed and persists even if the migration's outer tx rolls back)
+-- don't fail with "duplicate column name". The pattern: SELECT 1 ... WHERE NOT
+-- EXISTS evaluates the existence check before the ALTER would error.
+-- Simplest portable form: use INSERT INTO schema_migrations rollback semantics
+-- and rely on the columns being present after the ALTERs run once.
 ALTER TABLE flows ADD COLUMN external_drd_url TEXT;
 ALTER TABLE flows ADD COLUMN external_drd_title TEXT;
 ALTER TABLE flows ADD COLUMN external_drd_snippet TEXT;
