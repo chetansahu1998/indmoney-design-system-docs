@@ -36,7 +36,10 @@ body {
 
 .atlas-root {
   position: fixed;
-  inset: 0;
+  top: var(--header-h);
+  right: 0;
+  bottom: 0;
+  left: 0;
   overflow: hidden;
   background:
     radial-gradient(1200px 800px at 50% 50%, #11141d 0%, #0b0d12 70%, #07080c 100%);

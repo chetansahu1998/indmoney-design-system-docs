@@ -16,6 +16,7 @@ import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useMemo } from "react";
 
+import PageShell from "../../components/PageShell";
 import { parseAtlasURL } from "../../lib/atlas/url-state";
 
 import "./_styles/atlas.css";
@@ -28,9 +29,11 @@ const AtlasShell = dynamic(() => import("./_lib/AtlasShell"), {
 
 export default function AtlasPage() {
   return (
-    <Suspense fallback={<div className="atlas-root atlas-root--booting" />}>
-      <AtlasInner />
-    </Suspense>
+    <PageShell withSidebar={false}>
+      <Suspense fallback={<div className="atlas-root atlas-root--booting" />}>
+        <AtlasInner />
+      </Suspense>
+    </PageShell>
   );
 }
 
