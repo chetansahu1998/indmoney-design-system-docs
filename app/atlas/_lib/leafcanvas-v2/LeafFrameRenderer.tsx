@@ -302,28 +302,42 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     };
 
     attach();
-    // Subscribe to the canvas idle signal. On idle → detach to save
-    // callback churn. On active → re-attach (no-op for frames whose
-    // observers are already firing successfully — they short-circuit
-    // via the `intersected`/`warm` early returns).
-    const unsub = canvasIdleTracker.subscribe((idle) => {
-      if (idle) detach();
-      else attach();
-    });
+    // No idle-detach for pre-first-paint frames: subscribe is skipped
+    // until the frame promotes to warm/intersected at least once. This
+    // avoids a race where the canvas-idle signal fires ~500ms after
+    // page load and detaches observers on frames that haven't had a
+    // layout pass yet — they would otherwise sit in shimmer forever.
+    let unsub: (() => void) | null = null;
+    if (warm || intersected) {
+      unsub = canvasIdleTracker.subscribe((idle) => {
+        if (idle) detach();
+        else attach();
+      });
+    }
     return () => {
-      unsub();
+      unsub?.();
       detach();
     };
-  }, [intersected]);
+  }, [intersected, warm]);
 
   // ─── Tree resolution (priority-queued via canvasFetchQueue) ──────────────
-  // Cached → instant. Otherwise schedule against the global queue with
-  // priority = P1 once HOT, else P3 while only WARM. Promote on HOT.
+  // Cached → instant. Otherwise schedule against the global queue.
+  //
+  // CRITICAL: `state.status` and `intersected` MUST NOT be in this effect's
+  // deps. The effect calls `setState({ status: "loading" })` synchronously
+  // — if status were a dep, that setState would retrigger this same effect,
+  // which would run the cleanup of the old run (cancelled=true), and the
+  // ORIGINAL work() promise would then early-return when it resolves. Net
+  // effect: state stays "loading" forever, frame stuck on shimmer. The
+  // pre-existing bug that left ~half of NRI VKYC's frames grey.
+  //
+  // The deps that DO matter: warm (gates whether to start), slug/screenID
+  // (cancel + restart on leaf navigation), cached (cache landed; use it).
+  // `intersected` is read inside the closure to pick priority but is not
+  // a dep — promotion mid-fetch is handled by canvasFetchQueue.promote()
+  // separately, not by re-running this effect.
   useEffect(() => {
     if (!warm) return;
-    if (state.status === "loading" || state.status === "ready" || state.status === "empty") {
-      return;
-    }
     if (cached !== undefined) {
       if (cached === null) {
         setState({ status: "empty" });
@@ -336,9 +350,8 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     }
 
     // Epoch counter (DesignBrain-AI MSDFAtlasManager generation-id pattern):
-    // late responses for a leaf the user has already navigated away from
-    // never apply. The cleanup callback bumps `cancelled` so even an
-    // in-flight queue entry is no-op'd at completion.
+    // cleanup runs ONLY on unmount or when slug/screenID changes — both
+    // legitimate reasons to discard a late response.
     let cancelled = false;
     setState({ status: "loading" });
     const work = (): Promise<void> =>
@@ -360,6 +373,8 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
         }
         setState({ status: "ready", tree: unwrapped });
       });
+    // Capture initial priority via a ref-free read; promotion is the
+    // promote() lever the queue exposes for HOT mid-fetch.
     const initialPriority: 1 | 3 = intersected ? 1 : 3;
     canvasFetchQueue
       .schedule(initialPriority, work)
@@ -373,7 +388,8 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     return () => {
       cancelled = true;
     };
-  }, [warm, intersected, slug, screenID, cached, state.status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [warm, slug, screenID, cached]);
 
   // Promote a WARM-scheduled fetch to HOT priority when the frame enters
   // the HOT band mid-flight. No-op if the request already started or
