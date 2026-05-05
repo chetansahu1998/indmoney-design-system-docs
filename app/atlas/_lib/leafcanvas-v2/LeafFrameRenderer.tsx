@@ -362,7 +362,7 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
   // Empty map until the first batch resolves; the renderer falls back to
   // the placeholder for any unmatched cluster id (failed mints, slow
   // network, etc.) — graceful degradation, no broken layout.
-  const clusterURLs = useIconClusterURLs(slug, prunedTree, 2);
+  const clusterURLs = useIconClusterURLs(slug, openLeafID, prunedTree, 2);
   const rendered = useMemo(() => {
     if (!prunedTree || !prunedTree.absoluteBoundingBox) return null;
     return nodeToHTML(

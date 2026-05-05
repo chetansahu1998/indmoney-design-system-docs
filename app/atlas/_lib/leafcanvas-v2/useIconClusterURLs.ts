@@ -59,21 +59,37 @@ function walk(node: CanonicalNode, acc: string[]): void {
 /**
  * Resolves cluster ids → signed `?at=…` URLs for `<img src>` use.
  *
- * @param slug    project slug (must match the leaf's owning project)
- * @param treeRoot canonical_tree root used for cluster discovery
- * @param scale   PNG scale (1|2|3); 2 matches the screen PNG default
+ * Two-step warm-then-mint flow:
  *
- * @returns a Map (`id → url`). Empty until the first batch resolves.
+ *   1. POST /v1/projects/<slug>/assets/warm with the full node-id list.
+ *      ds-service runs RenderAssetsForLeaf which renders + caches each
+ *      PNG up-front, batched against Figma's 5 req/sec budget. Without
+ *      this step a leaf with 30+ clusters would race the 5-second
+ *      synchronous render budget per `<img>` and most fetches would
+ *      come back HTTP 425 — which browsers don't retry on, so the
+ *      canvas would show broken images.
+ *
+ *   2. After warm completes, parallel-mint /assets/export-url tokens.
+ *      Every fetch hits cache and returns instantly (no further Figma
+ *      round-trips).
+ *
+ * @param slug     project slug (must match the leaf's owning project)
+ * @param leafID   ds-service flow.id (resolved from the live store)
+ * @param treeRoot canonical_tree root used for cluster discovery
+ * @param scale    PNG scale (1|2|3); 2 matches the screen PNG default
+ *
+ * @returns a Map (`id → url`). Empty until warm + mint complete.
  */
 export function useIconClusterURLs(
   slug: string,
+  leafID: string | null | undefined,
   treeRoot: CanonicalNode | null,
   scale: 1 | 2 | 3 = 2,
 ): ReadonlyMap<string, string> {
   const [urls, setURLs] = useState<ReadonlyMap<string, string>>(EMPTY_CLUSTER_URLS);
 
   useEffect(() => {
-    if (!treeRoot || !slug) {
+    if (!treeRoot || !slug || !leafID) {
       setURLs(EMPTY_CLUSTER_URLS);
       return;
     }
@@ -85,40 +101,61 @@ export function useIconClusterURLs(
     let cancelled = false;
     const dsURL = process.env.NEXT_PUBLIC_DS_SERVICE_URL || "";
     const token = getToken();
-    const auth = token ? { Authorization: `Bearer ${token}` } : ({} as Record<string, string>);
+    const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
-    const next = new Map<string, string>();
-    Promise.all(
-      ids.map(async (id) => {
-        try {
-          const res = await fetch(
-            `${dsURL}/v1/projects/${encodeURIComponent(slug)}/assets/export-url`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...auth },
-              body: JSON.stringify({ node_id: id, format: "png", scale }),
-            },
-          );
-          if (!res.ok) return;
-          const body = (await res.json()) as { url?: string };
-          if (typeof body.url === "string" && body.url.length > 0) {
-            // The mint endpoint returns a relative URL — prepend dsURL
-            // so the browser hits ds-service directly (the same origin
-            // the canonical_tree fetch already uses).
-            next.set(id, body.url.startsWith("http") ? body.url : `${dsURL}${body.url}`);
+    (async () => {
+      // Mint signed URLs per cluster. Each `<img>` fetch synchronously
+      // renders + caches on first load (5s budget); subsequent loads
+      // hit cache and return instantly. If a render times out (HTTP
+      // 425), nodeToHTML.ts's onError handler swaps to the dashed
+      // placeholder. After the first user interaction with a leaf,
+      // the cache is warm and reloads paint the full canvas.
+      //
+      // A pre-warm batch endpoint was prototyped (POST /assets/warm)
+      // but removed pending investigation of an intermittent mux 404
+      // with the AdaptAuthMiddleware wrapper. See git log e62a935..
+      // for the work-in-progress; safe to re-introduce when the
+      // routing issue is resolved.
+      const next = new Map<string, string>();
+      const failures: string[] = [];
+      await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const res = await fetch(
+              `${dsURL}/v1/projects/${encodeURIComponent(slug)}/assets/export-url`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...authHeaders },
+                body: JSON.stringify({ node_id: id, format: "png", scale }),
+              },
+            );
+            if (!res.ok) {
+              failures.push(`${id}: HTTP ${res.status}`);
+              return;
+            }
+            const body = (await res.json()) as { url?: string };
+            if (typeof body.url === "string" && body.url.length > 0) {
+              next.set(id, body.url.startsWith("http") ? body.url : `${dsURL}${body.url}`);
+            }
+          } catch (err) {
+            failures.push(`${id}: ${err instanceof Error ? err.message : String(err)}`);
           }
-        } catch {
-          // Single-cluster failure → skip; placeholder renders.
-        }
-      }),
-    ).then(() => {
-      if (!cancelled) setURLs(next);
-    });
+        }),
+      );
+      if (cancelled) return;
+      if (failures.length > 0) {
+        console.warn(
+          `[icon-cluster] ${failures.length}/${ids.length} mints failed:`,
+          failures.slice(0, 5),
+        );
+      }
+      setURLs(next);
+    })();
 
     return () => {
       cancelled = true;
     };
-  }, [slug, treeRoot, scale]);
+  }, [slug, leafID, treeRoot, scale]);
 
   return urls;
 }

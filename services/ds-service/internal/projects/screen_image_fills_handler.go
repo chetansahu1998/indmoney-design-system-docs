@@ -23,6 +23,7 @@ package projects
 //	browser image request.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +34,148 @@ import (
 
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/auth"
 )
+
+// HandleWarmAssetCache serves
+//
+//	POST /v1/projects/{slug}/assets/warm
+//
+// Body: `{ "leaf_id": "...", "node_ids": [...], "format": "png|svg", "scale": 1|2|3 }`.
+// Response: `{ "warmed": <int>, "results": [{node_id, mime, storage_key}, ...] }`.
+//
+// Why this exists: HandleAssetDownload synchronously renders on cache miss
+// with a 5-second budget; if it elapses, returns 425. Browsers don't retry
+// `<img>` fetches on 425 — they just show a broken image. For canvas-v2 we
+// need every cluster's PNG cache-warm before any `<img>` request fires;
+// otherwise 30 simultaneous misses race the 5-req/sec Figma render budget
+// and most lose. This endpoint runs RenderAssetsForLeaf upfront, batched
+// at 80 ids/Figma-call, and returns when every requested node is cached.
+//
+// Frontend flow:
+//
+//  1. Walk canonical_tree, collect cluster ids
+//  2. POST /assets/warm with all ids — wait for response (~10-30s typical)
+//  3. Parallel-mint /assets/export-url tokens — every fetch hits cache
+//  4. Render `<img src=…?at=…>` — instant, no 425s
+//
+// Cost: roughly the same Figma API calls the old per-cluster path made,
+// but front-loaded into one orchestrated burst instead of spread across
+// failing browser retries. Net: faster and more deterministic.
+func (s *Server) HandleWarmAssetCache(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	if s.deps.AssetExporter == nil {
+		writeJSONErr(w, http.StatusServiceUnavailable, "asset_exporter", "not configured")
+		return
+	}
+	slug := r.PathValue("slug")
+	if slug == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_slug", "")
+		return
+	}
+
+	var req struct {
+		LeafID  string   `json:"leaf_id"`
+		NodeIDs []string `json:"node_ids"`
+		Format  string   `json:"format"`
+		Scale   int      `json:"scale"`
+	}
+	if err := readJSON(r, &req, 256*1024); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "decode", err.Error())
+		return
+	}
+	if req.LeafID == "" || len(req.NodeIDs) == 0 {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "leaf_id + node_ids required")
+		return
+	}
+	// Cap matches the bulk-export ceiling so a runaway client can't
+	// queue 10k Figma render slots in one request.
+	if len(req.NodeIDs) > MaxBulkAssetExportRows {
+		writeJSONErr(w, http.StatusBadRequest, "too_many_nodes",
+			fmt.Sprintf("max %d node_ids per warm call", MaxBulkAssetExportRows))
+		return
+	}
+	if req.Format != "png" && req.Format != "svg" {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "format must be png|svg")
+		return
+	}
+	if req.Scale < 1 || req.Scale > 3 {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "scale must be 1|2|3")
+		return
+	}
+
+	// Tenant scope check — same as HandleBulkAssetExport.
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	if _, err := repo.GetProjectBySlug(r.Context(), slug); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "warm_project_not_found",
+				fmt.Sprintf("slug=%q tenant=%q", slug, tenantID))
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+		return
+	}
+
+	results, err := s.tenantExporter(tenantID).RenderAssetsForLeaf(
+		r.Context(), tenantID, req.LeafID, req.NodeIDs, req.Format, req.Scale,
+	)
+	if errors.Is(err, ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if IsAssetExportNodeMissing(err) {
+		// Some clusters can't be SVG-rendered (e.g. raster-only fills) —
+		// surface as 200 with partial results so the frontend can render
+		// placeholders for the un-warmable ones.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"warmed":  countNonZero(results),
+			"results": results,
+			"warning": err.Error(),
+		})
+		return
+	}
+	if err != nil {
+		writeJSONErr(w, http.StatusBadGateway, "render_failed", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"warmed":  len(results),
+		"results": results,
+	})
+}
+
+func countNonZero(rs []AssetExportResult) int {
+	n := 0
+	for _, r := range rs {
+		if r.NodeID != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// readJSON reads up to `cap` bytes from r.Body and unmarshals into out.
+// Mirrors the inline pattern used by HandleBulkAssetExport — pulled here
+// so HandleWarmAssetCache stays focused.
+func readJSON(r *http.Request, out any, cap int64) error {
+	body, err := io.ReadAll(io.LimitReader(r.Body, cap))
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(body, out)
+}
 
 // HandleListImageRefs serves
 //

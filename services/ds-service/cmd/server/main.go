@@ -679,21 +679,26 @@ func (s *server) routes(mux *http.ServeMux) {
 	// loaders / file-save dialogs never see the JWT. Tokens bind
 	// (tenant, file_id, node_id, format, scale) for single assets and
 	// (tenant, bulk_id) for bulk zips.
+	// All literal-segment asset routes are registered BEFORE the generic
+	// `/assets/{node_id}` GET catch-all so Go 1.22 ServeMux's most-specific
+	// pattern rule binds the literal segments ("warm", "raw", "bulk", and
+	// "export-url" / "bulk-export") to their dedicated handlers. With the
+	// catch-all preceding them, certain POST literal routes silently 404'd
+	// despite being registered (observed for /warm and /bulk-export).
 	mux.HandleFunc("POST /v1/projects/{slug}/assets/export-url",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleMintAssetExportToken())))
-	// Image-fill resolver routes — registered BEFORE the generic
-	// `/assets/{node_id}` route so the specific "raw" / "bulk" segments
-	// take precedence (Go 1.22 ServeMux picks the more specific pattern).
+	mux.HandleFunc("POST /v1/projects/{slug}/assets/bulk-export",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleBulkAssetExport())))
 	mux.HandleFunc("GET /v1/projects/{slug}/leaves/{leaf_id}/image-refs",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleListImageRefs)))
 	mux.HandleFunc("GET /v1/projects/{slug}/assets/raw/{imageRef}",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleServeRawAsset)))
-	mux.HandleFunc("GET /v1/projects/{slug}/assets/{node_id}",
-		s.projectsServer.HandleAssetDownload())
-	mux.HandleFunc("POST /v1/projects/{slug}/assets/bulk-export",
-		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleBulkAssetExport())))
 	mux.HandleFunc("GET /v1/projects/{slug}/assets/bulk/{token}",
 		s.projectsServer.HandleBulkDownload())
+	// Generic catch-all GET — matches any other /assets/<node_id>. Must
+	// come last so the literal segments above bind first.
+	mux.HandleFunc("GET /v1/projects/{slug}/assets/{node_id}",
+		s.projectsServer.HandleAssetDownload())
 
 	// Phase 2 U10 — Audit-by-slug read path. /files/[slug] in the docs site
 	// reads from this endpoint instead of importing the JSON sidecar at build

@@ -150,7 +150,10 @@ function renderClusterPlaceholder(
   const sizing = sizeStyle(node);
 
   if (url) {
-    // U7 path — once asset-export client lands, render the real asset.
+    // Cluster export resolved — render the rasterized icon. onError
+    // swaps the broken image for the dashed placeholder so a stale
+    // token / 5xx / cache miss after eviction degrades gracefully
+    // instead of leaving an inline broken-image icon.
     return createElement("img", {
       key: keyHint,
       src: url,
@@ -158,6 +161,18 @@ function renderClusterPlaceholder(
       "data-figma-id": node.id,
       "data-cluster": "true",
       draggable: false,
+      onError: (e: { currentTarget: HTMLImageElement }) => {
+        const img = e.currentTarget;
+        img.removeAttribute("src");
+        img.setAttribute("data-cluster-failed", "true");
+        // Swap the inline style to the placeholder shape so the layout
+        // slot stays the same size — no reflow, no broken icon UI.
+        img.style.border = "1px dashed rgba(94, 234, 212, 0.6)";
+        img.style.borderRadius = "4px";
+        img.style.background = "rgba(94, 234, 212, 0.05)";
+        // eslint-disable-next-line no-console
+        console.warn("[icon-cluster] image load failed", { id: node.id, url });
+      },
       style: { ...positioning, ...sizing, display: "block", objectFit: "contain" },
     });
   }
