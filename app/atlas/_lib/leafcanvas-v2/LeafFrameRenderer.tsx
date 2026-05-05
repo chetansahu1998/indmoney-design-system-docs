@@ -28,6 +28,7 @@ import {
 import { useAtlas } from "../../../../lib/atlas/live-store";
 
 import { findByFigmaID } from "./AtomicChildInspector";
+import { BulkExportPanel } from "./BulkExportPanel";
 import { InlineTextEditor } from "./InlineTextEditor";
 import { nodeToHTML } from "./nodeToHTML";
 import type { CanonicalNode, ImageRefMap } from "./types";
@@ -88,12 +89,21 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
   const [intersected, setIntersected] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
 
-  // ─── Atomic-child selection (U7) ──────────────────────────────────────────
+  // ─── Atomic-child selection (U7 + U9) ─────────────────────────────────────
   // Single-click any TEXT / icon-cluster / RECTANGLE / ELLIPSE / VECTOR
   // atomic emits `selectAtomicChild`. Frame containers (FRAME) keep their
   // pass-through behaviour: clicking a frame walks up from the click
   // target to the nearest atomic descendant (D5).
+  //
+  // Shift-click (U9): toggles the atomic in `selectedAtomicChildren`
+  // instead of replacing the single-select. The store auto-clears the
+  // single selection once the bulk set grows past 1 so the inspector
+  // and BulkExportPanel never overlap.
   const selectAtomicChild = useAtlas((s) => s.selectAtomicChild);
+  const addToBulkSelection = useAtlas((s) => s.addToBulkSelection);
+  const removeFromBulkSelection = useAtlas((s) => s.removeFromBulkSelection);
+  const bulkSelected = useAtlas((s) => s.selection.selectedAtomicChildren);
+
   const handleClick = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement | null;
@@ -103,9 +113,24 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       // Stop propagation so the outer canvas pan/zoom layer doesn't also
       // interpret this as a frame focus event.
       e.stopPropagation();
+      if (e.shiftKey) {
+        const key = `${screenID}|${figmaID}`;
+        if (bulkSelected.has(key)) {
+          removeFromBulkSelection(screenID, figmaID);
+        } else {
+          addToBulkSelection(screenID, figmaID);
+        }
+        return;
+      }
       selectAtomicChild(screenID, figmaID);
     },
-    [screenID, selectAtomicChild],
+    [
+      screenID,
+      selectAtomicChild,
+      addToBulkSelection,
+      removeFromBulkSelection,
+      bulkSelected,
+    ],
   );
 
   // ─── Atomic-child editing (U8) ────────────────────────────────────────────
@@ -258,6 +283,137 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     return nodeToHTML(filtered, filtered.absoluteBoundingBox, null, { imageRefs }, "root");
   }, [filtered, imageRefs]);
 
+  // ─── Lasso selection (U9) ────────────────────────────────────────────────
+  // Pointer-down on canvas whitespace (an element that is NOT inside an
+  // atomic) starts a selection rectangle. Pointer-move expands it;
+  // pointer-up commits every atomic whose DOM bbox intersects the lasso
+  // rect to `selectedAtomicChildren`. Frames are never added — only their
+  // atomic descendants — so a lasso that covers a FRAME picks up only
+  // the icons/texts inside it.
+  const [lasso, setLasso] = useState<LassoRect | null>(null);
+  const lassoStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  const onPointerDown = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      // Only the primary button starts a lasso; right-click / middle pan
+      // are owned by the outer canvas shell.
+      if (e.button !== 0) return;
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      // If the user clicked through to an atomic, the click handler owns
+      // the interaction (single-click select / shift-click toggle). Lasso
+      // only kicks in on whitespace.
+      if (findAtomicTarget(target, wrapperRef.current)) return;
+      const wrapper = wrapperRef.current;
+      if (!wrapper) return;
+      const rect = wrapper.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      lassoStartRef.current = { x, y };
+      setLasso({ left: x, top: y, width: 0, height: 0 });
+    },
+    [],
+  );
+
+  const onPointerMove = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      const start = lassoStartRef.current;
+      if (!start) return;
+      const wrapper = wrapperRef.current;
+      if (!wrapper) return;
+      const rect = wrapper.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      setLasso({
+        left: Math.min(start.x, x),
+        top: Math.min(start.y, y),
+        width: Math.abs(x - start.x),
+        height: Math.abs(y - start.y),
+      });
+    },
+    [],
+  );
+
+  const onPointerUp = useCallback(() => {
+    const start = lassoStartRef.current;
+    lassoStartRef.current = null;
+    if (!start || !lasso) {
+      setLasso(null);
+      return;
+    }
+    // Treat anything smaller than ~4px as a click, not a drag.
+    if (lasso.width < 4 && lasso.height < 4) {
+      setLasso(null);
+      return;
+    }
+    const wrapper = wrapperRef.current;
+    if (!wrapper) {
+      setLasso(null);
+      return;
+    }
+    const wrapperRect = wrapper.getBoundingClientRect();
+    // Convert lasso (wrapper-local) to viewport coords for getBoundingClientRect comparison.
+    const lassoVp = {
+      left: lasso.left + wrapperRect.left,
+      top: lasso.top + wrapperRect.top,
+      right: lasso.left + lasso.width + wrapperRect.left,
+      bottom: lasso.top + lasso.height + wrapperRect.top,
+    };
+    // Walk every atomic-tagged DOM node under the wrapper. We rely on
+    // `data-figma-type` markup that nodeToHTML emits for atomic types, plus
+    // `data-cluster="true"` for icon clusters. FRAMEs are excluded by
+    // construction — they don't get selected even if they're inside the
+    // lasso.
+    const candidates = wrapper.querySelectorAll<HTMLElement>(
+      `[data-figma-type="TEXT"],` +
+        `[data-figma-type="RECTANGLE"],` +
+        `[data-figma-type="ELLIPSE"],` +
+        `[data-figma-type="VECTOR"],` +
+        `[data-figma-type="STAR"],` +
+        `[data-figma-type="POLYGON"],` +
+        `[data-figma-type="LINE"],` +
+        `[data-cluster="true"],[data-cluster-pending="true"]`,
+    );
+    for (const el of Array.from(candidates)) {
+      const figmaID = el.getAttribute("data-figma-id");
+      if (!figmaID) continue;
+      const r = el.getBoundingClientRect();
+      if (
+        r.right >= lassoVp.left &&
+        r.left <= lassoVp.right &&
+        r.bottom >= lassoVp.top &&
+        r.top <= lassoVp.bottom
+      ) {
+        addToBulkSelection(screenID, figmaID);
+      }
+    }
+    setLasso(null);
+  }, [lasso, screenID, addToBulkSelection]);
+
+  // ─── Paint bulk-selected outlines onto matching atomics ──────────────────
+  // We tag DOM nodes with `data-bulk-selected="true"` after each render so
+  // CSS can show the highlight without React owning the per-atomic
+  // markup. Ref-driven — survives re-renders triggered by the bulk Map.
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    // Clear stale flags first.
+    const stale = wrapper.querySelectorAll<HTMLElement>('[data-bulk-selected="true"]');
+    for (const el of Array.from(stale)) {
+      el.removeAttribute("data-bulk-selected");
+    }
+    if (bulkSelected.size === 0) return;
+    for (const [key, figmaNodeID] of bulkSelected) {
+      const sep = key.indexOf("|");
+      const sid = sep === -1 ? "" : key.slice(0, sep);
+      if (sid !== screenID) continue;
+      const el = wrapper.querySelector<HTMLElement>(
+        `[data-figma-id="${cssEscapeAttr(figmaNodeID)}"]`,
+      );
+      if (el) el.setAttribute("data-bulk-selected", "true");
+    }
+  }, [bulkSelected, screenID, rendered]);
+
   // ─── Render ──────────────────────────────────────────────────────────────
   // Outer wrapper — sized to the frame's PNG bbox so the canvas's auto-fit
   // math stays stable whether we're showing the skeleton, the rendered
@@ -268,9 +424,13 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       className="leafcv2-frame"
       data-screen-id={screenID}
       data-status={state.status}
-      style={{ width, height }}
+      style={{ width, height, position: "relative" }}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
     >
       {rendered ?? <Skeleton label={label} status={state.status} />}
       {editing && openLeafID && (
@@ -300,8 +460,55 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
           />
         </div>
       )}
+      {lasso && (
+        <div
+          className="leafcv2-lasso"
+          style={{
+            left: lasso.left,
+            top: lasso.top,
+            width: lasso.width,
+            height: lasso.height,
+          }}
+          aria-hidden="true"
+        />
+      )}
+      {openLeafID && (
+        <BulkExportPanel
+          slug={slug}
+          leafID={openLeafID}
+          resolveNodeName={(sid, fid) => {
+            // Only resolve names for our own screen — cross-screen rows
+            // (rare; lasso is per-frame) fall through to the figmaNodeID
+            // preview gracefully.
+            if (sid !== screenID) return null;
+            if (state.status !== "ready" || !state.tree) return null;
+            const found = findByFigmaID(state.tree, fid);
+            return found?.node.name ?? null;
+          }}
+        />
+      )}
     </div>
   );
+}
+
+/**
+ * Lasso rectangle in wrapper-local coordinates. `pointermove` widens it;
+ * `pointerup` consumes it for the intersection test then clears.
+ */
+interface LassoRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Minimal CSSOM `CSS.escape` polyfill scoped to attribute values. Figma
+ * node ids contain `:` which is a CSS pseudo-selector marker; without
+ * escaping, `querySelector('[data-figma-id="123:456"]')` throws.
+ */
+function cssEscapeAttr(s: string): string {
+  return s.replace(/(["\\])/g, "\\$1");
 }
 
 interface EditingTarget {

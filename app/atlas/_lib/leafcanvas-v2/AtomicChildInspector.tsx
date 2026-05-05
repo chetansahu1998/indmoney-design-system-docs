@@ -393,10 +393,11 @@ function ExportTab({
         setError(res.error || "Export failed");
         return;
       }
-      // Open in a new tab — preserves the inspector state. U5 will return
-      // a signed URL with a short TTL; reopening pulls a fresh one.
+      // Open in a new tab — preserves the inspector state. U5 returns a
+      // signed Figma image URL with a short TTL; reopening pulls a fresh
+      // one via the cached server-side proxy.
       if (typeof window !== "undefined") {
-        window.open(res.data.download_url, "_blank", "noopener");
+        window.open(res.data.url, "_blank", "noopener");
       }
     },
     [slug, screenID, figmaNodeID],

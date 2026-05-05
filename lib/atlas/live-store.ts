@@ -65,6 +65,18 @@ interface AtlasSelection {
    * re-collapses to the leaf-level overview.
    */
   selectedAtomicChild: { screenID: string; figmaNodeID: string } | null;
+  /**
+   * U9 — bulk-export selection. Keyed `screenID|figmaNodeID` so the lookup
+   * is O(1) per atomic during shift-click and lasso intersection tests.
+   * Value is the figmaNodeID (handy for fast iteration when minting the
+   * bulk-export request body).
+   *
+   * Coexists with `selectedAtomicChild`: shift-click promotes single ->
+   * multi by adding to the map; the single-select clears as soon as the
+   * bulk set grows past 1, so the inspector / BulkExportPanel never both
+   * show at the same time.
+   */
+  selectedAtomicChildren: Map<string, string>;
 }
 
 // ─── Per-leaf cache slot ─────────────────────────────────────────────────────
@@ -151,6 +163,16 @@ interface AtlasStoreState {
     screenID: string | null,
     figmaNodeID?: string | null,
   ) => void;
+  /**
+   * U9 — add an atomic to the bulk-export set. When the set transitions
+   * from 0 -> 1 we leave `selectedAtomicChild` in sync; when it grows
+   * past 1 the single-select clears so the inspector defers to the
+   * BulkExportPanel.
+   */
+  addToBulkSelection: (screenID: string, figmaNodeID: string) => void;
+  removeFromBulkSelection: (screenID: string, figmaNodeID: string) => void;
+  /** Empty the bulk set — used by Esc, lasso-cancel, and after export. */
+  clearBulkSelection: () => void;
   setTweak: <K extends keyof AtlasTweaks>(key: K, value: AtlasTweaks[K]) => void;
   applyEvent: (evt: AtlasLiveEvent) => void;
 
@@ -210,6 +232,7 @@ export const useAtlas = create<AtlasStoreState>()(
         leafID: null,
         frameID: null,
         selectedAtomicChild: null,
+        selectedAtomicChildren: new Map(),
       },
       tweaks: ATLAS_TWEAK_DEFAULTS,
       userDirectory: {},
@@ -298,6 +321,7 @@ export const useAtlas = create<AtlasStoreState>()(
               leafID: null,
               frameID: null,
               selectedAtomicChild: null,
+              selectedAtomicChildren: new Map(),
             },
           });
           return;
@@ -326,6 +350,7 @@ export const useAtlas = create<AtlasStoreState>()(
               leafID,
               frameID: null,
               selectedAtomicChild: null,
+              selectedAtomicChildren: new Map(),
             },
           });
           return;
@@ -336,6 +361,7 @@ export const useAtlas = create<AtlasStoreState>()(
             leafID,
             frameID: null,
             selectedAtomicChild: null,
+            selectedAtomicChildren: new Map(),
           },
         });
 
@@ -377,6 +403,7 @@ export const useAtlas = create<AtlasStoreState>()(
             leafID: null,
             frameID: null,
             selectedAtomicChild: null,
+            selectedAtomicChildren: new Map(),
           },
         });
       },
@@ -384,12 +411,14 @@ export const useAtlas = create<AtlasStoreState>()(
       selectFrame: (frameID) => {
         // Picking a different frame collapses any open atomic-child
         // inspector — otherwise we'd render snippets for a node that no
-        // longer belongs to the visible context.
+        // longer belongs to the visible context. Same for the bulk set:
+        // a frame switch is a context reset.
         set({
           selection: {
             ...get().selection,
             frameID,
             selectedAtomicChild: null,
+            selectedAtomicChildren: new Map(),
           },
         });
       },
@@ -410,6 +439,48 @@ export const useAtlas = create<AtlasStoreState>()(
             ...get().selection,
             selectedAtomicChild: { screenID, figmaNodeID },
           },
+        });
+      },
+
+      // ─── U9: bulk-export selection ───────────────────────────────────────
+      addToBulkSelection: (screenID, figmaNodeID) => {
+        const sel = get().selection;
+        const key = `${screenID}|${figmaNodeID}`;
+        if (sel.selectedAtomicChildren.has(key)) return; // idempotent
+        const next = new Map(sel.selectedAtomicChildren);
+        next.set(key, figmaNodeID);
+        // Single-select clears once the bulk set grows past 1 — the
+        // BulkExportPanel takes over the export affordance and we don't
+        // want the inspector and the panel both visible.
+        const nextSingle = next.size > 1 ? null : sel.selectedAtomicChild;
+        set({
+          selection: {
+            ...sel,
+            selectedAtomicChild: nextSingle,
+            selectedAtomicChildren: next,
+          },
+        });
+      },
+
+      removeFromBulkSelection: (screenID, figmaNodeID) => {
+        const sel = get().selection;
+        const key = `${screenID}|${figmaNodeID}`;
+        if (!sel.selectedAtomicChildren.has(key)) return;
+        const next = new Map(sel.selectedAtomicChildren);
+        next.delete(key);
+        set({
+          selection: {
+            ...sel,
+            selectedAtomicChildren: next,
+          },
+        });
+      },
+
+      clearBulkSelection: () => {
+        const sel = get().selection;
+        if (sel.selectedAtomicChildren.size === 0) return;
+        set({
+          selection: { ...sel, selectedAtomicChildren: new Map() },
         });
       },
 

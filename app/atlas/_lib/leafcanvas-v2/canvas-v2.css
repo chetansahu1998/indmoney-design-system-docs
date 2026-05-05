@@ -354,3 +354,84 @@
   /* Placeholder visuals owned inline so static analyzers don't flag
      dead `data-cluster-pending` selectors when the styles move. */
 }
+
+/* ── U9: bulk-select highlight, lasso, export panel ───────── */
+
+.leafcv2-frame [data-bulk-selected="true"] {
+  outline: 2px solid #06f;
+  outline-offset: 1px;
+}
+
+.leafcv2-lasso {
+  position: absolute;
+  pointer-events: none;
+  border: 1px solid #06f;
+  background: rgba(0, 102, 255, 0.08);
+  z-index: 90;
+}
+
+.leafcv2-bulk-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(20, 20, 24, 0.94);
+  color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  font: 500 12px/1.3 Inter, system-ui, sans-serif;
+  min-width: 220px;
+  max-width: 320px;
+}
+
+.leafcv2-bulk-panel__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.leafcv2-bulk-panel__btn {
+  appearance: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+  background: #06f;
+  color: #fff;
+}
+
+.leafcv2-bulk-panel__btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.leafcv2-bulk-panel__btn--ghost {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.leafcv2-bulk-panel__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 160px;
+  overflow-y: auto;
+  font: 400 11px/1.4 Inter, system-ui, sans-serif;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.leafcv2-bulk-panel__list li {
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.leafcv2-bulk-panel__error {
+  color: #ff8b8b;
+}
