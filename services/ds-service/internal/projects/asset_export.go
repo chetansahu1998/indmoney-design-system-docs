@@ -603,10 +603,14 @@ func isAcceptedAssetFormat(format string) bool {
 const AssetCacheRetryAfterSeconds = 5
 
 // SingleAssetSyncRenderBudget bounds the on-demand render path inside
-// HandleAssetDownload. The HTTP request shouldn't block forever — beyond ~5s
-// we send 425 + Retry-After so the frontend can poll instead of holding the
-// socket open.
-const SingleAssetSyncRenderBudget = 5 * time.Second
+// HandleAssetDownload. With 30+ standalone-shape requests per leaf racing
+// Figma's 5-req/sec PAT cap, a 5-second budget loses for the majority of
+// shapes (30 * 200ms minimum spacing = 6 seconds for the LAST shape just
+// to dispatch). Bumped to 30s — tradeoff: HTTP threads are tied up
+// longer for slow renders, but designers see actual icons instead of
+// 90% placeholder canvases. The frontend's img-onError retry-with-
+// backoff (nodeToHTML.ts) absorbs the rare cases that still time out.
+const SingleAssetSyncRenderBudget = 30 * time.Second
 
 // ─── Bulk export registry ────────────────────────────────────────────────────
 

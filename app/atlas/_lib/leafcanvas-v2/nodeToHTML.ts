@@ -154,9 +154,18 @@ function renderClusterPlaceholder(
 
   if (url) {
     // Cluster export resolved — render the rasterized icon. onError
-    // swaps the broken image for the dashed placeholder so a stale
-    // token / 5xx / cache miss after eviction degrades gracefully
-    // instead of leaving an inline broken-image icon.
+    // retries with exponential backoff before falling back to the
+    // dashed placeholder.
+    //
+    // Why retry: ds-service serves 425 (Too Early) when Figma's
+    // synchronous render budget elapses — most common when a leaf
+    // mounts 30+ standalone shapes simultaneously and Figma's 5
+    // req/sec PAT cap saturates. Browsers don't auto-retry image
+    // fetches on 425. The retry path keeps the same signed URL
+    // (token has 60s TTL — comfortably covers 3 retries at 1.5s,
+    // 3s, 6s spacing). After 3 failures we surrender to the dashed
+    // placeholder so the canvas isn't held hostage by one stuck
+    // render.
     return createElement("img", {
       key: keyHint,
       src: url,
@@ -166,15 +175,28 @@ function renderClusterPlaceholder(
       draggable: false,
       onError: (e: { currentTarget: HTMLImageElement }) => {
         const img = e.currentTarget;
+        const tries = parseInt(img.getAttribute("data-retry") ?? "0", 10);
+        const MAX_TRIES = 3;
+        if (tries < MAX_TRIES) {
+          // Exponential backoff: 1.5s, 3s, 6s. Stay under the 60s
+          // mint-token TTL so the same URL still verifies.
+          const delay = 1500 * 2 ** tries;
+          img.setAttribute("data-retry", String(tries + 1));
+          setTimeout(() => {
+            // Cache-bust on retry so the browser re-issues the
+            // request even if it cached the 425 response.
+            img.src = url + (url.includes("?") ? "&" : "?") + "_r=" + (tries + 1);
+          }, delay);
+          return;
+        }
+        // Final failure — degrade to the dashed placeholder.
         img.removeAttribute("src");
         img.setAttribute("data-cluster-failed", "true");
-        // Swap the inline style to the placeholder shape so the layout
-        // slot stays the same size — no reflow, no broken icon UI.
         img.style.border = "1px dashed rgba(94, 234, 212, 0.6)";
         img.style.borderRadius = "4px";
         img.style.background = "rgba(94, 234, 212, 0.05)";
         // eslint-disable-next-line no-console
-        console.warn("[icon-cluster] image load failed", { id: node.id, url });
+        console.warn("[icon-cluster] image load failed after retries", { id: node.id, url });
       },
       style: { ...positioning, ...sizing, display: "block", objectFit: "contain" },
     });
