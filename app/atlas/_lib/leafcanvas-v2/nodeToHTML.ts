@@ -25,6 +25,7 @@
 import { type CSSProperties, type ReactElement, createElement } from "react";
 
 import { isIconCluster } from "./icon-cluster-resolver";
+import { classifyNode } from "./node-classifier";
 import type {
   AnnotatedNode,
   BoundingBox,
@@ -78,43 +79,21 @@ export function nodeToHTML(
     return renderFlattenedChildren(annotated, parentBBox, parentLayoutMode, ctx, keyHint);
   }
 
-  // Icon cluster — vector wrapper that's a single conceptual icon.
-  // Renders as <img> when a resolved URL is in ctx.clusterURLs, else
-  // falls back to a dashed-border placeholder until the export lands.
-  if (isIconCluster(annotated)) {
-    return renderClusterPlaceholder(annotated, parentBBox, parentLayoutMode, ctx, keyHint);
-  }
-
-  // TEXT
+  // TEXT renders before classification — text nodes never rasterize.
   if (annotated.type === "TEXT") {
     return renderText(annotated, parentBBox, parentLayoutMode, keyHint);
   }
 
-  // Standalone shape nodes — VECTOR / ELLIPSE / LINE / BOOLEAN_OPERATION /
-  // STAR / POLYGON outside an icon-cluster wrapper. The plan is
-  // PNG-export-everything: any shape that's not part of a cluster goes
-  // through the asset-export pipeline and renders as <img>. Without
-  // this branch the default `renderContainer` would paint a coloured
-  // rectangle (the shape's bbox) which is visually wrong for icons and
-  // lines.
-  //
-  // Same id → URL contract as icon clusters: ctx.clusterURLs is a
-  // Map<nodeID, signedURL>. The useIconClusterURLs hook walks the
-  // tree and mints URLs for every shape it identifies; standalone
-  // shapes are added by extending collectClusterIDsWithBBox to
-  // include them too (separate edit to the hook).
-  if (
-    annotated.type === "VECTOR" ||
-    annotated.type === "ELLIPSE" ||
-    annotated.type === "LINE" ||
-    annotated.type === "BOOLEAN_OPERATION" ||
-    annotated.type === "STAR" ||
-    annotated.type === "POLYGON"
-  ) {
+  // node-classifier combines name patterns (Icons/.../, Illustrations/,
+  // Yes/No/24px slash variants) with the structural icon-cluster
+  // heuristic. Single source of truth for "should this rasterize?" so
+  // useIconClusterURLs's collector and this renderer can never disagree.
+  const klass = classifyNode(annotated);
+  if (klass.kind === "icon" || klass.kind === "illustration" || klass.kind === "shape") {
     return renderClusterPlaceholder(annotated, parentBBox, parentLayoutMode, ctx, keyHint);
   }
 
-  // Default: container (FRAME / RECTANGLE / INSTANCE / etc.)
+  // Default: container (layouts, named UI components, generic FRAMEs).
   return renderContainer(annotated, parentBBox, parentLayoutMode, ctx, keyHint);
 }
 

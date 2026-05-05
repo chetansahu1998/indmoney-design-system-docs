@@ -30,7 +30,7 @@
 import { useEffect, useState } from "react";
 
 import type { CanonicalNode } from "./types";
-import { isIconCluster } from "./icon-cluster-resolver";
+import { shouldRasterize } from "./node-classifier";
 import { getDeviceDPR, pickPreviewTier, type PreviewTier } from "./preview-tier";
 import { getToken } from "@/lib/auth-client";
 
@@ -45,7 +45,7 @@ export function collectClusterIDs(root: CanonicalNode | null): string[] {
 }
 
 function walk(node: CanonicalNode, acc: string[]): void {
-  if (isIconCluster(node) && typeof node.id === "string") {
+  if (shouldRasterize(node) && typeof node.id === "string") {
     acc.push(node.id);
     return;
   }
@@ -73,36 +73,14 @@ export function collectClusterIDsWithBBox(
   return out;
 }
 
-/** Standalone shape types that get exported as a 1-element cluster
- *  (PNG via asset-export) rather than rendered as a coloured div. */
-const STANDALONE_SHAPE_TYPES: ReadonlySet<string> = new Set([
-  "VECTOR",
-  "ELLIPSE",
-  "LINE",
-  "BOOLEAN_OPERATION",
-  "STAR",
-  "POLYGON",
-]);
-
 function walkWithBBox(node: CanonicalNode, acc: ClusterIDWithBBox[]): void {
-  // Wrapper-type clusters (existing icon-cluster heuristic).
-  if (isIconCluster(node) && typeof node.id === "string") {
-    const bbox = node.absoluteBoundingBox;
-    const longest = bbox
-      ? Math.max(bbox.width ?? 0, bbox.height ?? 0)
-      : 64;
-    acc.push({ id: node.id, longestEdgePx: longest });
-    return;
-  }
-  // Standalone shape nodes — VECTOR/ELLIPSE/LINE/BOOLEAN_OPERATION/
-  // STAR/POLYGON not wrapped in a cluster. Without this, a bare icon
-  // VECTOR renders as a coloured rectangle; with this, it goes through
-  // the same PNG-export path and appears as the actual shape.
-  if (
-    typeof node.type === "string" &&
-    STANDALONE_SHAPE_TYPES.has(node.type) &&
-    typeof node.id === "string"
-  ) {
+  // Single classification source — node-classifier.ts combines name
+  // patterns (Icons/.../, Illustrations/, Yes/No/24px variants) with the
+  // structural heuristic. shouldRasterize returns true for icons,
+  // illustrations, and standalone shapes; layout-named containers
+  // (Status Bar, OTP Input, Footer, ...) return false even when the
+  // structural heuristic would tag them as clusters.
+  if (shouldRasterize(node) && typeof node.id === "string") {
     const bbox = node.absoluteBoundingBox;
     const longest = bbox
       ? Math.max(bbox.width ?? 0, bbox.height ?? 0)
