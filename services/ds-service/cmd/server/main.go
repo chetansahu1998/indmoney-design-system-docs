@@ -58,6 +58,16 @@ type config struct {
 	SyncGitPush     bool
 	Port            string
 	CORSAllowOrigin []string
+
+	// DevAuthBypass — when true (env DEV_AUTH_BYPASS=1), the auth
+	// middleware skips JWT verification entirely and injects synthetic
+	// dev-user claims so local development needs no token paste / login
+	// dance. Production MUST leave this unset; startup logs WARN when set
+	// so an accidental prod deploy is loud. The synthetic claims pin to
+	// DevAuthBypassTenant so cross-tenant data is still segregated.
+	DevAuthBypass       bool
+	DevAuthBypassTenant string
+	DevAuthBypassEmail  string
 }
 
 func main() {
@@ -346,6 +356,15 @@ func loadConfig(log *slog.Logger) (*config, error) {
 		Port:           getenv("PORT", "8080"),
 		CORSAllowOrigin: strings.Split(
 			getenv("CORS_ALLOW_ORIGIN", "http://localhost:3001"), ","),
+		// Local-dev auth bypass — see config struct comment.
+		DevAuthBypass:       os.Getenv("DEV_AUTH_BYPASS") == "1",
+		DevAuthBypassTenant: getenv("DEV_AUTH_BYPASS_TENANT", "e090530f-2698-489d-934a-c821cb925c8a"),
+		DevAuthBypassEmail:  getenv("DEV_AUTH_BYPASS_EMAIL", "dev@local"),
+	}
+	if c.DevAuthBypass {
+		log.Warn("DEV_AUTH_BYPASS=1 — JWT verification SKIPPED for every request",
+			"tenant", c.DevAuthBypassTenant, "email", c.DevAuthBypassEmail,
+			"warning", "MUST NOT be set in production. Unset on Fly to disable.")
 	}
 
 	// Ensure data dir exists
@@ -948,6 +967,24 @@ func claimsFrom(r *http.Request) *auth.Claims {
 
 func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Local-dev auth bypass — short-circuit with synthetic claims so
+		// `npm run dev` works without minted JWTs. Production never sets
+		// DEV_AUTH_BYPASS; the startup banner WARNs loudly when it's on.
+		// The synthetic user is pinned to DevAuthBypassTenant so cross-
+		// tenant data still segregates.
+		if s.cfg.DevAuthBypass {
+			devClaims := &auth.Claims{
+				Sub:     "dev-user-local",
+				Email:   s.cfg.DevAuthBypassEmail,
+				Role:    "user",
+				Tenants: []string{s.cfg.DevAuthBypassTenant},
+				IsAdmin: false,
+			}
+			devClaims.ID = "dev-bypass"
+			ctx := context.WithValue(r.Context(), ctxClaims, devClaims)
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		// Primary: Authorization header (Bearer token) — what every JSON
 		// caller uses (browser fetch, plugin POSTs, curl smoke tests).
 		raw := r.Header.Get("Authorization")

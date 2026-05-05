@@ -4,6 +4,13 @@
  * Note: per OWASP ASVS V3.5.3 we should NOT store access tokens in localStorage,
  * but for v1 (single-user, local development, no public site exposure) we do
  * for cross-tab persistence. v1.1 will move to httpOnly cookies via ds-service.
+ *
+ * Local-dev auth bypass: when NEXT_PUBLIC_AUTH_BYPASS=1, the store auto-seeds
+ * a synthetic token on hydrate and getToken() returns a non-null value so
+ * page guards never redirect to /login. Backend ds-service must have its
+ * matching DEV_AUTH_BYPASS=1 env so the synthetic token is accepted.
+ * Production MUST NOT set NEXT_PUBLIC_AUTH_BYPASS — designers go through
+ * the real /login flow.
  */
 
 import { create } from "zustand";
@@ -17,16 +24,37 @@ interface AuthState {
   logout: () => void;
 }
 
+const AUTH_BYPASS = process.env.NEXT_PUBLIC_AUTH_BYPASS === "1";
+const BYPASS_TOKEN = "dev-bypass";
+const BYPASS_EMAIL = "dev@local";
+const BYPASS_ROLE = "user";
+
 export const useAuth = create<AuthState>()(
   persist(
     (set) => ({
-      token: null,
-      email: null,
-      role: null,
+      token: AUTH_BYPASS ? BYPASS_TOKEN : null,
+      email: AUTH_BYPASS ? BYPASS_EMAIL : null,
+      role: AUTH_BYPASS ? BYPASS_ROLE : null,
       setSession: (token, email, role) => set({ token, email, role }),
-      logout: () => set({ token: null, email: null, role: null }),
+      logout: () =>
+        set(
+          AUTH_BYPASS
+            ? { token: BYPASS_TOKEN, email: BYPASS_EMAIL, role: BYPASS_ROLE }
+            : { token: null, email: null, role: null },
+        ),
     }),
-    { name: "indmoney-ds-auth" },
+    {
+      name: "indmoney-ds-auth",
+      // When bypass is on, force-rehydrate to the synthetic session even if
+      // localStorage has a stale real token from a prior prod-build session.
+      onRehydrateStorage: () => (state) => {
+        if (AUTH_BYPASS && state) {
+          state.token = BYPASS_TOKEN;
+          state.email = BYPASS_EMAIL;
+          state.role = BYPASS_ROLE;
+        }
+      },
+    },
   ),
 );
 
