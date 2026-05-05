@@ -1,16 +1,26 @@
 package projects
 
 import (
+	"archive/zip"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/auth"
 )
 
 // U4 — Figma asset export proxy + cache.
@@ -252,7 +262,11 @@ func (a *AssetExporter) RenderAssetsForLeaf(ctx context.Context, tenantID, leafI
 		if err := limiter.wait(ctx, tenantID, AssetExportURLBurst, AssetExportURLRefill); err != nil {
 			return nil, fmt.Errorf("asset exporter: rate limit wait: %w", err)
 		}
-		got, err := fetchImagesWithRetry(ctx, a.URLs, fileID, chunk, format, scale)
+		// Stash tenantID on ctx so a tenant-aware URL fetcher
+		// (production wiring uses figmaPATResolver) can pick it up
+		// without changing the FigmaImageURLFetcher interface.
+		fetchCtx := withAssetExportTenant(ctx, tenantID)
+		got, err := fetchImagesWithRetry(fetchCtx, a.URLs, fileID, chunk, format, scale)
 		if err != nil {
 			return nil, fmt.Errorf("asset exporter: fetch images: %w", err)
 		}
@@ -515,4 +529,1038 @@ func (t *TenantRepo) LookupLeafFigmaContext(ctx context.Context, leafID string) 
 		return "", 0, err
 	}
 	return fileID, versionIndex, nil
+}
+
+// ─── U5 — HTTP layer (single + bulk asset download) ─────────────────────────
+//
+// Four endpoints:
+//
+//	POST /v1/projects/{slug}/assets/export-url      — mint a signed `?at=<token>`
+//	                                                   for a single (file_id, node_id, format, scale)
+//	GET  /v1/projects/{slug}/assets/{node_id}        — verify token, look up
+//	                                                   cache (or render
+//	                                                   on-demand <=5s),
+//	                                                   stream bytes
+//	POST /v1/projects/{slug}/assets/bulk-export     — batch RenderAssetsForLeaf,
+//	                                                   register a one-shot
+//	                                                   bulk_id, return signed
+//	                                                   `download_url`
+//	GET  /v1/projects/{slug}/assets/bulk/{token}     — verify, stream zip
+//
+// Token strategy: the existing AssetTokenSigner.Mint(tenantID, screenID, ttl)
+// signs `(tenant|screen|expires)`. We repurpose `screenID` as a composite
+// "asset key":
+//
+//	single → "<file_id>|<node_id>|<format>|<scale>"
+//	bulk   → "bulk:<bulk_id>"
+//
+// The verify path reconstructs the same composite and the HMAC fails closed
+// on any mismatch.
+//
+// Audit log: every successfully-streamed asset (single OR per-asset inside a
+// bulk) writes an `asset.exported` row. Bulk exports share a `bulk_id` so
+// post-hoc analytics can re-aggregate them, mirroring HandleBulkAcknowledge.
+
+// AssetExportTokenTTL — single-asset signed-URL lifetime. Matches asset.token's
+// 60s default for screen PNGs (Pr8) — short enough that a leaked log entry is
+// mostly harmless, long enough that <img src=…> retries don't fall off a cliff.
+const AssetExportTokenTTL = 60 * time.Second
+
+// BulkExportTokenTTL — one-shot zip-download lifetime. The plan caps at 5 min:
+// "download_url expires in 5 min." Long enough for a slow connection on a
+// 100-icon zip, short enough that the in-memory bulk registry stays bounded.
+const BulkExportTokenTTL = 5 * time.Minute
+
+// MaxBulkAssetExportRows — body cap on the bulk endpoint. Plan: "Body size cap
+// on bulk: max 100 node_ids per request."
+const MaxBulkAssetExportRows = 100
+
+// MaxBulkZipBufferBytes — when assembling the in-memory zip, refuse to keep
+// more than this much in RAM. Plan: "Stream zips (don't buffer in memory
+// beyond ~10 MB)." Above the cap, we spool to a temp file before serving.
+const MaxBulkZipBufferBytes = 10 << 20
+
+// MaxBulkZipTotalBytes — overall ceiling on a single bulk zip. Defends
+// against a designer accidentally requesting 200 huge full-frame PNGs and
+// stranding the server's tempdir.
+const MaxBulkZipTotalBytes = 256 << 20
+
+// AssetCacheRetryAfterSeconds — Retry-After header value when a single-asset
+// download must surface a 425 because the synchronous render budget elapses
+// before the asset materialises.
+const AssetCacheRetryAfterSeconds = 5
+
+// SingleAssetSyncRenderBudget bounds the on-demand render path inside
+// HandleAssetDownload. The HTTP request shouldn't block forever — beyond ~5s
+// we send 425 + Retry-After so the frontend can poll instead of holding the
+// socket open.
+const SingleAssetSyncRenderBudget = 5 * time.Second
+
+// ─── Bulk export registry ────────────────────────────────────────────────────
+
+// bulkExportEntry tracks a pending bulk download. Stored in process memory
+// keyed by bulk_id; a 5-minute TTL evicts stale entries on the next access.
+// Each entry records the sealed zip data (or temp-file path) plus the audit
+// metadata to write per-asset audit_log rows when the GET is served.
+type bulkExportEntry struct {
+	tenantID    string
+	leafID      string
+	projectSlug string
+	bulkID      string
+	format      string
+	scale       int
+	results     []AssetExportResult // per-node order matches request
+	nodeNames   map[string]string   // node_id → friendly name (best-effort)
+	dataDir     string
+	expiresAt   time.Time
+	zipBytes    []byte // populated when zip <= MaxBulkZipBufferBytes
+	zipPath     string // populated when zip is spooled to disk (large)
+	zipSize     int64
+	actorUserID string
+}
+
+// bulkExportRegistry is the in-process store of bulk-export staging data.
+// Single-instance is fine for Phase 1: bulk URLs are issued + consumed by
+// the same designer in a tight loop; we don't need cross-replica continuity.
+type bulkExportRegistry struct {
+	mu      sync.Mutex
+	entries map[string]*bulkExportEntry
+}
+
+func newBulkExportRegistry() *bulkExportRegistry {
+	return &bulkExportRegistry{entries: map[string]*bulkExportEntry{}}
+}
+
+func (b *bulkExportRegistry) Put(e *bulkExportEntry) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.entries[e.bulkID] = e
+	// Opportunistic GC: sweep expired entries on every put.
+	now := time.Now()
+	for k, v := range b.entries {
+		if now.After(v.expiresAt) {
+			cleanupBulkEntry(v)
+			delete(b.entries, k)
+		}
+	}
+}
+
+func (b *bulkExportRegistry) Take(bulkID string) (*bulkExportEntry, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.entries[bulkID]
+	if !ok {
+		return nil, false
+	}
+	if time.Now().After(e.expiresAt) {
+		cleanupBulkEntry(e)
+		delete(b.entries, bulkID)
+		return nil, false
+	}
+	// One-shot — remove on take.
+	delete(b.entries, bulkID)
+	return e, true
+}
+
+func cleanupBulkEntry(e *bulkExportEntry) {
+	if e == nil {
+		return
+	}
+	if e.zipPath != "" {
+		_ = os.Remove(e.zipPath)
+	}
+}
+
+// ─── Server hookup ──────────────────────────────────────────────────────────
+
+// assetExportSlug derives the project slug component used as the file-name
+// prefix of downloaded assets (`<flow-slug>__<node-name>.<ext>`). The plan
+// specifies "flow-slug = the project slug", so we use the URL slug directly.
+
+// HandleMintAssetExportToken serves
+//
+//	POST /v1/projects/{slug}/assets/export-url
+//
+// JSON body: `{ "node_id": "...", "format": "png|svg", "scale": 1|2|3 }`.
+// Response: `{ "url": "...?at=<token>", "expires_in": 60 }`.
+//
+// Verifies the caller has access to the project (via tenant_id resolved from
+// JWT + slug lookup) before minting. The token binds (tenant, file_id,
+// node_id, format, scale) so a leaked URL only exposes the one asset.
+func (s *Server) HandleMintAssetExportToken() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		claims, _ := ctx.Value(ctxKeyClaims).(*auth.Claims)
+		if claims == nil {
+			writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+			return
+		}
+		tenantID := s.resolveTenantID(claims)
+		if tenantID == "" {
+			writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+			return
+		}
+		if s.deps.AssetSigner == nil {
+			writeJSONErr(w, http.StatusServiceUnavailable, "asset_signer", "not configured")
+			return
+		}
+		slug := r.PathValue("slug")
+		if slug == "" {
+			writeJSONErr(w, http.StatusBadRequest, "missing_slug", "")
+			return
+		}
+
+		var req struct {
+			NodeID string `json:"node_id"`
+			Format string `json:"format"`
+			Scale  int    `json:"scale"`
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 8*1024))
+		if err != nil {
+			writeJSONErr(w, http.StatusBadRequest, "read_body", err.Error())
+			return
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeJSONErr(w, http.StatusBadRequest, "decode", err.Error())
+			return
+		}
+		if req.NodeID == "" {
+			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "node_id required")
+			return
+		}
+		if req.Format != "png" && req.Format != "svg" {
+			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "format must be png|svg")
+			return
+		}
+		if req.Scale < 1 || req.Scale > 3 {
+			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "scale must be 1|2|3")
+			return
+		}
+
+		// Tenant scoping: the project must belong to this tenant. Cross-tenant
+		// reads return 404 (no existence oracle) — same posture as the PNG
+		// route.
+		repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+		project, err := repo.GetProjectBySlug(ctx, slug)
+		if errors.Is(err, ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+			return
+		}
+
+		composite := singleAssetTokenKey(project.FileID, req.NodeID, req.Format, req.Scale)
+		token := s.deps.AssetSigner.Mint(tenantID, composite, AssetExportTokenTTL)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"url": fmt.Sprintf("/v1/projects/%s/assets/%s?format=%s&scale=%d&at=%s",
+				slug, req.NodeID, req.Format, req.Scale, token),
+			"expires_in": int(AssetExportTokenTTL.Seconds()),
+		})
+	}
+}
+
+// HandleAssetDownload serves
+//
+//	GET /v1/projects/{slug}/assets/{node_id}?format=&scale=&at=<token>
+//
+// Verifies the token (HMAC-bound to tenant + file_id + node_id + format +
+// scale), looks up the asset cache, and streams the bytes with the correct
+// Content-Type and a Content-Disposition: attachment filename built from
+// `<slug>__<sanitized-node-name>.<ext>`. On cache miss, attempts a
+// synchronous render with a 5-second budget; if that elapses, returns 425
+// with a Retry-After hint.
+func (s *Server) HandleAssetDownload() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		slug := r.PathValue("slug")
+		nodeID := r.PathValue("node_id")
+		format := r.URL.Query().Get("format")
+		scaleStr := r.URL.Query().Get("scale")
+		at := r.URL.Query().Get("at")
+
+		if slug == "" || nodeID == "" || format == "" || scaleStr == "" {
+			writeJSONErr(w, http.StatusBadRequest, "missing_params", "slug,node_id,format,scale required")
+			return
+		}
+		if format != "png" && format != "svg" {
+			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "format must be png|svg")
+			return
+		}
+		scale, err := strconv.Atoi(scaleStr)
+		if err != nil || scale < 1 || scale > 3 {
+			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "scale must be 1|2|3")
+			return
+		}
+		if at == "" {
+			writeJSONErr(w, http.StatusUnauthorized, "missing_token", "?at= required")
+			return
+		}
+		if s.deps.AssetSigner == nil {
+			writeJSONErr(w, http.StatusServiceUnavailable, "asset_signer", "not configured")
+			return
+		}
+
+		// We don't know which tenant from the URL alone — but the project's
+		// tenant is derivable from the slug (slugs are unique per tenant
+		// scope; a cross-tenant slug collision yields 404 below since the
+		// query joins on tenant_id implicitly via the row's tenant column).
+		tenantID, fileID, projectSlug, err := s.lookupProjectTenantBySlug(ctx, slug)
+		if err != nil || tenantID == "" {
+			http.NotFound(w, r)
+			return
+		}
+		// Verify the signed token against the same composite the mint used.
+		composite := singleAssetTokenKey(fileID, nodeID, format, scale)
+		if verifyErr := s.deps.AssetSigner.Verify(at, tenantID, composite); verifyErr != nil {
+			status := assetTokenErrToStatus(verifyErr)
+			writeJSONErr(w, status, "asset_token", verifyErr.Error())
+			return
+		}
+
+		// Cache lookup with a synchronous render fallback bounded by
+		// SingleAssetSyncRenderBudget. The render path delegates to U4's
+		// AssetExporter.RenderAssetsForLeaf — which honours the per-tenant
+		// rate limiter so we never accidentally swing past Figma's quota.
+		repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+		_, versionIndex, lerr := s.lookupVersionForFile(ctx, repo, fileID)
+		if lerr != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "version_lookup", lerr.Error())
+			return
+		}
+
+		row, ok, err := repo.LookupAsset(ctx, tenantID, fileID, nodeID, format, scale, versionIndex)
+		if err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+			return
+		}
+		if !ok {
+			// Cache miss — try one synchronous render.
+			if s.deps.AssetExporter == nil {
+				w.Header().Set("Retry-After", strconv.Itoa(AssetCacheRetryAfterSeconds))
+				writeJSONErr(w, http.StatusTooEarly, "render_unavailable", "asset exporter not wired")
+				return
+			}
+			leafID, lerr := s.lookupAnyLeafForFile(ctx, repo, fileID)
+			if lerr != nil || leafID == "" {
+				http.NotFound(w, r)
+				return
+			}
+			renderCtx, cancel := context.WithTimeout(ctx, SingleAssetSyncRenderBudget)
+			results, rerr := s.tenantExporter(tenantID).RenderAssetsForLeaf(renderCtx, tenantID, leafID, []string{nodeID}, format, scale)
+			cancel()
+			if errors.Is(rerr, context.DeadlineExceeded) {
+				w.Header().Set("Retry-After", strconv.Itoa(AssetCacheRetryAfterSeconds))
+				writeJSONErr(w, http.StatusTooEarly, "render_in_progress", "try again in a moment")
+				return
+			}
+			if IsAssetExportNodeMissing(rerr) {
+				writeJSONErr(w, http.StatusUnprocessableEntity, "node_not_renderable", rerr.Error())
+				return
+			}
+			if rerr != nil {
+				writeJSONErr(w, http.StatusBadGateway, "render_failed", rerr.Error())
+				return
+			}
+			if len(results) == 0 {
+				http.NotFound(w, r)
+				return
+			}
+			row = AssetCacheRow{
+				StorageKey: results[0].StorageKey,
+				Mime:       results[0].Mime,
+			}
+		}
+
+		// Resolve storage key → absolute path under DataDir, with the same
+		// path-traversal guard as HandleScreenPNG.
+		baseDir, err := filepath.Abs(s.deps.DataDir)
+		if err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "abs_base", err.Error())
+			return
+		}
+		fullPath, err := filepath.Abs(filepath.Join(baseDir, filepath.Clean(row.StorageKey)))
+		if err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "abs_full", err.Error())
+			return
+		}
+		if !strings.HasPrefix(fullPath, baseDir+string(os.PathSeparator)) && fullPath != baseDir {
+			writeJSONErr(w, http.StatusBadRequest, "path_traversal", "")
+			return
+		}
+		f, err := os.Open(fullPath)
+		if errors.Is(err, os.ErrNotExist) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "open", err.Error())
+			return
+		}
+		defer f.Close()
+		st, err := f.Stat()
+		if err != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "stat", err.Error())
+			return
+		}
+
+		// Friendly file name: `<flow-slug>__<sanitized-node-name>.<ext>`.
+		// We don't have a Figma-side "name" for the node here without a JOIN,
+		// so we use the sanitized node_id as a reasonable default — designers
+		// can rename in their browser. (The UI bulk path already passes
+		// names through nodeNames; the single path uses the bare node_id.)
+		filename := buildAssetFilename(projectSlug, nodeID, format)
+		w.Header().Set("Content-Type", row.Mime)
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", st.Size()))
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+
+		// Best-effort audit-log row. Failure to log shouldn't block the
+		// download — we log at debug and continue (mirrors the
+		// HandleBulkAcknowledge pattern of preferring delivery over logging
+		// on the read path).
+		s.writeAssetExportAudit(ctx, r, tenantID, "", nodeID, fileID, format, scale)
+
+		if _, err := io.Copy(w, f); err != nil {
+			slog.Debug("asset download: copy failed (client disconnect?)", "err", err, "path", fullPath)
+		}
+	}
+}
+
+// HandleBulkAssetExport serves
+//
+//	POST /v1/projects/{slug}/assets/bulk-export
+//
+// Body: `{ "leaf_id": "...", "node_ids": [...], "format": "...", "scale": N }`.
+// Renders each via U4's RenderAssetsForLeaf (cache-aware, rate-limited),
+// assembles a zip in memory (or spools to a temp file when > 10 MB),
+// registers the bulk under a random `bulk_id`, signs a one-shot URL bound
+// to (tenant, "bulk:<bulk_id>"), and returns
+// `{ "download_url": "...?at=<token>", "expires_in": 300 }`.
+func (s *Server) HandleBulkAssetExport() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		claims, _ := ctx.Value(ctxKeyClaims).(*auth.Claims)
+		if claims == nil {
+			writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+			return
+		}
+		tenantID := s.resolveTenantID(claims)
+		if tenantID == "" {
+			writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+			return
+		}
+		if s.deps.AssetSigner == nil {
+			writeJSONErr(w, http.StatusServiceUnavailable, "asset_signer", "not configured")
+			return
+		}
+		if s.deps.AssetExporter == nil {
+			writeJSONErr(w, http.StatusServiceUnavailable, "asset_exporter", "not configured")
+			return
+		}
+		slug := r.PathValue("slug")
+		if slug == "" {
+			writeJSONErr(w, http.StatusBadRequest, "missing_slug", "")
+			return
+		}
+
+		var req struct {
+			LeafID  string   `json:"leaf_id"`
+			NodeIDs []string `json:"node_ids"`
+			Format  string   `json:"format"`
+			Scale   int      `json:"scale"`
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 256*1024))
+		if err != nil {
+			writeJSONErr(w, http.StatusBadRequest, "read_body", err.Error())
+			return
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeJSONErr(w, http.StatusBadRequest, "decode", err.Error())
+			return
+		}
+		if req.LeafID == "" {
+			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "leaf_id required")
+			return
+		}
+		if len(req.NodeIDs) == 0 {
+			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "node_ids required")
+			return
+		}
+		if len(req.NodeIDs) > MaxBulkAssetExportRows {
+			writeJSONErr(w, http.StatusBadRequest, "too_many_nodes",
+				fmt.Sprintf("max %d node_ids per bulk request", MaxBulkAssetExportRows))
+			return
+		}
+		if req.Format != "png" && req.Format != "svg" {
+			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "format must be png|svg")
+			return
+		}
+		if req.Scale < 1 || req.Scale > 3 {
+			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "scale must be 1|2|3")
+			return
+		}
+
+		// Tenant scope check.
+		repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+		if _, err := repo.GetProjectBySlug(ctx, slug); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+			return
+		}
+
+		// Render via U4. RenderAssetsForLeaf already paces requests through
+		// figmaProxyLimiter so a 200-icon export back-pressures inside
+		// `len(node_ids)/chunkSize` /v1/images calls without ever spiking
+		// past Figma's per-tenant 5 req/sec budget.
+		results, rerr := s.tenantExporter(tenantID).RenderAssetsForLeaf(ctx, tenantID, req.LeafID, req.NodeIDs, req.Format, req.Scale)
+		if errors.Is(rerr, ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if IsAssetExportNodeMissing(rerr) {
+			writeJSONErr(w, http.StatusUnprocessableEntity, "node_not_renderable", rerr.Error())
+			return
+		}
+		if rerr != nil {
+			writeJSONErr(w, http.StatusBadGateway, "render_failed", rerr.Error())
+			return
+		}
+
+		// Build the zip. Stream into a buffer first; if it grows past
+		// MaxBulkZipBufferBytes, copy what we have to a temp file and
+		// continue streaming there. Either way the registry holds bytes
+		// (small) or a file path (large) to feed the GET.
+		entry := &bulkExportEntry{
+			tenantID:    tenantID,
+			leafID:      req.LeafID,
+			projectSlug: slug,
+			bulkID:      uuid.NewString(),
+			format:      req.Format,
+			scale:       req.Scale,
+			results:     results,
+			nodeNames:   map[string]string{}, // friendly names not yet wired; node_id is the fallback
+			dataDir:     s.deps.DataDir,
+			expiresAt:   time.Now().Add(BulkExportTokenTTL),
+			actorUserID: claims.Sub,
+		}
+		size, zipBytes, zipPath, zerr := assembleBulkZip(s.deps.DataDir, slug, results, req.Format)
+		if zerr != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "zip_failed", zerr.Error())
+			return
+		}
+		if size > MaxBulkZipTotalBytes {
+			if zipPath != "" {
+				_ = os.Remove(zipPath)
+			}
+			writeJSONErr(w, http.StatusRequestEntityTooLarge, "zip_too_large",
+				fmt.Sprintf("zip %d bytes exceeds cap %d", size, MaxBulkZipTotalBytes))
+			return
+		}
+		entry.zipBytes = zipBytes
+		entry.zipPath = zipPath
+		entry.zipSize = size
+		s.bulkRegistry().Put(entry)
+
+		composite := bulkAssetTokenKey(entry.bulkID)
+		token := s.deps.AssetSigner.Mint(tenantID, composite, BulkExportTokenTTL)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"download_url": fmt.Sprintf("/v1/projects/%s/assets/bulk/%s?at=%s", slug, entry.bulkID, token),
+			"expires_in":   int(BulkExportTokenTTL.Seconds()),
+			"bulk_id":      entry.bulkID,
+			"size_bytes":   size,
+			"count":        len(results),
+		})
+	}
+}
+
+// HandleBulkDownload serves
+//
+//	GET /v1/projects/{slug}/assets/bulk/{token}?at=<signed_token>
+//
+// `{token}` is the bulk_id; `?at=` is the signed token bound to
+// (tenant, "bulk:<bulk_id>"). On verify success, the registry entry is
+// consumed (one-shot semantics) and the zip streams. Each asset inside the
+// archive writes its own `asset.exported` audit-log row sharing the bulk_id.
+func (s *Server) HandleBulkDownload() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		slug := r.PathValue("slug")
+		bulkID := r.PathValue("token") // path component is named `token` in the route but carries the bulk_id
+		at := r.URL.Query().Get("at")
+
+		if slug == "" || bulkID == "" {
+			writeJSONErr(w, http.StatusBadRequest, "missing_params", "slug,bulk_id required")
+			return
+		}
+		if at == "" {
+			writeJSONErr(w, http.StatusUnauthorized, "missing_token", "?at= required")
+			return
+		}
+		if s.deps.AssetSigner == nil {
+			writeJSONErr(w, http.StatusServiceUnavailable, "asset_signer", "not configured")
+			return
+		}
+
+		// We need the tenant to verify the MAC. The bulk registry knows
+		// (since it stored tenantID at mint time); fetch the entry first
+		// (one-shot — succeeds at most once), then verify the token. If
+		// verify fails, requeue the entry so a benign retry isn't punished
+		// by losing the staged data.
+		entry, ok := s.bulkRegistry().Take(bulkID)
+		if !ok {
+			// Could be: never minted, already consumed, or expired. We map
+			// any of these to 410 Gone so a stale link doesn't hang.
+			writeJSONErr(w, http.StatusGone, "expired_or_consumed", "bulk download not available")
+			return
+		}
+		composite := bulkAssetTokenKey(bulkID)
+		if verifyErr := s.deps.AssetSigner.Verify(at, entry.tenantID, composite); verifyErr != nil {
+			// Re-park the entry so the legitimate caller (with a correct
+			// token) can still retrieve it within the TTL.
+			s.bulkRegistry().Put(entry)
+			status := assetTokenErrToStatus(verifyErr)
+			writeJSONErr(w, status, "asset_token", verifyErr.Error())
+			return
+		}
+		// Verified — clean the temp file (if any) after streaming.
+		defer cleanupBulkEntry(entry)
+
+		filename := fmt.Sprintf("%s__bulk-%s.zip", entry.projectSlug, entry.bulkID[:8])
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", entry.zipSize))
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+
+		// Per-asset audit_log rows — share bulk_id, mirror HandleBulkAcknowledge.
+		for _, res := range entry.results {
+			s.writeAssetExportAudit(ctx, r, entry.tenantID, entry.bulkID, res.NodeID,
+				deriveFileIDFromStorageKey(res.StorageKey), entry.format, entry.scale)
+		}
+
+		// Stream zip — from memory (small) or temp file (large).
+		if entry.zipBytes != nil {
+			if _, err := w.Write(entry.zipBytes); err != nil {
+				slog.Debug("bulk download: write failed (client disconnect?)", "err", err)
+			}
+			return
+		}
+		if entry.zipPath != "" {
+			f, err := os.Open(entry.zipPath)
+			if err != nil {
+				writeJSONErr(w, http.StatusInternalServerError, "open_zip", err.Error())
+				return
+			}
+			defer f.Close()
+			if _, err := io.Copy(w, f); err != nil {
+				slog.Debug("bulk download: copy failed (client disconnect?)", "err", err, "path", entry.zipPath)
+			}
+		}
+	}
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+// singleAssetTokenKey is the composite key the AssetTokenSigner signs for a
+// single-asset URL. Unique per (tenant, file_id, node_id, format, scale) so
+// a leaked URL only exposes the one asset.
+func singleAssetTokenKey(fileID, nodeID, format string, scale int) string {
+	return fmt.Sprintf("asset:%s|%s|%s|%d", fileID, nodeID, format, scale)
+}
+
+// bulkAssetTokenKey is the composite key for a bulk one-shot URL. The
+// bulk_id is server-generated, so a leaked URL only ever maps to its own
+// staged registry entry — no cross-bulk replay.
+func bulkAssetTokenKey(bulkID string) string {
+	return "bulk:" + bulkID
+}
+
+// assetTokenErrToStatus maps the AssetTokenSigner.Verify error sentinels to
+// HTTP status codes per the U5 plan: expired → 410, mismatch/malformed → 403.
+func assetTokenErrToStatus(err error) int {
+	switch {
+	case errors.Is(err, auth.ErrAssetTokenExpired):
+		return http.StatusGone
+	case errors.Is(err, auth.ErrAssetTokenInvalidMAC):
+		return http.StatusForbidden
+	case errors.Is(err, auth.ErrAssetTokenMalformed):
+		return http.StatusForbidden
+	default:
+		return http.StatusForbidden
+	}
+}
+
+// safeFilenameRe matches any character outside the plan's allowlist
+// `[a-zA-Z0-9-_]`. Non-matching characters get replaced with `_` so the
+// filename stays portable across browsers + filesystems.
+var safeFilenameRe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
+
+// sanitiseAssetName replaces filesystem-/HTTP-hostile characters with `_`.
+// Leading/trailing underscores collapse so we don't accidentally produce
+// `_my_icon_.svg` for an empty name. Empty input → "asset".
+func sanitiseAssetName(name string) string {
+	if name == "" {
+		return "asset"
+	}
+	out := safeFilenameRe.ReplaceAllString(name, "_")
+	out = strings.Trim(out, "_")
+	if out == "" {
+		return "asset"
+	}
+	return out
+}
+
+// buildAssetFilename produces `<slug>__<sanitised-name>.<ext>` per the plan.
+func buildAssetFilename(slug, nodeName, format string) string {
+	cleanSlug := sanitiseAssetName(slug)
+	cleanName := sanitiseAssetName(nodeName)
+	return fmt.Sprintf("%s__%s.%s", cleanSlug, cleanName, format)
+}
+
+// assembleBulkZip walks the rendered results, reading each from disk under
+// `dataDir/<storage_key>` and writing into a zip archive. Returns
+// (size, in-memory zip bytes, temp-file path, error). Exactly one of
+// zipBytes / zipPath is non-empty:
+//
+//   - small zips (<= MaxBulkZipBufferBytes) are returned in memory
+//   - larger zips are spooled to a temp file the caller is responsible for
+//     deleting after streaming.
+//
+// Each asset is named `<slug>__<sanitised-node-id>.<ext>` so a designer
+// gets a flat, human-readable archive (no nested dirs).
+// bulkZipEntry is one row in the assembled archive — local file path on
+// disk + the in-zip filename. Defined at package scope so the spool helper
+// can take it by slice without an anon-struct mismatch.
+type bulkZipEntry struct {
+	filename string
+	fullPath string
+	size     int64
+}
+
+func assembleBulkZip(dataDir, projectSlug string, results []AssetExportResult, format string) (int64, []byte, string, error) {
+	baseDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return 0, nil, "", err
+	}
+	entries := make([]bulkZipEntry, 0, len(results))
+	var totalIn int64
+	for _, r := range results {
+		fullPath, err := filepath.Abs(filepath.Join(baseDir, filepath.Clean(r.StorageKey)))
+		if err != nil {
+			return 0, nil, "", fmt.Errorf("abs %s: %w", r.StorageKey, err)
+		}
+		if !strings.HasPrefix(fullPath, baseDir+string(os.PathSeparator)) && fullPath != baseDir {
+			return 0, nil, "", fmt.Errorf("path escapes data dir: %s", r.StorageKey)
+		}
+		st, err := os.Stat(fullPath)
+		if err != nil {
+			return 0, nil, "", fmt.Errorf("stat %s: %w", r.StorageKey, err)
+		}
+		entries = append(entries, bulkZipEntry{
+			filename: buildAssetFilename(projectSlug, r.NodeID, format),
+			fullPath: fullPath,
+			size:     st.Size(),
+		})
+		totalIn += st.Size()
+	}
+
+	// Decide spool path: if uncompressed input already exceeds the buffer
+	// cap, go straight to a temp file. Otherwise try in memory.
+	if totalIn > int64(MaxBulkZipBufferBytes) {
+		return spoolBulkZipToFile(entries)
+	}
+
+	// Use a sized buffer + io.Writer. zip.NewWriter is happy to write to
+	// any io.Writer; we use a *bufferingWriter that flips to a temp file
+	// once we exceed MaxBulkZipBufferBytes.
+	bw := &flushToFileWriter{maxMem: MaxBulkZipBufferBytes}
+	zw := zip.NewWriter(bw)
+	for _, e := range entries {
+		fw, err := zw.Create(e.filename)
+		if err != nil {
+			_ = bw.cleanup()
+			return 0, nil, "", err
+		}
+		f, err := os.Open(e.fullPath)
+		if err != nil {
+			_ = bw.cleanup()
+			return 0, nil, "", err
+		}
+		if _, err := io.Copy(fw, f); err != nil {
+			_ = f.Close()
+			_ = bw.cleanup()
+			return 0, nil, "", err
+		}
+		_ = f.Close()
+	}
+	if err := zw.Close(); err != nil {
+		_ = bw.cleanup()
+		return 0, nil, "", err
+	}
+	if bw.spilled {
+		return bw.totalWritten, nil, bw.tempPath, nil
+	}
+	return bw.totalWritten, bw.mem, "", nil
+}
+
+// spoolBulkZipToFile is the fallback for "definitely too big to keep in RAM"
+// inputs. Writes the zip directly to a temp file and returns its path.
+func spoolBulkZipToFile(entries []bulkZipEntry) (int64, []byte, string, error) {
+	tmp, err := os.CreateTemp("", "asset-bulk-*.zip")
+	if err != nil {
+		return 0, nil, "", err
+	}
+	zw := zip.NewWriter(tmp)
+	for _, e := range entries {
+		fw, err := zw.Create(e.filename)
+		if err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+			return 0, nil, "", err
+		}
+		f, err := os.Open(e.fullPath)
+		if err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+			return 0, nil, "", err
+		}
+		if _, err := io.Copy(fw, f); err != nil {
+			_ = f.Close()
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+			return 0, nil, "", err
+		}
+		_ = f.Close()
+	}
+	if err := zw.Close(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return 0, nil, "", err
+	}
+	st, err := tmp.Stat()
+	if err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return 0, nil, "", err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return 0, nil, "", err
+	}
+	return st.Size(), nil, tmp.Name(), nil
+}
+
+// flushToFileWriter is a Writer that buffers in memory up to maxMem bytes,
+// then transparently spills to a temp file. Used so the zip-build path
+// doesn't have to know whether it'll ultimately fit in RAM.
+type flushToFileWriter struct {
+	maxMem       int
+	mem          []byte
+	spilled      bool
+	tempPath     string
+	tempFile     *os.File
+	totalWritten int64
+}
+
+func (b *flushToFileWriter) Write(p []byte) (int, error) {
+	b.totalWritten += int64(len(p))
+	if b.spilled {
+		return b.tempFile.Write(p)
+	}
+	if len(b.mem)+len(p) <= b.maxMem {
+		b.mem = append(b.mem, p...)
+		return len(p), nil
+	}
+	// Spill: flush mem to a temp file, then write p there.
+	tmp, err := os.CreateTemp("", "asset-bulk-*.zip")
+	if err != nil {
+		return 0, err
+	}
+	b.tempFile = tmp
+	b.tempPath = tmp.Name()
+	if _, err := tmp.Write(b.mem); err != nil {
+		return 0, err
+	}
+	b.mem = nil
+	b.spilled = true
+	return tmp.Write(p)
+}
+
+func (b *flushToFileWriter) cleanup() error {
+	if b.tempFile != nil {
+		_ = b.tempFile.Close()
+	}
+	if b.tempPath != "" {
+		return os.Remove(b.tempPath)
+	}
+	return nil
+}
+
+// tenantExporter returns a request-scoped AssetExporter clone whose Repo
+// is bound to tenantID. Production wiring stores a tenant-less exporter on
+// ServerDeps so the boot path doesn't have to enumerate tenants; per-call
+// we shallow-copy the exporter and swap in a tenant-scoped repo so the
+// LookupLeafFigmaContext / LookupAsset / StoreAsset chain inside
+// RenderAssetsForLeaf passes its `tenantID required` checks.
+//
+// Returns nil when AssetExporter isn't configured. Callers must nil-check.
+func (s *Server) tenantExporter(tenantID string) *AssetExporter {
+	base := s.deps.AssetExporter
+	if base == nil {
+		return nil
+	}
+	cp := *base
+	cp.Repo = NewTenantRepo(s.deps.DB.DB, tenantID)
+	return &cp
+}
+
+// bulkRegistry returns the (lazily initialised) per-server registry. We use
+// a method on Server so the registry's lifetime ties to the server's, and
+// tests can construct a fresh Server without leaking entries across runs.
+func (s *Server) bulkRegistry() *bulkExportRegistry {
+	s.bulkRegistryOnce.Do(func() {
+		s.bulkRegistryV = newBulkExportRegistry()
+	})
+	return s.bulkRegistryV
+}
+
+// writeAssetExportAudit best-effort writes a single audit_log row for an
+// asset.exported event. Per-asset rows in a bulk export share `bulk_id`.
+// Failure to log is logged at debug and never blocks the response.
+func (s *Server) writeAssetExportAudit(ctx context.Context, r *http.Request, tenantID, bulkID, nodeID, fileID, format string, scale int) {
+	if s.deps.DB == nil || s.deps.DB.DB == nil {
+		return
+	}
+	claims, _ := ctx.Value(ctxKeyClaims).(*auth.Claims)
+	userID := ""
+	if claims != nil {
+		userID = claims.Sub
+	}
+	details, _ := json.Marshal(map[string]any{
+		"node_id":    nodeID,
+		"format":     format,
+		"scale":      scale,
+		"bulk_id":    bulkID,
+		"file_id":    fileID,
+		"schema_ver": ProjectsSchemaVersion,
+	})
+	_, err := s.deps.DB.DB.ExecContext(ctx,
+		`INSERT INTO audit_log
+		    (id, ts, event_type, tenant_id, user_id, method, endpoint, status_code, duration_ms, ip_address, details)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uuid.NewString(),
+		time.Now().UTC().Format(time.RFC3339Nano),
+		"asset.exported",
+		tenantID,
+		userID,
+		r.Method,
+		r.URL.Path,
+		http.StatusOK,
+		0,
+		clientIP(r),
+		string(details),
+	)
+	if err != nil {
+		slog.Debug("asset export audit insert failed", "err", err, "node", nodeID)
+	}
+}
+
+// lookupProjectTenantBySlug resolves (tenant_id, file_id, slug) from a project
+// slug without requiring the caller to pass tenant_id. Used by the unauth-
+// JWT asset-token download path: the asset signed token IS the auth, so we
+// derive tenant from the row instead of trusting URL input.
+//
+// Returns ("", "", "", err) on miss; the handler treats that as 404 to avoid
+// an existence oracle.
+func (s *Server) lookupProjectTenantBySlug(ctx context.Context, slug string) (string, string, string, error) {
+	if s.deps.DB == nil || s.deps.DB.DB == nil {
+		return "", "", "", errors.New("no db")
+	}
+	var tenantID, fileID, projSlug string
+	err := s.deps.DB.DB.QueryRowContext(ctx,
+		`SELECT tenant_id, file_id, slug FROM projects WHERE slug = ? LIMIT 1`, slug,
+	).Scan(&tenantID, &fileID, &projSlug)
+	if err != nil {
+		return "", "", "", err
+	}
+	return tenantID, fileID, projSlug, nil
+}
+
+// lookupVersionForFile returns (file_id, latest_version_index) for any project
+// matching file_id under this tenant. Used by the GET asset path which
+// already has file_id from the slug lookup but not the version_index that
+// the asset_cache PK requires.
+func (s *Server) lookupVersionForFile(ctx context.Context, repo *TenantRepo, fileID string) (string, int, error) {
+	row := repo.handle().QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(v.version_index), 0)
+		  FROM project_versions v
+		  JOIN projects p ON p.id = v.project_id
+		 WHERE v.tenant_id = ? AND p.file_id = ?
+	`, repo.tenantID, fileID)
+	var vi int
+	if err := row.Scan(&vi); err != nil {
+		return "", 0, err
+	}
+	return fileID, vi, nil
+}
+
+// lookupAnyLeafForFile returns *any* leaf (flow.id) for the given file_id
+// under this tenant — used as the leaf_id input to RenderAssetsForLeaf when
+// the GET path needs to trigger a synchronous render but only knows the
+// file_id (the URL doesn't carry leaf_id). The flow merely anchors the
+// tenant-scoped lookup; per-asset rate limiting and cache keys depend on
+// (tenant, file_id, node_id, format, scale) only.
+func (s *Server) lookupAnyLeafForFile(ctx context.Context, repo *TenantRepo, fileID string) (string, error) {
+	row := repo.handle().QueryRowContext(ctx, `
+		SELECT id FROM flows
+		 WHERE tenant_id = ? AND file_id = ? AND deleted_at IS NULL
+		 LIMIT 1
+	`, repo.tenantID, fileID)
+	var id string
+	if err := row.Scan(&id); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// assetExportTenantCtxKey is the (private) context key under which
+// RenderAssetsForLeaf stashes the tenantID before calling the URL fetcher.
+// A tenant-aware fetcher (production wiring) uses AssetExportTenantFromCtx
+// to recover it without the FigmaImageURLFetcher interface having to grow
+// a tenantID parameter.
+type assetExportTenantCtxKeyT struct{}
+
+var assetExportTenantCtxKey = assetExportTenantCtxKeyT{}
+
+func withAssetExportTenant(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, assetExportTenantCtxKey, tenantID)
+}
+
+// AssetExportTenantFromCtx retrieves the tenantID stashed by
+// RenderAssetsForLeaf so a tenant-aware FigmaImageURLFetcher implementation
+// can decrypt the right Figma PAT. Returns "" when not present.
+func AssetExportTenantFromCtx(ctx context.Context) string {
+	if v, ok := ctx.Value(assetExportTenantCtxKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// deriveFileIDFromStorageKey reverses the persistAssetBytes layout
+// (`assets/<tenant>/<file>/v<n>/<node>.<ext>`) to recover the file_id.
+// Best-effort — used only in the bulk audit log for the `file_id` field.
+// On any malformed input returns "" so the audit row simply lacks the file
+// hint.
+func deriveFileIDFromStorageKey(key string) string {
+	parts := strings.Split(key, "/")
+	if len(parts) >= 3 && parts[0] == "assets" {
+		return parts[2]
+	}
+	return ""
 }

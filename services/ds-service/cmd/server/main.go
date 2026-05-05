@@ -158,6 +158,34 @@ func main() {
 		return string(pat), nil
 	}
 
+	// U5 — asset exporter: server-side renderer for Figma asset exports
+	// (icons / illustrations / glyphs as SVG/PNG) backed by the asset_cache
+	// table. The per-tenant Figma PAT is decrypted on each call via
+	// figmaPATResolver above; tenantID is read from the ctx that
+	// RenderAssetsForLeaf stashes before invoking GetImages.
+	assetExporter := &projects.AssetExporter{
+		Repo: projects.NewTenantRepo(dbConn.DB, ""),
+		URLs: figmaImageURLFetcherFunc(func(ctx context.Context, fileKey string, nodeIDs []string, format string, scale int) (map[string]string, error) {
+			tenantID := projects.AssetExportTenantFromCtx(ctx)
+			if tenantID == "" {
+				return nil, fmt.Errorf("asset export: no tenant in ctx")
+			}
+			pat, err := figmaPATResolver(ctx, tenantID)
+			if err != nil {
+				return nil, err
+			}
+			if pat == "" {
+				return nil, fmt.Errorf("figma pat not configured for tenant %s", tenantID)
+			}
+			return client.New(pat).GetImages(ctx, fileKey, nodeIDs, format, scale)
+		}),
+		Bytes: &projects.HTTPAssetByteFetcher{
+			Client: &http.Client{Timeout: 5 * time.Minute},
+		},
+		DataDir: dataDir,
+		Now:     time.Now,
+	}
+
 	// Pr8 / D1 — asset-token signer for PNG/KTX2 image-loader auth. Derives
 	// the HMAC key from the encryption key (already 32 bytes, persisted in
 	// .env.local, rotates with the same operator workflow). Falls back to
@@ -246,6 +274,7 @@ func main() {
 		PipelineFactory:  pipelineFactory,
 		FigmaPATResolver: figmaPATResolver,
 		AssetSigner:      assetSigner,
+		AssetExporter:    assetExporter,
 		GraphRebuildPool: graphRebuildPool,
 		Log:              log,
 	})
@@ -586,6 +615,21 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleDeleteOverride)))
 	mux.HandleFunc("POST /v1/projects/{slug}/text-overrides/bulk",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleBulkUpsertOverrides)))
+
+	// Plan 2026-05-05-002 U5 — asset download endpoints (single + bulk → zip).
+	// The mint endpoints (POST) require JWT; the GET download endpoints are
+	// authenticated solely via the signed asset token in `?at=` so image
+	// loaders / file-save dialogs never see the JWT. Tokens bind
+	// (tenant, file_id, node_id, format, scale) for single assets and
+	// (tenant, bulk_id) for bulk zips.
+	mux.HandleFunc("POST /v1/projects/{slug}/assets/export-url",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleMintAssetExportToken())))
+	mux.HandleFunc("GET /v1/projects/{slug}/assets/{node_id}",
+		s.projectsServer.HandleAssetDownload())
+	mux.HandleFunc("POST /v1/projects/{slug}/assets/bulk-export",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleBulkAssetExport())))
+	mux.HandleFunc("GET /v1/projects/{slug}/assets/bulk/{token}",
+		s.projectsServer.HandleBulkDownload())
 
 	// Phase 2 U10 — Audit-by-slug read path. /files/[slug] in the docs site
 	// reads from this endpoint instead of importing the JSON sidecar at build
@@ -1255,4 +1299,14 @@ func resolveSourcesFromEnv(brand string) ([]extractor.Source, error) {
 		return nil, errors.New("no FIGMA_FILE_KEY_<BRAND>* env vars set")
 	}
 	return out, nil
+}
+
+// figmaImageURLFetcherFunc adapts a closure to the
+// projects.FigmaImageURLFetcher interface. Used by the U5 wiring above so
+// the per-tenant PAT decrypt can happen inline without defining a named
+// type.
+type figmaImageURLFetcherFunc func(ctx context.Context, fileKey string, nodeIDs []string, format string, scale int) (map[string]string, error)
+
+func (f figmaImageURLFetcherFunc) GetImages(ctx context.Context, fileKey string, nodeIDs []string, format string, scale int) (map[string]string, error) {
+	return f(ctx, fileKey, nodeIDs, format, scale)
 }
