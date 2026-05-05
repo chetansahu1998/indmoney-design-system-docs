@@ -453,19 +453,24 @@ export async function bulkUpsertTextOverrides(
 }
 
 /**
- * Asset-export download URL builder used by the U7 inspector's PNG / SVG /
- * 2x / 3x buttons. Matches the U5 server contract:
+ * Asset-export URL minting used by the U7 inspector's PNG / SVG / 2x / 3x
+ * buttons (single asset) and the U9 BulkExportPanel (multi-select zip).
  *
- *   POST /v1/projects/:slug/assets/mint
- *   { screen_id, figma_node_id, format: "png"|"svg", scale?: 1|2|3 }
+ * U5 server endpoints (already live in ds-service):
  *
- * U5 hasn't shipped yet — until then this function returns a stable
- * placeholder URL so the inspector can wire its onClick handlers without
- * crashing. The real implementation will replace the body with a POST and
- * return `{ download_url, expires_at }` per spec line 388–397.
+ *   POST /v1/projects/:slug/assets/export-url
+ *     body  { node_id, format: "png"|"svg", scale?: 1|2|3 }
+ *     reply { url: string, expires_in: number }
  *
- * Caller behaviour is unchanged once U5 lands: still opens the URL in a
- * new tab via `window.open(url, "_blank")`.
+ *   POST /v1/projects/:slug/assets/bulk-export
+ *     body  { leaf_id, node_ids: string[], format, scale }
+ *     reply { download_url: string, expires_in: number }
+ *
+ * Both wrap Figma's `/v1/images?ids=…` proxy with the per-tenant cache from
+ * Phase 5.2; bulk additionally streams the zip server-side so 100-node
+ * selections don't hold the request open while we render. The client side
+ * is fire-and-forget — open the URL in a tab / set window.location.href and
+ * let the browser handle the download.
  */
 export interface MintAssetParams {
   slug: string;
@@ -476,37 +481,60 @@ export interface MintAssetParams {
 }
 
 export interface MintAssetResponse {
-  download_url: string;
-  expires_at: string;
+  /** Signed Figma image URL (single-asset path). */
+  url: string;
+  /** Seconds until the URL expires (caller refetches if longer-lived UI). */
+  expires_in: number;
 }
 
 export async function mintAssetExportURL(
   params: MintAssetParams,
 ): Promise<ApiResult<MintAssetResponse>> {
-  // Placeholder body — once U5 lands the call becomes:
-  //   return postJSON<MintAssetResponse>(
-  //     `/v1/projects/${slug}/assets/mint`,
-  //     { screen_id, figma_node_id, format, scale },
-  //   );
-  // For now we synthesise a deterministic preview URL so the inspector's
-  // click handlers can be wired and unit-tested without 404ing.
-  const qs = new URLSearchParams({
-    screen_id: params.screenID,
-    node_id: params.figmaNodeID,
-    format: params.format,
-    scale: String(params.scale ?? 1),
-  }).toString();
-  const url = `${dsBaseURL()}/v1/projects/${encodeURIComponent(
-    params.slug,
-  )}/assets/preview?${qs}`;
-  return {
-    ok: true,
-    data: {
-      download_url: url,
-      // 5-minute placeholder TTL — production U5 will return the real one.
-      expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+  return postJSON<MintAssetResponse>(
+    `/v1/projects/${encodeURIComponent(params.slug)}/assets/export-url`,
+    {
+      node_id: params.figmaNodeID,
+      format: params.format,
+      scale: params.scale ?? 1,
     },
-  };
+  );
+}
+
+/**
+ * Bulk-asset export — server zips up every node referenced by `nodeIDs` and
+ * returns a single `download_url` pointing at the cached zip. Filename
+ * collisions on the server side resolve to `<name>-1.<ext>`, `<name>-2.<ext>`
+ * (the client doesn't deduplicate).
+ *
+ * The Figma rate limit applies (per-tenant 5 req/sec token bucket per the
+ * Phase 5.2 P4 proxy). Caller doesn't need to throttle — server queues.
+ */
+export interface BulkMintAssetParams {
+  leafID: string;
+  nodeIDs: string[];
+  format: "png" | "svg";
+  scale?: 1 | 2 | 3;
+}
+
+export interface BulkMintAssetResponse {
+  /** Signed URL to a server-zipped archive — point window.location.href at it. */
+  download_url: string;
+  expires_in: number;
+}
+
+export async function mintBulkAssetExportURL(
+  slug: string,
+  params: BulkMintAssetParams,
+): Promise<ApiResult<BulkMintAssetResponse>> {
+  return postJSON<BulkMintAssetResponse>(
+    `/v1/projects/${encodeURIComponent(slug)}/assets/bulk-export`,
+    {
+      leaf_id: params.leafID,
+      node_ids: params.nodeIDs,
+      format: params.format,
+      scale: params.scale ?? 1,
+    },
+  );
 }
 
 /**
