@@ -445,7 +445,13 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
   // Empty map until the first batch resolves; the renderer falls back to
   // the placeholder for any unmatched cluster id (failed mints, slow
   // network, etc.) — graceful degradation, no broken layout.
-  const clusterURLs = useIconClusterURLs(slug, openLeafID, prunedTree, 2);
+  // U1 — zoom hardcoded to 1 for now. The atlas leaf canvas (leafcanvas.tsx)
+  // owns the live zoom state but doesn't surface it through React context;
+  // wiring that through is a follow-up. At zoom=1, pickPreviewTier still
+  // chooses preview-512 / preview-1024 for typical 250-500px clusters
+  // instead of the legacy scale=2 (~8× the byte count) — still a big win.
+  // When the leaf canvas exposes zoom, replace the literal `1` here.
+  const clusterURLs = useIconClusterURLs(slug, openLeafID, prunedTree, 1, 2);
   const rendered = useMemo(() => {
     if (!prunedTree || !prunedTree.absoluteBoundingBox) return null;
     return nodeToHTML(

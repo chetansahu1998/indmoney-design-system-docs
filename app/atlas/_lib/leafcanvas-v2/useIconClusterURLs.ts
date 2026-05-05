@@ -31,6 +31,7 @@ import { useEffect, useState } from "react";
 
 import type { CanonicalNode } from "./types";
 import { isIconCluster } from "./icon-cluster-resolver";
+import { getDeviceDPR, pickPreviewTier, type PreviewTier } from "./preview-tier";
 import { getToken } from "@/lib/auth-client";
 
 export const EMPTY_CLUSTER_URLS: ReadonlyMap<string, string> = new Map();
@@ -46,13 +47,43 @@ export function collectClusterIDs(root: CanonicalNode | null): string[] {
 function walk(node: CanonicalNode, acc: string[]): void {
   if (isIconCluster(node) && typeof node.id === "string") {
     acc.push(node.id);
-    // Don't recurse into a cluster: nested clusters render as part of
-    // the outer cluster's PNG. (If we minted both, the inner would
-    // double-paint over its parent.)
     return;
   }
   if (Array.isArray(node.children)) {
     for (const c of node.children) walk(c, acc);
+  }
+}
+
+/**
+ * Like `collectClusterIDs` but also returns the cluster's longest-edge
+ * px from `absoluteBoundingBox`. Used by the preview-tier selector to
+ * pick a tier per cluster rather than one tier for the whole leaf.
+ */
+export interface ClusterIDWithBBox {
+  id: string;
+  longestEdgePx: number;
+}
+
+export function collectClusterIDsWithBBox(
+  root: CanonicalNode | null,
+): ClusterIDWithBBox[] {
+  if (!root) return [];
+  const out: ClusterIDWithBBox[] = [];
+  walkWithBBox(root, out);
+  return out;
+}
+
+function walkWithBBox(node: CanonicalNode, acc: ClusterIDWithBBox[]): void {
+  if (isIconCluster(node) && typeof node.id === "string") {
+    const bbox = node.absoluteBoundingBox;
+    const longest = bbox
+      ? Math.max(bbox.width ?? 0, bbox.height ?? 0)
+      : 64; // sane default for clusters without bbox metadata
+    acc.push({ id: node.id, longestEdgePx: longest });
+    return;
+  }
+  if (Array.isArray(node.children)) {
+    for (const c of node.children) walkWithBBox(c, acc);
   }
 }
 
@@ -84,6 +115,9 @@ export function useIconClusterURLs(
   slug: string,
   leafID: string | null | undefined,
   treeRoot: CanonicalNode | null,
+  /** Display zoom — drives preview-tier selection per cluster. */
+  zoom: number = 1,
+  /** Legacy parameter; kept for callers that still pass scale=2 explicitly. */
   scale: 1 | 2 | 3 = 2,
 ): ReadonlyMap<string, string> {
   const [urls, setURLs] = useState<ReadonlyMap<string, string>>(EMPTY_CLUSTER_URLS);
@@ -93,8 +127,11 @@ export function useIconClusterURLs(
       setURLs(EMPTY_CLUSTER_URLS);
       return;
     }
-    const ids = collectClusterIDs(treeRoot);
-    if (ids.length === 0) {
+    // Collect cluster ids + their bounding box widths so we can pick a
+    // preview tier per cluster. Wider clusters get a bigger tier; tiny
+    // 16×16 icons stay at preview-128 even at zoom=2.
+    const idsWithBBox = collectClusterIDsWithBBox(treeRoot);
+    if (idsWithBBox.length === 0) {
       setURLs(EMPTY_CLUSTER_URLS);
       return;
     }
@@ -102,6 +139,7 @@ export function useIconClusterURLs(
     const dsURL = process.env.NEXT_PUBLIC_DS_SERVICE_URL || "";
     const token = getToken();
     const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    const dpr = getDeviceDPR();
 
     (async () => {
       // Mint signed URLs per cluster. Each `<img>` fetch synchronously
@@ -119,14 +157,22 @@ export function useIconClusterURLs(
       const next = new Map<string, string>();
       const failures: string[] = [];
       await Promise.all(
-        ids.map(async (id) => {
+        idsWithBBox.map(async ({ id, longestEdgePx }) => {
           try {
+            const tier: PreviewTier = pickPreviewTier(longestEdgePx, zoom, dpr);
             const res = await fetch(
               `${dsURL}/v1/projects/${encodeURIComponent(slug)}/assets/export-url`,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...authHeaders },
-                body: JSON.stringify({ node_id: id, format: "png", scale }),
+                // Preview-tier formats coerce scale to 1 server-side, but we
+                // still send the legacy `scale` so older deploys (pre-7e97cf2)
+                // don't 400 on a missing field.
+                body: JSON.stringify({
+                  node_id: id,
+                  format: `preview-${tier}`,
+                  scale,
+                }),
               },
             );
             if (!res.ok) {
@@ -145,7 +191,7 @@ export function useIconClusterURLs(
       if (cancelled) return;
       if (failures.length > 0) {
         console.warn(
-          `[icon-cluster] ${failures.length}/${ids.length} mints failed:`,
+          `[icon-cluster] ${failures.length}/${idsWithBBox.length} mints failed:`,
           failures.slice(0, 5),
         );
       }
