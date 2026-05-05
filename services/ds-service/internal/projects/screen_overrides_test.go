@@ -427,9 +427,11 @@ func TestHandleBulkUpsertOverrides_100Rows_SingleTx_SharedBulkID(t *testing.T) {
 			len(resp.Updated), resp.BulkID)
 	}
 
-	// 100 audit rows, all carrying the same bulk_id.
+	// 100 audit rows, all carrying the same bulk_id. U10 renamed the
+	// per-row event from `override.text.set` to `override.text.bulk_set`
+	// so the activity feed can render bulk runs as a single grouped item.
 	rows, err := fx.dbHandle.QueryContext(context.Background(),
-		`SELECT details FROM audit_log WHERE event_type = 'override.text.set'
+		`SELECT details FROM audit_log WHERE event_type = 'override.text.bulk_set'
 		   AND tenant_id = ?`, fx.tenantA)
 	if err != nil {
 		t.Fatal(err)
@@ -548,7 +550,7 @@ func TestRepo_BulkUpsertOverrides_AuditFailure_RollsBack(t *testing.T) {
 	rows := []*BulkOverrideRow{
 		{ScreenID: fx.screenA, FigmaNodeID: "ok-1", Value: "a", PerRowAudit: noopAudit},
 		{ScreenID: fx.screenA, FigmaNodeID: "fail-2", Value: "b",
-			PerRowAudit: func(tx *sql.Tx, flowID string, newRev int) error {
+			PerRowAudit: func(tx *sql.Tx, flowID string, oldValue string, newRev int) error {
 				return fmt.Errorf("synthetic audit failure")
 			}},
 	}
@@ -569,7 +571,7 @@ func TestRepo_BulkUpsertOverrides_AuditFailure_RollsBack(t *testing.T) {
 	}
 }
 
-func noopAudit(tx *sql.Tx, flowID string, newRev int) error { return nil }
+func noopAudit(tx *sql.Tx, flowID string, oldValue string, newRev int) error { return nil }
 
 // ───────────────────────── helpers ──────────────────────────────────────
 

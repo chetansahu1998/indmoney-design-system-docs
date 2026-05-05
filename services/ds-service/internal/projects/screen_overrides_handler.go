@@ -112,6 +112,12 @@ func (s *Server) HandleListOverrides(w http.ResponseWriter, r *http.Request) {
 //
 // Body capped at MaxOverrideValueBytes (16 KB); oversize → 413.
 // 409 on stale expected_revision exactly like HandlePutDRD.
+//
+// On success the handler kicks the GraphRebuildPool. Per the Phase 6
+// flush-driven SSE rule (docs/solutions/2026-05-01-001-phase-6-closure.md),
+// the worker rebuilds search_index_fts inside its own tx and only then
+// publishes the SSE event — subscribers therefore never observe a stale
+// search slice immediately after a PUT.
 func (s *Server) HandlePutOverride(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "PUT only")
@@ -161,33 +167,21 @@ func (s *Server) HandlePutOverride(w http.ResponseWriter, r *http.Request) {
 	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
 	endpoint := fmt.Sprintf("/v1/projects/%s/screens/%s/text-overrides/%s",
 		slug, screenID, figmaNodeID)
-	auditFn := func(tx *sql.Tx, flowID string, newRev int) error {
-		details, _ := json.Marshal(map[string]any{
-			"flow_id":         flowID,
-			"screen_id":       screenID,
-			"figma_node_id":   figmaNodeID,
-			"canonical_path":  req.CanonicalPath,
-			"value":           req.Value,
-			"revision":        newRev,
-			"schema_ver":      ProjectsSchemaVersion,
+	auditFn := func(tx *sql.Tx, flowID string, oldValue string, newRev int) error {
+		return WriteOverrideEvent(r.Context(), tx, OverrideEvent{
+			EventType:   AuditActionOverrideTextSet,
+			TenantID:    tenantID,
+			UserID:      claims.Sub,
+			FlowID:      flowID,
+			ScreenID:    screenID,
+			FigmaNodeID: figmaNodeID,
+			OldValue:    oldValue,
+			NewValue:    req.Value,
+			IPAddress:   clientIP(r),
+			Endpoint:    endpoint,
+			Method:      "PUT",
+			StatusCode:  http.StatusOK,
 		})
-		_, err := tx.ExecContext(r.Context(),
-			`INSERT INTO audit_log
-			    (id, ts, event_type, tenant_id, user_id, method, endpoint, status_code, duration_ms, ip_address, details)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			uuid.NewString(),
-			time.Now().UTC().Format(time.RFC3339Nano),
-			"override.text.set",
-			tenantID,
-			claims.Sub,
-			"PUT",
-			endpoint,
-			http.StatusOK,
-			0,
-			clientIP(r),
-			string(details),
-		)
-		return err
 	}
 
 	res, err := repo.UpsertOverride(r.Context(), OverrideUpsertInput{
@@ -220,6 +214,13 @@ func (s *Server) HandlePutOverride(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusInternalServerError, "override_upsert", err.Error())
 		return
 	}
+
+	// U10 — kick the search-rebuild worker AFTER the override tx commits.
+	// The worker's RebuildFull rewrites search_index_fts (which now includes
+	// `text_override` rows), then publishes the SSE event from inside its
+	// own commit window. Per the Phase 6 read-after-write rule, subscribers
+	// of `search.reindexed` therefore never observe a stale index.
+	s.enqueueGraphRebuild(tenantID, GraphSourceFlows, res.FlowID)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"revision":   res.Revision,
@@ -258,33 +259,23 @@ func (s *Server) HandleDeleteOverride(w http.ResponseWriter, r *http.Request) {
 	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
 	endpoint := fmt.Sprintf("/v1/projects/%s/screens/%s/text-overrides/%s",
 		slug, screenID, figmaNodeID)
-	auditFn := func(tx *sql.Tx, flowID string) error {
-		details, _ := json.Marshal(map[string]any{
-			"flow_id":       flowID,
-			"screen_id":     screenID,
-			"figma_node_id": figmaNodeID,
-			"schema_ver":    ProjectsSchemaVersion,
+	auditFn := func(tx *sql.Tx, flowID string, oldValue string) error {
+		return WriteOverrideEvent(r.Context(), tx, OverrideEvent{
+			EventType:   AuditActionOverrideTextReset,
+			TenantID:    tenantID,
+			UserID:      claims.Sub,
+			FlowID:      flowID,
+			ScreenID:    screenID,
+			FigmaNodeID: figmaNodeID,
+			OldValue:    oldValue,
+			IPAddress:   clientIP(r),
+			Endpoint:    endpoint,
+			Method:      "DELETE",
+			StatusCode:  http.StatusNoContent,
 		})
-		_, err := tx.ExecContext(r.Context(),
-			`INSERT INTO audit_log
-			    (id, ts, event_type, tenant_id, user_id, method, endpoint, status_code, duration_ms, ip_address, details)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			uuid.NewString(),
-			time.Now().UTC().Format(time.RFC3339Nano),
-			"override.text.reset",
-			tenantID,
-			claims.Sub,
-			"DELETE",
-			endpoint,
-			http.StatusNoContent,
-			0,
-			clientIP(r),
-			string(details),
-		)
-		return err
 	}
 
-	_, _, err := repo.DeleteOverride(r.Context(), slug, screenID, figmaNodeID, auditFn)
+	_, flowID, err := repo.DeleteOverride(r.Context(), slug, screenID, figmaNodeID, auditFn)
 	if errors.Is(err, ErrNotFound) {
 		writeJSONErr(w, http.StatusNotFound, "not_found", "")
 		return
@@ -293,6 +284,10 @@ func (s *Server) HandleDeleteOverride(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusInternalServerError, "override_delete", err.Error())
 		return
 	}
+
+	// U10 — kick search rebuild after commit. flowID may be "" if nothing was
+	// actually deleted (idempotent no-op); enqueueGraphRebuild tolerates that.
+	s.enqueueGraphRebuild(tenantID, GraphSourceFlows, flowID)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -372,34 +367,22 @@ func (s *Server) HandleBulkUpsertOverrides(w http.ResponseWriter, r *http.Reques
 			CanonicalPath:        item.CanonicalPath,
 			LastSeenOriginalText: item.LastSeenOriginalText,
 		}
-		row.PerRowAudit = func(tx *sql.Tx, flowID string, newRev int) error {
-			details, _ := json.Marshal(map[string]any{
-				"flow_id":        flowID,
-				"screen_id":      item.ScreenID,
-				"figma_node_id":  item.FigmaNodeID,
-				"canonical_path": item.CanonicalPath,
-				"value":          item.Value,
-				"revision":       newRev,
-				"bulk_id":        bulkID,
-				"schema_ver":     ProjectsSchemaVersion,
+		row.PerRowAudit = func(tx *sql.Tx, flowID string, oldValue string, newRev int) error {
+			return WriteOverrideEvent(r.Context(), tx, OverrideEvent{
+				EventType:   AuditActionOverrideTextBulkSet,
+				TenantID:    tenantID,
+				UserID:      claims.Sub,
+				FlowID:      flowID,
+				ScreenID:    item.ScreenID,
+				FigmaNodeID: item.FigmaNodeID,
+				OldValue:    oldValue,
+				NewValue:    item.Value,
+				BulkID:      bulkID,
+				IPAddress:   clientIP(r),
+				Endpoint:    endpoint,
+				Method:      "POST",
+				StatusCode:  http.StatusOK,
 			})
-			_, err := tx.ExecContext(r.Context(),
-				`INSERT INTO audit_log
-				    (id, ts, event_type, tenant_id, user_id, method, endpoint, status_code, duration_ms, ip_address, details)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				uuid.NewString(),
-				time.Now().UTC().Format(time.RFC3339Nano),
-				"override.text.set",
-				tenantID,
-				claims.Sub,
-				"POST",
-				endpoint,
-				http.StatusOK,
-				0,
-				clientIP(r),
-				string(details),
-			)
-			return err
 		}
 		rows = append(rows, row)
 	}
@@ -409,6 +392,20 @@ func (s *Server) HandleBulkUpsertOverrides(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "bulk_upsert", err.Error())
 		return
+	}
+
+	// U10 — one debounced graph rebuild per tenant covers every row in this
+	// bulk batch. Multiple flows touched ⇒ multiple enqueues, but the
+	// debounce flusher coalesces and the worker re-derives the whole
+	// (tenant, platform) slice anyway.
+	touchedFlows := map[string]struct{}{}
+	for _, row := range rows {
+		if row.FlowID != "" {
+			touchedFlows[row.FlowID] = struct{}{}
+		}
+	}
+	for flowID := range touchedFlows {
+		s.enqueueGraphRebuild(tenantID, GraphSourceFlows, flowID)
 	}
 
 	results := make([]map[string]any, 0, len(rows))
