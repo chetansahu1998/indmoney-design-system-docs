@@ -254,6 +254,63 @@ export async function putDRD(
 }
 
 /**
+ * Asset-export download URL builder used by the U7 inspector's PNG / SVG /
+ * 2x / 3x buttons. Matches the U5 server contract:
+ *
+ *   POST /v1/projects/:slug/assets/mint
+ *   { screen_id, figma_node_id, format: "png"|"svg", scale?: 1|2|3 }
+ *
+ * U5 hasn't shipped yet — until then this function returns a stable
+ * placeholder URL so the inspector can wire its onClick handlers without
+ * crashing. The real implementation will replace the body with a POST and
+ * return `{ download_url, expires_at }` per spec line 388–397.
+ *
+ * Caller behaviour is unchanged once U5 lands: still opens the URL in a
+ * new tab via `window.open(url, "_blank")`.
+ */
+export interface MintAssetParams {
+  slug: string;
+  screenID: string;
+  figmaNodeID: string;
+  format: "png" | "svg";
+  scale?: 1 | 2 | 3;
+}
+
+export interface MintAssetResponse {
+  download_url: string;
+  expires_at: string;
+}
+
+export async function mintAssetExportURL(
+  params: MintAssetParams,
+): Promise<ApiResult<MintAssetResponse>> {
+  // Placeholder body — once U5 lands the call becomes:
+  //   return postJSON<MintAssetResponse>(
+  //     `/v1/projects/${slug}/assets/mint`,
+  //     { screen_id, figma_node_id, format, scale },
+  //   );
+  // For now we synthesise a deterministic preview URL so the inspector's
+  // click handlers can be wired and unit-tested without 404ing.
+  const qs = new URLSearchParams({
+    screen_id: params.screenID,
+    node_id: params.figmaNodeID,
+    format: params.format,
+    scale: String(params.scale ?? 1),
+  }).toString();
+  const url = `${dsBaseURL()}/v1/projects/${encodeURIComponent(
+    params.slug,
+  )}/assets/preview?${qs}`;
+  return {
+    ok: true,
+    data: {
+      download_url: url,
+      // 5-minute placeholder TTL — production U5 will return the real one.
+      expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+    },
+  };
+}
+
+/**
  * GET /v1/projects/:slug/screens/:id/canonical-tree — lazy fetch of the
  * canonical tree blob for the JSON tab. U6 declares the wrapper but does not
  * call it; the JSON tab (U8) is the only consumer.

@@ -54,6 +54,16 @@ interface AtlasSelection {
   leafID: string | null;
   /** Selected frame inside the open leaf. */
   frameID: string | null;
+  /**
+   * Canvas-v2 atomic-child selection — set when the user single-clicks a
+   * TEXT / cluster / RECTANGLE / ELLIPSE / VECTOR atomic inside the
+   * canonical_tree renderer. Drives `AtomicChildInspector` (U7).
+   *
+   * Null means the inspector falls back to the parent frame's metadata.
+   * Esc clears it (see canvas keymap in U7) so the same panel
+   * re-collapses to the leaf-level overview.
+   */
+  selectedAtomicChild: { screenID: string; figmaNodeID: string } | null;
 }
 
 // ─── Per-leaf cache slot ─────────────────────────────────────────────────────
@@ -121,6 +131,14 @@ interface AtlasStoreState {
   closeLeaf: () => void;
   selectFrame: (frameID: string | null) => void;
   selectFlow: (flowID: string | null) => void;
+  /**
+   * Set or clear the canvas-v2 atomic-child selection. Pass `null` for both
+   * args (or omit the second) to deselect — Esc-key wiring uses this.
+   */
+  selectAtomicChild: (
+    screenID: string | null,
+    figmaNodeID?: string | null,
+  ) => void;
   setTweak: <K extends keyof AtlasTweaks>(key: K, value: AtlasTweaks[K]) => void;
   applyEvent: (evt: AtlasLiveEvent) => void;
 
@@ -149,7 +167,12 @@ export const useAtlas = create<AtlasStoreState>()(
       synapses: [],
       leavesByFlow: {},
       leafSlots: {},
-      selection: { flowID: null, leafID: null, frameID: null },
+      selection: {
+        flowID: null,
+        leafID: null,
+        frameID: null,
+        selectedAtomicChild: null,
+      },
       tweaks: ATLAS_TWEAK_DEFAULTS,
       userDirectory: {},
       hydrated: false,
@@ -231,7 +254,14 @@ export const useAtlas = create<AtlasStoreState>()(
 
       openLeaf: async (leafID) => {
         if (!leafID) {
-          set({ selection: { ...get().selection, leafID: null, frameID: null } });
+          set({
+            selection: {
+              ...get().selection,
+              leafID: null,
+              frameID: null,
+              selectedAtomicChild: null,
+            },
+          });
           return;
         }
         // After the brain-products migration: leafID is a ds-service project
@@ -252,10 +282,24 @@ export const useAtlas = create<AtlasStoreState>()(
         if (!parentProductSlug || !leaf) {
           // Caller hasn't loaded the parent yet; bail out softly and update
           // selection so the URL still reflects intent.
-          set({ selection: { flowID: get().selection.flowID, leafID, frameID: null } });
+          set({
+            selection: {
+              flowID: get().selection.flowID,
+              leafID,
+              frameID: null,
+              selectedAtomicChild: null,
+            },
+          });
           return;
         }
-        set({ selection: { flowID: parentProductSlug, leafID, frameID: null } });
+        set({
+          selection: {
+            flowID: parentProductSlug,
+            leafID,
+            frameID: null,
+            selectedAtomicChild: null,
+          },
+        });
 
         // Fetch canvas + overlays from the LEAF's own project slug. flowID=""
         // tells fetchLeafCanvas/Overlays to pull the whole project (all flows
@@ -284,15 +328,46 @@ export const useAtlas = create<AtlasStoreState>()(
       },
 
       closeLeaf: () => {
-        set({ selection: { ...get().selection, leafID: null, frameID: null } });
+        set({
+          selection: {
+            ...get().selection,
+            leafID: null,
+            frameID: null,
+            selectedAtomicChild: null,
+          },
+        });
       },
 
       selectFrame: (frameID) => {
-        set({ selection: { ...get().selection, frameID } });
+        // Picking a different frame collapses any open atomic-child
+        // inspector — otherwise we'd render snippets for a node that no
+        // longer belongs to the visible context.
+        set({
+          selection: {
+            ...get().selection,
+            frameID,
+            selectedAtomicChild: null,
+          },
+        });
       },
 
       selectFlow: (flowID) => {
         set({ selection: { ...get().selection, flowID } });
+      },
+
+      selectAtomicChild: (screenID, figmaNodeID) => {
+        if (!screenID || !figmaNodeID) {
+          set({
+            selection: { ...get().selection, selectedAtomicChild: null },
+          });
+          return;
+        }
+        set({
+          selection: {
+            ...get().selection,
+            selectedAtomicChild: { screenID, figmaNodeID },
+          },
+        });
       },
 
       // ─── Tweaks ──────────────────────────────────────────────────────────
