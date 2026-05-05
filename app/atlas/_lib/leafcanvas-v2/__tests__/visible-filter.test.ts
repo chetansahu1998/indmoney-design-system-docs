@@ -27,6 +27,47 @@ function _test_isVisible_hidden(): void {
   assert(!isVisible({ opacity: 0.0005 }), "near-zero opacity hides node");
 }
 
+function _test_isVisible_removed(): void {
+  assert(!isVisible({ removed: true }), "removed:true hides node");
+  assert(isVisible({ removed: false }), "removed:false leaves node visible");
+  assert(
+    !isVisible({ visible: true, removed: true }),
+    "removed:true wins over visible:true",
+  );
+}
+
+function _test_filterVisible_drops_opacity_zero(): void {
+  const tree: CanonicalNode = {
+    id: "root",
+    type: "FRAME",
+    children: [
+      { id: "a", type: "RECTANGLE" },
+      { id: "b", type: "RECTANGLE", opacity: 0 },
+      { id: "c", type: "RECTANGLE", opacity: 0.0005 },
+    ],
+  };
+  const out = filterVisible(tree)!;
+  const ids = out.children!.map((c) => c.id);
+  assert(ids.includes("a"), "opaque sibling kept");
+  assert(!ids.includes("b"), "opacity:0 sibling pruned");
+  assert(!ids.includes("c"), "near-zero opacity sibling pruned");
+}
+
+function _test_filterVisible_drops_removed(): void {
+  const tree: CanonicalNode = {
+    id: "root",
+    type: "FRAME",
+    children: [
+      { id: "a", type: "RECTANGLE" },
+      { id: "b", type: "RECTANGLE", removed: true },
+    ],
+  };
+  const out = filterVisible(tree)!;
+  const ids = out.children!.map((c) => c.id);
+  assert(ids.includes("a"), "non-removed sibling kept");
+  assert(!ids.includes("b"), "removed:true sibling pruned");
+}
+
 function _test_filterVisible_drops_hidden_subtree(): void {
   const tree: CanonicalNode = {
     id: "root",
@@ -127,7 +168,10 @@ function _test_countNodes(): void {
 export function runAll(): void {
   _test_isVisible_default_visible();
   _test_isVisible_hidden();
+  _test_isVisible_removed();
   _test_filterVisible_drops_hidden_subtree();
+  _test_filterVisible_drops_opacity_zero();
+  _test_filterVisible_drops_removed();
   _test_filterVisible_returns_null_for_hidden_root();
   _test_filterVisible_does_not_mutate_input();
   _test_copositioned_siblings_get_state_group();

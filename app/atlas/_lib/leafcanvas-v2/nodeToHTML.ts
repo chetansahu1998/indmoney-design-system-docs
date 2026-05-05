@@ -176,7 +176,10 @@ function renderText(
   const positioning = positionStyle(node, parentBBox, parentLayoutMode);
   const sizing = sizeStyle(node);
   const style = node.style ?? {};
-  const color = firstSolidColor(node.fills) ?? "#000000";
+  // Per U13: TEXT atomics with empty/missing/non-SOLID `fills` default to
+  // `#000` rather than inheriting from the parent — the spike found that
+  // inheriting often produced white-on-white in dark surfaces.
+  const color = firstSolidColor(node.fills) ?? "#000";
 
   const textStyle: CSSProperties = {
     ...positioning,
@@ -344,7 +347,13 @@ function backgroundStyle(
     }
     if (isImagePaint(f) && f.imageRef) {
       const url = imageRefs[f.imageRef];
-      if (!url) continue;
+      if (!url) {
+        // Placeholder rendering — keeps the slot occupied so layout
+        // doesn't reflow once U7's asset-export client populates the
+        // imageRef → URL map. We avoid emitting an `<img>` with a
+        // broken src so the surface stays clean during PNG snapshots.
+        return imagePlaceholderStyle();
+      }
       const out: CSSProperties = {
         backgroundImage: `url(${JSON.stringify(url)})`,
         backgroundRepeat: "no-repeat",
@@ -371,6 +380,22 @@ function backgroundStyle(
     }
   }
   return {};
+}
+
+/**
+ * Soft grey checker for IMAGE fills whose `imageRef` isn't yet in the
+ * resolution map (U7 plumbing pending). No broken-image glyph; just a
+ * neutral placeholder that visually communicates "image goes here".
+ */
+function imagePlaceholderStyle(): CSSProperties {
+  return {
+    backgroundColor: "rgba(0, 0, 0, 0.04)",
+    backgroundImage:
+      "linear-gradient(45deg, rgba(0,0,0,0.06) 25%, transparent 25%, transparent 75%, rgba(0,0,0,0.06) 75%), " +
+      "linear-gradient(45deg, rgba(0,0,0,0.06) 25%, transparent 25%, transparent 75%, rgba(0,0,0,0.06) 75%)",
+    backgroundSize: "12px 12px",
+    backgroundPosition: "0 0, 6px 6px",
+  };
 }
 
 function firstSolidColor(paints: Paint[] | undefined): string | null {

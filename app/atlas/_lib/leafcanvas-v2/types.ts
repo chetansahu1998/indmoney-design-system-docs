@@ -87,6 +87,12 @@ export interface CanonicalNode {
   name?: string;
   type?: NodeType;
   visible?: boolean;
+  /**
+   * Some Figma exports (notably plugin-side dumps) carry a `removed: true`
+   * flag instead of `visible: false` for soft-deleted layers. The visible
+   * filter treats it the same.
+   */
+  removed?: boolean;
   opacity?: number;
   /** Figma absolute bounds (relative to the page, in px). */
   absoluteBoundingBox?: BoundingBox | null;
