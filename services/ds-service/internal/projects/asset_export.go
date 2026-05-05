@@ -585,6 +585,18 @@ const MaxBulkZipBufferBytes = 10 << 20
 // stranding the server's tempdir.
 const MaxBulkZipTotalBytes = 256 << 20
 
+// isAcceptedAssetFormat reports whether the given asset format string is
+// recognised by the mint + download endpoints. The legacy node-render
+// formats (png/svg) plus the preview-pyramid tiers from migration 0021
+// are accepted; anything else is a 400.
+func isAcceptedAssetFormat(format string) bool {
+	if format == "png" || format == "svg" {
+		return true
+	}
+	_, ok := ParsePreviewTierFormat(format)
+	return ok
+}
+
 // AssetCacheRetryAfterSeconds — Retry-After header value when a single-asset
 // download must surface a 425 because the synchronous render budget elapses
 // before the asset materialises.
@@ -728,9 +740,15 @@ func (s *Server) HandleMintAssetExportToken() http.HandlerFunc {
 			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "node_id required")
 			return
 		}
-		if req.Format != "png" && req.Format != "svg" {
-			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "format must be png|svg")
+		if !isAcceptedAssetFormat(req.Format) {
+			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "format must be png|svg|preview-128|preview-512|preview-1024|preview-2048")
 			return
+		}
+		if _, isPreview := ParsePreviewTierFormat(req.Format); isPreview {
+			// Preview tiers are content-addressed by tier size only — scale is
+			// always 1 because the tier IS the resolution. Coerce silently so
+			// callers don't have to know the convention.
+			req.Scale = 1
 		}
 		if req.Scale < 1 || req.Scale > 3 {
 			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "scale must be 1|2|3")
@@ -784,12 +802,21 @@ func (s *Server) HandleAssetDownload() http.HandlerFunc {
 			writeJSONErr(w, http.StatusBadRequest, "missing_params", "slug,node_id,format,scale required")
 			return
 		}
-		if format != "png" && format != "svg" {
-			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "format must be png|svg")
+		if !isAcceptedAssetFormat(format) {
+			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "format must be png|svg|preview-128|preview-512|preview-1024|preview-2048")
 			return
 		}
+		previewTier, isPreview := ParsePreviewTierFormat(format)
 		scale, err := strconv.Atoi(scaleStr)
-		if err != nil || scale < 1 || scale > 3 {
+		if err != nil {
+			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "scale must be 1|2|3")
+			return
+		}
+		if isPreview {
+			// Coerce scale to 1 for preview-tier requests — matches the
+			// mint-side coercion above so token verification lines up.
+			scale = 1
+		} else if scale < 1 || scale > 3 {
 			writeJSONErr(w, http.StatusBadRequest, "invalid_payload", "scale must be 1|2|3")
 			return
 		}
@@ -834,6 +861,73 @@ func (s *Server) HandleAssetDownload() http.HandlerFunc {
 		if err != nil {
 			writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
 			return
+		}
+		if !ok && isPreview {
+			// Preview-tier cache miss — generate the entire pyramid in one
+			// pass so subsequent requests for any other tier hit cache. The
+			// generator does ONE Figma render (PNG @ scale=2) and downsamples
+			// locally to all four tiers, so render-budget cost is the same
+			// as a single legacy /assets/<node>?format=png&scale=2 call.
+			if s.deps.PreviewPyramid == nil {
+				w.Header().Set("Retry-After", strconv.Itoa(AssetCacheRetryAfterSeconds))
+				writeJSONErr(w, http.StatusTooEarly, "preview_pyramid_unavailable", "preview generator not wired")
+				return
+			}
+			leafID, lerr := s.lookupAnyLeafForFile(ctx, repo, fileID)
+			if lerr != nil || leafID == "" {
+				http.NotFound(w, r)
+				return
+			}
+			renderCtx, cancel := context.WithTimeout(ctx, SingleAssetSyncRenderBudget)
+			pyramidResults, perr := s.deps.PreviewPyramid.RenderPreviewPyramid(renderCtx, tenantID, leafID, fileID, nodeID, versionIndex)
+			cancel()
+			if errors.Is(perr, context.DeadlineExceeded) {
+				w.Header().Set("Retry-After", strconv.Itoa(AssetCacheRetryAfterSeconds))
+				writeJSONErr(w, http.StatusTooEarly, "render_in_progress", "try again in a moment")
+				return
+			}
+			// Persist every successfully-rendered tier — even if one tier
+			// failed, the rest are valid cache rows.
+			for _, pr := range pyramidResults {
+				crow := AssetCacheRow{
+					TenantID:     tenantID,
+					FileID:       fileID,
+					NodeID:       nodeID,
+					Format:       pr.Tier.FormatString(),
+					Scale:        1,
+					VersionIndex: versionIndex,
+					StorageKey:   pr.StorageKey,
+					Bytes:        pr.Bytes,
+					Mime:         pr.Mime,
+					CreatedAt:    s.deps.PreviewPyramid.now(),
+				}
+				if perr := repo.StoreAsset(ctx, crow); perr != nil {
+					// Disk-write succeeded but DB row failed → log via the
+					// generic 500 path. Subsequent requests will refetch.
+					writeJSONErr(w, http.StatusInternalServerError, "preview_persist", perr.Error())
+					return
+				}
+			}
+			if perr != nil && len(pyramidResults) == 0 {
+				writeJSONErr(w, http.StatusBadGateway, "preview_render_failed", perr.Error())
+				return
+			}
+			// Find the requested tier in the freshly-persisted set.
+			for _, pr := range pyramidResults {
+				if pr.Tier == previewTier {
+					row = AssetCacheRow{
+						StorageKey: pr.StorageKey,
+						Mime:       pr.Mime,
+					}
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				// Generator partial-failed for the specific tier we wanted.
+				http.NotFound(w, r)
+				return
+			}
 		}
 		if !ok {
 			// Cache miss — try one synchronous render.
@@ -1417,6 +1511,23 @@ func (s *Server) tenantExporter(tenantID string) *AssetExporter {
 	}
 	cp := *base
 	cp.Repo = NewTenantRepo(s.deps.DB.DB, tenantID)
+	return &cp
+}
+
+// TenantBoundExporter exposes the same per-tenant copy-on-clone the
+// internal handlers use, for callers that need a tenant-scoped
+// AssetExporter outside the Server type — specifically the preview-
+// pyramid generator's source fetcher (asset_preview_pyramid.go).
+//
+// Returns nil if the underlying AssetExporter isn't wired, mirroring
+// tenantExporter's behaviour so consumers don't have to special-case
+// "exporter unavailable" twice.
+func TenantBoundExporter(base *AssetExporter, db *sql.DB, tenantID string) *AssetExporter {
+	if base == nil {
+		return nil
+	}
+	cp := *base
+	cp.Repo = NewTenantRepo(db, tenantID)
 	return &cp
 }
 

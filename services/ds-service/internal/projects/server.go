@@ -117,6 +117,12 @@ type ServerDeps struct {
 	// existing grey-checker placeholder, same as before this feature shipped).
 	ImageFillResolver *ImageFillResolver
 
+	// PreviewPyramid renders 4-tier (128/512/1024/2048) PNG previews from
+	// a single Figma source render — U1 of plan 2026-05-06-001. nil
+	// disables the preview-tier path; preview-N requests in HandleAssetDownload
+	// fall through to a 425 with "preview_pyramid_unavailable".
+	PreviewPyramid *PreviewPyramidGenerator
+
 	// GraphRebuildPool — plan 2026-05-03-001 / T3. Mutating handlers
 	// (export, decision create, violation patch, persona approve/reject,
 	// taxonomy archive) call s.enqueueGraphRebuild() after their commit so

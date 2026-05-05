@@ -224,6 +224,23 @@ func main() {
 		Now:     time.Now,
 	}
 
+	// Preview-pyramid generator — U1 of plan 2026-05-06-001. Uses
+	// AssetExporter as the source for the PNG@scale=2 it downsamples
+	// to 128/512/1024/2048 tiers. Lives next to the asset exporter so
+	// they share dataDir + the bytes fetcher implicitly via the source
+	// path's RenderAssetsForLeaf call.
+	previewPyramid := &projects.PreviewPyramidGenerator{
+		Source: &projects.AssetExporterPreviewSource{
+			Exporter: assetExporter,
+			TenantBoundExporter: func(tenantID string) *projects.AssetExporter {
+				return projects.TenantBoundExporter(assetExporter, dbConn.DB, tenantID)
+			},
+			DataDir: dataDir,
+		},
+		DataDir: dataDir,
+		Now:     time.Now,
+	}
+
 	// Pr8 / D1 — asset-token signer for PNG/KTX2 image-loader auth. Derives
 	// the HMAC key from the encryption key (already 32 bytes, persisted in
 	// .env.local, rotates with the same operator workflow). Falls back to
@@ -314,6 +331,7 @@ func main() {
 		AssetSigner:      assetSigner,
 		AssetExporter:     assetExporter,
 		ImageFillResolver: imageFillResolver,
+		PreviewPyramid:    previewPyramid,
 		GraphRebuildPool:  graphRebuildPool,
 		Log:              log,
 	})
