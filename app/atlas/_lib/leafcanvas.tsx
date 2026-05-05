@@ -3,6 +3,7 @@
 // Ported verbatim from INDmoney Docs/leafcanvas.jsx.
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
 import { CopyOverridesTab } from "./leafcanvas-v2/CopyOverridesTab";
+import { setLeafZoom } from "./leafcanvas-v2/leaf-zoom-signal";
 // ============================================================
 // LEAF CANVAS — Figma-like infinite board for a single sub-flow.
 // Renders an array of "frames" (phone-mockup screens) on a
@@ -22,6 +23,14 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
   const [cam, setCam] = useState({ x: 0, y: 0, z: 0.6 });
   const camRef = useRef(cam);
   useEffect(() => { camRef.current = cam; }, [cam]);
+
+  // Broadcast the canvas zoom to the canvas-v2 surface so its preview-tier
+  // selector picks the right PNG size as the user zooms in/out. Module-
+  // level signal (leaf-zoom-signal.ts) avoids prop-drilling through the
+  // real-data-bridge → PhoneFrameWrapper → LeafFrameRenderer chain.
+  useEffect(() => {
+    setLeafZoom(cam.z);
+  }, [cam.z]);
 
   // Auto-fit to layout on mount. Guards an empty `frames` array (real-data
   // case where the project has no rendered screens yet) so Math.min/max of

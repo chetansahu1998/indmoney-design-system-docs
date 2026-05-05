@@ -40,6 +40,7 @@ import { StatePicker } from "./StatePicker";
 import type { AnnotatedNode, CanonicalNode, ImageRefMap } from "./types";
 import { canvasFetchQueue } from "./fetch-queue";
 import { canvasIdleTracker } from "./idle-tracker";
+import { useLeafZoom } from "./leaf-zoom-signal";
 import { useIconClusterURLs } from "./useIconClusterURLs";
 import { useImageRefs } from "./useImageRefs";
 import {
@@ -461,13 +462,15 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
   // Empty map until the first batch resolves; the renderer falls back to
   // the placeholder for any unmatched cluster id (failed mints, slow
   // network, etc.) — graceful degradation, no broken layout.
-  // U1 — zoom hardcoded to 1 for now. The atlas leaf canvas (leafcanvas.tsx)
-  // owns the live zoom state but doesn't surface it through React context;
-  // wiring that through is a follow-up. At zoom=1, pickPreviewTier still
-  // chooses preview-512 / preview-1024 for typical 250-500px clusters
-  // instead of the legacy scale=2 (~8× the byte count) — still a big win.
-  // When the leaf canvas exposes zoom, replace the literal `1` here.
-  const clusterURLs = useIconClusterURLs(slug, openLeafID, prunedTree, 1, 2);
+  // Live leaf-canvas zoom drives preview-tier selection per cluster.
+  // Source: leafcanvas.tsx writes setLeafZoom(cam.z) on every camera
+  // update. When zoom flips into a new tier band the hook re-mints
+  // and the <img> src updates — browser swaps to the new tier. For
+  // tiny zoom deltas inside the same tier band the URLs are identical
+  // (pickPreviewTier returns the same value) so React's useMemo on
+  // the URL map doesn't trigger a re-render of every cluster.
+  const liveZoom = useLeafZoom();
+  const clusterURLs = useIconClusterURLs(slug, openLeafID, prunedTree, liveZoom, 2);
   const rendered = useMemo(() => {
     if (!prunedTree || !prunedTree.absoluteBoundingBox) return null;
     return nodeToHTML(
