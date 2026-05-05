@@ -197,6 +197,23 @@ function PhoneFrameWrapper(props: any) {
           label: frame.label,
           width: frame.w ?? 280,
           height: frame.h ?? 580,
+          // U11 — orphan-override drag-and-drop. The Copy Overrides tab
+          // serialises the orphan row onto a drag event; on drop we
+          // forward to the live store's applyOrphanReattach action,
+          // which deletes the source row and creates an active one at
+          // the drop target.
+          onDropOrphanOntoAtomic: (screenID, figmaNodeID, payload, canonicalPath) => {
+            void useAtlas
+              .getState()
+              .applyOrphanReattach(
+                payload.leafID,
+                payload.slug,
+                payload.orphan,
+                screenID,
+                figmaNodeID,
+                canonicalPath,
+              );
+          },
         }),
       );
     }

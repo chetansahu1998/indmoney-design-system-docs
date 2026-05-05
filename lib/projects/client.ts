@@ -438,6 +438,23 @@ export async function deleteTextOverride(
 }
 
 /**
+ * GET /v1/projects/:slug/leaves/:leaf_id/text-overrides — list every override
+ * pinned to any screen inside the leaf (active + orphaned). Used by U11's
+ * Copy-overrides inspector tab, which renders a flow-level listing rather
+ * than the per-screen view that `fetchTextOverrides` returns.
+ */
+export async function fetchLeafTextOverrides(
+  slug: string,
+  leafID: string,
+): Promise<ApiResult<{ overrides: TextOverride[] }>> {
+  return getJSON<{ overrides: TextOverride[] }>(
+    `/v1/projects/${encodeURIComponent(slug)}/leaves/${encodeURIComponent(
+      leafID,
+    )}/text-overrides`,
+  );
+}
+
+/**
  * POST /v1/projects/:slug/text-overrides/bulk — bulk upsert. Last-write-wins
  * per row (no expected_revision). Caller handles per-row reconciliation when
  * the response arrives.
