@@ -33,6 +33,7 @@ import "@blocknote/mantine/style.css";
 import { fetchDRD, putDRD } from "@/lib/projects/client";
 import EmptyTab from "./EmptyTab";
 import ActivityRail from "@/components/drd/ActivityRail";
+import { DRDToolbar } from "./DRDToolbar";
 
 const AUTOSAVE_DEBOUNCE_MS = 1500;
 
@@ -232,7 +233,10 @@ export default function DRDTab({ slug, flowID, readOnly = false }: DRDTabProps) 
       </header>
       <div style={drdRowStyle}>
         <div style={editorWrapperStyle} aria-busy={!loaded}>
-          <BlockNoteView editor={editor} editable={loaded && !readOnly} />
+          <DRDToolbar editor={editor} disabled={!loaded || readOnly} />
+          <div style={editorScrollStyle}>
+            <BlockNoteView editor={editor} editable={loaded && !readOnly} />
+          </div>
         </div>
         <ActivityRail slug={slug} flowID={flowID} />
       </div>
@@ -360,8 +364,21 @@ const headerStyle: React.CSSProperties = {
 };
 const editorWrapperStyle: React.CSSProperties = {
   flex: 1,
+  display: "flex",
+  flexDirection: "column",
+  minHeight: 0,
+  border: "1px solid var(--border)",
+  borderRadius: 8,
+  overflow: "hidden",
+  background: "var(--bg-base, #fff)",
+};
+const editorScrollStyle: React.CSSProperties = {
+  flex: 1,
   overflowY: "auto",
-  padding: 8,
+  paddingLeft: 48,
+  paddingRight: 24,
+  paddingTop: 12,
+  paddingBottom: 24,
 };
 const badgeBase: React.CSSProperties = {
   fontFamily: "var(--font-mono)",

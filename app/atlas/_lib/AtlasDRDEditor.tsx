@@ -41,6 +41,7 @@ import {
 } from "@blocknote/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { DRDToolbar } from "../../../components/projects/tabs/DRDToolbar";
 import { useAuth } from "../../../lib/auth-client";
 import { fetchDRD, fetchProject, putDRD } from "../../../lib/projects/client";
 import { createDRDProvider, mintDRDTicket, userColor } from "../../../lib/drd/collab";
@@ -278,6 +279,7 @@ export default function AtlasDRDEditor({ slug, flowID }: AtlasDRDEditorProps) {
           {labelForSaveState(saveState, collabActive)}
         </span>
       </div>
+      <DRDToolbar editor={editor} />
       <div className="lc-drd-editor-host">
         <BlockNoteView
           editor={editor}

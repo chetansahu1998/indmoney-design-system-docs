@@ -48,6 +48,7 @@ import {
 import { useReducedMotion } from "@/lib/animations/context";
 import EmptyTab from "./EmptyTab";
 import ActivityRail from "@/components/drd/ActivityRail";
+import { DRDToolbar } from "./DRDToolbar";
 
 // Phase 5.1 P2 — schema with custom blocks (decisionRef, figmaLink,
 // violationRef). Defaults preserved so paragraph/heading/list/etc.
@@ -206,19 +207,22 @@ function CollabEditor({ slug, flowID, readOnly, bundle, user }: CollabEditorProp
       </header>
       <div style={drdRowStyle}>
         <div style={editorWrapperStyle}>
-          <BlockNoteView editor={editor} editable={!readOnly} slashMenu={false}>
-            <SuggestionMenuController
-              triggerCharacter="/"
-              getItems={async (query) => {
-                // Phase 5.2 P2 — merge BlockNote's defaults with the
-                // DRD verbs so /decision /figma-link /violation-ref
-                // surface alongside paragraph, heading, etc.
-                const defaults = getDefaultReactSlashMenuItems(editor);
-                const drdItems = buildDRDSlashItems(editor);
-                return filterDRDSlashItems(query, [...drdItems, ...defaults]);
-              }}
-            />
-          </BlockNoteView>
+          <DRDToolbar editor={editor} disabled={readOnly} />
+          <div style={editorScrollStyle}>
+            <BlockNoteView editor={editor} editable={!readOnly} slashMenu={false}>
+              <SuggestionMenuController
+                triggerCharacter="/"
+                getItems={async (query) => {
+                  // Phase 5.2 P2 — merge BlockNote's defaults with the
+                  // DRD verbs so /decision /figma-link /violation-ref
+                  // surface alongside paragraph, heading, etc.
+                  const defaults = getDefaultReactSlashMenuItems(editor);
+                  const drdItems = buildDRDSlashItems(editor);
+                  return filterDRDSlashItems(query, [...drdItems, ...defaults]);
+                }}
+              />
+            </BlockNoteView>
+          </div>
         </div>
         <ActivityRail slug={slug} flowID={flowID} />
       </div>
@@ -329,10 +333,21 @@ const drdRowStyle: React.CSSProperties = {
 const editorWrapperStyle: React.CSSProperties = {
   flex: 1,
   minWidth: 0,
+  display: "flex",
+  flexDirection: "column",
+  minHeight: 0,
   border: "1px solid var(--border)",
   borderRadius: 8,
   background: "var(--bg-base, #fff)",
-  overflow: "auto",
+  overflow: "hidden",
+};
+const editorScrollStyle: React.CSSProperties = {
+  flex: 1,
+  overflowY: "auto",
+  paddingLeft: 48,
+  paddingRight: 24,
+  paddingTop: 12,
+  paddingBottom: 24,
 };
 const readOnlyBannerStyle: React.CSSProperties = {
   display: "flex",
