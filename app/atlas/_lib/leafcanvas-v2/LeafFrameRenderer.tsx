@@ -29,6 +29,11 @@ import { useAtlas } from "../../../../lib/atlas/live-store";
 
 import { findByFigmaID } from "./AtomicChildInspector";
 import { BulkExportPanel } from "./BulkExportPanel";
+import {
+  ORPHAN_DRAG_MIME,
+  decodeOrphanDrag,
+  type OrphanDragPayload,
+} from "./CopyOverridesTab";
 import { InlineTextEditor } from "./InlineTextEditor";
 import { nodeToHTML } from "./nodeToHTML";
 import type { CanonicalNode, ImageRefMap } from "./types";
@@ -62,6 +67,19 @@ export interface LeafFrameRendererProps {
   /** Frame dimensions for skeleton sizing. */
   width: number;
   height: number;
+  /**
+   * U11 — fired when an orphan-override row is dropped onto a TEXT
+   * atomic inside this frame. The host wires this to
+   * `applyOrphanReattach` so the source row is deleted + a fresh active
+   * row is created at the drop target. Non-TEXT atomics no-op (cursor
+   * shows "no-drop" via `dropEffect = "none"`).
+   */
+  onDropOrphanOntoAtomic?: (
+    screenID: string,
+    figmaNodeID: string,
+    payload: OrphanDragPayload,
+    canonicalPath: string,
+  ) => void;
 }
 
 interface CanonicalState {
@@ -73,7 +91,7 @@ interface CanonicalState {
 const INITIAL_STATE: CanonicalState = { status: "idle" };
 
 export function LeafFrameRenderer(props: LeafFrameRendererProps) {
-  const { slug, screenID, label, width, height } = props;
+  const { slug, screenID, label, width, height, onDropOrphanOntoAtomic } = props;
 
   // Pull any pre-fetched tree from the live store so frames already
   // hydrated by data-adapters.ts skip the network round-trip.
@@ -414,6 +432,63 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     }
   }, [bulkSelected, screenID, rendered]);
 
+  // ─── U11 — orphan re-attach drop target ───────────────────────────────────
+  // Drag-over: walk the click target up to the nearest TEXT atomic. If
+  // we land on one, allow the drop; otherwise mark the cursor "no-drop".
+  // We only react when the drag carries our custom MIME so the canvas
+  // pan/zoom layer's drag detection isn't disturbed by foreign drags.
+  const isOrphanDrag = useCallback((dt: DataTransfer | null): boolean => {
+    if (!dt) return false;
+    const types = dt.types;
+    for (let i = 0; i < types.length; i++) {
+      if (types[i] === ORPHAN_DRAG_MIME) return true;
+    }
+    return false;
+  }, []);
+
+  const handleDragOver = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      if (!onDropOrphanOntoAtomic) return;
+      if (!isOrphanDrag(e.dataTransfer)) return;
+      const target = e.target as HTMLElement | null;
+      const textEl = target ? findTextAtomic(target, wrapperRef.current) : null;
+      if (textEl) {
+        e.preventDefault(); // signal "drop allowed here"
+        e.dataTransfer.dropEffect = "move";
+      } else {
+        e.dataTransfer.dropEffect = "none";
+      }
+    },
+    [isOrphanDrag, onDropOrphanOntoAtomic],
+  );
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      if (!onDropOrphanOntoAtomic) return;
+      if (!isOrphanDrag(e.dataTransfer)) return;
+      const target = e.target as HTMLElement | null;
+      const textEl = target ? findTextAtomic(target, wrapperRef.current) : null;
+      if (!textEl) return; // non-TEXT atomic → no-op (Edge case in plan)
+      const figmaID = textEl.getAttribute("data-figma-id");
+      if (!figmaID) return;
+      const raw = e.dataTransfer.getData(ORPHAN_DRAG_MIME);
+      const payload = decodeOrphanDrag(raw);
+      if (!payload) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // canonical_path is best-effort: the renderer may not have the
+      // tree yet, in which case we pass an empty string and the host
+      // (applyOrphanReattach) lets the server fall back on the existing
+      // row's path.
+      const path =
+        state.status === "ready" && state.tree
+          ? buildCanonicalPath(state.tree, figmaID)
+          : "";
+      onDropOrphanOntoAtomic(screenID, figmaID, payload, path);
+    },
+    [isOrphanDrag, onDropOrphanOntoAtomic, screenID, state],
+  );
+
   // ─── Render ──────────────────────────────────────────────────────────────
   // Outer wrapper — sized to the frame's PNG bbox so the canvas's auto-fit
   // math stays stable whether we're showing the skeleton, the rendered
@@ -431,6 +506,8 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
     >
       {rendered ?? <Skeleton label={label} status={state.status} />}
       {editing && openLeafID && (

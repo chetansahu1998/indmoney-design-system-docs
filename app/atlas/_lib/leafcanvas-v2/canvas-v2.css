@@ -355,6 +355,7 @@
      dead `data-cluster-pending` selectors when the styles move. */
 }
 
+
 /* ── U9: bulk-select highlight, lasso, export panel ───────── */
 
 .leafcv2-frame [data-bulk-selected="true"] {
@@ -434,4 +435,238 @@
 
 .leafcv2-bulk-panel__error {
   color: #ff8b8b;
+
+/* ─────────────────────────────────────────────────────────────
+   U11 — Copy overrides tab styling. Lives in the LeafInspector
+   chrome (lc-ins-* siblings) so the visual rhythm matches the
+   surrounding tabs (DRD / Decisions / Activity).
+   ───────────────────────────────────────────────────────────── */
+
+.lcv2-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 8px 12px;
+}
+
+.lcv2-copy-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lcv2-copy-search {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  font: 500 12px/1.4 Inter, system-ui, sans-serif;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.lcv2-copy-filters {
+  display: flex;
+  gap: 4px;
+}
+
+.lcv2-copy-filter {
+  flex: 1 1 auto;
+  padding: 4px 6px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 999px;
+  background: transparent;
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+  text-transform: capitalize;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.lcv2-copy-filter.is-active {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+.lcv2-copy-filter-num {
+  font: 600 10px/1 Inter, system-ui, sans-serif;
+  background: rgba(0, 0, 0, 0.08);
+  padding: 1px 5px;
+  border-radius: 999px;
+}
+
+.lcv2-copy-sort {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  font: 500 12px/1.4 Inter, system-ui, sans-serif;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.lcv2-copy-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.lcv2-copy-csv {
+  display: flex;
+  gap: 4px;
+}
+
+.lcv2-copy-csv-btn {
+  padding: 3px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  background: transparent;
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.lcv2-copy-csv-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.lcv2-copy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.lcv2-copy-row {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lcv2-copy-row[draggable="true"] {
+  cursor: grab;
+}
+
+.lcv2-copy-row[data-status="orphaned"] {
+  background: rgba(255, 200, 100, 0.08);
+  border-color: rgba(220, 140, 0, 0.25);
+}
+
+.lcv2-copy-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.lcv2-copy-screen {
+  font: 600 12px/1.4 Inter, system-ui, sans-serif;
+}
+
+.lcv2-copy-pill {
+  font: 600 10px/1 Inter, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.lcv2-copy-pill[data-status="active"] {
+  background: rgba(0, 130, 90, 0.1);
+  color: rgba(0, 110, 70, 0.95);
+}
+
+.lcv2-copy-pill[data-status="orphaned"] {
+  background: rgba(220, 140, 0, 0.12);
+  color: rgba(180, 100, 0, 1);
+}
+
+.lcv2-copy-strings {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+}
+
+.lcv2-copy-strings-label {
+  display: inline-block;
+  width: 28px;
+  color: rgba(0, 0, 0, 0.45);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.lcv2-copy-strings-text {
+  word-break: break-word;
+}
+
+.lcv2-copy-original .lcv2-copy-strings-text {
+  color: rgba(0, 0, 0, 0.55);
+  text-decoration: line-through;
+  text-decoration-color: rgba(0, 0, 0, 0.18);
+}
+
+.lcv2-copy-row-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 500 10px/1.4 Inter, system-ui, sans-serif;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.lcv2-copy-author {
+  font-weight: 600;
+}
+
+.lcv2-copy-dot {
+  color: rgba(0, 0, 0, 0.3);
+}
+
+.lcv2-copy-when {
+  flex: 1 1 auto;
+}
+
+.lcv2-copy-reset {
+  padding: 2px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  background: transparent;
+  font: 500 10px/1.4 Inter, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.lcv2-copy-reset:hover:not([disabled]) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.lcv2-copy-orphan-hint {
+  font: 500 10px/1.4 Inter, system-ui, sans-serif;
+  color: rgba(180, 100, 0, 0.85);
+}
+
+.lcv2-copy-empty {
+  text-align: center;
+  padding: 16px 8px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.lcv2-copy-empty-h {
+  font: 600 12px/1.4 Inter, system-ui, sans-serif;
+}
+
+.lcv2-copy-error {
+  color: rgba(180, 50, 50, 0.95);
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(255, 80, 80, 0.06);
+
 }

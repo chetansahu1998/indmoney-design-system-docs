@@ -23,6 +23,11 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { TextOverride } from "../projects/client";
 import {
+  deleteTextOverride,
+  fetchLeafTextOverrides,
+  putTextOverride,
+} from "../projects/client";
+import {
   fetchInitialAtlasState,
   fetchLeafCanvas,
   fetchLeafOverlays,
@@ -201,6 +206,34 @@ interface AtlasStoreState {
     currentRevision: number,
     currentValue: string,
   ) => void;
+
+  /**
+   * U11 — drag-orphan-onto-atomic re-attach. Deletes the orphaned override
+   * row at its original `(screen_id, figma_node_id)` and re-creates it at
+   * the drop target with the same value. Server-side U2 also accepts a
+   * direct PUT at the new location with `expected_revision: 0`; we issue
+   * both calls in sequence so the source row disappears, last-write-wins.
+   *
+   * The action mutates `leafSlot.overrides` optimistically: removes the
+   * orphan row from the source bucket, inserts a synthetic active row at
+   * the destination if the PUT succeeds. If either call fails, the local
+   * cache is reverted; callers branch on the returned `ApiResult`.
+   */
+  applyOrphanReattach: (
+    leafID: string,
+    slug: string,
+    orphan: TextOverride,
+    newScreenID: string,
+    newFigmaNodeID: string,
+    canonicalPath: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+
+  /**
+   * U11 — refresh the per-leaf override cache from the leaf-level endpoint.
+   * Used by the Copy-overrides tab to react to SSE events (another user
+   * edits an override) and explicit refresh clicks.
+   */
+  refreshLeafOverrides: (leafID: string, slug: string) => Promise<void>;
 
   // Optimistic mutations
   patchViolationStatus: (violationID: string, status: DisplayViolation["status"]) => void;
@@ -555,6 +588,113 @@ export const useAtlas = create<AtlasStoreState>()(
               ...slot,
               overrides: { ...slot.overrides, [screenID]: nextForScreen },
             },
+          },
+        });
+      },
+
+      // ─── U11: orphan re-attach + leaf-level refresh ─────────────────────
+      applyOrphanReattach: async (
+        leafID,
+        slug,
+        orphan,
+        newScreenID,
+        newFigmaNodeID,
+        canonicalPath,
+      ) => {
+        // 1. PUT at the new location first. If this fails we leave the
+        //    orphan row alone so the user can retry. Server allows
+        //    `expected_revision: 0` to mean "create or last-write-wins".
+        const putRes = await putTextOverride(slug, newScreenID, newFigmaNodeID, {
+          value: orphan.value,
+          expected_revision: 0,
+          canonical_path: canonicalPath,
+          last_seen_original_text: orphan.last_seen_original_text,
+        });
+        if (!putRes.ok) {
+          if (putRes.status === 409) {
+            return {
+              ok: false,
+              error: "Target node already has an override (revision conflict)",
+            };
+          }
+          // Narrow to the ApiErr arm of TextOverridePutResult.
+          const errMsg = "error" in putRes ? putRes.error : "Re-attach failed";
+          return { ok: false, error: errMsg };
+        }
+
+        // 2. DELETE the orphan row at its old location. If this 404s the
+        //    row may already be gone; treat as success.
+        const delRes = await deleteTextOverride(
+          slug,
+          orphan.screen_id,
+          orphan.figma_node_id,
+        );
+        if (!delRes.ok && delRes.status !== 404) {
+          // The new override exists; leave the cache in a consistent state
+          // and surface the error so the UI can prompt a manual cleanup.
+          return { ok: false, error: delRes.error || "Source delete failed" };
+        }
+
+        // 3. Reflect both operations in the local cache.
+        const slots = get().leafSlots;
+        const slot = slots[leafID];
+        if (!slot) return { ok: true };
+
+        const oldForScreen = new Map(slot.overrides[orphan.screen_id] ?? []);
+        oldForScreen.delete(orphan.figma_node_id);
+
+        const newForScreen = new Map(slot.overrides[newScreenID] ?? []);
+        const synthesised: TextOverride = {
+          id: orphan.id, // server will issue a fresh id; cache eats next refresh
+          screen_id: newScreenID,
+          figma_node_id: newFigmaNodeID,
+          canonical_path: canonicalPath,
+          last_seen_original_text: orphan.last_seen_original_text,
+          value: orphan.value,
+          revision: putRes.data.revision,
+          status: "active",
+          updated_by_user_id: orphan.updated_by_user_id,
+          updated_at: putRes.data.updated_at,
+        };
+        newForScreen.set(newFigmaNodeID, synthesised);
+
+        set({
+          leafSlots: {
+            ...slots,
+            [leafID]: {
+              ...slot,
+              overrides: {
+                ...slot.overrides,
+                [orphan.screen_id]: oldForScreen,
+                [newScreenID]: newForScreen,
+              },
+            },
+          },
+        });
+        return { ok: true };
+      },
+
+      refreshLeafOverrides: async (leafID, slug) => {
+        const r = await fetchLeafTextOverrides(slug, leafID);
+        if (!r.ok) return;
+        const slots = get().leafSlots;
+        const slot = slots[leafID];
+        if (!slot) return;
+        const next: Record<string, Map<string, TextOverride>> = {};
+        // Preserve empty per-screen maps for screens that have no overrides
+        // server-side so the renderer can still null-probe them.
+        for (const sid of Object.keys(slot.overrides)) {
+          next[sid] = new Map();
+        }
+        for (const row of r.data.overrides) {
+          const m = next[row.screen_id] ?? new Map<string, TextOverride>();
+          m.set(row.figma_node_id, row);
+          next[row.screen_id] = m;
+        }
+        set({
+          leafSlots: {
+            ...slots,
+            [leafID]: { ...slot, overrides: next },
           },
         });
       },
