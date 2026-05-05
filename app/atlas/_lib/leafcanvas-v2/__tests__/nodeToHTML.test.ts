@@ -20,7 +20,7 @@ function assert(cond: unknown, msg: string): void {
   if (!cond) throw new Error(`assertion failed: ${msg}`);
 }
 
-const CTX: NodeToHTMLContext = { imageRefs: {} };
+const CTX: NodeToHTMLContext = { imageRefs: {}, clusterURLs: new Map() };
 
 function asProps(el: ReactElement): { [k: string]: unknown } {
   return el.props as { [k: string]: unknown };
@@ -245,7 +245,7 @@ function _test_image_fill_scale_mode_fit(): void {
     absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
     fills: [{ type: "IMAGE", imageRef: "abc", scaleMode: "FIT" }],
   };
-  const ctx: NodeToHTMLContext = { imageRefs: { abc: "https://cdn/x.png" } };
+  const ctx: NodeToHTMLContext = { imageRefs: { abc: "https://cdn/x.png" }, clusterURLs: new Map() };
   const el = nodeToHTML(tree, ROOT_BBOX, null, ctx, "r")!;
   const s = styleOf(el);
   assert(s["backgroundSize"] === "contain", "FIT → contain");
@@ -374,7 +374,7 @@ function _test_image_fill_missing_ref_renders_placeholder(): void {
     fills: [{ type: "IMAGE", imageRef: "missing", scaleMode: "FILL" }],
   };
   // Empty imageRefs map — the URL won't resolve.
-  const el = nodeToHTML(tree, ROOT_BBOX, null, { imageRefs: {} }, "r")!;
+  const el = nodeToHTML(tree, ROOT_BBOX, null, { imageRefs: {}, clusterURLs: new Map() }, "r")!;
   const s = styleOf(el);
   // Placeholder must NOT emit a `url(...)` (no broken image), and SHOULD
   // emit a soft background so the slot stays visually occupied.

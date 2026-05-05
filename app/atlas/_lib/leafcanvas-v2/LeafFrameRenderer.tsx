@@ -38,6 +38,8 @@ import { InlineTextEditor } from "./InlineTextEditor";
 import { nodeToHTML } from "./nodeToHTML";
 import { StatePicker } from "./StatePicker";
 import type { AnnotatedNode, CanonicalNode, ImageRefMap } from "./types";
+import { useIconClusterURLs } from "./useIconClusterURLs";
+import { useImageRefs } from "./useImageRefs";
 import {
   collectStateGroups,
   filterVisible,
@@ -353,11 +355,24 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     return pruneInactive(filtered, inactive);
   }, [filtered, groupsByFrame, allGroups, picksForFrame]);
 
-  const imageRefs: ImageRefMap = useEmptyImageRefs();
+  const imageRefs: ImageRefMap = useImageRefs(slug, openLeafID);
+  // Icon-cluster resolution — for FRAME/INSTANCE/GROUP wrappers that are
+  // text-free icon graphics, we mint a signed PNG URL per cluster so the
+  // canvas paints a real icon instead of a dashed-border placeholder.
+  // Empty map until the first batch resolves; the renderer falls back to
+  // the placeholder for any unmatched cluster id (failed mints, slow
+  // network, etc.) — graceful degradation, no broken layout.
+  const clusterURLs = useIconClusterURLs(slug, prunedTree, 2);
   const rendered = useMemo(() => {
     if (!prunedTree || !prunedTree.absoluteBoundingBox) return null;
-    return nodeToHTML(prunedTree, prunedTree.absoluteBoundingBox, null, { imageRefs }, "root");
-  }, [prunedTree, imageRefs]);
+    return nodeToHTML(
+      prunedTree,
+      prunedTree.absoluteBoundingBox,
+      null,
+      { imageRefs, clusterURLs },
+      "root",
+    );
+  }, [prunedTree, imageRefs, clusterURLs]);
 
   // ─── Lasso selection (U9) ────────────────────────────────────────────────
   // Pointer-down on canvas whitespace (an element that is NOT inside an

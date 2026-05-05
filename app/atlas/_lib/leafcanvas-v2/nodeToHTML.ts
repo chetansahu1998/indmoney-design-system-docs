@@ -24,7 +24,7 @@
 
 import { type CSSProperties, type ReactElement, createElement } from "react";
 
-import { isIconCluster, resolveClusterURL } from "./icon-cluster-resolver";
+import { isIconCluster } from "./icon-cluster-resolver";
 import type {
   AnnotatedNode,
   BoundingBox,
@@ -38,8 +38,18 @@ import type {
 } from "./types";
 
 export interface NodeToHTMLContext {
-  /** image-fill ref → URL. Provided by U7 once it lands; meanwhile {} works. */
+  /** image-fill ref → URL (raster fills proxied through ds-service). */
   imageRefs: ImageRefMap;
+  /**
+   * Resolved icon-cluster `<img>` URLs keyed by canonical_tree node id.
+   * Populated by LeafFrameRenderer's `useIconClusterURLs` hook from
+   * Figma's /v1/images node-render endpoint, then served via the
+   * existing `?at=<token>` signed URL flow. A miss falls through to
+   * the dashed-border placeholder so the canvas degrades gracefully
+   * while exports are in flight. ReadonlyMap so callers can pass the
+   * hook result directly (it's frozen) without a defensive copy.
+   */
+  clusterURLs: ReadonlyMap<string, string>;
   /** Stable key prefix so nested sibling arrays keep unique React keys. */
   keyPrefix?: string;
 }
@@ -68,9 +78,11 @@ export function nodeToHTML(
     return renderFlattenedChildren(annotated, parentBBox, parentLayoutMode, ctx, keyHint);
   }
 
-  // Icon cluster — single placeholder for now. U7 swaps in real <img>.
+  // Icon cluster — vector wrapper that's a single conceptual icon.
+  // Renders as <img> when a resolved URL is in ctx.clusterURLs, else
+  // falls back to a dashed-border placeholder until the export lands.
   if (isIconCluster(annotated)) {
-    return renderClusterPlaceholder(annotated, parentBBox, parentLayoutMode, keyHint);
+    return renderClusterPlaceholder(annotated, parentBBox, parentLayoutMode, ctx, keyHint);
   }
 
   // TEXT
@@ -130,9 +142,10 @@ function renderClusterPlaceholder(
   node: AnnotatedNode,
   parentBBox: BoundingBox | null,
   parentLayoutMode: LayoutMode,
+  ctx: NodeToHTMLContext,
   keyHint: string,
 ): ReactElement {
-  const url = resolveClusterURL(node);
+  const url = node.id ? ctx.clusterURLs.get(node.id) ?? null : null;
   const positioning = positionStyle(node, parentBBox, parentLayoutMode);
   const sizing = sizeStyle(node);
 
