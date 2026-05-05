@@ -86,6 +86,181 @@
   background: transparent;
 }
 
+/* ── AtomicChildInspector (U7) ─────────────────────────────
+   Re-uses the leaf inspector's `lc-ins-*` chrome from
+   `app/atlas/_styles/leafcanvas.css` — these are the
+   v2-specific extras for the atomic-child slots. */
+
+.lcv2-ins-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px 16px 24px;
+}
+
+.lcv2-ins-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.lcv2-ins-block-h {
+  font: 600 11px/1 Inter, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.lcv2-ins-row {
+  display: flex;
+  justify-content: space-between;
+  font: 500 12px/1.4 Inter, system-ui, sans-serif;
+  padding: 4px 0;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.04);
+}
+
+.lcv2-ins-row-l {
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.lcv2-ins-row-v {
+  color: rgba(0, 0, 0, 0.85);
+  font-feature-settings: "tnum";
+}
+
+.lcv2-ins-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 500 12px/1 "JetBrains Mono", ui-monospace, monospace;
+}
+
+.lcv2-ins-color-sw {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  flex: 0 0 auto;
+}
+
+.lcv2-ins-color-hex {
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.lcv2-ins-color-name {
+  margin-left: auto;
+  color: rgba(0, 0, 0, 0.5);
+  font: 500 11px/1 Inter, system-ui, sans-serif;
+}
+
+.lcv2-ins-token {
+  font: 500 11px/1.4 "JetBrains Mono", ui-monospace, monospace;
+  color: rgba(0, 0, 0, 0.6);
+}
+
+.lcv2-ins-text-preview {
+  font: 500 13px/1.4 Inter, system-ui, sans-serif;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+  word-break: break-word;
+}
+
+.lcv2-ins-muted {
+  color: rgba(0, 0, 0, 0.4);
+}
+
+.lcv2-ins-pill {
+  align-self: flex-start;
+  font: 600 10px/1 Inter, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 175, 50, 0.16);
+  color: rgba(170, 100, 0, 1);
+}
+
+.lcv2-ins-code {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lcv2-ins-code-h {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font: 600 10px/1 Inter, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(0, 0, 0, 0.5);
+}
+
+.lcv2-ins-code-copy {
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  font: 500 10px/1 Inter, system-ui, sans-serif;
+  padding: 3px 6px;
+  color: rgba(0, 0, 0, 0.7);
+  cursor: pointer;
+}
+
+.lcv2-ins-code-copy:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.lcv2-ins-code-pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.85);
+  color: rgba(255, 255, 255, 0.92);
+  border-radius: 6px;
+  font: 500 11px/1.5 "JetBrains Mono", ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+.lcv2-ins-export-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lcv2-ins-export-btn {
+  font: 600 12px/1 Inter, system-ui, sans-serif;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.03);
+  color: rgba(0, 0, 0, 0.85);
+  cursor: pointer;
+}
+
+.lcv2-ins-export-btn[disabled],
+.lcv2-ins-export-btn[data-busy="true"] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.lcv2-ins-export-btn:hover:not([disabled]) {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.lcv2-ins-error {
+  color: rgba(180, 50, 50, 0.95);
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(255, 80, 80, 0.06);
+}
+
 /* ── Cluster placeholder (until U7 ships asset-export) ────── */
 
 .leafcv2-frame [data-cluster-pending="true"] {

@@ -18,7 +18,8 @@
  * Strict TS: no `// @ts-nocheck`.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { lazyFetchCanonicalTree } from "../../../../lib/projects/client";
 import { useAtlas } from "../../../../lib/atlas/live-store";
@@ -28,6 +29,22 @@ import type { CanonicalNode, ImageRefMap } from "./types";
 import { filterVisible } from "./visible-filter";
 
 import "./canvas-v2.css";
+
+/**
+ * Node types that count as "atomic" for inspector selection. Frame
+ * containers stay pass-through per D5 — clicking them defers to the
+ * nearest atomic descendant under the click target (handled by the
+ * DOM walk in `findAtomicTarget`).
+ */
+const ATOMIC_TYPES: ReadonlySet<string> = new Set([
+  "TEXT",
+  "RECTANGLE",
+  "ELLIPSE",
+  "VECTOR",
+  "STAR",
+  "POLYGON",
+  "LINE",
+]);
 
 export interface LeafFrameRendererProps {
   /** ds-service project slug — leaf id post brain-products migration. */
@@ -65,6 +82,26 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
   const [state, setState] = useState<CanonicalState>(INITIAL_STATE);
   const [intersected, setIntersected] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  // ─── Atomic-child selection (U7) ──────────────────────────────────────────
+  // Single-click any TEXT / icon-cluster / RECTANGLE / ELLIPSE / VECTOR
+  // atomic emits `selectAtomicChild`. Frame containers (FRAME) keep their
+  // pass-through behaviour: clicking a frame walks up from the click
+  // target to the nearest atomic descendant (D5).
+  const selectAtomicChild = useAtlas((s) => s.selectAtomicChild);
+  const handleClick = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const figmaID = findAtomicTarget(target, wrapperRef.current);
+      if (!figmaID) return;
+      // Stop propagation so the outer canvas pan/zoom layer doesn't also
+      // interpret this as a frame focus event.
+      e.stopPropagation();
+      selectAtomicChild(screenID, figmaID);
+    },
+    [screenID, selectAtomicChild],
+  );
 
   // ─── Intersection-based virtualization ────────────────────────────────────
   useEffect(() => {
@@ -161,6 +198,7 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       data-screen-id={screenID}
       data-status={state.status}
       style={{ width, height }}
+      onClick={handleClick}
     >
       {rendered ?? <Skeleton label={label} status={state.status} />}
     </div>
@@ -202,3 +240,38 @@ function useEmptyImageRefs(): ImageRefMap {
 }
 
 const EMPTY_IMAGE_REFS: ImageRefMap = Object.freeze({}) as ImageRefMap;
+
+/**
+ * Walk up from the click target to the nearest atomic node. Returns the
+ * Figma node id or null when the user clicked through to a non-atomic
+ * (e.g. a transparent FRAME edge with no shape under the cursor).
+ *
+ * Resolution order:
+ *   1. Climb until we hit a `data-figma-type` whose value is in
+ *      ATOMIC_TYPES (TEXT, shapes, etc.) — single click selects that.
+ *   2. Or until we hit a `data-cluster="true"` / `data-cluster-pending`
+ *      element — icon-cluster wrappers count as atomic per the plan.
+ *   3. We never select FRAMEs (D5 — frames pass-through), so if we walk
+ *      out of the wrapper without hitting either, return null.
+ */
+function findAtomicTarget(
+  el: HTMLElement,
+  wrapper: HTMLDivElement | null,
+): string | null {
+  let cur: HTMLElement | null = el;
+  while (cur && cur !== wrapper) {
+    const cluster = cur.getAttribute("data-cluster");
+    const clusterPending = cur.getAttribute("data-cluster-pending");
+    if (cluster === "true" || clusterPending === "true") {
+      const id = cur.getAttribute("data-figma-id");
+      if (id) return id;
+    }
+    const type = cur.getAttribute("data-figma-type");
+    if (type && ATOMIC_TYPES.has(type)) {
+      const id = cur.getAttribute("data-figma-id");
+      if (id) return id;
+    }
+    cur = cur.parentElement;
+  }
+  return null;
+}
