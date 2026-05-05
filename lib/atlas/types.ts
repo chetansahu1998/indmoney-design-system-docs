@@ -13,6 +13,7 @@
  * objects.
  */
 
+import type { TextOverride } from "../projects/client";
 import type { ViolationSeverity } from "../projects/types";
 
 // ─── Brain graph ─────────────────────────────────────────────────────────────
@@ -232,6 +233,15 @@ export interface LeafOverlays {
   activity: ActivityEntry[];
   comments: DisplayComment[];
   drd?: DRDDocument;
+  /**
+   * U8 — per-screen text-override map. Two-level lookup:
+   *   overrides[screenID].get(figma_node_id) → TextOverride row.
+   *
+   * Populated during cold load by parallel `fetchTextOverrides` calls
+   * (one per screen). Empty `Record<string, Map>` when no screens have
+   * any overrides; the live store extends this map on PUT/DELETE.
+   */
+  overrides?: Record<string, Map<string, TextOverride>>;
 }
 
 // ─── Tweaks panel ────────────────────────────────────────────────────────────

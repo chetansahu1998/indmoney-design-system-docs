@@ -21,6 +21,7 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import type { TextOverride } from "../projects/client";
 import {
   fetchInitialAtlasState,
   fetchLeafCanvas,
@@ -90,6 +91,17 @@ export interface LeafSlot {
    * doesn't have to null-check the map itself.
    */
   canonicalTreeByScreenID: Record<string, unknown>;
+  /**
+   * U8 — text overrides scoped to this leaf slot. Two-level lookup:
+   *   overrides[screenID].get(figma_node_id) → TextOverride row.
+   *
+   * Populated cold by `fetchTextOverrides` per screen during initial leaf
+   * load (in data-adapters.fetchLeafOverlays). Hot writes (PUT, DELETE,
+   * 409 conflicts) mutate via `setOverride` / `removeOverride` /
+   * `recordConflict`. Always present per screenID once initialised so
+   * consumers can probe `.get()` directly.
+   */
+  overrides: Record<string, Map<string, TextOverride>>;
 }
 
 // ─── Store contract ──────────────────────────────────────────────────────────
@@ -141,6 +153,32 @@ interface AtlasStoreState {
   ) => void;
   setTweak: <K extends keyof AtlasTweaks>(key: K, value: AtlasTweaks[K]) => void;
   applyEvent: (evt: AtlasLiveEvent) => void;
+
+  // U8 — text-override mutators.
+  /**
+   * Insert / replace one override row in the open leaf slot. The leaf id
+   * matches `selection.leafID` per the canvas-v2 wiring; pass it through
+   * so cross-leaf writes (rare — bulk imports) stay scoped.
+   */
+  setOverride: (leafID: string, override: TextOverride) => void;
+  /**
+   * Remove an override (Reset-to-original). Idempotent — drops cleanly
+   * when the row isn't there.
+   */
+  removeOverride: (leafID: string, screenID: string, figmaNodeID: string) => void;
+  /**
+   * Stamp the local cache with the server-side current_revision +
+   * current_value reported by a 409 PUT response. Lets the inspector
+   * refresh affordance render the live row's value without an extra GET.
+   * Last-write-wins per the U8 plan.
+   */
+  recordConflict: (
+    leafID: string,
+    screenID: string,
+    figmaNodeID: string,
+    currentRevision: number,
+    currentValue: string,
+  ) => void;
 
   // Optimistic mutations
   patchViolationStatus: (violationID: string, status: DisplayViolation["status"]) => void;
@@ -323,6 +361,11 @@ export const useAtlas = create<AtlasStoreState>()(
           // available for the first 20 screens (probe-walk for edge
           // inference); the remainder lazy-load as the v2 renderer scrolls.
           canonicalTreeByScreenID: canvas.canonicalTreeByScreenID ?? {},
+          // U8 — overrides map seeded by fetchLeafOverlays (per-screen
+          // GET .../text-overrides). Empty {} when the project has no
+          // overrides yet; per-screen Map<figmaNodeID, TextOverride> once
+          // populated.
+          overrides: overlays.overrides ?? {},
         };
         set({ leafSlots: { ...get().leafSlots, [leafID]: slot } });
       },
@@ -366,6 +409,81 @@ export const useAtlas = create<AtlasStoreState>()(
           selection: {
             ...get().selection,
             selectedAtomicChild: { screenID, figmaNodeID },
+          },
+        });
+      },
+
+      // ─── U8: text-override mutators ──────────────────────────────────────
+      setOverride: (leafID, override) => {
+        const slots = get().leafSlots;
+        const slot = slots[leafID];
+        if (!slot) return;
+        const screenID = override.screen_id;
+        const prevForScreen = slot.overrides[screenID];
+        const nextForScreen = new Map(prevForScreen ?? []);
+        nextForScreen.set(override.figma_node_id, override);
+        set({
+          leafSlots: {
+            ...slots,
+            [leafID]: {
+              ...slot,
+              overrides: { ...slot.overrides, [screenID]: nextForScreen },
+            },
+          },
+        });
+      },
+
+      removeOverride: (leafID, screenID, figmaNodeID) => {
+        const slots = get().leafSlots;
+        const slot = slots[leafID];
+        if (!slot) return;
+        const prevForScreen = slot.overrides[screenID];
+        if (!prevForScreen || !prevForScreen.has(figmaNodeID)) return;
+        const nextForScreen = new Map(prevForScreen);
+        nextForScreen.delete(figmaNodeID);
+        set({
+          leafSlots: {
+            ...slots,
+            [leafID]: {
+              ...slot,
+              overrides: { ...slot.overrides, [screenID]: nextForScreen },
+            },
+          },
+        });
+      },
+
+      recordConflict: (leafID, screenID, figmaNodeID, currentRevision, currentValue) => {
+        const slots = get().leafSlots;
+        const slot = slots[leafID];
+        if (!slot) return;
+        const prevForScreen = slot.overrides[screenID];
+        const existing = prevForScreen?.get(figmaNodeID);
+        const merged: TextOverride = existing
+          ? { ...existing, revision: currentRevision, value: currentValue }
+          : {
+              // No prior cache — synthesise a row carrying just the bits the
+              // inspector needs to render the conflict banner. Server-side
+              // GET .../text-overrides will overwrite next refresh.
+              id: "",
+              screen_id: screenID,
+              figma_node_id: figmaNodeID,
+              canonical_path: "",
+              last_seen_original_text: "",
+              value: currentValue,
+              revision: currentRevision,
+              status: "active",
+              updated_by_user_id: "",
+              updated_at: "",
+            };
+        const nextForScreen = new Map(prevForScreen ?? []);
+        nextForScreen.set(figmaNodeID, merged);
+        set({
+          leafSlots: {
+            ...slots,
+            [leafID]: {
+              ...slot,
+              overrides: { ...slot.overrides, [screenID]: nextForScreen },
+            },
           },
         });
       },
