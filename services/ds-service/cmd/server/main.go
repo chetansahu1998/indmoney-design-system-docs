@@ -616,6 +616,15 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/projects/{slug}/text-overrides/bulk",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleBulkUpsertOverrides)))
 
+	// U12 — CSV bulk export/import for translators / PMs. Export streams
+	// every TEXT node across the leaf as CSV; import accepts a multipart
+	// upload (5 MB cap), detects conflicts via last_edited_at vs DB
+	// updated_at, and chunks dirty rows into 100-row bulk-upsert calls.
+	mux.HandleFunc("GET /v1/projects/{slug}/leaves/{leaf_id}/text-overrides/csv",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleCSVExport)))
+	mux.HandleFunc("POST /v1/projects/{slug}/leaves/{leaf_id}/text-overrides/csv",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleCSVImport)))
+
 	// Plan 2026-05-05-002 U5 — asset download endpoints (single + bulk → zip).
 	// The mint endpoints (POST) require JWT; the GET download endpoints are
 	// authenticated solely via the signed asset token in `?at=` so image

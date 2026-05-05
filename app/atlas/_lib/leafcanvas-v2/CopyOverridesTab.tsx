@@ -21,10 +21,17 @@
  * Strict TS — no `// @ts-nocheck`.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 
-import { deleteTextOverride, type TextOverride } from "../../../../lib/projects/client";
+import {
+  deleteTextOverride,
+  exportLeafOverridesCSV,
+  importLeafOverridesCSV,
+  type CSVImportConflict,
+  type CSVImportResponse,
+  type TextOverride,
+} from "../../../../lib/projects/client";
 import { useAtlas } from "../../../../lib/atlas/live-store";
 import type { Frame } from "../../../../lib/atlas/types";
 
@@ -191,18 +198,90 @@ export function CopyOverridesTab(props: CopyOverridesTabProps) {
     [slug, leafID, refreshLeafOverrides],
   );
 
-  // CSV buttons — wired but stubbed; U12 swaps in real handlers.
-  const onExportCSV = useCallback(() => {
-    // U12 will replace this with a GET to
-    // /v1/projects/:slug/leaves/:leaf_id/text-overrides/csv that streams
-    // a CSV download. Keeping the button visible now lets us wire the
-    // tab into the LeafInspector with real estate already allocated.
-    // eslint-disable-next-line no-console
-    console.log("U12");
-  }, []);
+  // ─── U12: CSV export / import ──────────────────────────────────────────
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [csvBusy, setCsvBusy] = useState<"idle" | "exporting" | "importing">("idle");
+  const [conflictModal, setConflictModal] = useState<{
+    csv: string;
+    conflicts: CSVImportConflict[];
+  } | null>(null);
+
+  const onExportCSV = useCallback(async () => {
+    setError(null);
+    setCsvBusy("exporting");
+    const res = await exportLeafOverridesCSV(slug, leafID);
+    setCsvBusy("idle");
+    if (!res.ok) {
+      setError(res.error || "CSV export failed");
+      return;
+    }
+    // Trigger a download via Blob + URL.createObjectURL so the user
+    // doesn't bounce to a new tab. Filename includes the leaf id so
+    // multiple exports don't clobber each other in Downloads/.
+    const blob = new Blob([res.data.csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `overrides-${leafID}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Defer revoke so Safari finishes the download before the URL is
+    // invalidated.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, [slug, leafID]);
+
   const onImportCSV = useCallback(() => {
-    // eslint-disable-next-line no-console
-    console.log("U12");
+    setError(null);
+    fileInputRef.current?.click();
+  }, []);
+
+  const handleFilePicked = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      // Reset the input so the user can re-pick the same file after a
+      // failed import.
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (!file) return;
+      setCsvBusy("importing");
+      const csvText = await file.text();
+      const res = await importLeafOverridesCSV(slug, leafID, csvText);
+      setCsvBusy("idle");
+      if (!res.ok) {
+        setError(res.error || "CSV import failed");
+        return;
+      }
+      // Conflicts present → ask the user. Apply-all requires a second
+      // round-trip with force=true; skip-all dismisses without applying.
+      if (res.data.conflicts && res.data.conflicts.length > 0 && res.data.applied === 0) {
+        setConflictModal({ csv: csvText, conflicts: res.data.conflicts });
+        return;
+      }
+      // Refresh + report.
+      void refreshLeafOverrides(leafID, slug);
+      reportImportResult(res.data, setError);
+    },
+    [slug, leafID, refreshLeafOverrides],
+  );
+
+  const onConfirmApplyAll = useCallback(async () => {
+    if (!conflictModal) return;
+    setCsvBusy("importing");
+    const res = await importLeafOverridesCSV(slug, leafID, conflictModal.csv, {
+      force: true,
+    });
+    setCsvBusy("idle");
+    setConflictModal(null);
+    if (!res.ok) {
+      setError(res.error || "CSV import failed");
+      return;
+    }
+    void refreshLeafOverrides(leafID, slug);
+    reportImportResult(res.data, setError);
+  }, [conflictModal, slug, leafID, refreshLeafOverrides]);
+
+  const onConfirmSkipAll = useCallback(() => {
+    setConflictModal(null);
   }, []);
 
   if (!slot) {
@@ -260,14 +339,41 @@ export function CopyOverridesTab(props: CopyOverridesTabProps) {
           {visible.length !== rows.length ? ` (of ${rows.length})` : ""}
         </span>
         <div className="lcv2-copy-csv">
-          <button type="button" className="lcv2-copy-csv-btn" onClick={onExportCSV}>
-            Export CSV
+          <button
+            type="button"
+            className="lcv2-copy-csv-btn"
+            onClick={onExportCSV}
+            disabled={csvBusy !== "idle"}
+          >
+            {csvBusy === "exporting" ? "Exporting…" : "Export CSV"}
           </button>
-          <button type="button" className="lcv2-copy-csv-btn" onClick={onImportCSV}>
-            Import CSV
+          <button
+            type="button"
+            className="lcv2-copy-csv-btn"
+            onClick={onImportCSV}
+            disabled={csvBusy !== "idle"}
+          >
+            {csvBusy === "importing" ? "Importing…" : "Import CSV"}
           </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            style={{ display: "none" }}
+            onChange={handleFilePicked}
+            aria-hidden="true"
+          />
         </div>
       </div>
+
+      {conflictModal && (
+        <CSVConflictModal
+          conflicts={conflictModal.conflicts}
+          onApplyAll={onConfirmApplyAll}
+          onSkipAll={onConfirmSkipAll}
+          busy={csvBusy === "importing"}
+        />
+      )}
 
       {error && <div className="lcv2-copy-error">{error}</div>}
 
@@ -428,6 +534,110 @@ function resolveAuthor(directory: Record<string, string>, id: string): string {
 function shortenID(id: string): string {
   if (id.length <= 8) return id;
   return `${id.slice(0, 4)}…${id.slice(-4)}`;
+}
+
+/**
+ * Surface a CSV-import result to the user via the existing error pane.
+ * "Errors" here are non-fatal — the server applied what it could and
+ * flagged the rest with a per-row reason.
+ */
+function reportImportResult(
+  data: CSVImportResponse,
+  setError: (msg: string | null) => void,
+): void {
+  if (data.errors && data.errors.length > 0) {
+    setError(
+      `CSV import: ${data.applied} applied, ${data.errors.length} skipped (${data.errors[0].reason})`,
+    );
+    return;
+  }
+  setError(null);
+}
+
+// ─── CSV conflict confirmation modal (U12) ──────────────────────────────────
+//
+// Inline component (per the U12 plan: no new file). Renders when the import
+// path returned `conflicts.length > 0`. Two actions:
+//   - Apply all → second import call with force=true (last-write-wins)
+//   - Skip all  → close the modal; nothing applied
+//
+// Per-row apply/skip is intentionally left out — translators almost always
+// want the whole batch one way or the other, and per-row reconciliation
+// adds a state machine the brainstorm v1 explicitly defers.
+
+interface CSVConflictModalProps {
+  conflicts: CSVImportConflict[];
+  onApplyAll: () => void;
+  onSkipAll: () => void;
+  busy: boolean;
+}
+
+function CSVConflictModal(props: CSVConflictModalProps) {
+  const { conflicts, onApplyAll, onSkipAll, busy } = props;
+  return (
+    <div
+      className="lcv2-copy-modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="lcv2-csv-conflict-title"
+    >
+      <div className="lcv2-copy-modal">
+        <div className="lcv2-copy-modal-head">
+          <h3 id="lcv2-csv-conflict-title" className="lcv2-copy-modal-title">
+            {conflicts.length} {conflicts.length === 1 ? "row" : "rows"} changed since
+            you exported
+          </h3>
+          <p className="lcv2-copy-modal-sub">
+            The DB version is newer than your CSV. Apply your changes anyway, or
+            skip them all and keep the live values.
+          </p>
+        </div>
+        <div className="lcv2-copy-modal-list" role="list">
+          {conflicts.slice(0, 50).map((c) => (
+            <div key={`${c.screen_id}:${c.figma_node_id}`} className="lcv2-copy-modal-row" role="listitem">
+              <div className="lcv2-copy-modal-row-head">
+                <span className="lcv2-copy-modal-row-id">{c.figma_node_id}</span>
+                <span className="lcv2-copy-modal-row-idx">row {c.row_index}</span>
+              </div>
+              <div className="lcv2-copy-modal-row-strings">
+                <div className="lcv2-copy-modal-row-csv">
+                  <span className="lcv2-copy-modal-row-label">your CSV</span>
+                  <span className="lcv2-copy-modal-row-text">{c.csv_value}</span>
+                </div>
+                <div className="lcv2-copy-modal-row-cur">
+                  <span className="lcv2-copy-modal-row-label">live now</span>
+                  <span className="lcv2-copy-modal-row-text">{c.current_value}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+          {conflicts.length > 50 && (
+            <div className="lcv2-copy-modal-more">
+              … and {conflicts.length - 50} more
+            </div>
+          )}
+        </div>
+        <div className="lcv2-copy-modal-actions">
+          <button
+            type="button"
+            className="lcv2-copy-modal-btn"
+            onClick={onSkipAll}
+            disabled={busy}
+          >
+            Skip all
+          </button>
+          <button
+            type="button"
+            className="lcv2-copy-modal-btn lcv2-copy-modal-btn-primary"
+            onClick={onApplyAll}
+            disabled={busy}
+          >
+            {busy ? "Applying…" : "Apply all"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /**
