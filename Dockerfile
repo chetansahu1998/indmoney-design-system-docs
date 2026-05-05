@@ -36,6 +36,7 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/backfill-lod        ./cmd/backfi
 RUN go build -trimpath -ldflags="-s -w" -o /out/set-version-status  ./cmd/set-version-status
 RUN go build -trimpath -ldflags="-s -w" -o /out/cleanup-versions    ./cmd/cleanup-versions
 RUN go build -trimpath -ldflags="-s -w" -o /out/compress-trees      ./cmd/compress-trees
+RUN go build -trimpath -ldflags="-s -w" -o /out/seed-passwords      ./cmd/seed-passwords
 
 # ─── Stage 2: runtime ────────────────────────────────────────────────────────
 FROM alpine:3.20
@@ -49,6 +50,7 @@ COPY --from=build /out/backfill-lod        /usr/local/bin/backfill-lod
 COPY --from=build /out/set-version-status  /usr/local/bin/set-version-status
 COPY --from=build /out/cleanup-versions    /usr/local/bin/cleanup-versions
 COPY --from=build /out/compress-trees      /usr/local/bin/compress-trees
+COPY --from=build /out/seed-passwords      /usr/local/bin/seed-passwords
 
 # Ship the parts of the repo cmd/server reads at runtime. Everything not
 # listed here is excluded by .dockerignore — keeps the image small.
