@@ -36,8 +36,14 @@ import {
 } from "./CopyOverridesTab";
 import { InlineTextEditor } from "./InlineTextEditor";
 import { nodeToHTML } from "./nodeToHTML";
-import type { CanonicalNode, ImageRefMap } from "./types";
-import { filterVisible } from "./visible-filter";
+import { StatePicker } from "./StatePicker";
+import type { AnnotatedNode, CanonicalNode, ImageRefMap } from "./types";
+import {
+  collectStateGroups,
+  filterVisible,
+  inactiveVariantIDs,
+  type StateGroup,
+} from "./visible-filter";
 
 import "./canvas-v2.css";
 
@@ -295,11 +301,56 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     return filterVisible(state.tree);
   }, [state]);
 
+  // ─── U14: Collect state groups for the picker + drive variant gating ──────
+  // `collectStateGroups` walks the annotated tree once and buckets every
+  // co-positioned cluster under the nearest enclosing FRAME id. We feed
+  // every group into a single picker mounted at the leaf-frame top — the
+  // outer scope id we use for the live store is `screenID`, which matches
+  // this leaf's root canonical id (see `openLeaf` in live-store.ts).
+  const groupsByFrame = useMemo<Map<string, StateGroup[]>>(() => {
+    if (!filtered) return new Map();
+    return collectStateGroups(filtered);
+  }, [filtered]);
+
+  const allGroups = useMemo<StateGroup[]>(() => {
+    const out: StateGroup[] = [];
+    for (const list of groupsByFrame.values()) out.push(...list);
+    return out;
+  }, [groupsByFrame]);
+
+  // Subscribe to picks for THIS screen only. The store-level Map is keyed
+  // by the leaf-frame `screenID` so unrelated leaves never trigger a
+  // re-render here.
+  const picksForFrame = useAtlas((s) => s.selection.activeStatesByFrame.get(screenID));
+
+  // Compute the prune set: every variant figmaNodeID that ISN'T currently
+  // the active one for its group. Renderer gates these out via a
+  // post-filter walk so the renderer + picker can never disagree.
+  const prunedTree = useMemo<AnnotatedNode | null>(() => {
+    if (!filtered) return null;
+    if (allGroups.length === 0) return filtered;
+    // The store-level Map is screenID-scoped (one picker per leaf
+    // frame). `collectStateGroups` keys groups by their nearest enclosing
+    // FRAME id — which may be deeper than `screenID`. We re-broadcast
+    // the user's picks across every collected frame id so a single
+    // picker can drive every nested state group. groupKeys are unique
+    // within a frame, so no cross-talk inside the screen.
+    const picks = new Map<string, Map<string, string>>();
+    if (picksForFrame && picksForFrame.size > 0) {
+      for (const frameID of groupsByFrame.keys()) {
+        picks.set(frameID, picksForFrame);
+      }
+    }
+    const inactive = inactiveVariantIDs(groupsByFrame, picks);
+    if (inactive.size === 0) return filtered;
+    return pruneInactive(filtered, inactive);
+  }, [filtered, groupsByFrame, allGroups, picksForFrame]);
+
   const imageRefs: ImageRefMap = useEmptyImageRefs();
   const rendered = useMemo(() => {
-    if (!filtered || !filtered.absoluteBoundingBox) return null;
-    return nodeToHTML(filtered, filtered.absoluteBoundingBox, null, { imageRefs }, "root");
-  }, [filtered, imageRefs]);
+    if (!prunedTree || !prunedTree.absoluteBoundingBox) return null;
+    return nodeToHTML(prunedTree, prunedTree.absoluteBoundingBox, null, { imageRefs }, "root");
+  }, [prunedTree, imageRefs]);
 
   // ─── Lasso selection (U9) ────────────────────────────────────────────────
   // Pointer-down on canvas whitespace (an element that is NOT inside an
@@ -510,6 +561,14 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       onDrop={handleDrop}
     >
       {rendered ?? <Skeleton label={label} status={state.status} />}
+      {/* U14 — co-positioned design-state picker. Mounted only when the
+          tree contains at least one state group; the component itself
+          short-circuits to null on empty groups but the conditional
+          here keeps React from running the subscription when there's
+          nothing to show. */}
+      {allGroups.length > 0 && (
+        <StatePicker frameID={screenID} groups={allGroups} />
+      )}
       {editing && openLeafID && (
         <div
           className="leafcv2-inline-editor-host"
@@ -711,6 +770,32 @@ const EMPTY_IMAGE_REFS: ImageRefMap = Object.freeze({}) as ImageRefMap;
  *   3. We never select FRAMEs (D5 — frames pass-through), so if we walk
  *      out of the wrapper without hitting either, return null.
  */
+/**
+ * U14 — return a fresh tree with every node whose `id` is in `inactive`
+ * dropped. Inactive nodes are co-positioned siblings that the user
+ * hasn't picked in the state picker; pruning here (rather than rendering
+ * them with `display:none`) keeps the DOM-element budget low and frees
+ * hit-testing for the visible variant.
+ *
+ * Mirrors `filterVisible`'s zero-mutation contract — the input is never
+ * touched.
+ */
+function pruneInactive(
+  node: AnnotatedNode,
+  inactive: Set<string>,
+): AnnotatedNode | null {
+  if (typeof node.id === "string" && inactive.has(node.id)) return null;
+  if (!Array.isArray(node.children)) {
+    return node;
+  }
+  const kids: AnnotatedNode[] = [];
+  for (const c of node.children) {
+    const pruned = pruneInactive(c, inactive);
+    if (pruned) kids.push(pruned);
+  }
+  return { ...node, children: kids };
+}
+
 function findAtomicTarget(
   el: HTMLElement,
   wrapper: HTMLDivElement | null,

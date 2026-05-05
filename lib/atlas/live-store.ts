@@ -82,6 +82,23 @@ interface AtlasSelection {
    * show at the same time.
    */
   selectedAtomicChildren: Map<string, string>;
+  /**
+   * U14 — co-positioned design-state picker. When a frame contains 2+
+   * children sharing `(x, y, w, h)` (rounded), `visible-filter` tags them
+   * as a state group; the renderer mounts a `<StatePicker>` showing one
+   * chip per variant. Clicking a chip writes
+   *   activeStatesByFrame.get(frameID).set(groupKey, variantID)
+   * and the renderer reads this to decide which variant to keep visible.
+   *
+   * Two-level Map (frameID → groupKey → variantID) so multiple state
+   * groups per frame don't collide and so cross-frame collisions of the
+   * geometric `groupKey` stay scoped (the spike found two unrelated
+   * frames can land on the same `(x, y, w, h)` rounded tuple).
+   *
+   * Empty by default — only stores explicit user picks. The default
+   * variant (first in DOM order) is implicit and does not appear here.
+   */
+  activeStatesByFrame: Map<string, Map<string, string>>;
 }
 
 // ─── Per-leaf cache slot ─────────────────────────────────────────────────────
@@ -178,6 +195,16 @@ interface AtlasStoreState {
   removeFromBulkSelection: (screenID: string, figmaNodeID: string) => void;
   /** Empty the bulk set — used by Esc, lasso-cancel, and after export. */
   clearBulkSelection: () => void;
+  /**
+   * U14 — record the user's pick for one (frameID, groupKey) state group.
+   * Pass `null` for `variantID` to revert to the default (drops the entry
+   * from the map).
+   */
+  setActiveState: (
+    frameID: string,
+    groupKey: string,
+    variantID: string | null,
+  ) => void;
   setTweak: <K extends keyof AtlasTweaks>(key: K, value: AtlasTweaks[K]) => void;
   applyEvent: (evt: AtlasLiveEvent) => void;
 
@@ -266,6 +293,7 @@ export const useAtlas = create<AtlasStoreState>()(
         frameID: null,
         selectedAtomicChild: null,
         selectedAtomicChildren: new Map(),
+        activeStatesByFrame: new Map(),
       },
       tweaks: ATLAS_TWEAK_DEFAULTS,
       userDirectory: {},
@@ -355,6 +383,7 @@ export const useAtlas = create<AtlasStoreState>()(
               frameID: null,
               selectedAtomicChild: null,
               selectedAtomicChildren: new Map(),
+              activeStatesByFrame: new Map(),
             },
           });
           return;
@@ -384,6 +413,7 @@ export const useAtlas = create<AtlasStoreState>()(
               frameID: null,
               selectedAtomicChild: null,
               selectedAtomicChildren: new Map(),
+              activeStatesByFrame: new Map(),
             },
           });
           return;
@@ -395,6 +425,7 @@ export const useAtlas = create<AtlasStoreState>()(
             frameID: null,
             selectedAtomicChild: null,
             selectedAtomicChildren: new Map(),
+            activeStatesByFrame: new Map(),
           },
         });
 
@@ -437,6 +468,7 @@ export const useAtlas = create<AtlasStoreState>()(
             frameID: null,
             selectedAtomicChild: null,
             selectedAtomicChildren: new Map(),
+            activeStatesByFrame: new Map(),
           },
         });
       },
@@ -515,6 +547,29 @@ export const useAtlas = create<AtlasStoreState>()(
         set({
           selection: { ...sel, selectedAtomicChildren: new Map() },
         });
+      },
+
+      // ─── U14: design-state picker ────────────────────────────────────────
+      setActiveState: (frameID, groupKey, variantID) => {
+        const sel = get().selection;
+        const next = new Map(sel.activeStatesByFrame);
+        const inner = new Map(next.get(frameID) ?? []);
+        if (variantID === null) {
+          // Revert to default — drop the entry. Empty inner map gets
+          // pruned to keep the outer map clean.
+          inner.delete(groupKey);
+          if (inner.size === 0) {
+            next.delete(frameID);
+          } else {
+            next.set(frameID, inner);
+          }
+        } else {
+          // Idempotent: bail if the same pick is already recorded.
+          if (inner.get(groupKey) === variantID) return;
+          inner.set(groupKey, variantID);
+          next.set(frameID, inner);
+        }
+        set({ selection: { ...sel, activeStatesByFrame: next } });
       },
 
       // ─── U8: text-override mutators ──────────────────────────────────────
