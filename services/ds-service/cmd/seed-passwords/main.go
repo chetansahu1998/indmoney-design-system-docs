@@ -105,11 +105,17 @@ func main() {
 			continue
 		}
 
-		userID := deterministicUUID(d.Email)
-		var existingHash sql.NullString
+		// Look up by EMAIL first — prior bootstrap commands may have created
+		// the row with a different id than our deterministic one. We always
+		// keep the existing id and only rewrite password_hash; otherwise we
+		// hit "UNIQUE constraint failed: users.email" on a fresh INSERT.
+		var (
+			existingID   sql.NullString
+			existingHash sql.NullString
+		)
 		_ = db.QueryRowContext(context.Background(),
-			`SELECT password_hash FROM users WHERE id = ?`, userID,
-		).Scan(&existingHash)
+			`SELECT id, password_hash FROM users WHERE email = ?`, d.Email,
+		).Scan(&existingID, &existingHash)
 
 		if *keepExisting && existingHash.Valid && existingHash.String != "" && existingHash.String != "noop" {
 			out = append(out, row{Name: d.Name, Email: d.Email, Skipped: "yes", Reason: "password already set"})
@@ -125,14 +131,24 @@ func main() {
 			die("hash: %v", err)
 		}
 
-		// UPSERT user. Schema: id PK, email UNIQUE, password_hash, role, created_at, last_login_at.
-		_, err = db.ExecContext(context.Background(), `
-			INSERT INTO users (id, email, password_hash, role, created_at)
-			VALUES (?, ?, ?, 'user', ?)
-			ON CONFLICT(id) DO UPDATE SET password_hash = excluded.password_hash
-		`, userID, d.Email, hash, now)
-		if err != nil {
-			die("upsert user %s: %v", d.Email, err)
+		userID := deterministicUUID(d.Email)
+		if existingID.Valid && existingID.String != "" {
+			// Row already present — update password in place, keep id.
+			userID = existingID.String
+			_, err = db.ExecContext(context.Background(),
+				`UPDATE users SET password_hash = ? WHERE id = ?`, hash, userID)
+			if err != nil {
+				die("update user %s: %v", d.Email, err)
+			}
+		} else {
+			// Fresh insert with deterministic id.
+			_, err = db.ExecContext(context.Background(), `
+				INSERT INTO users (id, email, password_hash, role, created_at)
+				VALUES (?, ?, ?, 'user', ?)
+			`, userID, d.Email, hash, now)
+			if err != nil {
+				die("insert user %s: %v", d.Email, err)
+			}
 		}
 
 		// UPSERT tenant_users link.
