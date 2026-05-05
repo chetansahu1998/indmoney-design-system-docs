@@ -1,7 +1,7 @@
 ---
 title: Zeplin-grade interactive leaf canvas
 type: feat
-status: active
+status: completed
 date: 2026-05-05
 origin: docs/brainstorms/2026-05-05-zeplin-grade-leaf-canvas-requirements.md
 ---

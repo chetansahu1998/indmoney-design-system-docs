@@ -11,6 +11,7 @@ A multi-brand design-system documentation site, forked from [Field DS](https://g
 - **Compiled to W3C-DTCG JSON** via [Terrazzo](https://terrazzo.app), exposed as both `tokens.ts` (autocomplete) and `tokens.css` (CSS custom properties)
 - **Light + dark mode** rendering, mode-paired tokens
 - **Operator-gated `Sync now`** via local ds-service (Go + SQLite, Cloudflare Tunnel)
+- **Zeplin-grade leaf canvas** (canvas v2) — reconstructs each Figma frame from `canonical_tree` as live HTML/CSS layers. Designers can hover/inspect/export atomic children (text, icons, image fills) and edit text content in place; surrounding autolayout reflows automatically. Edits persist server-side as overrides keyed on `figma_node_id` and survive 5-min sheet-sync re-imports. Plan: `docs/plans/2026-05-05-002-feat-zeplin-grade-leaf-canvas-plan.md`. Toggle with `NEXT_PUBLIC_LEAFCANVAS_V2=1` in `.env.local` until the rollout completes.
 
 ## Local dev
 
