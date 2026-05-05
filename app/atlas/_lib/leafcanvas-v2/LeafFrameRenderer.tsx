@@ -39,6 +39,7 @@ import { nodeToHTML } from "./nodeToHTML";
 import { StatePicker } from "./StatePicker";
 import type { AnnotatedNode, CanonicalNode, ImageRefMap } from "./types";
 import { canvasFetchQueue } from "./fetch-queue";
+import { canvasIdleTracker } from "./idle-tracker";
 import { useIconClusterURLs } from "./useIconClusterURLs";
 import { useImageRefs } from "./useImageRefs";
 import {
@@ -238,6 +239,12 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
   // Hysteresis: once a frame intersects the WARM band we keep it warm —
   // we never demote back to "not warm" on pan-back, only forward to HOT.
   // Pan thrashing therefore can't trigger repeated fetches.
+  //
+  // U7 — Adaptive IO sleep: when the canvas-wide idle tracker reports
+  // 500ms of no activity, we disconnect both observers. They re-attach
+  // on the next user interaction. Saves callback churn + GC pressure
+  // on a static atlas without changing correctness — frames already
+  // marked `intersected` short-circuit on the early-return check.
   const [warm, setWarm] = useState(false);
   useEffect(() => {
     if (intersected) return;
@@ -249,36 +256,63 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       setIntersected(true);
       return;
     }
-    const warmObs = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting) {
-            setWarm(true);
-            warmObs.disconnect();
-            break;
+
+    let warmObs: IntersectionObserver | null = null;
+    let hotObs: IntersectionObserver | null = null;
+
+    const attach = (): void => {
+      if (warmObs || hotObs) return; // already attached
+      warmObs = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              setWarm(true);
+              warmObs?.disconnect();
+              warmObs = null;
+              break;
+            }
           }
-        }
-      },
-      { rootMargin: "1000px" },
-    );
-    const hotObs = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting) {
-            setIntersected(true);
-            hotObs.disconnect();
-            warmObs.disconnect();
-            break;
+        },
+        { rootMargin: "1000px" },
+      );
+      hotObs = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              setIntersected(true);
+              hotObs?.disconnect();
+              hotObs = null;
+              warmObs?.disconnect();
+              warmObs = null;
+              break;
+            }
           }
-        }
-      },
-      { rootMargin: "200px" },
-    );
-    warmObs.observe(el);
-    hotObs.observe(el);
+        },
+        { rootMargin: "200px" },
+      );
+      warmObs.observe(el);
+      hotObs.observe(el);
+    };
+
+    const detach = (): void => {
+      warmObs?.disconnect();
+      hotObs?.disconnect();
+      warmObs = null;
+      hotObs = null;
+    };
+
+    attach();
+    // Subscribe to the canvas idle signal. On idle → detach to save
+    // callback churn. On active → re-attach (no-op for frames whose
+    // observers are already firing successfully — they short-circuit
+    // via the `intersected`/`warm` early returns).
+    const unsub = canvasIdleTracker.subscribe((idle) => {
+      if (idle) detach();
+      else attach();
+    });
     return () => {
-      warmObs.disconnect();
-      hotObs.disconnect();
+      unsub();
+      detach();
     };
   }, [intersected]);
 
