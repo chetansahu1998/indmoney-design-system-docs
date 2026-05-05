@@ -21,6 +21,12 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import type { TextOverride } from "../projects/client";
+import {
+  deleteTextOverride,
+  fetchLeafTextOverrides,
+  putTextOverride,
+} from "../projects/client";
 import {
   fetchInitialAtlasState,
   fetchLeafCanvas,
@@ -54,11 +60,50 @@ interface AtlasSelection {
   leafID: string | null;
   /** Selected frame inside the open leaf. */
   frameID: string | null;
+  /**
+   * Canvas-v2 atomic-child selection — set when the user single-clicks a
+   * TEXT / cluster / RECTANGLE / ELLIPSE / VECTOR atomic inside the
+   * canonical_tree renderer. Drives `AtomicChildInspector` (U7).
+   *
+   * Null means the inspector falls back to the parent frame's metadata.
+   * Esc clears it (see canvas keymap in U7) so the same panel
+   * re-collapses to the leaf-level overview.
+   */
+  selectedAtomicChild: { screenID: string; figmaNodeID: string } | null;
+  /**
+   * U9 — bulk-export selection. Keyed `screenID|figmaNodeID` so the lookup
+   * is O(1) per atomic during shift-click and lasso intersection tests.
+   * Value is the figmaNodeID (handy for fast iteration when minting the
+   * bulk-export request body).
+   *
+   * Coexists with `selectedAtomicChild`: shift-click promotes single ->
+   * multi by adding to the map; the single-select clears as soon as the
+   * bulk set grows past 1, so the inspector / BulkExportPanel never both
+   * show at the same time.
+   */
+  selectedAtomicChildren: Map<string, string>;
+  /**
+   * U14 — co-positioned design-state picker. When a frame contains 2+
+   * children sharing `(x, y, w, h)` (rounded), `visible-filter` tags them
+   * as a state group; the renderer mounts a `<StatePicker>` showing one
+   * chip per variant. Clicking a chip writes
+   *   activeStatesByFrame.get(frameID).set(groupKey, variantID)
+   * and the renderer reads this to decide which variant to keep visible.
+   *
+   * Two-level Map (frameID → groupKey → variantID) so multiple state
+   * groups per frame don't collide and so cross-frame collisions of the
+   * geometric `groupKey` stay scoped (the spike found two unrelated
+   * frames can land on the same `(x, y, w, h)` rounded tuple).
+   *
+   * Empty by default — only stores explicit user picks. The default
+   * variant (first in DOM order) is implicit and does not appear here.
+   */
+  activeStatesByFrame: Map<string, Map<string, string>>;
 }
 
 // ─── Per-leaf cache slot ─────────────────────────────────────────────────────
 
-interface LeafSlot {
+export interface LeafSlot {
   frames: Frame[];
   edges: LeafEdge[];
   overlays: {
@@ -69,6 +114,28 @@ interface LeafSlot {
     drd?: DRDDocument;
   };
   loadedAt: number;
+  /**
+   * Per-screen canonical_tree blobs lazy-loaded for the strict-TS
+   * LeafFrameRenderer (canvas v2). Keyed by screens.id.
+   *   - undefined entry  → not yet fetched (renderer triggers fetch).
+   *   - null entry       → fetch completed but no tree available
+   *                        (sheet-sync screens lack one until audit runs).
+   *   - object entry     → ready-to-walk canonical tree.
+   * Always present (initialized to `{}` in `loadLeaf`) so the renderer
+   * doesn't have to null-check the map itself.
+   */
+  canonicalTreeByScreenID: Record<string, unknown>;
+  /**
+   * U8 — text overrides scoped to this leaf slot. Two-level lookup:
+   *   overrides[screenID].get(figma_node_id) → TextOverride row.
+   *
+   * Populated cold by `fetchTextOverrides` per screen during initial leaf
+   * load (in data-adapters.fetchLeafOverlays). Hot writes (PUT, DELETE,
+   * 409 conflicts) mutate via `setOverride` / `removeOverride` /
+   * `recordConflict`. Always present per screenID once initialised so
+   * consumers can probe `.get()` directly.
+   */
+  overrides: Record<string, Map<string, TextOverride>>;
 }
 
 // ─── Store contract ──────────────────────────────────────────────────────────
@@ -110,8 +177,90 @@ interface AtlasStoreState {
   closeLeaf: () => void;
   selectFrame: (frameID: string | null) => void;
   selectFlow: (flowID: string | null) => void;
+  /**
+   * Set or clear the canvas-v2 atomic-child selection. Pass `null` for both
+   * args (or omit the second) to deselect — Esc-key wiring uses this.
+   */
+  selectAtomicChild: (
+    screenID: string | null,
+    figmaNodeID?: string | null,
+  ) => void;
+  /**
+   * U9 — add an atomic to the bulk-export set. When the set transitions
+   * from 0 -> 1 we leave `selectedAtomicChild` in sync; when it grows
+   * past 1 the single-select clears so the inspector defers to the
+   * BulkExportPanel.
+   */
+  addToBulkSelection: (screenID: string, figmaNodeID: string) => void;
+  removeFromBulkSelection: (screenID: string, figmaNodeID: string) => void;
+  /** Empty the bulk set — used by Esc, lasso-cancel, and after export. */
+  clearBulkSelection: () => void;
+  /**
+   * U14 — record the user's pick for one (frameID, groupKey) state group.
+   * Pass `null` for `variantID` to revert to the default (drops the entry
+   * from the map).
+   */
+  setActiveState: (
+    frameID: string,
+    groupKey: string,
+    variantID: string | null,
+  ) => void;
   setTweak: <K extends keyof AtlasTweaks>(key: K, value: AtlasTweaks[K]) => void;
   applyEvent: (evt: AtlasLiveEvent) => void;
+
+  // U8 — text-override mutators.
+  /**
+   * Insert / replace one override row in the open leaf slot. The leaf id
+   * matches `selection.leafID` per the canvas-v2 wiring; pass it through
+   * so cross-leaf writes (rare — bulk imports) stay scoped.
+   */
+  setOverride: (leafID: string, override: TextOverride) => void;
+  /**
+   * Remove an override (Reset-to-original). Idempotent — drops cleanly
+   * when the row isn't there.
+   */
+  removeOverride: (leafID: string, screenID: string, figmaNodeID: string) => void;
+  /**
+   * Stamp the local cache with the server-side current_revision +
+   * current_value reported by a 409 PUT response. Lets the inspector
+   * refresh affordance render the live row's value without an extra GET.
+   * Last-write-wins per the U8 plan.
+   */
+  recordConflict: (
+    leafID: string,
+    screenID: string,
+    figmaNodeID: string,
+    currentRevision: number,
+    currentValue: string,
+  ) => void;
+
+  /**
+   * U11 — drag-orphan-onto-atomic re-attach. Deletes the orphaned override
+   * row at its original `(screen_id, figma_node_id)` and re-creates it at
+   * the drop target with the same value. Server-side U2 also accepts a
+   * direct PUT at the new location with `expected_revision: 0`; we issue
+   * both calls in sequence so the source row disappears, last-write-wins.
+   *
+   * The action mutates `leafSlot.overrides` optimistically: removes the
+   * orphan row from the source bucket, inserts a synthetic active row at
+   * the destination if the PUT succeeds. If either call fails, the local
+   * cache is reverted; callers branch on the returned `ApiResult`.
+   */
+  applyOrphanReattach: (
+    leafID: string,
+    slug: string,
+    orphan: TextOverride,
+    newScreenID: string,
+    newFigmaNodeID: string,
+    canonicalPath: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>;
+
+  /**
+   * U11 — refresh the per-leaf override cache from the leaf-level endpoint.
+   * Used by the Copy-overrides tab to react to SSE events (another user
+   * edits an override) and explicit refresh clicks.
+   */
+  refreshLeafOverrides: (leafID: string, slug: string) => Promise<void>;
 
   // Optimistic mutations
   patchViolationStatus: (violationID: string, status: DisplayViolation["status"]) => void;
@@ -138,7 +287,14 @@ export const useAtlas = create<AtlasStoreState>()(
       synapses: [],
       leavesByFlow: {},
       leafSlots: {},
-      selection: { flowID: null, leafID: null, frameID: null },
+      selection: {
+        flowID: null,
+        leafID: null,
+        frameID: null,
+        selectedAtomicChild: null,
+        selectedAtomicChildren: new Map(),
+        activeStatesByFrame: new Map(),
+      },
       tweaks: ATLAS_TWEAK_DEFAULTS,
       userDirectory: {},
       hydrated: false,
@@ -220,7 +376,16 @@ export const useAtlas = create<AtlasStoreState>()(
 
       openLeaf: async (leafID) => {
         if (!leafID) {
-          set({ selection: { ...get().selection, leafID: null, frameID: null } });
+          set({
+            selection: {
+              ...get().selection,
+              leafID: null,
+              frameID: null,
+              selectedAtomicChild: null,
+              selectedAtomicChildren: new Map(),
+              activeStatesByFrame: new Map(),
+            },
+          });
           return;
         }
         // After the brain-products migration: leafID is a ds-service project
@@ -241,10 +406,28 @@ export const useAtlas = create<AtlasStoreState>()(
         if (!parentProductSlug || !leaf) {
           // Caller hasn't loaded the parent yet; bail out softly and update
           // selection so the URL still reflects intent.
-          set({ selection: { flowID: get().selection.flowID, leafID, frameID: null } });
+          set({
+            selection: {
+              flowID: get().selection.flowID,
+              leafID,
+              frameID: null,
+              selectedAtomicChild: null,
+              selectedAtomicChildren: new Map(),
+              activeStatesByFrame: new Map(),
+            },
+          });
           return;
         }
-        set({ selection: { flowID: parentProductSlug, leafID, frameID: null } });
+        set({
+          selection: {
+            flowID: parentProductSlug,
+            leafID,
+            frameID: null,
+            selectedAtomicChild: null,
+            selectedAtomicChildren: new Map(),
+            activeStatesByFrame: new Map(),
+          },
+        });
 
         // Fetch canvas + overlays from the LEAF's own project slug. flowID=""
         // tells fetchLeafCanvas/Overlays to pull the whole project (all flows
@@ -264,20 +447,311 @@ export const useAtlas = create<AtlasStoreState>()(
           edges: canvas.edges,
           overlays,
           loadedAt: Date.now(),
+          // Seeded by fetchLeafCanvas: per-screen canonical_tree is
+          // available for the first 20 screens (probe-walk for edge
+          // inference); the remainder lazy-load as the v2 renderer scrolls.
+          canonicalTreeByScreenID: canvas.canonicalTreeByScreenID ?? {},
+          // U8 — overrides map seeded by fetchLeafOverlays (per-screen
+          // GET .../text-overrides). Empty {} when the project has no
+          // overrides yet; per-screen Map<figmaNodeID, TextOverride> once
+          // populated.
+          overrides: overlays.overrides ?? {},
         };
         set({ leafSlots: { ...get().leafSlots, [leafID]: slot } });
       },
 
       closeLeaf: () => {
-        set({ selection: { ...get().selection, leafID: null, frameID: null } });
+        set({
+          selection: {
+            ...get().selection,
+            leafID: null,
+            frameID: null,
+            selectedAtomicChild: null,
+            selectedAtomicChildren: new Map(),
+            activeStatesByFrame: new Map(),
+          },
+        });
       },
 
       selectFrame: (frameID) => {
-        set({ selection: { ...get().selection, frameID } });
+        // Picking a different frame collapses any open atomic-child
+        // inspector — otherwise we'd render snippets for a node that no
+        // longer belongs to the visible context. Same for the bulk set:
+        // a frame switch is a context reset.
+        set({
+          selection: {
+            ...get().selection,
+            frameID,
+            selectedAtomicChild: null,
+            selectedAtomicChildren: new Map(),
+          },
+        });
       },
 
       selectFlow: (flowID) => {
         set({ selection: { ...get().selection, flowID } });
+      },
+
+      selectAtomicChild: (screenID, figmaNodeID) => {
+        if (!screenID || !figmaNodeID) {
+          set({
+            selection: { ...get().selection, selectedAtomicChild: null },
+          });
+          return;
+        }
+        set({
+          selection: {
+            ...get().selection,
+            selectedAtomicChild: { screenID, figmaNodeID },
+          },
+        });
+      },
+
+      // ─── U9: bulk-export selection ───────────────────────────────────────
+      addToBulkSelection: (screenID, figmaNodeID) => {
+        const sel = get().selection;
+        const key = `${screenID}|${figmaNodeID}`;
+        if (sel.selectedAtomicChildren.has(key)) return; // idempotent
+        const next = new Map(sel.selectedAtomicChildren);
+        next.set(key, figmaNodeID);
+        // Single-select clears once the bulk set grows past 1 — the
+        // BulkExportPanel takes over the export affordance and we don't
+        // want the inspector and the panel both visible.
+        const nextSingle = next.size > 1 ? null : sel.selectedAtomicChild;
+        set({
+          selection: {
+            ...sel,
+            selectedAtomicChild: nextSingle,
+            selectedAtomicChildren: next,
+          },
+        });
+      },
+
+      removeFromBulkSelection: (screenID, figmaNodeID) => {
+        const sel = get().selection;
+        const key = `${screenID}|${figmaNodeID}`;
+        if (!sel.selectedAtomicChildren.has(key)) return;
+        const next = new Map(sel.selectedAtomicChildren);
+        next.delete(key);
+        set({
+          selection: {
+            ...sel,
+            selectedAtomicChildren: next,
+          },
+        });
+      },
+
+      clearBulkSelection: () => {
+        const sel = get().selection;
+        if (sel.selectedAtomicChildren.size === 0) return;
+        set({
+          selection: { ...sel, selectedAtomicChildren: new Map() },
+        });
+      },
+
+      // ─── U14: design-state picker ────────────────────────────────────────
+      setActiveState: (frameID, groupKey, variantID) => {
+        const sel = get().selection;
+        const next = new Map(sel.activeStatesByFrame);
+        const inner = new Map(next.get(frameID) ?? []);
+        if (variantID === null) {
+          // Revert to default — drop the entry. Empty inner map gets
+          // pruned to keep the outer map clean.
+          inner.delete(groupKey);
+          if (inner.size === 0) {
+            next.delete(frameID);
+          } else {
+            next.set(frameID, inner);
+          }
+        } else {
+          // Idempotent: bail if the same pick is already recorded.
+          if (inner.get(groupKey) === variantID) return;
+          inner.set(groupKey, variantID);
+          next.set(frameID, inner);
+        }
+        set({ selection: { ...sel, activeStatesByFrame: next } });
+      },
+
+      // ─── U8: text-override mutators ──────────────────────────────────────
+      setOverride: (leafID, override) => {
+        const slots = get().leafSlots;
+        const slot = slots[leafID];
+        if (!slot) return;
+        const screenID = override.screen_id;
+        const prevForScreen = slot.overrides[screenID];
+        const nextForScreen = new Map(prevForScreen ?? []);
+        nextForScreen.set(override.figma_node_id, override);
+        set({
+          leafSlots: {
+            ...slots,
+            [leafID]: {
+              ...slot,
+              overrides: { ...slot.overrides, [screenID]: nextForScreen },
+            },
+          },
+        });
+      },
+
+      removeOverride: (leafID, screenID, figmaNodeID) => {
+        const slots = get().leafSlots;
+        const slot = slots[leafID];
+        if (!slot) return;
+        const prevForScreen = slot.overrides[screenID];
+        if (!prevForScreen || !prevForScreen.has(figmaNodeID)) return;
+        const nextForScreen = new Map(prevForScreen);
+        nextForScreen.delete(figmaNodeID);
+        set({
+          leafSlots: {
+            ...slots,
+            [leafID]: {
+              ...slot,
+              overrides: { ...slot.overrides, [screenID]: nextForScreen },
+            },
+          },
+        });
+      },
+
+      recordConflict: (leafID, screenID, figmaNodeID, currentRevision, currentValue) => {
+        const slots = get().leafSlots;
+        const slot = slots[leafID];
+        if (!slot) return;
+        const prevForScreen = slot.overrides[screenID];
+        const existing = prevForScreen?.get(figmaNodeID);
+        const merged: TextOverride = existing
+          ? { ...existing, revision: currentRevision, value: currentValue }
+          : {
+              // No prior cache — synthesise a row carrying just the bits the
+              // inspector needs to render the conflict banner. Server-side
+              // GET .../text-overrides will overwrite next refresh.
+              id: "",
+              screen_id: screenID,
+              figma_node_id: figmaNodeID,
+              canonical_path: "",
+              last_seen_original_text: "",
+              value: currentValue,
+              revision: currentRevision,
+              status: "active",
+              updated_by_user_id: "",
+              updated_at: "",
+            };
+        const nextForScreen = new Map(prevForScreen ?? []);
+        nextForScreen.set(figmaNodeID, merged);
+        set({
+          leafSlots: {
+            ...slots,
+            [leafID]: {
+              ...slot,
+              overrides: { ...slot.overrides, [screenID]: nextForScreen },
+            },
+          },
+        });
+      },
+
+      // ─── U11: orphan re-attach + leaf-level refresh ─────────────────────
+      applyOrphanReattach: async (
+        leafID,
+        slug,
+        orphan,
+        newScreenID,
+        newFigmaNodeID,
+        canonicalPath,
+      ) => {
+        // 1. PUT at the new location first. If this fails we leave the
+        //    orphan row alone so the user can retry. Server allows
+        //    `expected_revision: 0` to mean "create or last-write-wins".
+        const putRes = await putTextOverride(slug, newScreenID, newFigmaNodeID, {
+          value: orphan.value,
+          expected_revision: 0,
+          canonical_path: canonicalPath,
+          last_seen_original_text: orphan.last_seen_original_text,
+        });
+        if (!putRes.ok) {
+          if (putRes.status === 409) {
+            return {
+              ok: false,
+              error: "Target node already has an override (revision conflict)",
+            };
+          }
+          // Narrow to the ApiErr arm of TextOverridePutResult.
+          const errMsg = "error" in putRes ? putRes.error : "Re-attach failed";
+          return { ok: false, error: errMsg };
+        }
+
+        // 2. DELETE the orphan row at its old location. If this 404s the
+        //    row may already be gone; treat as success.
+        const delRes = await deleteTextOverride(
+          slug,
+          orphan.screen_id,
+          orphan.figma_node_id,
+        );
+        if (!delRes.ok && delRes.status !== 404) {
+          // The new override exists; leave the cache in a consistent state
+          // and surface the error so the UI can prompt a manual cleanup.
+          return { ok: false, error: delRes.error || "Source delete failed" };
+        }
+
+        // 3. Reflect both operations in the local cache.
+        const slots = get().leafSlots;
+        const slot = slots[leafID];
+        if (!slot) return { ok: true };
+
+        const oldForScreen = new Map(slot.overrides[orphan.screen_id] ?? []);
+        oldForScreen.delete(orphan.figma_node_id);
+
+        const newForScreen = new Map(slot.overrides[newScreenID] ?? []);
+        const synthesised: TextOverride = {
+          id: orphan.id, // server will issue a fresh id; cache eats next refresh
+          screen_id: newScreenID,
+          figma_node_id: newFigmaNodeID,
+          canonical_path: canonicalPath,
+          last_seen_original_text: orphan.last_seen_original_text,
+          value: orphan.value,
+          revision: putRes.data.revision,
+          status: "active",
+          updated_by_user_id: orphan.updated_by_user_id,
+          updated_at: putRes.data.updated_at,
+        };
+        newForScreen.set(newFigmaNodeID, synthesised);
+
+        set({
+          leafSlots: {
+            ...slots,
+            [leafID]: {
+              ...slot,
+              overrides: {
+                ...slot.overrides,
+                [orphan.screen_id]: oldForScreen,
+                [newScreenID]: newForScreen,
+              },
+            },
+          },
+        });
+        return { ok: true };
+      },
+
+      refreshLeafOverrides: async (leafID, slug) => {
+        const r = await fetchLeafTextOverrides(slug, leafID);
+        if (!r.ok) return;
+        const slots = get().leafSlots;
+        const slot = slots[leafID];
+        if (!slot) return;
+        const next: Record<string, Map<string, TextOverride>> = {};
+        // Preserve empty per-screen maps for screens that have no overrides
+        // server-side so the renderer can still null-probe them.
+        for (const sid of Object.keys(slot.overrides)) {
+          next[sid] = new Map();
+        }
+        for (const row of r.data.overrides) {
+          const m = next[row.screen_id] ?? new Map<string, TextOverride>();
+          m.set(row.figma_node_id, row);
+          next[row.screen_id] = m;
+        }
+        set({
+          leafSlots: {
+            ...slots,
+            [leafID]: { ...slot, overrides: next },
+          },
+        });
       },
 
       // ─── Tweaks ──────────────────────────────────────────────────────────

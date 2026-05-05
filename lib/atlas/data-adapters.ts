@@ -23,9 +23,11 @@
 import { getToken } from "../auth-client";
 import {
   fetchProject,
+  fetchTextOverrides,
   listViolations,
   screenPngUrl,
   type ApiResult,
+  type TextOverride,
 } from "../projects/client";
 import type {
   Flow as DSFlow,
@@ -336,7 +338,13 @@ export async function fetchLeafCanvas(
   // canonical_tree hasn't been built yet (sheet-sync imports skip the
   // pipeline that fills the column), every screen 404s and we'd otherwise
   // spam 20 requests' worth of console noise on every leaf open.
+  //
+  // Side effect since U6: every fetched canonical_tree is also stashed in
+  // `canonicalTreeByScreenID` so the strict-TS LeafFrameRenderer can skip
+  // the network round-trip for above-the-fold frames. Frames not in this
+  // initial sample lazy-load their tree directly via lazyFetchCanonicalTree.
   const edges: LeafEdge[] = [];
+  const canonicalTreeByScreenID: Record<string, unknown> = {};
   const sample = screens.slice(0, 20);
   const screenIDs = new Set(screens.map((s) => s.ID));
   if (sample.length > 0) {
@@ -344,6 +352,7 @@ export async function fetchLeafCanvas(
       `/v1/projects/${encodeURIComponent(slug)}/screens/${encodeURIComponent(sample[0].ID)}/canonical-tree`,
     );
     if (probe.ok) {
+      canonicalTreeByScreenID[sample[0].ID] = probe.data.canonical_tree ?? null;
       const targets = collectNavigationTargets(probe.data.canonical_tree, screenIDs);
       targets.forEach((toID, j) => {
         edges.push({ from: sample[0].ID, to: toID, kind: j === 0 ? "main" : "branch" });
@@ -358,6 +367,7 @@ export async function fetchLeafCanvas(
       trees.forEach((t, i) => {
         if (t.status !== "fulfilled" || !t.value.ok) return;
         const fromScreen = sample[i + 1];
+        canonicalTreeByScreenID[fromScreen.ID] = t.value.data.canonical_tree ?? null;
         const targetIDs = collectNavigationTargets(t.value.data.canonical_tree, screenIDs);
         targetIDs.forEach((toID, j) => {
           edges.push({ from: fromScreen.ID, to: toID, kind: j === 0 ? "main" : "branch" });
@@ -368,7 +378,7 @@ export async function fetchLeafCanvas(
     // the parallel walk to avoid 20 redundant 404s in the network panel.
   }
 
-  return { frames, edges };
+  return { frames, edges, canonicalTreeByScreenID };
 }
 
 /**
@@ -399,7 +409,7 @@ export async function fetchLeafOverlays(
   if (!resolvedFlowID) {
     // No flow yet — surface empty overlays without 404-spamming the per-flow
     // endpoints. The inspector renders empty state for each tab.
-    return { violations: [], decisions: [], activity: [], comments: [] };
+    return { violations: [], decisions: [], activity: [], comments: [], overrides: {} };
   }
   const [violations, decisions, activity, comments, drd] = await Promise.all([
     listViolations(slug, versionID),
@@ -449,12 +459,37 @@ export async function fetchLeafOverlays(
       }
     : undefined;
 
+  // U8 — fetch text overrides for every screen in the leaf in parallel.
+  // The endpoint is per-screen rather than per-flow because overrides are
+  // pinned to figma_node_id within a screen, and the leaf-wide endpoint
+  // is intended for the U11 "Copy overrides" tab which renders flow-level
+  // listings. Failures fold to empty maps so cold load tolerates a partial
+  // outage without dropping the rest of the overlay slice.
+  const overrides: Record<string, Map<string, TextOverride>> = {};
+  if (flowScreenIDs.size > 0) {
+    const screenIDs = Array.from(flowScreenIDs);
+    const overrideResponses = await Promise.allSettled(
+      screenIDs.map((id) => fetchTextOverrides(slug, id)),
+    );
+    overrideResponses.forEach((r, idx) => {
+      const screenID = screenIDs[idx];
+      const map = new Map<string, TextOverride>();
+      if (r.status === "fulfilled" && r.value.ok) {
+        for (const row of r.value.data.overrides ?? []) {
+          map.set(row.figma_node_id, row);
+        }
+      }
+      overrides[screenID] = map;
+    });
+  }
+
   return {
     violations: violationDisplay,
     decisions: decisionDisplay,
     activity: activityDisplay,
     comments: commentDisplay,
     drd: drdDoc,
+    overrides,
   };
 }
 
@@ -684,6 +719,13 @@ function activityKindOf(eventType: string): ActivityKind {
   if (eventType.startsWith("audit")) return "audit";
   if (eventType.startsWith("figma") || eventType.includes("export") || eventType.includes("sync")) return "sync";
   if (eventType.startsWith("drd") || eventType.startsWith("comment")) return "edit";
+  // U10 — copy overrides. `set` and `bulk_set` are user edits; `reset` is a
+  // sync-style undo back to the Figma source; `orphaned` is a pipeline event
+  // that surfaces under the audit kind so PMs treat it like a violation
+  // needing review.
+  if (eventType === "override.text.orphaned") return "audit";
+  if (eventType === "override.text.reset") return "sync";
+  if (eventType.startsWith("override.")) return "edit";
   return "edit";
 }
 
@@ -714,8 +756,45 @@ function activitySentenceOf(row: FlowActivityRow): string {
       return "marked a violation fixed";
     case "violation.dismissed":
       return "dismissed a violation";
+    case "override.text.set": {
+      // `screen-name` resolution lives upstream — the audit row only carries
+      // screen_id; the inspector substitutes the human-readable name when it
+      // renders. `details` ships old/new strings so the diff is reproducible
+      // even if the live override has since been edited again.
+      const oldText = parseDetailString(row.details, "old") ?? "";
+      const newText = parseDetailString(row.details, "new") ?? "";
+      return `edited "${oldText}" → "${newText}"`;
+    }
+    case "override.text.reset": {
+      const oldText = parseDetailString(row.details, "old") ?? "";
+      return oldText ? `reset override "${oldText}"` : "reset an override";
+    }
+    case "override.text.orphaned": {
+      const oldText = parseDetailString(row.details, "old") ?? "";
+      return oldText
+        ? `override "${oldText}" was orphaned by re-import`
+        : "override was orphaned by re-import";
+    }
+    case "override.text.bulk_set": {
+      // Bulk events emit one audit row per item that share `bulk_id`. The
+      // sentence is per-row but stays terse — the activity tab groups by
+      // bulk_id when rendering so the user sees "edited 14 strings" once.
+      const newText = parseDetailString(row.details, "new") ?? "";
+      return newText ? `bulk-edited copy → "${newText}"` : "bulk-edited copy";
+    }
     default:
       return row.event_type.replace(/[._]/g, " ");
+  }
+}
+
+function parseDetailString(details: string | undefined, key: string): string | null {
+  if (!details) return null;
+  try {
+    const parsed = JSON.parse(details) as Record<string, unknown>;
+    const v = parsed[key];
+    return typeof v === "string" ? v : null;
+  } catch {
+    return null;
   }
 }
 

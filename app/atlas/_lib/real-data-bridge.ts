@@ -22,6 +22,7 @@
 import React from "react";
 
 import { useAtlas } from "../../../lib/atlas/live-store";
+import { LeafFrameRenderer } from "./leafcanvas-v2/LeafFrameRenderer";
 
 // ─── Originals captured for fallback ─────────────────────────────────────────
 
@@ -135,8 +136,89 @@ function bridgeBuildComments(leaf: any) {
 
 // ─── Bridge: PhoneFrame ──────────────────────────────────────────────────────
 
+/**
+ * Read the leaf-canvas v2 flag once per call. Env var is the public flag;
+ * a window-level override exists so storybook / preview environments can
+ * flip it without rebuilding the bundle.
+ */
+function leafCanvasV2Enabled(): boolean {
+  if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_LEAFCANVAS_V2 === "1") return true;
+  if (typeof window !== "undefined" && (window as any).__LEAFCANVAS_V2 === true) return true;
+  return false;
+}
+
+/**
+ * Find the active leaf slug for a frame so the v2 renderer can pull the
+ * right canonical_tree. Walks the live store: leaf id == project slug
+ * post brain-products migration, and frame.id == screens.id.
+ */
+function findSlugForFrame(frameID: string): string | null {
+  const state = snapshot();
+  const sel = state.selection;
+  if (sel.leafID && state.leafSlots[sel.leafID]?.frames.some((f: any) => f.id === frameID)) {
+    return sel.leafID;
+  }
+  for (const [leafID, slot] of Object.entries(state.leafSlots)) {
+    if ((slot as any).frames?.some((f: any) => f.id === frameID)) return leafID;
+  }
+  return null;
+}
+
 function PhoneFrameWrapper(props: any) {
   const frame = props.frame;
+
+  // Path 0 — Canvas v2 flag on AND we have a real frame: try the
+  // strict-TS LeafFrameRenderer. The renderer falls back to a transparent
+  // skeleton when canonical_tree is null, so we layer it ON TOP of the
+  // PNG rather than replacing it. That way sheet-sync screens (where the
+  // tree may not exist yet) keep their PNG underlay.
+  if (leafCanvasV2Enabled() && frame && frame.kind === "real") {
+    const slug = findSlugForFrame(frame.id);
+    if (slug) {
+      return React.createElement(
+        "div",
+        { className: "ph-screen ph-screen--v2", style: { position: "relative", width: "100%", height: "100%" } },
+        // PNG underlay (only if available) so the user sees something
+        // immediately while the canonical_tree resolves. The v2 renderer
+        // sits on top and takes over once filtered/rendered.
+        frame.pngUrl
+          ? React.createElement("img", {
+              src: frame.pngUrl,
+              alt: frame.label || "Screen",
+              loading: "lazy",
+              decoding: "async",
+              draggable: false,
+              style: { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" },
+            })
+          : null,
+        React.createElement(LeafFrameRenderer, {
+          slug,
+          screenID: frame.id,
+          label: frame.label,
+          width: frame.w ?? 280,
+          height: frame.h ?? 580,
+          // U11 — orphan-override drag-and-drop. The Copy Overrides tab
+          // serialises the orphan row onto a drag event; on drop we
+          // forward to the live store's applyOrphanReattach action,
+          // which deletes the source row and creates an active one at
+          // the drop target.
+          onDropOrphanOntoAtomic: (screenID, figmaNodeID, payload, canonicalPath) => {
+            void useAtlas
+              .getState()
+              .applyOrphanReattach(
+                payload.leafID,
+                payload.slug,
+                payload.orphan,
+                screenID,
+                figmaNodeID,
+                canonicalPath,
+              );
+          },
+        }),
+      );
+    }
+    // No slug match → fall through to the legacy PNG path below.
+  }
 
   // Path 1 — real-screen with rendered PNG: image-load.
   if (frame && typeof frame.pngUrl === "string" && frame.pngUrl) {

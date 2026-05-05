@@ -26,12 +26,17 @@ import (
 // SearchIndexRow is one row in search_index_fts.
 type SearchIndexRow struct {
 	TenantID   string
-	EntityKind string // flow | drd | decision | persona | component
+	EntityKind string // flow | drd | decision | persona | component | folder | product | text_override
 	EntityID   string
 	OpenURL    string
 	Title      string
 	Body       string
 }
+
+// SearchEntityKindTextOverride is the FTS5 entity kind for active text
+// overrides materialised by U10. Searching ⌘K for the override's value
+// surfaces the leaf canvas at the right screen + node.
+const SearchEntityKindTextOverride = "text_override"
 
 // UpsertSearchIndexRows is the worker write path. SQLite FTS5 doesn't
 // support ON CONFLICT, so we DELETE the matching (tenant_id, kind, id)
@@ -145,10 +150,77 @@ func BuildSearchRowsForTenant(ctx context.Context, db *sql.DB, tenantID string) 
 	}
 	all = append(all, taxonomy...)
 
+	// U10 — active screen_text_overrides. Each override beats the original
+	// Figma string in the search index: ⌘K for the new copy hits the
+	// override row; ⌘K for the original no longer matches because the
+	// canonical_tree text isn't itself indexed (overrides + DRD content +
+	// decisions own that surface).
+	overrides, err := buildTextOverrideSearchRows(ctx, db, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("text_override search rows: %w", err)
+	}
+	all = append(all, overrides...)
+
 	// Component search rows are per-tenant duplicates of the manifest;
 	// they get added by the worker's full-rebuild path which already has
 	// the manifest parsed.
 	return all, nil
+}
+
+// buildTextOverrideSearchRows materialises one search row per active
+// (status='active') screen_text_overrides row in the tenant. Joins through
+// screens → flows → projects so each row carries enough context to deep-link
+// the leaf canvas.
+//
+// Rows where status='orphaned' are skipped — the override no longer maps to
+// a node on the canvas, so surfacing it from search would just dead-end. The
+// "Copy overrides" inspector tab (U11) is the right surface for orphans.
+func buildTextOverrideSearchRows(ctx context.Context, db *sql.DB, tenantID string) ([]SearchIndexRow, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT o.id, o.figma_node_id, o.value, o.last_seen_original_text,
+		        s.id, s.screen_logical_id,
+		        p.slug
+		   FROM screen_text_overrides o
+		   JOIN screens s ON s.id = o.screen_id
+		   JOIN flows f ON f.id = s.flow_id
+		   JOIN projects p ON p.id = f.project_id
+		  WHERE o.tenant_id = ?
+		    AND o.status = 'active'
+		    AND p.deleted_at IS NULL`,
+		tenantID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SearchIndexRow
+	for rows.Next() {
+		var (
+			overrideID, figmaNodeID, value, original string
+			screenID, screenLogical, slug            string
+		)
+		if err := rows.Scan(&overrideID, &figmaNodeID, &value, &original,
+			&screenID, &screenLogical, &slug); err != nil {
+			return nil, err
+		}
+		// Title surfaces the screen + the override copy so a search-result
+		// row carries enough context to disambiguate identical strings on
+		// different screens. Body keeps the original text searchable too —
+		// helpful when a PM remembers what the copy *was* before the edit.
+		title := screenLogical + ": " + value
+		body := original
+		out = append(out, SearchIndexRow{
+			TenantID:   tenantID,
+			EntityKind: SearchEntityKindTextOverride,
+			EntityID:   overrideID,
+			OpenURL: "/atlas/leaf/" + slug +
+				"?screen=" + screenID +
+				"&node=" + figmaNodeID,
+			Title: title,
+			Body:  body,
+		})
+	}
+	return out, rows.Err()
 }
 
 // buildTaxonomySearchRows surfaces the (product, path) taxonomy entries so

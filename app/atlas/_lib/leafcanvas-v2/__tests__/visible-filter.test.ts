@@ -1,0 +1,369 @@
+/**
+ * visible-filter.test.ts — Phase X U6.
+ *
+ * No test runner is wired in this repo (per `lib/projects/resolveTreeForMode.test.ts`),
+ * but this file is shape-correct for Vitest/Jest pickup. Each `_test_*`
+ * function is independent and asserts via thrown errors. The `runAll`
+ * export below lets a future runner drive everything from a single entry.
+ */
+
+import {
+  collectStateGroups,
+  countNodes,
+  filterVisible,
+  inactiveVariantIDs,
+  isVisible,
+  resolveActiveVariantID,
+  type StateGroup,
+} from "../visible-filter";
+import type { AnnotatedNode, CanonicalNode } from "../types";
+
+function assert(cond: unknown, msg: string): void {
+  if (!cond) throw new Error(`assertion failed: ${msg}`);
+}
+
+function _test_isVisible_default_visible(): void {
+  assert(isVisible({}), "node with no visible/opacity should be visible");
+  assert(isVisible({ visible: true }), "explicit visible:true is visible");
+  assert(isVisible({ opacity: 1 }), "opacity:1 is visible");
+  assert(isVisible({ opacity: 0.5 }), "partial opacity is still visible");
+}
+
+function _test_isVisible_hidden(): void {
+  assert(!isVisible({ visible: false }), "visible:false hides node");
+  assert(!isVisible({ opacity: 0 }), "opacity:0 hides node");
+  assert(!isVisible({ opacity: 0.0005 }), "near-zero opacity hides node");
+}
+
+function _test_isVisible_removed(): void {
+  assert(!isVisible({ removed: true }), "removed:true hides node");
+  assert(isVisible({ removed: false }), "removed:false leaves node visible");
+  assert(
+    !isVisible({ visible: true, removed: true }),
+    "removed:true wins over visible:true",
+  );
+}
+
+function _test_filterVisible_drops_opacity_zero(): void {
+  const tree: CanonicalNode = {
+    id: "root",
+    type: "FRAME",
+    children: [
+      { id: "a", type: "RECTANGLE" },
+      { id: "b", type: "RECTANGLE", opacity: 0 },
+      { id: "c", type: "RECTANGLE", opacity: 0.0005 },
+    ],
+  };
+  const out = filterVisible(tree)!;
+  const ids = out.children!.map((c) => c.id);
+  assert(ids.includes("a"), "opaque sibling kept");
+  assert(!ids.includes("b"), "opacity:0 sibling pruned");
+  assert(!ids.includes("c"), "near-zero opacity sibling pruned");
+}
+
+function _test_filterVisible_drops_removed(): void {
+  const tree: CanonicalNode = {
+    id: "root",
+    type: "FRAME",
+    children: [
+      { id: "a", type: "RECTANGLE" },
+      { id: "b", type: "RECTANGLE", removed: true },
+    ],
+  };
+  const out = filterVisible(tree)!;
+  const ids = out.children!.map((c) => c.id);
+  assert(ids.includes("a"), "non-removed sibling kept");
+  assert(!ids.includes("b"), "removed:true sibling pruned");
+}
+
+function _test_filterVisible_drops_hidden_subtree(): void {
+  const tree: CanonicalNode = {
+    id: "root",
+    type: "FRAME",
+    children: [
+      { id: "a", type: "FRAME", visible: true },
+      {
+        id: "b",
+        type: "FRAME",
+        visible: true,
+        children: [
+          { id: "b1", type: "RECTANGLE", visible: false },
+          { id: "b2", type: "RECTANGLE", visible: true },
+        ],
+      },
+      { id: "c", type: "FRAME", visible: false }, // whole subtree pruned
+    ],
+  };
+  const out = filterVisible(tree);
+  assert(out !== null, "root visible");
+  assert(out!.children!.length === 2, "two visible top-level children");
+  const ids = out!.children!.map((c) => c.id);
+  assert(!ids.includes("c"), "hidden top-level subtree pruned");
+  const b = out!.children!.find((c) => c.id === "b")!;
+  assert(b.children!.length === 1, "hidden inner child pruned");
+  assert(b.children![0].id === "b2", "remaining inner child is b2");
+}
+
+function _test_filterVisible_returns_null_for_hidden_root(): void {
+  const out = filterVisible({ id: "x", visible: false });
+  assert(out === null, "hidden root returns null");
+}
+
+function _test_filterVisible_does_not_mutate_input(): void {
+  const tree: CanonicalNode = {
+    id: "root",
+    children: [{ id: "a", visible: false }, { id: "b" }],
+  };
+  const before = JSON.stringify(tree);
+  filterVisible(tree);
+  assert(JSON.stringify(tree) === before, "input unchanged");
+}
+
+function _test_copositioned_siblings_get_state_group(): void {
+  const tree: CanonicalNode = {
+    id: "root",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
+    children: [
+      {
+        id: "default",
+        type: "FRAME",
+        absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 },
+      },
+      {
+        id: "hover",
+        type: "FRAME",
+        absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 },
+      },
+      {
+        id: "other",
+        type: "FRAME",
+        absoluteBoundingBox: { x: 60, y: 10, width: 50, height: 20 },
+      },
+    ],
+  };
+  const out = filterVisible(tree)!;
+  const dflt = out.children!.find((c) => c.id === "default")!;
+  const hover = out.children!.find((c) => c.id === "hover")!;
+  const other = out.children!.find((c) => c.id === "other")!;
+  assert(typeof dflt.__stateGroup === "string", "default has stateGroup");
+  assert(dflt.__stateGroup === hover.__stateGroup, "default and hover share group");
+  assert(other.__stateGroup === undefined, "uniquely-positioned sibling has no group");
+}
+
+function _test_copositioned_only_when_2plus_share(): void {
+  const tree: CanonicalNode = {
+    id: "root",
+    children: [
+      { id: "a", absoluteBoundingBox: { x: 0, y: 0, width: 10, height: 10 } },
+      { id: "b", absoluteBoundingBox: { x: 1, y: 1, width: 10, height: 10 } },
+    ],
+  };
+  const out = filterVisible(tree)!;
+  for (const c of out.children!) {
+    assert(c.__stateGroup === undefined, `sibling ${c.id} should not be tagged`);
+  }
+}
+
+// ─── U14: collectStateGroups + resolveActiveVariantID ──────────────────────
+
+function _test_collectStateGroups_happy_path(): void {
+  const tree: CanonicalNode = {
+    id: "screen-1",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
+    children: [
+      {
+        id: "v1",
+        name: "Default",
+        type: "FRAME",
+        absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 },
+      },
+      {
+        id: "v2",
+        name: "Hover",
+        type: "FRAME",
+        absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 },
+      },
+    ],
+  };
+  const annotated = filterVisible(tree)!;
+  const groups = collectStateGroups(annotated);
+  const list = groups.get("screen-1");
+  assert(Array.isArray(list) && list.length === 1, "one state group on screen-1");
+  const g = list![0];
+  assert(g.variants.length === 2, "two variants in group");
+  assert(g.variants[0].figmaNodeID === "v1", "first variant is v1 (DOM order)");
+  assert(g.variants[0].name === "Default", "name preserved when present");
+  assert(g.variants[1].name === "Hover", "second variant name preserved");
+  assert(g.defaultVariantID === "v1", "default = first listed");
+}
+
+function _test_collectStateGroups_three_stacked(): void {
+  const tree: CanonicalNode = {
+    id: "screen-1",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 200 },
+    children: [
+      { id: "a", absoluteBoundingBox: { x: 5, y: 5, width: 40, height: 40 } },
+      { id: "b", absoluteBoundingBox: { x: 5, y: 5, width: 40, height: 40 } },
+      { id: "c", absoluteBoundingBox: { x: 5, y: 5, width: 40, height: 40 } },
+    ],
+  };
+  const annotated = filterVisible(tree)!;
+  const groups = collectStateGroups(annotated);
+  const list = groups.get("screen-1");
+  assert(list?.length === 1, "single group from three stacked siblings");
+  assert(list![0].variants.length === 3, "three variants emitted");
+  // No-name siblings should fall back to "State 1/2/3".
+  assert(list![0].variants[0].name === "State 1", "fallback name State 1");
+  assert(list![0].variants[2].name === "State 3", "fallback name State 3");
+}
+
+function _test_collectStateGroups_empty_when_no_copositioned(): void {
+  const tree: CanonicalNode = {
+    id: "screen-1",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 200 },
+    children: [
+      { id: "a", absoluteBoundingBox: { x: 5, y: 5, width: 40, height: 40 } },
+      { id: "b", absoluteBoundingBox: { x: 60, y: 5, width: 40, height: 40 } },
+    ],
+  };
+  const annotated = filterVisible(tree)!;
+  const groups = collectStateGroups(annotated);
+  assert(groups.size === 0, "no groups emitted when nothing co-positioned");
+}
+
+function _test_collectStateGroups_scoped_per_frame(): void {
+  // Two nested FRAMEs at different (x,y) but each carrying a state group
+  // at the SAME geometric coords (10, 10, 50, 20). Without per-frame
+  // scoping the two groups would collide on `groupKey`. With scoping,
+  // each FRAME owns its own list.
+  const tree: CanonicalNode = {
+    id: "screen-1",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 400, height: 400 },
+    children: [
+      {
+        id: "frame-A",
+        type: "FRAME",
+        absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 200 },
+        children: [
+          { id: "a-default", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+          { id: "a-hover", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+        ],
+      },
+      {
+        id: "frame-B",
+        type: "FRAME",
+        absoluteBoundingBox: { x: 200, y: 0, width: 200, height: 200 },
+        children: [
+          { id: "b-default", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+          { id: "b-hover", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+        ],
+      },
+    ],
+  };
+  const annotated = filterVisible(tree)!;
+  const groups = collectStateGroups(annotated);
+  const aList = groups.get("frame-A");
+  const bList = groups.get("frame-B");
+  assert(aList?.length === 1, "frame-A owns one group");
+  assert(bList?.length === 1, "frame-B owns one group");
+  assert(
+    aList![0].variants.map((v) => v.figmaNodeID).join(",") === "a-default,a-hover",
+    "frame-A variants are A's children",
+  );
+  assert(
+    bList![0].variants.map((v) => v.figmaNodeID).join(",") === "b-default,b-hover",
+    "frame-B variants are B's children — no cross-talk",
+  );
+  // The screen-1 root has no co-positioned direct children itself.
+  assert(groups.get("screen-1") === undefined, "no screen-1 entry");
+}
+
+function _test_resolveActiveVariantID_default(): void {
+  const g: StateGroup = {
+    key: "k",
+    variants: [
+      { figmaNodeID: "x", name: "X" },
+      { figmaNodeID: "y", name: "Y" },
+    ],
+    defaultVariantID: "x",
+  };
+  assert(resolveActiveVariantID(g, undefined) === "x", "no pick → default");
+  assert(resolveActiveVariantID(g, "y") === "y", "valid pick wins");
+  assert(
+    resolveActiveVariantID(g, "stale-id") === "x",
+    "stale pick falls back to default",
+  );
+}
+
+function _test_inactiveVariantIDs(): void {
+  const g: StateGroup = {
+    key: "k",
+    variants: [
+      { figmaNodeID: "x", name: "X" },
+      { figmaNodeID: "y", name: "Y" },
+      { figmaNodeID: "z", name: "Z" },
+    ],
+    defaultVariantID: "x",
+  };
+  const groupsByFrame = new Map<string, StateGroup[]>([["screen-1", [g]]]);
+  // No picks → default "x" active; y + z inactive.
+  const empty = inactiveVariantIDs(groupsByFrame, new Map());
+  assert(empty.has("y") && empty.has("z") && !empty.has("x"), "default active");
+  // Picking y → x + z inactive.
+  const picks = new Map([
+    ["screen-1", new Map([["k", "y"]])],
+  ]);
+  const after = inactiveVariantIDs(groupsByFrame, picks);
+  assert(after.has("x") && after.has("z") && !after.has("y"), "pick swaps active");
+}
+
+function _test_collectStateGroups_does_not_mutate_input(): void {
+  const tree: CanonicalNode = {
+    id: "screen-1",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
+    children: [
+      { id: "a", absoluteBoundingBox: { x: 1, y: 1, width: 10, height: 10 } },
+      { id: "b", absoluteBoundingBox: { x: 1, y: 1, width: 10, height: 10 } },
+    ],
+  };
+  const annotated = filterVisible(tree)! as AnnotatedNode;
+  const before = JSON.stringify(annotated);
+  collectStateGroups(annotated);
+  const after = JSON.stringify(annotated);
+  assert(before === after, "collectStateGroups does not mutate annotated tree");
+}
+
+function _test_countNodes(): void {
+  const tree: CanonicalNode = {
+    id: "r",
+    children: [{ id: "a" }, { id: "b", children: [{ id: "b1" }] }],
+  };
+  assert(countNodes(tree) === 4, "4 nodes total");
+}
+
+export function runAll(): void {
+  _test_isVisible_default_visible();
+  _test_isVisible_hidden();
+  _test_isVisible_removed();
+  _test_filterVisible_drops_hidden_subtree();
+  _test_filterVisible_drops_opacity_zero();
+  _test_filterVisible_drops_removed();
+  _test_filterVisible_returns_null_for_hidden_root();
+  _test_filterVisible_does_not_mutate_input();
+  _test_copositioned_siblings_get_state_group();
+  _test_copositioned_only_when_2plus_share();
+  _test_collectStateGroups_happy_path();
+  _test_collectStateGroups_three_stacked();
+  _test_collectStateGroups_empty_when_no_copositioned();
+  _test_collectStateGroups_scoped_per_frame();
+  _test_collectStateGroups_does_not_mutate_input();
+  _test_resolveActiveVariantID_default();
+  _test_inactiveVariantIDs();
+  _test_countNodes();
+}

@@ -2,6 +2,7 @@
 "use client";
 // Ported verbatim from INDmoney Docs/leafcanvas.jsx.
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { CopyOverridesTab } from "./leafcanvas-v2/CopyOverridesTab";
 // ============================================================
 // LEAF CANVAS — Figma-like infinite board for a single sub-flow.
 // Renders an array of "frames" (phone-mockup screens) on a
@@ -543,13 +544,13 @@ window.LeafInspector = function LeafInspector({ leaf, frameId, onClose, onPickFr
         <button className="lc-ins-close" onClick={onClose}>✕</button>
       </div>
       <div className="lc-ins-tabs">
-        {["drd", "violations", "decisions", "activity", "comments"].map(t => (
+        {["drd", "violations", "decisions", "copy", "activity", "comments"].map(t => (
           <button
             key={t}
             className={`lc-ins-tab ${tab === t ? "is-active" : ""}`}
             onClick={() => setTab(t)}
           >
-            {t === "drd" ? "DRD" : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === "drd" ? "DRD" : t === "copy" ? "Copy" : t.charAt(0).toUpperCase() + t.slice(1)}
             {t === "violations" && violations.length > 0 && (
               <span className="lc-tab-pill">{violations.length}</span>
             )}
@@ -569,6 +570,7 @@ window.LeafInspector = function LeafInspector({ leaf, frameId, onClose, onPickFr
           />
         )}
         {tab === "decisions" && <DecisionsTab decisions={decisions} leaf={leaf} onPickFrame={onPickFrame} />}
+        {tab === "copy" && <CopyOverridesTab slug={leaf.id} leafID={leaf.id} />}
         {tab === "activity" && <ActivityTab activity={activity} />}
         {tab === "comments" && <CommentsTab comments={comments} />}
       </div>

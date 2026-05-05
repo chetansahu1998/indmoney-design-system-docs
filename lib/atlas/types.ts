@@ -13,6 +13,7 @@
  * objects.
  */
 
+import type { TextOverride } from "../projects/client";
 import type { ViolationSeverity } from "../projects/types";
 
 // ─── Brain graph ─────────────────────────────────────────────────────────────
@@ -128,6 +129,16 @@ export interface LeafEdge {
 export interface LeafCanvas {
   frames: Frame[];
   edges: LeafEdge[];
+  /**
+   * Per-screen canonical_tree blobs already pulled as part of the edge
+   * inference walk (first 20 screens). The strict-TS LeafFrameRenderer
+   * uses these to skip the network round-trip for above-the-fold frames;
+   * scrolled-into-view frames lazy-fetch their tree directly.
+   *
+   * undefined entry = not in this batch; null entry = fetched but no
+   * tree available; object = ready-to-walk canonical tree.
+   */
+  canonicalTreeByScreenID?: Record<string, unknown>;
 }
 
 // ─── Inspector overlays ──────────────────────────────────────────────────────
@@ -222,6 +233,15 @@ export interface LeafOverlays {
   activity: ActivityEntry[];
   comments: DisplayComment[];
   drd?: DRDDocument;
+  /**
+   * U8 — per-screen text-override map. Two-level lookup:
+   *   overrides[screenID].get(figma_node_id) → TextOverride row.
+   *
+   * Populated during cold load by parallel `fetchTextOverrides` calls
+   * (one per screen). Empty `Record<string, Map>` when no screens have
+   * any overrides; the live store extends this map on PUT/DELETE.
+   */
+  overrides?: Record<string, Map<string, TextOverride>>;
 }
 
 // ─── Tweaks panel ────────────────────────────────────────────────────────────

@@ -253,6 +253,449 @@ export async function putDRD(
   }
 }
 
+// ─── Screen text overrides (U2 server / U8 client) ─────────────────────────
+//
+// Override repo wraps `PUT/DELETE /v1/projects/{slug}/screens/{id}/text-overrides/{figma_node_id}`
+// plus the `GET .../screens/{id}/text-overrides` list endpoint and the
+// `POST /v1/projects/{slug}/text-overrides/bulk` bulk-upsert endpoint shipped
+// in U2. The PUT mirrors `putDRD`'s optimistic-concurrency contract:
+// `expected_revision` matches the row's last-known revision; 409 returns the
+// server's `current_revision` + `current_value` so the caller can render a
+// diff and offer a refresh affordance (last-write-wins).
+//
+// Wire-shape parity:
+//   ScreenTextOverride matches services/ds-service/internal/projects/screen_overrides.go
+//   field-for-field — adding fields server-side is forward-compatible because
+//   the type below is open via `Record<string, unknown>` for unknown keys.
+
+/** Subset of the row required by canvas-v2 components (renderer + inspector). */
+export interface TextOverride {
+  id: string;
+  screen_id: string;
+  figma_node_id: string;
+  canonical_path: string;
+  last_seen_original_text: string;
+  value: string;
+  revision: number;
+  status: string; // "active" | "orphaned"
+  updated_by_user_id: string;
+  updated_at: string;
+}
+
+export interface TextOverridePutBody {
+  value: string;
+  expected_revision: number;
+  canonical_path: string;
+  last_seen_original_text: string;
+}
+
+export interface TextOverridePutResponse {
+  revision: number;
+  updated_at: string;
+}
+
+/**
+ * Discriminated union mirrored on `DRDPutResult`: success, conflict (409 with
+ * server-side current_revision + current_value), or any other API error.
+ */
+export type TextOverridePutResult =
+  | ApiOk<TextOverridePutResponse>
+  | { ok: false; status: 409; conflict: { current_revision: number; current_value: string } }
+  | ApiErr;
+
+export interface BulkOverrideItem {
+  screen_id: string;
+  figma_node_id: string;
+  value: string;
+  canonical_path: string;
+  last_seen_original_text: string;
+}
+
+export interface BulkOverrideRowResult {
+  screen_id: string;
+  figma_node_id: string;
+  revision: number;
+}
+
+export interface BulkOverrideResponse {
+  bulk_id: string;
+  updated: number;
+  skipped: number;
+  results: BulkOverrideRowResult[];
+}
+
+/**
+ * GET /v1/projects/:slug/screens/:id/text-overrides — list every override
+ * pinned to one screen (any status). Adapter folds the response into the live
+ * store's per-screen `overrides` map.
+ */
+export async function fetchTextOverrides(
+  slug: string,
+  screenID: string,
+): Promise<ApiResult<{ overrides: TextOverride[] }>> {
+  return getJSON<{ overrides: TextOverride[] }>(
+    `/v1/projects/${encodeURIComponent(slug)}/screens/${encodeURIComponent(
+      screenID,
+    )}/text-overrides`,
+  );
+}
+
+/**
+ * PUT /v1/projects/:slug/screens/:id/text-overrides/:figma_node_id — upsert
+ * an override with optimistic-concurrency. 409 carries `current_revision` +
+ * `current_value` so callers can render a diff and offer "Refresh" (last-
+ * write-wins per the U8 plan).
+ */
+export async function putTextOverride(
+  slug: string,
+  screenID: string,
+  figmaNodeID: string,
+  body: TextOverridePutBody,
+): Promise<TextOverridePutResult> {
+  try {
+    const res = await fetch(
+      `${dsBaseURL()}/v1/projects/${encodeURIComponent(
+        slug,
+      )}/screens/${encodeURIComponent(screenID)}/text-overrides/${encodeURIComponent(
+        figmaNodeID,
+      )}`,
+      {
+        method: "PUT",
+        headers: authedHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(body),
+      },
+    );
+    if (res.status === 409) {
+      const parsed = (await res.json().catch(() => ({}))) as {
+        current_revision?: number;
+        current_value?: string;
+      };
+      return {
+        ok: false,
+        status: 409,
+        conflict: {
+          current_revision: parsed.current_revision ?? 0,
+          current_value: parsed.current_value ?? "",
+        },
+      };
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: await safeJSONErr(res),
+      };
+    }
+    return { ok: true, data: (await res.json()) as TextOverridePutResponse };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * DELETE /v1/projects/:slug/screens/:id/text-overrides/:figma_node_id —
+ * idempotent reset. Server returns 204 on success; 404 → not_found error.
+ *
+ * Returns `ApiResult<void>` since the reset endpoint has no body. Strict-TS
+ * callers branch on `r.ok` exactly like the other helpers.
+ */
+export async function deleteTextOverride(
+  slug: string,
+  screenID: string,
+  figmaNodeID: string,
+): Promise<ApiResult<void>> {
+  try {
+    const res = await fetch(
+      `${dsBaseURL()}/v1/projects/${encodeURIComponent(
+        slug,
+      )}/screens/${encodeURIComponent(screenID)}/text-overrides/${encodeURIComponent(
+        figmaNodeID,
+      )}`,
+      {
+        method: "DELETE",
+        headers: authedHeaders(),
+      },
+    );
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: await safeJSONErr(res),
+      };
+    }
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * GET /v1/projects/:slug/leaves/:leaf_id/text-overrides — list every override
+ * pinned to any screen inside the leaf (active + orphaned). Used by U11's
+ * Copy-overrides inspector tab, which renders a flow-level listing rather
+ * than the per-screen view that `fetchTextOverrides` returns.
+ */
+export async function fetchLeafTextOverrides(
+  slug: string,
+  leafID: string,
+): Promise<ApiResult<{ overrides: TextOverride[] }>> {
+  return getJSON<{ overrides: TextOverride[] }>(
+    `/v1/projects/${encodeURIComponent(slug)}/leaves/${encodeURIComponent(
+      leafID,
+    )}/text-overrides`,
+  );
+}
+
+/**
+ * POST /v1/projects/:slug/text-overrides/bulk — bulk upsert. Last-write-wins
+ * per row (no expected_revision). Caller handles per-row reconciliation when
+ * the response arrives.
+ */
+export async function bulkUpsertTextOverrides(
+  slug: string,
+  body: { items: BulkOverrideItem[] },
+): Promise<ApiResult<BulkOverrideResponse>> {
+  return postJSON<BulkOverrideResponse>(
+    `/v1/projects/${encodeURIComponent(slug)}/text-overrides/bulk`,
+    body,
+  );
+}
+
+// ─── U12: CSV bulk export / import ─────────────────────────────────────────
+//
+// Translation / PM workflow. The export path streams a CSV the user
+// downloads via Blob + URL.createObjectURL. The import path posts a
+// multipart upload and the server replies with `{ applied, skipped,
+// conflicts }` so the client can present a confirmation modal.
+
+/** One conflict surfaced by `importLeafOverridesCSV`. */
+export interface CSVImportConflict {
+  row_index: number;
+  screen_id: string;
+  figma_node_id: string;
+  csv_value: string;
+  current_value: string;
+}
+
+/** One line-level error returned by `importLeafOverridesCSV` for malformed CSV. */
+export interface CSVImportError {
+  row_index: number;
+  reason: string;
+}
+
+/** Successful response for `importLeafOverridesCSV`. */
+export interface CSVImportResponse {
+  applied: number;
+  skipped: number;
+  bulk_id?: string;
+  conflicts: CSVImportConflict[];
+  errors?: CSVImportError[];
+}
+
+/**
+ * GET /v1/projects/:slug/leaves/:leaf_id/text-overrides/csv — fetch the
+ * full leaf CSV as text. Caller wraps the returned string in a Blob and
+ * triggers a download via URL.createObjectURL.
+ *
+ * We use `fetch` directly (not `getJSON`) because the response is text/csv,
+ * not JSON. Wrapped in the `ApiResult<{csv}>` envelope so the call-site
+ * stays homogeneous with the other helpers.
+ */
+export async function exportLeafOverridesCSV(
+  slug: string,
+  leafID: string,
+): Promise<ApiResult<{ csv: string }>> {
+  try {
+    const res = await fetch(
+      `${dsBaseURL()}/v1/projects/${encodeURIComponent(
+        slug,
+      )}/leaves/${encodeURIComponent(leafID)}/text-overrides/csv`,
+      {
+        method: "GET",
+        headers: authedHeaders(),
+      },
+    );
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: await safeJSONErr(res),
+      };
+    }
+    const csv = await res.text();
+    return { ok: true, data: { csv } };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * POST /v1/projects/:slug/leaves/:leaf_id/text-overrides/csv — multipart
+ * upload of the edited CSV. When `force` is true the server skips the
+ * conflict short-circuit and applies every dirty row last-write-wins;
+ * the typical first call leaves it false so the caller can render a
+ * confirmation modal listing each conflicting row.
+ *
+ * On a 400 with line-level errors, the response still parses into
+ * `CSVImportResponse` (with `applied=0`) so the caller can present
+ * actionable error feedback.
+ */
+export async function importLeafOverridesCSV(
+  slug: string,
+  leafID: string,
+  csvText: string,
+  options?: { force?: boolean },
+): Promise<ApiResult<CSVImportResponse>> {
+  try {
+    const fd = new FormData();
+    const blob = new Blob([csvText], { type: "text/csv" });
+    fd.append("file", blob, "overrides.csv");
+    if (options?.force) fd.append("force", "true");
+
+    const res = await fetch(
+      `${dsBaseURL()}/v1/projects/${encodeURIComponent(
+        slug,
+      )}/leaves/${encodeURIComponent(leafID)}/text-overrides/csv`,
+      {
+        method: "POST",
+        // Browser sets the multipart Content-Type with the boundary; we
+        // must not override it via authedHeaders(content-type) here.
+        headers: authedHeaders(),
+        body: fd,
+      },
+    );
+    if (!res.ok) {
+      // 400 still carries the structured error envelope so callers can
+      // surface line-level CSV problems instead of a generic toast.
+      const detail = await res.text();
+      try {
+        const parsed = JSON.parse(detail) as Partial<CSVImportResponse> & {
+          errors?: CSVImportError[];
+        };
+        if (parsed && (parsed.errors || parsed.conflicts)) {
+          return {
+            ok: false,
+            status: res.status,
+            error: parsed.errors
+              ? `CSV invalid: ${parsed.errors.length} line${
+                  parsed.errors.length === 1 ? "" : "s"
+                }`
+              : `HTTP ${res.status}`,
+          };
+        }
+      } catch {
+        // Fall through to the generic error path below.
+      }
+      return { ok: false, status: res.status, error: detail || `HTTP ${res.status}` };
+    }
+    const parsed = (await res.json()) as CSVImportResponse;
+    return { ok: true, data: parsed };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * Asset-export URL minting used by the U7 inspector's PNG / SVG / 2x / 3x
+ * buttons (single asset) and the U9 BulkExportPanel (multi-select zip).
+ *
+ * U5 server endpoints (already live in ds-service):
+ *
+ *   POST /v1/projects/:slug/assets/export-url
+ *     body  { node_id, format: "png"|"svg", scale?: 1|2|3 }
+ *     reply { url: string, expires_in: number }
+ *
+ *   POST /v1/projects/:slug/assets/bulk-export
+ *     body  { leaf_id, node_ids: string[], format, scale }
+ *     reply { download_url: string, expires_in: number }
+ *
+ * Both wrap Figma's `/v1/images?ids=…` proxy with the per-tenant cache from
+ * Phase 5.2; bulk additionally streams the zip server-side so 100-node
+ * selections don't hold the request open while we render. The client side
+ * is fire-and-forget — open the URL in a tab / set window.location.href and
+ * let the browser handle the download.
+ */
+export interface MintAssetParams {
+  slug: string;
+  screenID: string;
+  figmaNodeID: string;
+  format: "png" | "svg";
+  scale?: 1 | 2 | 3;
+}
+
+export interface MintAssetResponse {
+  /** Signed Figma image URL (single-asset path). */
+  url: string;
+  /** Seconds until the URL expires (caller refetches if longer-lived UI). */
+  expires_in: number;
+}
+
+export async function mintAssetExportURL(
+  params: MintAssetParams,
+): Promise<ApiResult<MintAssetResponse>> {
+  return postJSON<MintAssetResponse>(
+    `/v1/projects/${encodeURIComponent(params.slug)}/assets/export-url`,
+    {
+      node_id: params.figmaNodeID,
+      format: params.format,
+      scale: params.scale ?? 1,
+    },
+  );
+}
+
+/**
+ * Bulk-asset export — server zips up every node referenced by `nodeIDs` and
+ * returns a single `download_url` pointing at the cached zip. Filename
+ * collisions on the server side resolve to `<name>-1.<ext>`, `<name>-2.<ext>`
+ * (the client doesn't deduplicate).
+ *
+ * The Figma rate limit applies (per-tenant 5 req/sec token bucket per the
+ * Phase 5.2 P4 proxy). Caller doesn't need to throttle — server queues.
+ */
+export interface BulkMintAssetParams {
+  leafID: string;
+  nodeIDs: string[];
+  format: "png" | "svg";
+  scale?: 1 | 2 | 3;
+}
+
+export interface BulkMintAssetResponse {
+  /** Signed URL to a server-zipped archive — point window.location.href at it. */
+  download_url: string;
+  expires_in: number;
+}
+
+export async function mintBulkAssetExportURL(
+  slug: string,
+  params: BulkMintAssetParams,
+): Promise<ApiResult<BulkMintAssetResponse>> {
+  return postJSON<BulkMintAssetResponse>(
+    `/v1/projects/${encodeURIComponent(slug)}/assets/bulk-export`,
+    {
+      leaf_id: params.leafID,
+      node_ids: params.nodeIDs,
+      format: params.format,
+      scale: params.scale ?? 1,
+    },
+  );
+}
+
 /**
  * GET /v1/projects/:slug/screens/:id/canonical-tree — lazy fetch of the
  * canonical tree blob for the JSON tab. U6 declares the wrapper but does not

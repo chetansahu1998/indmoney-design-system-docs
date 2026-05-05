@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -102,6 +103,13 @@ type ServerDeps struct {
 	// the legacy `?token=<jwt>` query-string fallback continues to work.
 	AssetSigner *auth.AssetTokenSigner
 
+	// AssetExporter renders + caches Figma asset exports (icons, illustrations,
+	// glyphs as SVG/PNG) for the U5 download endpoints. Constructed once at
+	// boot with a per-tenant Figma URL fetcher + byte fetcher + the asset_cache
+	// repo. nil disables the U5 endpoints (HandleAssetDownload's miss path
+	// falls back to 425 / HandleBulkAssetExport returns 503).
+	AssetExporter *AssetExporter
+
 	// GraphRebuildPool — plan 2026-05-03-001 / T3. Mutating handlers
 	// (export, decision create, violation patch, persona approve/reject,
 	// taxonomy archive) call s.enqueueGraphRebuild() after their commit so
@@ -117,6 +125,12 @@ type ServerDeps struct {
 // Server bundles handlers + deps. Use NewServer to construct.
 type Server struct {
 	deps ServerDeps
+
+	// U5 — bulk-asset-export staging registry. Lazily constructed via
+	// bulkRegistry() on first use so tests that only exercise non-bulk paths
+	// don't pay the alloc cost.
+	bulkRegistryOnce sync.Once
+	bulkRegistryV    *bulkExportRegistry
 }
 
 // NewServer returns a configured *Server.

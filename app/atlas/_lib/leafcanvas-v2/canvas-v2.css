@@ -1,0 +1,673 @@
+/* ============================================================
+   canvas-v2.css — styles for the strict-TS LeafFrameRenderer.
+
+   Mounted from `app/atlas/_lib/leafcanvas-v2/LeafFrameRenderer.tsx`.
+   Scope is `.leafcv2-*` so styles never collide with the original
+   `<window.PhoneFrame>` PNG path (which uses `.ph-screen*`).
+
+   Design tokens follow `app/atlas/_styles/leafcanvas.css` — same
+   surface colors, same shimmer keyframe, same skeleton border.
+   ============================================================ */
+
+/* ── Self-hosted Inter (canvas-v2 surface) ─────────────────
+   The brain UI loads Inter via a Google Fonts <link> in the
+   landing HTML, but the canvas-v2 surface also runs in PNG
+   snapshots and offline previews where the network may not be
+   reachable. Self-hosting from /public/fonts/inter keeps the
+   render deterministic.
+
+   IMPORTANT — R10 Basier Circle swap:
+   The IND design system documents Basier Circle as the canonical
+   product face. We can't ship the .ttf in this PR (license pending)
+   so the @font-face for `BasierCircle` below is a stub: it falls
+   back to Inter, then to system-ui. When the licence lands, swap
+   the `src:` URLs in the BasierCircle blocks for the real woff2s
+   and the existing TEXT path will pick them up automatically (the
+   converter passes `fontFamily` through verbatim from canonical_tree.style).
+   ============================================================ */
+
+/* Inter — self-hosted woff2s in /public/fonts/inter/.
+   `font-display: swap` keeps the render visible during the
+   request — important for the per-frame skeleton timing. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/inter/Inter-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/inter/Inter-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/inter/Inter-SemiBold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/inter/Inter-Bold.woff2") format("woff2");
+}
+
+/* Basier Circle — STUB until R10 licence lands.
+   `local()` lookups will succeed for designers who have the font
+   installed on their system; otherwise we fall through to the
+   `unicode-range` no-op `src` and the browser's font-fallback
+   chain (defined inline at the TEXT site) takes over. */
+@font-face {
+  font-family: "BasierCircle";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local("Basier Circle Regular"), local("BasierCircle-Regular"),
+    url("/fonts/inter/Inter-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "BasierCircle";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: local("Basier Circle Medium"), local("BasierCircle-Medium"),
+    url("/fonts/inter/Inter-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "BasierCircle";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: local("Basier Circle SemiBold"), local("BasierCircle-SemiBold"),
+    url("/fonts/inter/Inter-SemiBold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "BasierCircle";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: local("Basier Circle Bold"), local("BasierCircle-Bold"),
+    url("/fonts/inter/Inter-Bold.woff2") format("woff2");
+}
+
+/* ── Frame wrapper (wraps each per-frame walker output) ───── */
+
+.leafcv2-frame {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-1, #f8f8f8);
+  /* Children use position:absolute relative to this box. */
+  isolation: isolate;
+}
+
+.leafcv2-frame[data-status="loading"],
+.leafcv2-frame[data-status="idle"] {
+  background: var(--bg-1, #f8f8f8);
+}
+
+.leafcv2-frame[data-status="error"] {
+  background: rgba(255, 80, 80, 0.05);
+}
+
+/* ── Skeleton (off-screen + loading) ──────────────────────── */
+
+.leafcv2-skeleton {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.02) 0%,
+    rgba(0, 0, 0, 0.04) 100%
+  );
+  overflow: hidden;
+}
+
+.leafcv2-skeleton__shimmer {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.45) 35%,
+    transparent 70%
+  );
+  animation: leafcv2-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes leafcv2-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.leafcv2-skeleton--error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: rgba(180, 50, 50, 0.85);
+  font: 500 12px/1.4 Inter, system-ui, sans-serif;
+  background: rgba(255, 80, 80, 0.04);
+}
+
+.leafcv2-skeleton--error .leafcv2-skeleton__label {
+  font-weight: 600;
+}
+
+.leafcv2-skeleton--error .leafcv2-skeleton__sub {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.leafcv2-skeleton--empty {
+  background: transparent;
+}
+
+/* ── AtomicChildInspector (U7) ─────────────────────────────
+   Re-uses the leaf inspector's `lc-ins-*` chrome from
+   `app/atlas/_styles/leafcanvas.css` — these are the
+   v2-specific extras for the atomic-child slots. */
+
+.lcv2-ins-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px 16px 24px;
+}
+
+.lcv2-ins-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.lcv2-ins-block-h {
+  font: 600 11px/1 Inter, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.lcv2-ins-row {
+  display: flex;
+  justify-content: space-between;
+  font: 500 12px/1.4 Inter, system-ui, sans-serif;
+  padding: 4px 0;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.04);
+}
+
+.lcv2-ins-row-l {
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.lcv2-ins-row-v {
+  color: rgba(0, 0, 0, 0.85);
+  font-feature-settings: "tnum";
+}
+
+.lcv2-ins-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 500 12px/1 "JetBrains Mono", ui-monospace, monospace;
+}
+
+.lcv2-ins-color-sw {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  flex: 0 0 auto;
+}
+
+.lcv2-ins-color-hex {
+  color: rgba(0, 0, 0, 0.85);
+}
+
+.lcv2-ins-color-name {
+  margin-left: auto;
+  color: rgba(0, 0, 0, 0.5);
+  font: 500 11px/1 Inter, system-ui, sans-serif;
+}
+
+.lcv2-ins-token {
+  font: 500 11px/1.4 "JetBrains Mono", ui-monospace, monospace;
+  color: rgba(0, 0, 0, 0.6);
+}
+
+.lcv2-ins-text-preview {
+  font: 500 13px/1.4 Inter, system-ui, sans-serif;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+  word-break: break-word;
+}
+
+.lcv2-ins-muted {
+  color: rgba(0, 0, 0, 0.4);
+}
+
+.lcv2-ins-pill {
+  align-self: flex-start;
+  font: 600 10px/1 Inter, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 175, 50, 0.16);
+  color: rgba(170, 100, 0, 1);
+}
+
+.lcv2-ins-code {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lcv2-ins-code-h {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font: 600 10px/1 Inter, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(0, 0, 0, 0.5);
+}
+
+.lcv2-ins-code-copy {
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  font: 500 10px/1 Inter, system-ui, sans-serif;
+  padding: 3px 6px;
+  color: rgba(0, 0, 0, 0.7);
+  cursor: pointer;
+}
+
+.lcv2-ins-code-copy:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.lcv2-ins-code-pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.85);
+  color: rgba(255, 255, 255, 0.92);
+  border-radius: 6px;
+  font: 500 11px/1.5 "JetBrains Mono", ui-monospace, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+.lcv2-ins-export-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.lcv2-ins-export-btn {
+  font: 600 12px/1 Inter, system-ui, sans-serif;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.03);
+  color: rgba(0, 0, 0, 0.85);
+  cursor: pointer;
+}
+
+.lcv2-ins-export-btn[disabled],
+.lcv2-ins-export-btn[data-busy="true"] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.lcv2-ins-export-btn:hover:not([disabled]) {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.lcv2-ins-error {
+  color: rgba(180, 50, 50, 0.95);
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(255, 80, 80, 0.06);
+}
+
+/* ── Cluster placeholder (until U7 ships asset-export) ────── */
+
+.leafcv2-frame [data-cluster-pending="true"] {
+  /* Placeholder visuals owned inline so static analyzers don't flag
+     dead `data-cluster-pending` selectors when the styles move. */
+}
+
+
+/* ── U9: bulk-select highlight, lasso, export panel ───────── */
+
+.leafcv2-frame [data-bulk-selected="true"] {
+  outline: 2px solid #06f;
+  outline-offset: 1px;
+}
+
+.leafcv2-lasso {
+  position: absolute;
+  pointer-events: none;
+  border: 1px solid #06f;
+  background: rgba(0, 102, 255, 0.08);
+  z-index: 90;
+}
+
+.leafcv2-bulk-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(20, 20, 24, 0.94);
+  color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  font: 500 12px/1.3 Inter, system-ui, sans-serif;
+  min-width: 220px;
+  max-width: 320px;
+}
+
+.leafcv2-bulk-panel__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.leafcv2-bulk-panel__btn {
+  appearance: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+  background: #06f;
+  color: #fff;
+}
+
+.leafcv2-bulk-panel__btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.leafcv2-bulk-panel__btn--ghost {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.leafcv2-bulk-panel__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 160px;
+  overflow-y: auto;
+  font: 400 11px/1.4 Inter, system-ui, sans-serif;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.leafcv2-bulk-panel__list li {
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.leafcv2-bulk-panel__error {
+  color: #ff8b8b;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   U11 — Copy overrides tab styling. Lives in the LeafInspector
+   chrome (lc-ins-* siblings) so the visual rhythm matches the
+   surrounding tabs (DRD / Decisions / Activity).
+   ───────────────────────────────────────────────────────────── */
+
+.lcv2-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 8px 12px;
+}
+
+.lcv2-copy-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lcv2-copy-search {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  font: 500 12px/1.4 Inter, system-ui, sans-serif;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.lcv2-copy-filters {
+  display: flex;
+  gap: 4px;
+}
+
+.lcv2-copy-filter {
+  flex: 1 1 auto;
+  padding: 4px 6px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 999px;
+  background: transparent;
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+  text-transform: capitalize;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.lcv2-copy-filter.is-active {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+.lcv2-copy-filter-num {
+  font: 600 10px/1 Inter, system-ui, sans-serif;
+  background: rgba(0, 0, 0, 0.08);
+  padding: 1px 5px;
+  border-radius: 999px;
+}
+
+.lcv2-copy-sort {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  font: 500 12px/1.4 Inter, system-ui, sans-serif;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.lcv2-copy-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.lcv2-copy-csv {
+  display: flex;
+  gap: 4px;
+}
+
+.lcv2-copy-csv-btn {
+  padding: 3px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  background: transparent;
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.lcv2-copy-csv-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.lcv2-copy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.lcv2-copy-row {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lcv2-copy-row[draggable="true"] {
+  cursor: grab;
+}
+
+.lcv2-copy-row[data-status="orphaned"] {
+  background: rgba(255, 200, 100, 0.08);
+  border-color: rgba(220, 140, 0, 0.25);
+}
+
+.lcv2-copy-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.lcv2-copy-screen {
+  font: 600 12px/1.4 Inter, system-ui, sans-serif;
+}
+
+.lcv2-copy-pill {
+  font: 600 10px/1 Inter, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.lcv2-copy-pill[data-status="active"] {
+  background: rgba(0, 130, 90, 0.1);
+  color: rgba(0, 110, 70, 0.95);
+}
+
+.lcv2-copy-pill[data-status="orphaned"] {
+  background: rgba(220, 140, 0, 0.12);
+  color: rgba(180, 100, 0, 1);
+}
+
+.lcv2-copy-strings {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+}
+
+.lcv2-copy-strings-label {
+  display: inline-block;
+  width: 28px;
+  color: rgba(0, 0, 0, 0.45);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.lcv2-copy-strings-text {
+  word-break: break-word;
+}
+
+.lcv2-copy-original .lcv2-copy-strings-text {
+  color: rgba(0, 0, 0, 0.55);
+  text-decoration: line-through;
+  text-decoration-color: rgba(0, 0, 0, 0.18);
+}
+
+.lcv2-copy-row-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: 500 10px/1.4 Inter, system-ui, sans-serif;
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.lcv2-copy-author {
+  font-weight: 600;
+}
+
+.lcv2-copy-dot {
+  color: rgba(0, 0, 0, 0.3);
+}
+
+.lcv2-copy-when {
+  flex: 1 1 auto;
+}
+
+.lcv2-copy-reset {
+  padding: 2px 8px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  background: transparent;
+  font: 500 10px/1.4 Inter, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+.lcv2-copy-reset:hover:not([disabled]) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.lcv2-copy-orphan-hint {
+  font: 500 10px/1.4 Inter, system-ui, sans-serif;
+  color: rgba(180, 100, 0, 0.85);
+}
+
+.lcv2-copy-empty {
+  text-align: center;
+  padding: 16px 8px;
+  color: rgba(0, 0, 0, 0.45);
+}
+
+.lcv2-copy-empty-h {
+  font: 600 12px/1.4 Inter, system-ui, sans-serif;
+}
+
+.lcv2-copy-error {
+  color: rgba(180, 50, 50, 0.95);
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(255, 80, 80, 0.06);
+
+}
