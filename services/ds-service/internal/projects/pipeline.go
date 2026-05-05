@@ -468,13 +468,38 @@ func (p *Pipeline) fail(ctx context.Context, in PipelineInputs, err error) {
 	}
 }
 
+// CanonicalTreeFetchDepth is the depth Figma's /v1/files/<key>/nodes
+// endpoint walks under each requested screen frame. depth=3 (the prior
+// value) cut subtrees off at three levels — frames at depth ≥ 4 came
+// back as empty bounding boxes and rendered as grey columns in the
+// canvas-v2 LeafFrameRenderer. Real INDmoney screens nest 6–8 levels:
+//
+//	screen → header/body → card/list → row → label/icon → vector path
+//
+// depth=10 covers virtually every observed nesting on prod files while
+// staying well under Figma's response-size limits (the API itself has
+// no documented depth cap; the practical bound is the 100 MB JSON
+// response limit, which we never approach for typical leaf exports).
+//
+// Tradeoff: payload + canonical_tree blob grows ~3-5x at depth=10 vs
+// depth=3 for content-heavy screens. The canonical_tree is gzipped on
+// disk (T8 migration) so the storage hit is bounded; render-side memory
+// usage scales linearly with node count (~1 KB per node).
+//
+// Tracked migration note: existing canonical_trees stored at depth=3
+// won't grow on their own — projects need to be re-exported (POST
+// /v1/projects/<slug>/export or the sheets-sync re-import flow) to pick
+// up the deeper trees. See docs/issues/2026-05-05-canonical-tree-depth.md
+// for the operator runbook.
+const CanonicalTreeFetchDepth = 10
+
 // fetchNodesWithRetry calls /v1/files/{key}/nodes with 3-attempt backoff on 429.
 // Other non-2xx errors fail fast.
 func (p *Pipeline) fetchNodesWithRetry(ctx context.Context, fileKey string, ids []string) (map[string]any, error) {
 	var lastErr error
 	delay := 500 * time.Millisecond
 	for attempt := 0; attempt < 3; attempt++ {
-		out, err := p.NodeFetcher.GetFileNodes(ctx, fileKey, ids, 3)
+		out, err := p.NodeFetcher.GetFileNodes(ctx, fileKey, ids, CanonicalTreeFetchDepth)
 		if err == nil {
 			return out, nil
 		}
