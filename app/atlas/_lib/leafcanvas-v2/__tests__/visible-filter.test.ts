@@ -7,8 +7,16 @@
  * export below lets a future runner drive everything from a single entry.
  */
 
-import { countNodes, filterVisible, isVisible } from "../visible-filter";
-import type { CanonicalNode } from "../types";
+import {
+  collectStateGroups,
+  countNodes,
+  filterVisible,
+  inactiveVariantIDs,
+  isVisible,
+  resolveActiveVariantID,
+  type StateGroup,
+} from "../visible-filter";
+import type { AnnotatedNode, CanonicalNode } from "../types";
 
 function assert(cond: unknown, msg: string): void {
   if (!cond) throw new Error(`assertion failed: ${msg}`);
@@ -157,6 +165,180 @@ function _test_copositioned_only_when_2plus_share(): void {
   }
 }
 
+// ─── U14: collectStateGroups + resolveActiveVariantID ──────────────────────
+
+function _test_collectStateGroups_happy_path(): void {
+  const tree: CanonicalNode = {
+    id: "screen-1",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
+    children: [
+      {
+        id: "v1",
+        name: "Default",
+        type: "FRAME",
+        absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 },
+      },
+      {
+        id: "v2",
+        name: "Hover",
+        type: "FRAME",
+        absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 },
+      },
+    ],
+  };
+  const annotated = filterVisible(tree)!;
+  const groups = collectStateGroups(annotated);
+  const list = groups.get("screen-1");
+  assert(Array.isArray(list) && list.length === 1, "one state group on screen-1");
+  const g = list![0];
+  assert(g.variants.length === 2, "two variants in group");
+  assert(g.variants[0].figmaNodeID === "v1", "first variant is v1 (DOM order)");
+  assert(g.variants[0].name === "Default", "name preserved when present");
+  assert(g.variants[1].name === "Hover", "second variant name preserved");
+  assert(g.defaultVariantID === "v1", "default = first listed");
+}
+
+function _test_collectStateGroups_three_stacked(): void {
+  const tree: CanonicalNode = {
+    id: "screen-1",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 200 },
+    children: [
+      { id: "a", absoluteBoundingBox: { x: 5, y: 5, width: 40, height: 40 } },
+      { id: "b", absoluteBoundingBox: { x: 5, y: 5, width: 40, height: 40 } },
+      { id: "c", absoluteBoundingBox: { x: 5, y: 5, width: 40, height: 40 } },
+    ],
+  };
+  const annotated = filterVisible(tree)!;
+  const groups = collectStateGroups(annotated);
+  const list = groups.get("screen-1");
+  assert(list?.length === 1, "single group from three stacked siblings");
+  assert(list![0].variants.length === 3, "three variants emitted");
+  // No-name siblings should fall back to "State 1/2/3".
+  assert(list![0].variants[0].name === "State 1", "fallback name State 1");
+  assert(list![0].variants[2].name === "State 3", "fallback name State 3");
+}
+
+function _test_collectStateGroups_empty_when_no_copositioned(): void {
+  const tree: CanonicalNode = {
+    id: "screen-1",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 200 },
+    children: [
+      { id: "a", absoluteBoundingBox: { x: 5, y: 5, width: 40, height: 40 } },
+      { id: "b", absoluteBoundingBox: { x: 60, y: 5, width: 40, height: 40 } },
+    ],
+  };
+  const annotated = filterVisible(tree)!;
+  const groups = collectStateGroups(annotated);
+  assert(groups.size === 0, "no groups emitted when nothing co-positioned");
+}
+
+function _test_collectStateGroups_scoped_per_frame(): void {
+  // Two nested FRAMEs at different (x,y) but each carrying a state group
+  // at the SAME geometric coords (10, 10, 50, 20). Without per-frame
+  // scoping the two groups would collide on `groupKey`. With scoping,
+  // each FRAME owns its own list.
+  const tree: CanonicalNode = {
+    id: "screen-1",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 400, height: 400 },
+    children: [
+      {
+        id: "frame-A",
+        type: "FRAME",
+        absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 200 },
+        children: [
+          { id: "a-default", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+          { id: "a-hover", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+        ],
+      },
+      {
+        id: "frame-B",
+        type: "FRAME",
+        absoluteBoundingBox: { x: 200, y: 0, width: 200, height: 200 },
+        children: [
+          { id: "b-default", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+          { id: "b-hover", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+        ],
+      },
+    ],
+  };
+  const annotated = filterVisible(tree)!;
+  const groups = collectStateGroups(annotated);
+  const aList = groups.get("frame-A");
+  const bList = groups.get("frame-B");
+  assert(aList?.length === 1, "frame-A owns one group");
+  assert(bList?.length === 1, "frame-B owns one group");
+  assert(
+    aList![0].variants.map((v) => v.figmaNodeID).join(",") === "a-default,a-hover",
+    "frame-A variants are A's children",
+  );
+  assert(
+    bList![0].variants.map((v) => v.figmaNodeID).join(",") === "b-default,b-hover",
+    "frame-B variants are B's children — no cross-talk",
+  );
+  // The screen-1 root has no co-positioned direct children itself.
+  assert(groups.get("screen-1") === undefined, "no screen-1 entry");
+}
+
+function _test_resolveActiveVariantID_default(): void {
+  const g: StateGroup = {
+    key: "k",
+    variants: [
+      { figmaNodeID: "x", name: "X" },
+      { figmaNodeID: "y", name: "Y" },
+    ],
+    defaultVariantID: "x",
+  };
+  assert(resolveActiveVariantID(g, undefined) === "x", "no pick → default");
+  assert(resolveActiveVariantID(g, "y") === "y", "valid pick wins");
+  assert(
+    resolveActiveVariantID(g, "stale-id") === "x",
+    "stale pick falls back to default",
+  );
+}
+
+function _test_inactiveVariantIDs(): void {
+  const g: StateGroup = {
+    key: "k",
+    variants: [
+      { figmaNodeID: "x", name: "X" },
+      { figmaNodeID: "y", name: "Y" },
+      { figmaNodeID: "z", name: "Z" },
+    ],
+    defaultVariantID: "x",
+  };
+  const groupsByFrame = new Map<string, StateGroup[]>([["screen-1", [g]]]);
+  // No picks → default "x" active; y + z inactive.
+  const empty = inactiveVariantIDs(groupsByFrame, new Map());
+  assert(empty.has("y") && empty.has("z") && !empty.has("x"), "default active");
+  // Picking y → x + z inactive.
+  const picks = new Map([
+    ["screen-1", new Map([["k", "y"]])],
+  ]);
+  const after = inactiveVariantIDs(groupsByFrame, picks);
+  assert(after.has("x") && after.has("z") && !after.has("y"), "pick swaps active");
+}
+
+function _test_collectStateGroups_does_not_mutate_input(): void {
+  const tree: CanonicalNode = {
+    id: "screen-1",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
+    children: [
+      { id: "a", absoluteBoundingBox: { x: 1, y: 1, width: 10, height: 10 } },
+      { id: "b", absoluteBoundingBox: { x: 1, y: 1, width: 10, height: 10 } },
+    ],
+  };
+  const annotated = filterVisible(tree)! as AnnotatedNode;
+  const before = JSON.stringify(annotated);
+  collectStateGroups(annotated);
+  const after = JSON.stringify(annotated);
+  assert(before === after, "collectStateGroups does not mutate annotated tree");
+}
+
 function _test_countNodes(): void {
   const tree: CanonicalNode = {
     id: "r",
@@ -176,5 +358,12 @@ export function runAll(): void {
   _test_filterVisible_does_not_mutate_input();
   _test_copositioned_siblings_get_state_group();
   _test_copositioned_only_when_2plus_share();
+  _test_collectStateGroups_happy_path();
+  _test_collectStateGroups_three_stacked();
+  _test_collectStateGroups_empty_when_no_copositioned();
+  _test_collectStateGroups_scoped_per_frame();
+  _test_collectStateGroups_does_not_mutate_input();
+  _test_resolveActiveVariantID_default();
+  _test_inactiveVariantIDs();
   _test_countNodes();
 }
