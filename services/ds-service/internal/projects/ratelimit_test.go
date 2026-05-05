@@ -50,11 +50,17 @@ func TestRateLimit_PerTenantCap(t *testing.T) {
 	clock := time.Now()
 	rl.now = func() time.Time { return clock }
 
-	// Spread across many users so per-user cap doesn't fire first.
+	// Spread across many users so per-user cap doesn't fire first. After
+	// the 2026-05-05 cap bump (UserBucketSize 10→120, TenantBucketSize
+	// 200→10000), the rotation has to cover at least
+	// ceil(TenantBucketSize / UserBucketSize) users — otherwise the per-
+	// user cap exhausts before the tenant cap and we under-count.
+	const userPool = 100 // 100*120 = 12000 > TenantBucketSize (10000)
 	allowed := 0
 	for i := 0; i < TenantBucketSize+50; i++ {
-		// rotate user every 5 requests to stay under per-user cap
-		userID := "user-" + string(rune('A'+(i%40)))
+		// Rotate through `userPool` users so no single user hits its cap
+		// before the tenant cap binds.
+		userID := "user-" + string(rune('A'+(i%userPool)))
 		if rl.Allow(userID, "tenant-X") {
 			allowed++
 		}
