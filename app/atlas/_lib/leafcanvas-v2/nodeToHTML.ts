@@ -199,10 +199,16 @@ function renderText(
         : undefined,
     textAlign: textAlign(style.textAlignHorizontal),
     fontStyle: style.italic ? "italic" : undefined,
-    // Per plan: nowrap + clip until U13 swaps in Basier Circle.
-    whiteSpace: "nowrap",
+    // pre-wrap honors explicit `\n` in `characters` AND wraps long lines
+    // when the bbox can hold multiple. Figma sizes the bbox to fit the
+    // text under "Auto height"; for "Fixed size" text the bbox is the
+    // user's chosen rect and `overflow: hidden` clips overflow. Without
+    // textAutoResize on canonical_tree we can't pick the right mode per
+    // node — pre-wrap is the safer default for both. See
+    // docs/issues/2026-05-05-text-auto-resize.md.
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
     overflow: "hidden",
-    textOverflow: "clip",
     display: "inline-block",
     boxSizing: "border-box",
   };

@@ -45,6 +45,12 @@ yarn-debug.log*
 yarn-error.log*
 *.tsbuildinfo
 
+# Source-of-truth Basier Circle dump — designer drops the .ttf bundle at
+# the repo root; the four weights are copied into public/fonts/basier-circle/
+# (which IS tracked) and served at /fonts/basier-circle/*.ttf. The folder
+# below is a vendor artifact only.
+/Basier Circle/
+
 # Vercel
 .vercel
 

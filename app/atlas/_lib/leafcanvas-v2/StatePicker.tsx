@@ -173,7 +173,11 @@ const CHIP_STYLE: CSSProperties = {
 
 const ACTIVE_CHIP_STYLE: CSSProperties = {
   ...CHIP_STYLE,
+  // Override the full `border` shorthand (not just borderColor) — mixing
+  // shorthand on the inactive style with a longhand override on the active
+  // style triggers React's "Removing a style property during rerender"
+  // warning when toggling between the two.
+  border: "1px solid rgba(20, 20, 24, 0.92)",
   background: "rgba(20, 20, 24, 0.92)",
   color: "#fff",
-  borderColor: "rgba(20, 20, 24, 0.92)",
 };

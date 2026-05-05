@@ -9,21 +9,23 @@
    surface colors, same shimmer keyframe, same skeleton border.
    ============================================================ */
 
-/* ── Self-hosted Inter (canvas-v2 surface) ─────────────────
+/* ── Self-hosted Inter + Basier Circle (canvas-v2 surface) ─────
    The brain UI loads Inter via a Google Fonts <link> in the
    landing HTML, but the canvas-v2 surface also runs in PNG
    snapshots and offline previews where the network may not be
-   reachable. Self-hosting from /public/fonts/inter keeps the
-   render deterministic.
+   reachable. Self-hosting from /public/fonts/* keeps the render
+   deterministic across local dev, Fly, and headless capture.
 
-   IMPORTANT — R10 Basier Circle swap:
-   The IND design system documents Basier Circle as the canonical
-   product face. We can't ship the .ttf in this PR (license pending)
-   so the @font-face for `BasierCircle` below is a stub: it falls
-   back to Inter, then to system-ui. When the licence lands, swap
-   the `src:` URLs in the BasierCircle blocks for the real woff2s
-   and the existing TEXT path will pick them up automatically (the
-   converter passes `fontFamily` through verbatim from canonical_tree.style).
+   Basier Circle is the canonical INDmoney product face — every
+   TEXT node in canonical_tree carries `fontFamily: "Basier Circle"`,
+   so the converter (nodeToHTML.ts) passes it through verbatim and
+   the @font-face declarations below resolve it from .ttf bytes
+   under /public/fonts/basier-circle/. Inter remains as a fallback
+   for nodes that explicitly request it.
+
+   File format note: TTF is shipped (not WOFF2) because that's
+   what the source distribution provides. WOFF2 would compress
+   ~30-50% smaller. Tracked: docs/issues/2026-05-05-basier-woff2.md
    ============================================================ */
 
 /* Inter — self-hosted woff2s in /public/fonts/inter/.
@@ -58,18 +60,56 @@
   src: url("/fonts/inter/Inter-Bold.woff2") format("woff2");
 }
 
-/* Basier Circle — STUB until R10 licence lands.
-   `local()` lookups will succeed for designers who have the font
-   installed on their system; otherwise we fall through to the
-   `unicode-range` no-op `src` and the browser's font-fallback
-   chain (defined inline at the TEXT site) takes over. */
+/* Basier Circle — self-hosted from /public/fonts/basier-circle/.
+   Two family aliases are declared because canonical_tree TEXT nodes
+   serialize the family name with a literal space ("Basier Circle"),
+   while CSS-in-JS sites in the codebase historically use the no-
+   space camelCase ("BasierCircle"). Aliasing both to the same .ttf
+   means either source resolves correctly. `local()` first so a
+   designer with the font installed gets the OS copy with no
+   network round-trip. */
+@font-face {
+  font-family: "Basier Circle";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local("Basier Circle Regular"), local("BasierCircle-Regular"),
+    url("/fonts/basier-circle/BasierCircle-Regular.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Basier Circle";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: local("Basier Circle Medium"), local("BasierCircle-Medium"),
+    url("/fonts/basier-circle/BasierCircle-Medium.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Basier Circle";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: local("Basier Circle SemiBold"), local("BasierCircle-SemiBold"),
+    url("/fonts/basier-circle/BasierCircle-SemiBold.ttf") format("truetype");
+}
+@font-face {
+  font-family: "Basier Circle";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: local("Basier Circle Bold"), local("BasierCircle-Bold"),
+    url("/fonts/basier-circle/BasierCircle-Bold.ttf") format("truetype");
+}
+
+/* Camelcase alias — same .ttf bytes, different family name so old
+   CSS-in-JS using `fontFamily: "BasierCircle"` still resolves. */
 @font-face {
   font-family: "BasierCircle";
   font-style: normal;
   font-weight: 400;
   font-display: swap;
   src: local("Basier Circle Regular"), local("BasierCircle-Regular"),
-    url("/fonts/inter/Inter-Regular.woff2") format("woff2");
+    url("/fonts/basier-circle/BasierCircle-Regular.ttf") format("truetype");
 }
 @font-face {
   font-family: "BasierCircle";
@@ -77,7 +117,7 @@
   font-weight: 500;
   font-display: swap;
   src: local("Basier Circle Medium"), local("BasierCircle-Medium"),
-    url("/fonts/inter/Inter-Medium.woff2") format("woff2");
+    url("/fonts/basier-circle/BasierCircle-Medium.ttf") format("truetype");
 }
 @font-face {
   font-family: "BasierCircle";
@@ -85,7 +125,7 @@
   font-weight: 600;
   font-display: swap;
   src: local("Basier Circle SemiBold"), local("BasierCircle-SemiBold"),
-    url("/fonts/inter/Inter-SemiBold.woff2") format("woff2");
+    url("/fonts/basier-circle/BasierCircle-SemiBold.ttf") format("truetype");
 }
 @font-face {
   font-family: "BasierCircle";
@@ -93,7 +133,7 @@
   font-weight: 700;
   font-display: swap;
   src: local("Basier Circle Bold"), local("BasierCircle-Bold"),
-    url("/fonts/inter/Inter-Bold.woff2") format("woff2");
+    url("/fonts/basier-circle/BasierCircle-Bold.ttf") format("truetype");
 }
 
 /* ── Frame wrapper (wraps each per-frame walker output) ───── */
