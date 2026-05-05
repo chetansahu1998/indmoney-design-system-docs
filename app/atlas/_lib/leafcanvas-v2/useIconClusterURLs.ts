@@ -201,7 +201,12 @@ export function useIconClusterURLs(
     return () => {
       cancelled = true;
     };
-  }, [slug, leafID, treeRoot, scale]);
+    // `zoom` IS a dep so a zoom change that flips a cluster into a new
+    // tier band triggers a fresh mint with the higher-resolution PNG.
+    // Mint calls hit ds-service cache (no Figma round-trip), so the
+    // re-mint cost is bounded by ~5ms per cluster × N clusters per
+    // zoom-stop event.
+  }, [slug, leafID, treeRoot, zoom, scale]);
 
   return urls;
 }
