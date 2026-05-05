@@ -259,7 +259,9 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       if (cached === null) {
         setState({ status: "empty" });
       } else {
-        setState({ status: "ready", tree: cached as CanonicalNode });
+        const unwrapped = unwrapCanonicalTree(cached);
+        if (unwrapped) setState({ status: "ready", tree: unwrapped });
+        else setState({ status: "empty" });
       }
       return;
     }
@@ -281,7 +283,12 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
           setState({ status: "empty" });
           return;
         }
-        setState({ status: "ready", tree: tree as CanonicalNode });
+        const unwrapped = unwrapCanonicalTree(tree);
+        if (!unwrapped) {
+          setState({ status: "empty" });
+          return;
+        }
+        setState({ status: "ready", tree: unwrapped });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -645,6 +652,30 @@ interface LassoRect {
  */
 function cssEscapeAttr(s: string): string {
   return s.replace(/(["\\])/g, "\\$1");
+}
+
+/**
+ * Server returns canonical_tree as either:
+ *   - the raw FRAME node directly (older imports); or
+ *   - a Figma `/files/.../nodes` envelope `{ document, components,
+ *     componentSets, styles, schemaVersion }` where the actual node lives
+ *     under `document` (the post-T8 audit pipeline shape).
+ *
+ * This unwrap normalises both into the bare node — `.absoluteBoundingBox`
+ * always present at the result root — so the renderer can stop guessing.
+ */
+function unwrapCanonicalTree(raw: unknown): CanonicalNode | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  // Envelope shape: pull the document node out.
+  if (obj.document && typeof obj.document === "object") {
+    return obj.document as CanonicalNode;
+  }
+  // Already a bare node — must have at least an id + bbox to be renderable.
+  if (typeof obj.id === "string" && obj.absoluteBoundingBox) {
+    return obj as CanonicalNode;
+  }
+  return null;
 }
 
 interface EditingTarget {
