@@ -90,7 +90,31 @@ export function nodeToHTML(
     return renderText(annotated, parentBBox, parentLayoutMode, keyHint);
   }
 
-  // Default: container (FRAME / RECTANGLE / VECTOR / ELLIPSE / etc.)
+  // Standalone shape nodes — VECTOR / ELLIPSE / LINE / BOOLEAN_OPERATION /
+  // STAR / POLYGON outside an icon-cluster wrapper. The plan is
+  // PNG-export-everything: any shape that's not part of a cluster goes
+  // through the asset-export pipeline and renders as <img>. Without
+  // this branch the default `renderContainer` would paint a coloured
+  // rectangle (the shape's bbox) which is visually wrong for icons and
+  // lines.
+  //
+  // Same id → URL contract as icon clusters: ctx.clusterURLs is a
+  // Map<nodeID, signedURL>. The useIconClusterURLs hook walks the
+  // tree and mints URLs for every shape it identifies; standalone
+  // shapes are added by extending collectClusterIDsWithBBox to
+  // include them too (separate edit to the hook).
+  if (
+    annotated.type === "VECTOR" ||
+    annotated.type === "ELLIPSE" ||
+    annotated.type === "LINE" ||
+    annotated.type === "BOOLEAN_OPERATION" ||
+    annotated.type === "STAR" ||
+    annotated.type === "POLYGON"
+  ) {
+    return renderClusterPlaceholder(annotated, parentBBox, parentLayoutMode, ctx, keyHint);
+  }
+
+  // Default: container (FRAME / RECTANGLE / INSTANCE / etc.)
   return renderContainer(annotated, parentBBox, parentLayoutMode, ctx, keyHint);
 }
 

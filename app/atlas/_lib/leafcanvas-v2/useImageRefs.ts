@@ -84,20 +84,30 @@ export function useImageRefs(
     // the same map, so any flow.id from the right product works.
     let resolvedLeafID: string = leafID;
     if (!isUUID(leafID)) {
+      // brain-products populates leavesByFlow with `Leaf{id: <project_slug>}`
+      // — those are NOT real flow UUIDs. Only `loadLeavesForFlow` produces
+      // Leaves whose `.id` is a flow UUID (from DS /v1/projects/<slug>).
+      // Search for one of THOSE: walk all leaves, match by `l.flow === slug`,
+      // require `l.id` itself to be a UUID — otherwise it's a brain-products
+      // entry that wouldn't help the backend either.
       let found: string | null = null;
       for (const leaves of Object.values(leavesByFlow)) {
         if (!Array.isArray(leaves)) continue;
-        const match = leaves.find((l) => l.flow === slug || l.id === leafID);
-        if (match) {
-          found = match.id;
-          break;
+        for (const l of leaves) {
+          if (l.flow === slug && isUUID(l.id)) {
+            found = l.id;
+            break;
+          }
         }
+        if (found) break;
       }
       if (!found) {
-        // No leaf cataloged yet for this slug — skip the fetch. Returning
-        // the empty map means image fills render as grey-checker placeholders
-        // (same as before this hook existed). Will retry on next remount
-        // once the live-store has populated.
+        // No real flow UUID available yet. Don't fire the request —
+        // a slug-as-leaf-id is guaranteed to 404 and just spams the
+        // console. Image fills render as grey-checker placeholders
+        // (same as before this hook existed). When the live-store
+        // populates with proper flow UUIDs (or the URL contract is
+        // fixed), the hook re-runs via the leavesByFlow dep.
         setRefs(EMPTY_IMAGE_REFS);
         return;
       }

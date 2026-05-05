@@ -73,12 +73,40 @@ export function collectClusterIDsWithBBox(
   return out;
 }
 
+/** Standalone shape types that get exported as a 1-element cluster
+ *  (PNG via asset-export) rather than rendered as a coloured div. */
+const STANDALONE_SHAPE_TYPES: ReadonlySet<string> = new Set([
+  "VECTOR",
+  "ELLIPSE",
+  "LINE",
+  "BOOLEAN_OPERATION",
+  "STAR",
+  "POLYGON",
+]);
+
 function walkWithBBox(node: CanonicalNode, acc: ClusterIDWithBBox[]): void {
+  // Wrapper-type clusters (existing icon-cluster heuristic).
   if (isIconCluster(node) && typeof node.id === "string") {
     const bbox = node.absoluteBoundingBox;
     const longest = bbox
       ? Math.max(bbox.width ?? 0, bbox.height ?? 0)
-      : 64; // sane default for clusters without bbox metadata
+      : 64;
+    acc.push({ id: node.id, longestEdgePx: longest });
+    return;
+  }
+  // Standalone shape nodes — VECTOR/ELLIPSE/LINE/BOOLEAN_OPERATION/
+  // STAR/POLYGON not wrapped in a cluster. Without this, a bare icon
+  // VECTOR renders as a coloured rectangle; with this, it goes through
+  // the same PNG-export path and appears as the actual shape.
+  if (
+    typeof node.type === "string" &&
+    STANDALONE_SHAPE_TYPES.has(node.type) &&
+    typeof node.id === "string"
+  ) {
+    const bbox = node.absoluteBoundingBox;
+    const longest = bbox
+      ? Math.max(bbox.width ?? 0, bbox.height ?? 0)
+      : 24;
     acc.push({ id: node.id, longestEdgePx: longest });
     return;
   }

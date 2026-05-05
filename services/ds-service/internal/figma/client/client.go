@@ -120,7 +120,15 @@ func (c *Client) GetFileNodes(ctx context.Context, fileKey string, nodeIDs []str
 	for _, id := range nodeIDs[1:] {
 		csv += "," + id
 	}
-	path := fmt.Sprintf("/v1/files/%s/nodes?ids=%s", fileKey, csv)
+	// `&geometry=paths` makes the API include `fillGeometry` and
+	// `strokeGeometry` arrays on every shape node — SVG path strings the
+	// canvas-v2 walker can emit as <svg><path/></svg> for real vector
+	// rendering. Without it, VECTOR / ELLIPSE / LINE nodes return only
+	// their bbox + fill colour and our renderer paints them as plain
+	// coloured divs (icons render as solid rectangles). The geometry
+	// payload roughly doubles the response size for icon-heavy frames
+	// but is the only way to render true vector shapes in DOM.
+	path := fmt.Sprintf("/v1/files/%s/nodes?ids=%s&geometry=paths", fileKey, csv)
 	if depth > 0 {
 		path += "&depth=" + strconv.Itoa(depth)
 	}
