@@ -469,6 +469,148 @@ export async function bulkUpsertTextOverrides(
   );
 }
 
+// ─── U12: CSV bulk export / import ─────────────────────────────────────────
+//
+// Translation / PM workflow. The export path streams a CSV the user
+// downloads via Blob + URL.createObjectURL. The import path posts a
+// multipart upload and the server replies with `{ applied, skipped,
+// conflicts }` so the client can present a confirmation modal.
+
+/** One conflict surfaced by `importLeafOverridesCSV`. */
+export interface CSVImportConflict {
+  row_index: number;
+  screen_id: string;
+  figma_node_id: string;
+  csv_value: string;
+  current_value: string;
+}
+
+/** One line-level error returned by `importLeafOverridesCSV` for malformed CSV. */
+export interface CSVImportError {
+  row_index: number;
+  reason: string;
+}
+
+/** Successful response for `importLeafOverridesCSV`. */
+export interface CSVImportResponse {
+  applied: number;
+  skipped: number;
+  bulk_id?: string;
+  conflicts: CSVImportConflict[];
+  errors?: CSVImportError[];
+}
+
+/**
+ * GET /v1/projects/:slug/leaves/:leaf_id/text-overrides/csv — fetch the
+ * full leaf CSV as text. Caller wraps the returned string in a Blob and
+ * triggers a download via URL.createObjectURL.
+ *
+ * We use `fetch` directly (not `getJSON`) because the response is text/csv,
+ * not JSON. Wrapped in the `ApiResult<{csv}>` envelope so the call-site
+ * stays homogeneous with the other helpers.
+ */
+export async function exportLeafOverridesCSV(
+  slug: string,
+  leafID: string,
+): Promise<ApiResult<{ csv: string }>> {
+  try {
+    const res = await fetch(
+      `${dsBaseURL()}/v1/projects/${encodeURIComponent(
+        slug,
+      )}/leaves/${encodeURIComponent(leafID)}/text-overrides/csv`,
+      {
+        method: "GET",
+        headers: authedHeaders(),
+      },
+    );
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: await safeJSONErr(res),
+      };
+    }
+    const csv = await res.text();
+    return { ok: true, data: { csv } };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * POST /v1/projects/:slug/leaves/:leaf_id/text-overrides/csv — multipart
+ * upload of the edited CSV. When `force` is true the server skips the
+ * conflict short-circuit and applies every dirty row last-write-wins;
+ * the typical first call leaves it false so the caller can render a
+ * confirmation modal listing each conflicting row.
+ *
+ * On a 400 with line-level errors, the response still parses into
+ * `CSVImportResponse` (with `applied=0`) so the caller can present
+ * actionable error feedback.
+ */
+export async function importLeafOverridesCSV(
+  slug: string,
+  leafID: string,
+  csvText: string,
+  options?: { force?: boolean },
+): Promise<ApiResult<CSVImportResponse>> {
+  try {
+    const fd = new FormData();
+    const blob = new Blob([csvText], { type: "text/csv" });
+    fd.append("file", blob, "overrides.csv");
+    if (options?.force) fd.append("force", "true");
+
+    const res = await fetch(
+      `${dsBaseURL()}/v1/projects/${encodeURIComponent(
+        slug,
+      )}/leaves/${encodeURIComponent(leafID)}/text-overrides/csv`,
+      {
+        method: "POST",
+        // Browser sets the multipart Content-Type with the boundary; we
+        // must not override it via authedHeaders(content-type) here.
+        headers: authedHeaders(),
+        body: fd,
+      },
+    );
+    if (!res.ok) {
+      // 400 still carries the structured error envelope so callers can
+      // surface line-level CSV problems instead of a generic toast.
+      const detail = await res.text();
+      try {
+        const parsed = JSON.parse(detail) as Partial<CSVImportResponse> & {
+          errors?: CSVImportError[];
+        };
+        if (parsed && (parsed.errors || parsed.conflicts)) {
+          return {
+            ok: false,
+            status: res.status,
+            error: parsed.errors
+              ? `CSV invalid: ${parsed.errors.length} line${
+                  parsed.errors.length === 1 ? "" : "s"
+                }`
+              : `HTTP ${res.status}`,
+          };
+        }
+      } catch {
+        // Fall through to the generic error path below.
+      }
+      return { ok: false, status: res.status, error: detail || `HTTP ${res.status}` };
+    }
+    const parsed = (await res.json()) as CSVImportResponse;
+    return { ok: true, data: parsed };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 /**
  * Asset-export URL minting used by the U7 inspector's PNG / SVG / 2x / 3x
  * buttons (single asset) and the U9 BulkExportPanel (multi-select zip).
