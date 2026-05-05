@@ -8,6 +8,7 @@ import "./globals.css";
 import "./atlas/view-transitions.css";
 import ToastHost from "@/components/ui/Toast";
 import RootClient from "@/components/RootClient";
+import AuthGate from "@/components/AuthGate";
 
 const BRAND = process.env.NEXT_PUBLIC_BRAND ?? "indmoney";
 const BRAND_LABELS: Record<string, string> = {
@@ -57,7 +58,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <RootClient />
-        {children}
+        <AuthGate>{children}</AuthGate>
         <ToastHost />
       </body>
     </html>
