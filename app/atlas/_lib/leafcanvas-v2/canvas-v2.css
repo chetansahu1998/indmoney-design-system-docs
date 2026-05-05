@@ -9,6 +9,93 @@
    surface colors, same shimmer keyframe, same skeleton border.
    ============================================================ */
 
+/* ── Self-hosted Inter (canvas-v2 surface) ─────────────────
+   The brain UI loads Inter via a Google Fonts <link> in the
+   landing HTML, but the canvas-v2 surface also runs in PNG
+   snapshots and offline previews where the network may not be
+   reachable. Self-hosting from /public/fonts/inter keeps the
+   render deterministic.
+
+   IMPORTANT — R10 Basier Circle swap:
+   The IND design system documents Basier Circle as the canonical
+   product face. We can't ship the .ttf in this PR (license pending)
+   so the @font-face for `BasierCircle` below is a stub: it falls
+   back to Inter, then to system-ui. When the licence lands, swap
+   the `src:` URLs in the BasierCircle blocks for the real woff2s
+   and the existing TEXT path will pick them up automatically (the
+   converter passes `fontFamily` through verbatim from canonical_tree.style).
+   ============================================================ */
+
+/* Inter — self-hosted woff2s in /public/fonts/inter/.
+   `font-display: swap` keeps the render visible during the
+   request — important for the per-frame skeleton timing. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/inter/Inter-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/inter/Inter-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/inter/Inter-SemiBold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/inter/Inter-Bold.woff2") format("woff2");
+}
+
+/* Basier Circle — STUB until R10 licence lands.
+   `local()` lookups will succeed for designers who have the font
+   installed on their system; otherwise we fall through to the
+   `unicode-range` no-op `src` and the browser's font-fallback
+   chain (defined inline at the TEXT site) takes over. */
+@font-face {
+  font-family: "BasierCircle";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local("Basier Circle Regular"), local("BasierCircle-Regular"),
+    url("/fonts/inter/Inter-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "BasierCircle";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: local("Basier Circle Medium"), local("BasierCircle-Medium"),
+    url("/fonts/inter/Inter-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "BasierCircle";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: local("Basier Circle SemiBold"), local("BasierCircle-SemiBold"),
+    url("/fonts/inter/Inter-SemiBold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "BasierCircle";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: local("Basier Circle Bold"), local("BasierCircle-Bold"),
+    url("/fonts/inter/Inter-Bold.woff2") format("woff2");
+}
+
 /* ── Frame wrapper (wraps each per-frame walker output) ───── */
 
 .leafcv2-frame {

@@ -9,6 +9,21 @@
  *   - Hover/click hit-testing: an invisible-but-present element steals
  *     events from the visible one underneath.
  *
+ * Exhaustive list of "invisible" conditions handled here (U13):
+ *   1. `visible === false`          → standard Figma toggle.
+ *   2. `removed === true`           → some plugin-side exports use this
+ *                                     for soft-deleted layers.
+ *   3. `opacity <= 0.001`           → effectively invisible. Treated like
+ *                                     `visible:false` so the node is
+ *                                     filtered at walker time, not via CSS
+ *                                     (CSS-only opacity:0 still counts
+ *                                     toward the DOM-element budget and
+ *                                     still steals hit-testing).
+ *
+ * Anything else (e.g. zero-width bbox, off-screen layout) renders honestly
+ * and the canvas-v2 surface relies on `clipsContent: true` on the parent
+ * frame to hide it.
+ *
  * Co-positioned detection (state-picker scaffold for U14):
  *   When 2+ siblings share `(x, y, width, height)` (rounded to 1 px to
  *   absorb float drift), tag them with `__stateGroup = parentID:hash` so
@@ -25,6 +40,7 @@ const OPACITY_HIDDEN_THRESHOLD = 0.001;
 
 export function isVisible(node: CanonicalNode): boolean {
   if (node.visible === false) return false;
+  if (node.removed === true) return false;
   if (typeof node.opacity === "number" && node.opacity <= OPACITY_HIDDEN_THRESHOLD) {
     return false;
   }

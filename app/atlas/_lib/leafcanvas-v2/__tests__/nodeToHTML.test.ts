@@ -324,6 +324,68 @@ function synthLargeTree(target: number): CanonicalNode {
   return root;
 }
 
+// ─── TEXT default colour when fills empty ───────────────────────────────────
+
+function _test_text_empty_fills_defaults_to_black(): void {
+  // Empty fills array (the case the spike found rendering white-on-white):
+  const tree1: CanonicalNode = {
+    id: "t",
+    type: "TEXT",
+    characters: "Hi",
+    absoluteBoundingBox: { x: 0, y: 0, width: 50, height: 20 },
+    fills: [],
+  };
+  const el1 = nodeToHTML(tree1, ROOT_BBOX, null, CTX, "r")!;
+  assert(el1.type === "span", "TEXT renders as <span>");
+  assert(styleOf(el1)["color"] === "#000", "empty fills → color #000");
+
+  // Missing fills entirely:
+  const tree2: CanonicalNode = {
+    id: "t",
+    type: "TEXT",
+    characters: "Hi",
+    absoluteBoundingBox: { x: 0, y: 0, width: 50, height: 20 },
+  };
+  const el2 = nodeToHTML(tree2, ROOT_BBOX, null, CTX, "r")!;
+  assert(styleOf(el2)["color"] === "#000", "missing fills → color #000");
+
+  // Non-SOLID fill (e.g. IMAGE) also falls back:
+  const tree3: CanonicalNode = {
+    id: "t",
+    type: "TEXT",
+    characters: "Hi",
+    absoluteBoundingBox: { x: 0, y: 0, width: 50, height: 20 },
+    fills: [{ type: "IMAGE", imageRef: "abc" }],
+  };
+  const el3 = nodeToHTML(tree3, ROOT_BBOX, null, CTX, "r")!;
+  assert(
+    styleOf(el3)["color"] === "#000",
+    "non-SOLID fill on TEXT → color #000",
+  );
+}
+
+// ─── IMAGE fill placeholder when imageRef missing from refs map ─────────────
+
+function _test_image_fill_missing_ref_renders_placeholder(): void {
+  const tree: CanonicalNode = {
+    id: "img",
+    type: "RECTANGLE",
+    absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
+    fills: [{ type: "IMAGE", imageRef: "missing", scaleMode: "FILL" }],
+  };
+  // Empty imageRefs map — the URL won't resolve.
+  const el = nodeToHTML(tree, ROOT_BBOX, null, { imageRefs: {} }, "r")!;
+  const s = styleOf(el);
+  // Placeholder must NOT emit a `url(...)` (no broken image), and SHOULD
+  // emit a soft background so the slot stays visually occupied.
+  const bgImage = String(s["backgroundImage"] ?? "");
+  assert(!bgImage.includes("url("), "no broken url() in placeholder");
+  assert(
+    typeof s["backgroundColor"] === "string",
+    "placeholder sets a backgroundColor",
+  );
+}
+
 // ─── Hidden via opacity:0 also pruned ────────────────────────────────────────
 
 function _test_opacity_zero_pruned(): void {
@@ -355,4 +417,6 @@ export function runAll(): void {
   _test_frame_explicit_clips_false();
   _test_perf_500_nodes_under_budget();
   _test_opacity_zero_pruned();
+  _test_text_empty_fills_defaults_to_black();
+  _test_image_fill_missing_ref_renders_placeholder();
 }
