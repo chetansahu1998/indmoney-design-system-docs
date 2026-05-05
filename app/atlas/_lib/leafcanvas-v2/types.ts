@@ -107,6 +107,28 @@ export type Paint =
   | GradientPaint
   | { type: string; visible?: boolean };
 
+/**
+ * Effect — drop shadow / inner shadow / layer blur / background blur.
+ * Shape mirrors Figma's REST API verbatim so the renderer can convert
+ * straight to CSS.
+ */
+export interface Effect {
+  type: "DROP_SHADOW" | "INNER_SHADOW" | "LAYER_BLUR" | "BACKGROUND_BLUR" | string;
+  visible?: boolean;
+  /** Shadow color (RGBA). Absent for blur effects. */
+  color?: RGBA;
+  /** Shadow offset in px. Absent for blur effects. */
+  offset?: { x: number; y: number };
+  /** Blur radius (shadow softness, OR filter blur amount). */
+  radius?: number;
+  /** Shadow spread in px (Figma's "Spread" slider). Optional. */
+  spread?: number;
+  blendMode?: string;
+  /** Drop shadow only — whether the shadow paints behind the shape's
+   *  fill (true) or only outside the shape's outline (false). */
+  showShadowBehindNode?: boolean;
+}
+
 export interface TextStyle {
   fontFamily?: string;
   fontPostScriptName?: string;
@@ -147,6 +169,16 @@ export interface CanonicalNode {
   strokeGeometry?: Array<{ path: string; windingRule?: "EVENODD" | "NONZERO" }>;
   /** Figma blend mode applied to this node's painting. CSS mix-blend-mode equivalent. */
   blendMode?: string;
+  /**
+   * Figma effects array — drop shadow, inner shadow, layer blur,
+   * background blur. CSS counterparts:
+   *   DROP_SHADOW      → box-shadow (or filter:drop-shadow for shapes)
+   *   INNER_SHADOW     → box-shadow inset
+   *   LAYER_BLUR       → filter: blur()
+   *   BACKGROUND_BLUR  → backdrop-filter: blur()
+   * Multiple effects stack via CSS comma-list / chained filters.
+   */
+  effects?: Effect[];
   /** Auto-layout direction. null/absent = absolute children. */
   layoutMode?: LayoutMode;
   itemSpacing?: number;

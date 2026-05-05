@@ -319,6 +319,24 @@ function renderContainer(
     baseStyle.opacity = node.opacity;
   }
 
+  // Effects — drop / inner shadow + layer / background blur. Real card
+  // elevation in INDmoney files (e.g. Mutual Funds V2 Dashboard) uses
+  // 3-stack DROP_SHADOW for Material-style depth. Without this branch
+  // those cards render flat instead of elevated.
+  const effectStyle = effectsToStyle(node.effects);
+  if (effectStyle) Object.assign(baseStyle, effectStyle);
+
+  // Blend mode — Figma's NORMAL is the CSS default; PASS_THROUGH is
+  // group-only and doesn't have a CSS counterpart, so we skip it.
+  // Anything else (MULTIPLY / SCREEN / OVERLAY / etc.) maps directly
+  // to mix-blend-mode.
+  if (typeof node.blendMode === "string" && node.blendMode !== "NORMAL" && node.blendMode !== "PASS_THROUGH") {
+    // CSSProperties.mixBlendMode is a string-literal union; we can't
+    // narrow at the type level without enumerating every Figma mode,
+    // so cast through `as` after lower-casing.
+    baseStyle.mixBlendMode = blendModeToCSS(node.blendMode) as CSSProperties["mixBlendMode"];
+  }
+
   const children = Array.isArray(node.children) ? node.children : [];
   const childBBox = node.absoluteBoundingBox ?? parentBBox;
   const childElements = children
@@ -385,10 +403,6 @@ function backgroundStyle(
     if (isImagePaint(f) && f.imageRef) {
       const url = imageRefs[f.imageRef];
       if (!url) {
-        // Placeholder rendering — keeps the slot occupied so layout
-        // doesn't reflow once U7's asset-export client populates the
-        // imageRef → URL map. We avoid emitting an `<img>` with a
-        // broken src so the surface stays clean during PNG snapshots.
         return imagePlaceholderStyle();
       }
       const out: CSSProperties = {
@@ -415,8 +429,159 @@ function backgroundStyle(
       }
       return out;
     }
+    // GRADIENT_LINEAR / RADIAL / ANGULAR / DIAMOND — emit a CSS
+    // gradient. Figma's gradientHandlePositions are 3 normalized
+    // {x,y} points in node-local 0..1 coords; we approximate the
+    // CSS angle from the first two handles. Stops carry position
+    // (0..1) + RGBA already.
+    const grad = gradientPaintToCSS(f);
+    if (grad) {
+      return { backgroundImage: grad };
+    }
   }
   return {};
+}
+
+/**
+ * Convert a Figma GRADIENT_* paint to a CSS gradient string. Returns
+ * null for unknown gradient kinds (caller falls through to next paint).
+ *
+ * - LINEAR  → `linear-gradient(<angle>, <stops>)`
+ * - RADIAL  → `radial-gradient(circle at <handle1>, <stops>)`
+ * - ANGULAR → `conic-gradient(from <angle> at center, <stops>)`
+ *   (Figma's "angular" is CSS conic; close enough for canvas-v2 reads.)
+ * - DIAMOND → no exact CSS counterpart; approximate as a linear gradient
+ *   at 45deg (rare in practice; document and revisit if encountered).
+ */
+function gradientPaintToCSS(p: Paint): string | null {
+  if (!isGradientPaint(p)) return null;
+  const stops = (p.gradientStops ?? [])
+    .filter((s): s is { position: number; color: RGBA } => !!s && !!s.color)
+    .map((s) => {
+      const c = rgbaToCSS(s.color, undefined) ?? "transparent";
+      const pct = clamp(s.position * 100, 0, 100).toFixed(2);
+      return `${c} ${pct}%`;
+    })
+    .join(", ");
+  if (!stops) return null;
+
+  const handles = p.gradientHandlePositions ?? [];
+  const h0 = handles[0] ?? { x: 0.5, y: 0 };
+  const h1 = handles[1] ?? { x: 0.5, y: 1 };
+
+  switch (p.type) {
+    case "GRADIENT_LINEAR": {
+      // CSS `linear-gradient` angle is measured clockwise from the
+      // top (0deg = upward). Figma handles run from start → end in
+      // node-local coords; convert that vector to a CSS angle.
+      const dx = h1.x - h0.x;
+      const dy = h1.y - h0.y;
+      const angleRad = Math.atan2(dx, -dy); // CSS angle = atan2(dx, -dy)
+      const angleDeg = (angleRad * 180) / Math.PI;
+      return `linear-gradient(${angleDeg.toFixed(2)}deg, ${stops})`;
+    }
+    case "GRADIENT_RADIAL": {
+      // Center at h0; outer-stop boundary at h1.
+      const cx = (clamp(h0.x, 0, 1) * 100).toFixed(2);
+      const cy = (clamp(h0.y, 0, 1) * 100).toFixed(2);
+      return `radial-gradient(circle at ${cx}% ${cy}%, ${stops})`;
+    }
+    case "GRADIENT_ANGULAR": {
+      const cx = (clamp(h0.x, 0, 1) * 100).toFixed(2);
+      const cy = (clamp(h0.y, 0, 1) * 100).toFixed(2);
+      return `conic-gradient(at ${cx}% ${cy}%, ${stops})`;
+    }
+    case "GRADIENT_DIAMOND": {
+      // No clean CSS counterpart; degrade to a linear at 45deg.
+      // Tracked in classifier docs; revisit when a real example
+      // shows up in canonical_tree data.
+      return `linear-gradient(45deg, ${stops})`;
+    }
+    default:
+      return null;
+  }
+}
+
+function isGradientPaint(p: Paint): p is import("./types").GradientPaint {
+  return (
+    p.type === "GRADIENT_LINEAR" ||
+    p.type === "GRADIENT_RADIAL" ||
+    p.type === "GRADIENT_ANGULAR" ||
+    p.type === "GRADIENT_DIAMOND"
+  );
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+/**
+ * Convert Figma's `effects` array to CSS box-shadow + filter +
+ * backdrop-filter. Multiple drop/inner shadows stack via comma-list.
+ * Multiple blurs chain via space-separated filter functions.
+ */
+function effectsToStyle(
+  effects: import("./types").Effect[] | undefined,
+): CSSProperties | null {
+  if (!Array.isArray(effects) || effects.length === 0) return null;
+  const boxShadows: string[] = [];
+  const filters: string[] = [];
+  const backdropFilters: string[] = [];
+  for (const e of effects) {
+    if (e.visible === false) continue;
+    switch (e.type) {
+      case "DROP_SHADOW": {
+        const c = rgbaToCSS(e.color, undefined);
+        if (!c) break;
+        const ox = e.offset?.x ?? 0;
+        const oy = e.offset?.y ?? 0;
+        const r = e.radius ?? 0;
+        const sp = typeof e.spread === "number" ? `${e.spread}px ` : "";
+        boxShadows.push(`${ox}px ${oy}px ${r}px ${sp}${c}`);
+        break;
+      }
+      case "INNER_SHADOW": {
+        const c = rgbaToCSS(e.color, undefined);
+        if (!c) break;
+        const ox = e.offset?.x ?? 0;
+        const oy = e.offset?.y ?? 0;
+        const r = e.radius ?? 0;
+        const sp = typeof e.spread === "number" ? `${e.spread}px ` : "";
+        boxShadows.push(`inset ${ox}px ${oy}px ${r}px ${sp}${c}`);
+        break;
+      }
+      case "LAYER_BLUR":
+        if (typeof e.radius === "number" && e.radius > 0) {
+          filters.push(`blur(${e.radius}px)`);
+        }
+        break;
+      case "BACKGROUND_BLUR":
+        if (typeof e.radius === "number" && e.radius > 0) {
+          backdropFilters.push(`blur(${e.radius}px)`);
+        }
+        break;
+    }
+  }
+  if (boxShadows.length === 0 && filters.length === 0 && backdropFilters.length === 0) {
+    return null;
+  }
+  const out: CSSProperties = {};
+  if (boxShadows.length) out.boxShadow = boxShadows.join(", ");
+  if (filters.length) out.filter = filters.join(" ");
+  if (backdropFilters.length) {
+    out.backdropFilter = backdropFilters.join(" ");
+    // Safari/older Chrome prefix.
+    (out as Record<string, unknown>)["WebkitBackdropFilter"] = backdropFilters.join(" ");
+  }
+  return out;
+}
+
+/**
+ * Map Figma blend mode to CSS mix-blend-mode value. Most names match
+ * verbatim once lower-cased and underscores replaced with hyphens.
+ */
+function blendModeToCSS(figma: string): string {
+  return figma.toLowerCase().replace(/_/g, "-");
 }
 
 /**
