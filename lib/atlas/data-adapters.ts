@@ -23,9 +23,11 @@
 import { getToken } from "../auth-client";
 import {
   fetchProject,
+  fetchTextOverrides,
   listViolations,
   screenPngUrl,
   type ApiResult,
+  type TextOverride,
 } from "../projects/client";
 import type {
   Flow as DSFlow,
@@ -407,7 +409,7 @@ export async function fetchLeafOverlays(
   if (!resolvedFlowID) {
     // No flow yet — surface empty overlays without 404-spamming the per-flow
     // endpoints. The inspector renders empty state for each tab.
-    return { violations: [], decisions: [], activity: [], comments: [] };
+    return { violations: [], decisions: [], activity: [], comments: [], overrides: {} };
   }
   const [violations, decisions, activity, comments, drd] = await Promise.all([
     listViolations(slug, versionID),
@@ -457,12 +459,37 @@ export async function fetchLeafOverlays(
       }
     : undefined;
 
+  // U8 — fetch text overrides for every screen in the leaf in parallel.
+  // The endpoint is per-screen rather than per-flow because overrides are
+  // pinned to figma_node_id within a screen, and the leaf-wide endpoint
+  // is intended for the U11 "Copy overrides" tab which renders flow-level
+  // listings. Failures fold to empty maps so cold load tolerates a partial
+  // outage without dropping the rest of the overlay slice.
+  const overrides: Record<string, Map<string, TextOverride>> = {};
+  if (flowScreenIDs.size > 0) {
+    const screenIDs = Array.from(flowScreenIDs);
+    const overrideResponses = await Promise.allSettled(
+      screenIDs.map((id) => fetchTextOverrides(slug, id)),
+    );
+    overrideResponses.forEach((r, idx) => {
+      const screenID = screenIDs[idx];
+      const map = new Map<string, TextOverride>();
+      if (r.status === "fulfilled" && r.value.ok) {
+        for (const row of r.value.data.overrides ?? []) {
+          map.set(row.figma_node_id, row);
+        }
+      }
+      overrides[screenID] = map;
+    });
+  }
+
   return {
     violations: violationDisplay,
     decisions: decisionDisplay,
     activity: activityDisplay,
     comments: commentDisplay,
     drd: drdDoc,
+    overrides,
   };
 }
 

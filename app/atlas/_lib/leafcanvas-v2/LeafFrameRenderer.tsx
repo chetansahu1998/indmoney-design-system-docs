@@ -19,11 +19,16 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 
-import { lazyFetchCanonicalTree } from "../../../../lib/projects/client";
+import {
+  lazyFetchCanonicalTree,
+  type TextOverride,
+} from "../../../../lib/projects/client";
 import { useAtlas } from "../../../../lib/atlas/live-store";
 
+import { findByFigmaID } from "./AtomicChildInspector";
+import { InlineTextEditor } from "./InlineTextEditor";
 import { nodeToHTML } from "./nodeToHTML";
 import type { CanonicalNode, ImageRefMap } from "./types";
 import { filterVisible } from "./visible-filter";
@@ -101,6 +106,72 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       selectAtomicChild(screenID, figmaID);
     },
     [screenID, selectAtomicChild],
+  );
+
+  // ─── Atomic-child editing (U8) ────────────────────────────────────────────
+  // Double-click a TEXT atomic → activates the InlineTextEditor over it.
+  // Non-TEXT atomics (icons, shapes, frames) are no-ops per D2.
+  const setOverride = useAtlas((s) => s.setOverride);
+  const recordConflict = useAtlas((s) => s.recordConflict);
+  const openLeafID = useAtlas((s) => s.selection.leafID);
+  const [editing, setEditing] = useState<EditingTarget | null>(null);
+
+  const handleDoubleClick = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      // Walk up to the nearest TEXT element specifically — non-TEXT
+      // atomics (RECTANGLE / cluster / VECTOR) are no-ops in v1 per D2.
+      const textEl = findTextAtomic(target, wrapperRef.current);
+      if (!textEl) return;
+      const figmaID = textEl.getAttribute("data-figma-id");
+      if (!figmaID) return;
+      e.stopPropagation();
+      e.preventDefault();
+      // Look up the override + canonical_path from the cached tree so the
+      // PUT body can carry both. Tree may be unavailable (lazy slot, error)
+      // — bail out softly so dblclick doesn't crash on unhydrated frames.
+      if (state.status !== "ready" || !state.tree) return;
+      const found = findByFigmaID(state.tree, figmaID);
+      if (!found || found.node.type !== "TEXT") return;
+      const rect = textEl.getBoundingClientRect();
+      const wrapperRect = wrapperRef.current?.getBoundingClientRect();
+      // Position is local to the wrapper so CSS transforms (canvas zoom)
+      // pass through cleanly.
+      const left = wrapperRect ? rect.left - wrapperRect.left : rect.left;
+      const top = wrapperRect ? rect.top - wrapperRect.top : rect.top;
+      setEditing({
+        figmaNodeID: figmaID,
+        originalText: found.node.characters ?? "",
+        canonicalPath: buildCanonicalPath(state.tree, figmaID),
+        currentRevision: 0,
+        bbox: { left, top, width: rect.width, height: rect.height },
+        textStyle: extractTextStyle(textEl),
+      });
+    },
+    [state],
+  );
+
+  const onEditorClose = useCallback(() => setEditing(null), []);
+  const onSavedOverride = useCallback(
+    (ov: TextOverride) => {
+      if (!openLeafID) return;
+      setOverride(openLeafID, ov);
+    },
+    [openLeafID, setOverride],
+  );
+  const onEditorConflict = useCallback(
+    (currentRevision: number, currentValue: string) => {
+      if (!openLeafID || !editing) return;
+      recordConflict(
+        openLeafID,
+        screenID,
+        editing.figmaNodeID,
+        currentRevision,
+        currentValue,
+      );
+    },
+    [editing, openLeafID, recordConflict, screenID],
   );
 
   // ─── Intersection-based virtualization ────────────────────────────────────
@@ -199,10 +270,112 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       data-status={state.status}
       style={{ width, height }}
       onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
     >
       {rendered ?? <Skeleton label={label} status={state.status} />}
+      {editing && openLeafID && (
+        <div
+          className="leafcv2-inline-editor-host"
+          style={{
+            position: "absolute",
+            left: editing.bbox.left,
+            top: editing.bbox.top,
+            width: editing.bbox.width,
+            height: editing.bbox.height,
+            zIndex: 100,
+          }}
+        >
+          <InlineTextEditor
+            slug={slug}
+            leafID={openLeafID}
+            screenID={screenID}
+            figmaNodeID={editing.figmaNodeID}
+            originalText={editing.originalText}
+            canonicalPath={editing.canonicalPath}
+            currentRevision={editing.currentRevision}
+            textStyle={editing.textStyle}
+            onSavedOverride={onSavedOverride}
+            onConflict={onEditorConflict}
+            onClose={onEditorClose}
+          />
+        </div>
+      )}
     </div>
   );
+}
+
+interface EditingTarget {
+  figmaNodeID: string;
+  originalText: string;
+  canonicalPath: string;
+  currentRevision: number;
+  bbox: { left: number; top: number; width: number; height: number };
+  textStyle: CSSProperties;
+}
+
+/**
+ * Find the nearest TEXT atomic from a click target. Mirrors
+ * `findAtomicTarget` but narrows to TEXT only — clusters / shapes are
+ * no-ops for the editor per D2.
+ */
+function findTextAtomic(
+  el: HTMLElement,
+  wrapper: HTMLDivElement | null,
+): HTMLElement | null {
+  let cur: HTMLElement | null = el;
+  while (cur && cur !== wrapper) {
+    const type = cur.getAttribute("data-figma-type");
+    if (type === "TEXT") return cur;
+    cur = cur.parentElement;
+  }
+  return null;
+}
+
+/**
+ * Walk the canonical_tree building "Frame/Section/Label" style ancestor
+ * paths so the override PUT body carries enough context for the U2
+ * reattach logic. Mirrors `services/ds-service/internal/projects/
+ * canonical_tree_index.go:buildPath` — joins ancestor `name` fields with
+ * "/". Falls back to "" when the node can't be located.
+ */
+function buildCanonicalPath(tree: CanonicalNode, targetID: string): string {
+  const trail: string[] = [];
+  function walk(node: CanonicalNode, parents: string[]): boolean {
+    const here = [...parents, node.name ?? node.id ?? ""];
+    if (node.id === targetID) {
+      trail.push(...here);
+      return true;
+    }
+    const kids = Array.isArray(node.children) ? node.children : [];
+    for (const c of kids) {
+      if (!c || typeof c !== "object") continue;
+      if (walk(c as CanonicalNode, here)) return true;
+    }
+    return false;
+  }
+  walk(tree, []);
+  return trail.join("/");
+}
+
+/**
+ * Capture the rendered text style off the live span so the editor can
+ * paint the contenteditable replica with byte-identical typography. We
+ * read computed styles instead of inline style because `nodeToHTML` can
+ * cascade some properties via parent rules.
+ */
+function extractTextStyle(el: HTMLElement): CSSProperties {
+  const cs = window.getComputedStyle(el);
+  return {
+    fontFamily: cs.fontFamily,
+    fontSize: cs.fontSize,
+    fontWeight: cs.fontWeight,
+    color: cs.color,
+    lineHeight: cs.lineHeight,
+    letterSpacing: cs.letterSpacing,
+    textAlign: cs.textAlign as CSSProperties["textAlign"],
+    fontStyle: cs.fontStyle,
+    whiteSpace: cs.whiteSpace as CSSProperties["whiteSpace"],
+  };
 }
 
 function Skeleton({

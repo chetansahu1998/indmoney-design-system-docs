@@ -29,6 +29,7 @@ import { currentBrand } from "../../../../lib/brand";
 import {
   type ApiResult,
   type MintAssetResponse,
+  deleteTextOverride,
   mintAssetExportURL,
 } from "../../../../lib/projects/client";
 import { lookupTokenByHex } from "../../../../lib/tokens/hex-to-token";
@@ -63,6 +64,12 @@ export interface AtomicChildInspectorProps {
   brand?: string;
   /** Closes the inspector — wired to Esc / explicit ✕ button. */
   onClose?: () => void;
+  /**
+   * U8 — fired after a successful Reset-to-original (DELETE override).
+   * The host component clears the override from its store slice so the
+   * canvas re-paints with the canonical_tree's original `characters`.
+   */
+  onOverrideReset?: () => void;
 }
 
 type InspectorTab = "layer" | "type" | "tokens" | "export";
@@ -75,7 +82,7 @@ const TABS: ReadonlyArray<{ id: InspectorTab; label: string }> = [
 ];
 
 export function AtomicChildInspector(props: AtomicChildInspectorProps) {
-  const { screenID, figmaNodeID, canonicalTree, override, slug, onClose } = props;
+  const { screenID, figmaNodeID, canonicalTree, override, slug, onClose, onOverrideReset } = props;
   const brand = props.brand ?? currentBrand();
 
   const found = useMemo(
@@ -144,7 +151,16 @@ export function AtomicChildInspector(props: AtomicChildInspectorProps) {
       <div className="lc-ins-body">
         {tab === "layer" && <LayerTab node={node} parent={parent} brand={brand} />}
         {tab === "type" && (
-          <TypeTab node={node} brand={brand} override={override ?? null} isText={isText} />
+          <TypeTab
+            node={node}
+            brand={brand}
+            override={override ?? null}
+            isText={isText}
+            slug={slug}
+            screenID={screenID}
+            figmaNodeID={figmaNodeID}
+            onOverrideReset={onOverrideReset}
+          />
         )}
         {tab === "tokens" && (
           <TokensTab node={node} brand={brand} override={override ?? null} isText={isText} />
@@ -224,11 +240,19 @@ function TypeTab({
   brand,
   override,
   isText,
+  slug,
+  screenID,
+  figmaNodeID,
+  onOverrideReset,
 }: {
   node: CanonicalNode;
   brand: string;
   override: ScreenTextOverride | null;
   isText: boolean;
+  slug: string;
+  screenID: string;
+  figmaNodeID: string;
+  onOverrideReset?: () => void;
 }) {
   if (!isText) {
     return (
@@ -257,7 +281,12 @@ function TypeTab({
           {text || <span className="lcv2-ins-muted">(empty)</span>}
         </div>
         {overrideActive && (
-          <div className="lcv2-ins-pill">override active · rev {override.status ?? "active"}</div>
+          <ResetOverrideRow
+            slug={slug}
+            screenID={screenID}
+            figmaNodeID={figmaNodeID}
+            onDeleted={onOverrideReset}
+          />
         )}
       </div>
       <Row label="Font" value={s.fontFamily ?? "—"} />
@@ -385,6 +414,60 @@ function ExportTab({
         </div>
         {error && <div className="lcv2-ins-error">{error}</div>}
       </div>
+    </div>
+  );
+}
+
+// ─── Reset-to-original (U8) ──────────────────────────────────────────────────
+
+/**
+ * Surface in the Type tab when an active override is pinned to the
+ * selected TEXT atomic. Click → DELETE the override row → fire
+ * `onDeleted` so the host clears the local cache. The canvas re-paints
+ * with the canonical_tree's original `characters` automatically (no
+ * extra reload — just clearing the override map flips the renderer).
+ */
+function ResetOverrideRow({
+  slug,
+  screenID,
+  figmaNodeID,
+  onDeleted,
+}: {
+  slug: string;
+  screenID: string;
+  figmaNodeID: string;
+  onDeleted?: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onClick = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    const r = await deleteTextOverride(slug, screenID, figmaNodeID);
+    setBusy(false);
+    if (!r.ok) {
+      setError(r.error || "Reset failed");
+      return;
+    }
+    onDeleted?.();
+  }, [figmaNodeID, onDeleted, screenID, slug]);
+
+  return (
+    <div className="lcv2-ins-pill-row">
+      <span className="lcv2-ins-pill" data-status="active">
+        override active
+      </span>
+      <button
+        className="lcv2-ins-reset-btn"
+        onClick={onClick}
+        disabled={busy}
+        type="button"
+        aria-label="Reset to original"
+      >
+        {busy ? "Resetting…" : "Reset to original"}
+      </button>
+      {error && <span className="lcv2-ins-error">{error}</span>}
     </div>
   );
 }

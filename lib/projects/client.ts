@@ -253,6 +253,205 @@ export async function putDRD(
   }
 }
 
+// ─── Screen text overrides (U2 server / U8 client) ─────────────────────────
+//
+// Override repo wraps `PUT/DELETE /v1/projects/{slug}/screens/{id}/text-overrides/{figma_node_id}`
+// plus the `GET .../screens/{id}/text-overrides` list endpoint and the
+// `POST /v1/projects/{slug}/text-overrides/bulk` bulk-upsert endpoint shipped
+// in U2. The PUT mirrors `putDRD`'s optimistic-concurrency contract:
+// `expected_revision` matches the row's last-known revision; 409 returns the
+// server's `current_revision` + `current_value` so the caller can render a
+// diff and offer a refresh affordance (last-write-wins).
+//
+// Wire-shape parity:
+//   ScreenTextOverride matches services/ds-service/internal/projects/screen_overrides.go
+//   field-for-field — adding fields server-side is forward-compatible because
+//   the type below is open via `Record<string, unknown>` for unknown keys.
+
+/** Subset of the row required by canvas-v2 components (renderer + inspector). */
+export interface TextOverride {
+  id: string;
+  screen_id: string;
+  figma_node_id: string;
+  canonical_path: string;
+  last_seen_original_text: string;
+  value: string;
+  revision: number;
+  status: string; // "active" | "orphaned"
+  updated_by_user_id: string;
+  updated_at: string;
+}
+
+export interface TextOverridePutBody {
+  value: string;
+  expected_revision: number;
+  canonical_path: string;
+  last_seen_original_text: string;
+}
+
+export interface TextOverridePutResponse {
+  revision: number;
+  updated_at: string;
+}
+
+/**
+ * Discriminated union mirrored on `DRDPutResult`: success, conflict (409 with
+ * server-side current_revision + current_value), or any other API error.
+ */
+export type TextOverridePutResult =
+  | ApiOk<TextOverridePutResponse>
+  | { ok: false; status: 409; conflict: { current_revision: number; current_value: string } }
+  | ApiErr;
+
+export interface BulkOverrideItem {
+  screen_id: string;
+  figma_node_id: string;
+  value: string;
+  canonical_path: string;
+  last_seen_original_text: string;
+}
+
+export interface BulkOverrideRowResult {
+  screen_id: string;
+  figma_node_id: string;
+  revision: number;
+}
+
+export interface BulkOverrideResponse {
+  bulk_id: string;
+  updated: number;
+  skipped: number;
+  results: BulkOverrideRowResult[];
+}
+
+/**
+ * GET /v1/projects/:slug/screens/:id/text-overrides — list every override
+ * pinned to one screen (any status). Adapter folds the response into the live
+ * store's per-screen `overrides` map.
+ */
+export async function fetchTextOverrides(
+  slug: string,
+  screenID: string,
+): Promise<ApiResult<{ overrides: TextOverride[] }>> {
+  return getJSON<{ overrides: TextOverride[] }>(
+    `/v1/projects/${encodeURIComponent(slug)}/screens/${encodeURIComponent(
+      screenID,
+    )}/text-overrides`,
+  );
+}
+
+/**
+ * PUT /v1/projects/:slug/screens/:id/text-overrides/:figma_node_id — upsert
+ * an override with optimistic-concurrency. 409 carries `current_revision` +
+ * `current_value` so callers can render a diff and offer "Refresh" (last-
+ * write-wins per the U8 plan).
+ */
+export async function putTextOverride(
+  slug: string,
+  screenID: string,
+  figmaNodeID: string,
+  body: TextOverridePutBody,
+): Promise<TextOverridePutResult> {
+  try {
+    const res = await fetch(
+      `${dsBaseURL()}/v1/projects/${encodeURIComponent(
+        slug,
+      )}/screens/${encodeURIComponent(screenID)}/text-overrides/${encodeURIComponent(
+        figmaNodeID,
+      )}`,
+      {
+        method: "PUT",
+        headers: authedHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(body),
+      },
+    );
+    if (res.status === 409) {
+      const parsed = (await res.json().catch(() => ({}))) as {
+        current_revision?: number;
+        current_value?: string;
+      };
+      return {
+        ok: false,
+        status: 409,
+        conflict: {
+          current_revision: parsed.current_revision ?? 0,
+          current_value: parsed.current_value ?? "",
+        },
+      };
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: await safeJSONErr(res),
+      };
+    }
+    return { ok: true, data: (await res.json()) as TextOverridePutResponse };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * DELETE /v1/projects/:slug/screens/:id/text-overrides/:figma_node_id —
+ * idempotent reset. Server returns 204 on success; 404 → not_found error.
+ *
+ * Returns `ApiResult<void>` since the reset endpoint has no body. Strict-TS
+ * callers branch on `r.ok` exactly like the other helpers.
+ */
+export async function deleteTextOverride(
+  slug: string,
+  screenID: string,
+  figmaNodeID: string,
+): Promise<ApiResult<void>> {
+  try {
+    const res = await fetch(
+      `${dsBaseURL()}/v1/projects/${encodeURIComponent(
+        slug,
+      )}/screens/${encodeURIComponent(screenID)}/text-overrides/${encodeURIComponent(
+        figmaNodeID,
+      )}`,
+      {
+        method: "DELETE",
+        headers: authedHeaders(),
+      },
+    );
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: await safeJSONErr(res),
+      };
+    }
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * POST /v1/projects/:slug/text-overrides/bulk — bulk upsert. Last-write-wins
+ * per row (no expected_revision). Caller handles per-row reconciliation when
+ * the response arrives.
+ */
+export async function bulkUpsertTextOverrides(
+  slug: string,
+  body: { items: BulkOverrideItem[] },
+): Promise<ApiResult<BulkOverrideResponse>> {
+  return postJSON<BulkOverrideResponse>(
+    `/v1/projects/${encodeURIComponent(slug)}/text-overrides/bulk`,
+    body,
+  );
+}
+
 /**
  * Asset-export download URL builder used by the U7 inspector's PNG / SVG /
  * 2x / 3x buttons. Matches the U5 server contract:
