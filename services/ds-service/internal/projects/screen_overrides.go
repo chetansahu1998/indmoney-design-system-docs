@@ -134,12 +134,13 @@ type OverrideUpsertResult struct {
 //
 // auditFn is called AFTER the override write succeeds, BEFORE the caller's
 // commit. It receives the same *sql.Tx so the audit row + override are atomic.
-// It also receives the flow_id resolved from the screen, so the caller can
-// embed `details.flow_id` without a separate query.
+// It also receives the flow_id resolved from the screen and the prior override
+// value (empty string on first-write paths) so the caller can embed an
+// old → new diff in `details` without a separate query.
 func (t *TenantRepo) UpsertOverride(
 	ctx context.Context,
 	in OverrideUpsertInput,
-	auditFn func(tx *sql.Tx, flowID string, newRevision int) error,
+	auditFn func(tx *sql.Tx, flowID string, oldValue string, newRevision int) error,
 ) (OverrideUpsertResult, error) {
 	if t.tenantID == "" {
 		return OverrideUpsertResult{}, errors.New("projects: tenant_id required")
@@ -176,6 +177,27 @@ func (t *TenantRepo) UpsertOverride(
 
 	now := t.now().UTC()
 	nowStr := rfc3339(now)
+
+	// Capture the prior override value (if any) BEFORE we mutate the row so
+	// the audit hook can record a true old → new diff. On first writes the
+	// SELECT returns sql.ErrNoRows; we fall back to LastSeenOriginalText so
+	// the activity feed still shows what the user replaced.
+	var oldValue string
+	{
+		var v sql.NullString
+		err := tx.QueryRowContext(ctx,
+			`SELECT value FROM screen_text_overrides
+			   WHERE screen_id = ? AND figma_node_id = ? AND tenant_id = ?
+			   LIMIT 1`,
+			in.ScreenID, in.FigmaNodeID, t.tenantID,
+		).Scan(&v)
+		if err == nil && v.Valid {
+			oldValue = v.String
+		}
+	}
+	if oldValue == "" {
+		oldValue = in.LastSeenOriginalText
+	}
 
 	var newRev int
 	if in.ExpectedRevision == 0 {
@@ -225,7 +247,7 @@ func (t *TenantRepo) UpsertOverride(
 	}
 
 	if auditFn != nil {
-		if err := auditFn(tx, flowID, newRev); err != nil {
+		if err := auditFn(tx, flowID, oldValue, newRev); err != nil {
 			return OverrideUpsertResult{}, fmt.Errorf("override audit: %w", err)
 		}
 	}
@@ -247,14 +269,15 @@ func (t *TenantRepo) UpsertOverride(
 // nil) so the handler can return 204 without distinguishing.
 //
 // Like UpsertOverride, the operation runs in a tx that also encloses the
-// audit-log INSERT; auditFn receives the resolved flow_id.
+// audit-log INSERT; auditFn receives the resolved flow_id and the prior
+// override value so the activity feed can surface "{user} reset \"{old}\"".
 //
 // Returns (deleted bool, flowID string, err error). flowID is "" when the
 // screen itself isn't visible — matched against ErrNotFound.
 func (t *TenantRepo) DeleteOverride(
 	ctx context.Context,
 	projectSlug, screenID, figmaNodeID string,
-	auditFn func(tx *sql.Tx, flowID string) error,
+	auditFn func(tx *sql.Tx, flowID string, oldValue string) error,
 ) (bool, string, error) {
 	if t.tenantID == "" {
 		return false, "", errors.New("projects: tenant_id required")
@@ -285,6 +308,23 @@ func (t *TenantRepo) DeleteOverride(
 		return false, "", fmt.Errorf("resolve screen: %w", err)
 	}
 
+	// Capture the prior value before deleting so the audit hook can include
+	// it in the activity-feed event. SELECT inside the same tx so the read
+	// reflects any in-flight write.
+	var oldValue string
+	{
+		var v sql.NullString
+		_ = tx.QueryRowContext(ctx,
+			`SELECT value FROM screen_text_overrides
+			   WHERE screen_id = ? AND figma_node_id = ? AND tenant_id = ?
+			   LIMIT 1`,
+			screenID, figmaNodeID, t.tenantID,
+		).Scan(&v)
+		if v.Valid {
+			oldValue = v.String
+		}
+	}
+
 	res, err := tx.ExecContext(ctx,
 		`DELETE FROM screen_text_overrides
 		   WHERE screen_id = ? AND figma_node_id = ? AND tenant_id = ?`,
@@ -303,7 +343,7 @@ func (t *TenantRepo) DeleteOverride(
 	// may still want to record the idempotent-no-op call (or it can no-op
 	// itself). Per the plan we only emit the audit row for actual deletes.
 	if deleted && auditFn != nil {
-		if err := auditFn(tx, flowID); err != nil {
+		if err := auditFn(tx, flowID, oldValue); err != nil {
 			return false, flowID, fmt.Errorf("override delete audit: %w", err)
 		}
 	}
@@ -359,8 +399,10 @@ type BulkOverrideRow struct {
 	// FlowID is resolved per row so the audit hook can include it.
 	FlowID string
 	// PerRowAudit is invoked inside the same tx as this row's upsert. Mirrors
-	// HandleBulkAcknowledge's BulkLifecycleRow pattern.
-	PerRowAudit func(tx *sql.Tx, flowID string, newRevision int) error
+	// HandleBulkAcknowledge's BulkLifecycleRow pattern. Receives `oldValue`
+	// (the prior value of the row, or LastSeenOriginalText on first writes)
+	// so the activity feed can render an old → new diff per bulk row.
+	PerRowAudit func(tx *sql.Tx, flowID string, oldValue string, newRevision int) error
 }
 
 // BulkOverrideSummary reports per-row outcomes after a bulk upsert.
@@ -407,6 +449,15 @@ func (t *TenantRepo) BulkUpsertOverrides(
 	}
 	defer resolveStmt.Close()
 
+	priorStmt, err := tx.PrepareContext(ctx,
+		`SELECT value FROM screen_text_overrides
+		   WHERE screen_id = ? AND figma_node_id = ? AND tenant_id = ?
+		   LIMIT 1`)
+	if err != nil {
+		return BulkOverrideSummary{}, fmt.Errorf("prepare prior: %w", err)
+	}
+	defer priorStmt.Close()
+
 	upsertStmt, err := tx.PrepareContext(ctx,
 		`INSERT INTO screen_text_overrides
 		    (id, tenant_id, screen_id, figma_node_id, canonical_path,
@@ -443,6 +494,22 @@ func (t *TenantRepo) BulkUpsertOverrides(
 		}
 		row.FlowID = flowID
 
+		// Capture the prior override value (if any) before the upsert so
+		// PerRowAudit can include an old → new diff. First-write rows fall
+		// back to LastSeenOriginalText so the activity feed still has a
+		// meaningful "what was replaced" string.
+		var oldValue string
+		{
+			var v sql.NullString
+			err := priorStmt.QueryRowContext(ctx, row.ScreenID, row.FigmaNodeID, t.tenantID).Scan(&v)
+			if err == nil && v.Valid {
+				oldValue = v.String
+			}
+		}
+		if oldValue == "" {
+			oldValue = row.LastSeenOriginalText
+		}
+
 		var newRev int
 		err = upsertStmt.QueryRowContext(ctx,
 			uuid.NewString(), t.tenantID, row.ScreenID, row.FigmaNodeID,
@@ -455,7 +522,7 @@ func (t *TenantRepo) BulkUpsertOverrides(
 		row.Revision = newRev
 
 		if row.PerRowAudit != nil {
-			if err := row.PerRowAudit(tx, flowID, newRev); err != nil {
+			if err := row.PerRowAudit(tx, flowID, oldValue, newRev); err != nil {
 				return BulkOverrideSummary{}, fmt.Errorf("bulk audit row %s: %w", row.FigmaNodeID, err)
 			}
 		}

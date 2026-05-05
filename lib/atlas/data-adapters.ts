@@ -692,6 +692,13 @@ function activityKindOf(eventType: string): ActivityKind {
   if (eventType.startsWith("audit")) return "audit";
   if (eventType.startsWith("figma") || eventType.includes("export") || eventType.includes("sync")) return "sync";
   if (eventType.startsWith("drd") || eventType.startsWith("comment")) return "edit";
+  // U10 — copy overrides. `set` and `bulk_set` are user edits; `reset` is a
+  // sync-style undo back to the Figma source; `orphaned` is a pipeline event
+  // that surfaces under the audit kind so PMs treat it like a violation
+  // needing review.
+  if (eventType === "override.text.orphaned") return "audit";
+  if (eventType === "override.text.reset") return "sync";
+  if (eventType.startsWith("override.")) return "edit";
   return "edit";
 }
 
@@ -722,8 +729,45 @@ function activitySentenceOf(row: FlowActivityRow): string {
       return "marked a violation fixed";
     case "violation.dismissed":
       return "dismissed a violation";
+    case "override.text.set": {
+      // `screen-name` resolution lives upstream — the audit row only carries
+      // screen_id; the inspector substitutes the human-readable name when it
+      // renders. `details` ships old/new strings so the diff is reproducible
+      // even if the live override has since been edited again.
+      const oldText = parseDetailString(row.details, "old") ?? "";
+      const newText = parseDetailString(row.details, "new") ?? "";
+      return `edited "${oldText}" → "${newText}"`;
+    }
+    case "override.text.reset": {
+      const oldText = parseDetailString(row.details, "old") ?? "";
+      return oldText ? `reset override "${oldText}"` : "reset an override";
+    }
+    case "override.text.orphaned": {
+      const oldText = parseDetailString(row.details, "old") ?? "";
+      return oldText
+        ? `override "${oldText}" was orphaned by re-import`
+        : "override was orphaned by re-import";
+    }
+    case "override.text.bulk_set": {
+      // Bulk events emit one audit row per item that share `bulk_id`. The
+      // sentence is per-row but stays terse — the activity tab groups by
+      // bulk_id when rendering so the user sees "edited 14 strings" once.
+      const newText = parseDetailString(row.details, "new") ?? "";
+      return newText ? `bulk-edited copy → "${newText}"` : "bulk-edited copy";
+    }
     default:
       return row.event_type.replace(/[._]/g, " ");
+  }
+}
+
+function parseDetailString(details: string | undefined, key: string): string | null {
+  if (!details) return null;
+  try {
+    const parsed = JSON.parse(details) as Record<string, unknown>;
+    const v = parsed[key];
+    return typeof v === "string" ? v : null;
+  } catch {
+    return null;
   }
 }
 

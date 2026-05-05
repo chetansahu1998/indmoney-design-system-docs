@@ -490,31 +490,23 @@ type OverrideOrphanedEvent struct {
 type OverrideAuditLogger struct{}
 
 // WriteOverrideOrphaned persists one `override.text.orphaned` audit_log row
-// using the supplied tx. The endpoint column is set to a synthetic string so
-// the operator audit-log query can group these alongside the other
-// `override.text.*` events.
+// using the supplied tx. Delegates to U10's WriteOverrideEvent helper so the
+// `details` JSON shape (old, new, screen_id, figma_node_id, reason) stays in
+// sync with the PUT/DELETE/bulk paths the activity feed reads from.
+//
+// `flow_id` is intentionally left blank: the re-attach pipeline operates
+// before flow_id is re-resolved against the new tree. The frontend's flow-
+// scoped activity tab therefore omits orphan events; tenant-wide audit
+// queries still surface them.
 func (OverrideAuditLogger) WriteOverrideOrphaned(ctx context.Context, tx *sql.Tx, ev OverrideOrphanedEvent) error {
-	details, _ := json.Marshal(map[string]any{
-		"screen_id":     ev.ScreenID,
-		"override_id":   ev.OverrideID,
-		"figma_node_id": ev.FigmaNodeID,
-		"canonical_path": ev.Path,
-		"original_text": ev.Original,
-		"reason":        ev.Reason,
+	return WriteOverrideEvent(ctx, tx, OverrideEvent{
+		EventType:   AuditActionOverrideOrphaned,
+		TenantID:    ev.TenantID,
+		ScreenID:    ev.ScreenID,
+		FigmaNodeID: ev.FigmaNodeID,
+		OldValue:    ev.Original,
+		Reason:      ev.Reason,
 	})
-	_, err := tx.ExecContext(ctx,
-		`INSERT INTO audit_log
-		    (id, ts, event_type, tenant_id, user_id, method, endpoint,
-		     status_code, duration_ms, ip_address, details)
-		 VALUES (?, ?, ?, ?, '', 'POST', '/internal/pipeline/reattach',
-		         0, 0, '', ?)`,
-		uuid.NewString(),
-		ev.At.Format(time.RFC3339Nano),
-		AuditActionOverrideOrphaned,
-		ev.TenantID,
-		string(details),
-	)
-	return err
 }
 
 // ─── small helpers ─────────────────────────────────────────────────────────
