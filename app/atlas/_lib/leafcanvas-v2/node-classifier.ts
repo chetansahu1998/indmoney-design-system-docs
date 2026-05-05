@@ -59,10 +59,27 @@ export interface ClassifiedNode {
   /** Normalized canonical role (lowercase, slash-joined segments). */
   role?: string;
   /**
-   * Variant properties parsed from name slashes. Common keys:
-   *   - state: "Yes" | "No" (Figma Yes/No toggle)
-   *   - size: "24px", "32px", etc.
-   *   - any `key=value` pair (Figma component variant property syntax)
+   * Slash-segments of the original name (whitespace trimmed, original
+   * case preserved). Surfaces a structural breakdown the inspector can
+   * show without re-parsing the name string. Examples:
+   *
+   *   "Icons/ 2D/ Help"
+   *     → ["Icons", "2D", "Help"]
+   *
+   *   "Illustrations/Equity tracking/Light/Banners/Got more demat accounts"
+   *     → ["Illustrations", "Equity tracking", "Light", "Banners",
+   *        "Got more demat accounts"]
+   *
+   *   "Help/No/24px"
+   *     → ["Help", "No", "24px"]
+   */
+  taxonomy?: string[];
+  /**
+   * Variant properties parsed from name slashes OR key=value segments:
+   *   - state: "Yes" | "No" | "On" | "Off" (toggle)
+   *   - size:  "24px", "32px", etc.
+   *   - mode:  "Light" | "Dark" (theme inferred from segments)
+   *   - any `key=value` pair (Figma component-variant API syntax)
    */
   variantProps?: Record<string, string>;
 }
@@ -79,6 +96,7 @@ const VARIANT_PROP_RE = /(\w[\w- ]*)\s*=\s*([^,/]+)/g;
 /** Names that look like layout containers — exclude from rasterization
  *  even when the structural heuristic would call them clusters. */
 const LAYOUT_NAME_HINTS: ReadonlySet<string> = new Set([
+  // System UI surfaces
   "status bar",
   "top strip",
   "footer",
@@ -86,12 +104,16 @@ const LAYOUT_NAME_HINTS: ReadonlySet<string> = new Set([
   "navigation bar",
   "tab bar",
   "action bar",
+  "action bar_1 cta",
+  "action bar_2cta",
+  // Inputs
   "input field",
   "input field final",
   "text input",
   "text input ",
   "otp input",
   "keyboard",
+  // Buttons / CTAs
   "footer cta",
   "footer text",
   "footer icon",
@@ -100,11 +122,29 @@ const LAYOUT_NAME_HINTS: ReadonlySet<string> = new Set([
   "1 cta",
   "2 cta",
   "prefix",
+  // Generic-shape-named INSTANCEs that are actually styled containers
+  // (89× "Rounded Rectangle" in Plutus Term Deposit alone).
+  "rounded rectangle",
+  "toggle final",
+  "filters and tabs",
+  "list 311",
+  // Backgrounds
   "background",
 ]);
 
+/** Slash-segment hints that signal a theme/mode rather than an icon. */
+const THEME_SEGMENTS: ReadonlySet<string> = new Set(["light", "dark"]);
+
 function normalizeName(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** Split a name on `/` into trimmed non-empty segments. */
+function taxonomySegments(rawName: string): string[] {
+  return rawName
+    .split("/")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 /** Public — classify any canonical_tree node. */
@@ -114,11 +154,14 @@ export function classifyNode(node: CanonicalNode): ClassifiedNode {
 
   const rawName = typeof node.name === "string" ? node.name : "";
   const name = normalizeName(rawName);
+  const taxonomy = taxonomySegments(rawName);
 
   // Layout-named containers always win over the structural heuristic.
   if (LAYOUT_NAME_HINTS.has(name)) {
-    return { kind: "container", role: name.replace(/\s+/g, "-") };
+    return { kind: "container", role: name.replace(/\s+/g, "-"), taxonomy };
   }
+
+  const variantProps = parseVariantProps(rawName, taxonomy);
 
   // Explicit icon taxonomy.
   if (ICON_NAME_RE.test(rawName)) {
@@ -128,7 +171,8 @@ export function classifyNode(node: CanonicalNode): ClassifiedNode {
         .replace(/^\s*/, "")
         .replace(/\s*\/\s*/g, "/")
         .toLowerCase(),
-      variantProps: parseVariantProps(rawName),
+      taxonomy,
+      variantProps,
     };
   }
 
@@ -137,7 +181,8 @@ export function classifyNode(node: CanonicalNode): ClassifiedNode {
     return {
       kind: "illustration",
       role: rawName.replace(/\s*\/\s*/g, "/").toLowerCase(),
-      variantProps: parseVariantProps(rawName),
+      taxonomy,
+      variantProps,
     };
   }
 
@@ -148,13 +193,14 @@ export function classifyNode(node: CanonicalNode): ClassifiedNode {
     return {
       kind: "icon",
       role: rawName.split("/")[0]?.trim().toLowerCase() ?? rawName.toLowerCase(),
-      variantProps: parseVariantProps(rawName),
+      taxonomy,
+      variantProps,
     };
   }
 
   // Structural heuristic for icon-cluster wrappers.
   if (isIconCluster(node)) {
-    return { kind: "icon" };
+    return { kind: "icon", taxonomy };
   }
 
   // Standalone shape primitives.
@@ -166,12 +212,12 @@ export function classifyNode(node: CanonicalNode): ClassifiedNode {
     t === "STAR" ||
     t === "POLYGON"
   ) {
-    return { kind: "shape" };
+    return { kind: "shape", taxonomy };
   }
 
   // FRAME/INSTANCE/COMPONENT/GROUP/RECTANGLE without a recognised
   // icon/illustration/layout name — treat as container, walk children.
-  return { kind: "container" };
+  return { kind: "container", taxonomy };
 }
 
 /**
@@ -183,7 +229,10 @@ export function classifyNode(node: CanonicalNode): ClassifiedNode {
  * Returns a flat string→string map. Keys are lowercased; values
  * preserve case so `Primary` stays `Primary`.
  */
-export function parseVariantProps(rawName: string): Record<string, string> | undefined {
+export function parseVariantProps(
+  rawName: string,
+  taxonomyArg?: string[],
+): Record<string, string> | undefined {
   const out: Record<string, string> = {};
   // Flavour 1: key=value pairs anywhere in the name.
   let m: RegExpExecArray | null;
@@ -200,6 +249,16 @@ export function parseVariantProps(rawName: string): Record<string, string> | und
     // Fallback: trailing /<NN>px size segment without Yes/No.
     const sized = SIZED_VARIANT_RE.exec(rawName);
     if (sized) out["size"] = sized[1];
+  }
+  // Flavour 3: theme/mode segment (Light / Dark) anywhere in the path.
+  // Plutus illustrations carry `Illustrations/<theme>/Light/...`; surface
+  // that as `mode=Light` so the inspector can show the rendered theme.
+  const tax = taxonomyArg ?? rawName.split("/").map((s) => s.trim());
+  for (const seg of tax) {
+    if (THEME_SEGMENTS.has(seg.toLowerCase())) {
+      out["mode"] = seg;
+      break;
+    }
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
