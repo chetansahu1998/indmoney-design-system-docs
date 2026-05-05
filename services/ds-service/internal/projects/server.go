@@ -110,6 +110,13 @@ type ServerDeps struct {
 	// falls back to 425 / HandleBulkAssetExport returns 503).
 	AssetExporter *AssetExporter
 
+	// ImageFillResolver resolves canonical_tree imageRef hashes to cached
+	// raster blobs via Figma's /v1/files/<key>/images endpoint. Powers the
+	// canvas-v2 LeafFrameRenderer's IMAGE-Paint rendering. nil disables the
+	// /image-refs and /assets/raw endpoints (renderer falls back to its
+	// existing grey-checker placeholder, same as before this feature shipped).
+	ImageFillResolver *ImageFillResolver
+
 	// GraphRebuildPool — plan 2026-05-03-001 / T3. Mutating handlers
 	// (export, decision create, violation patch, persona approve/reject,
 	// taxonomy archive) call s.enqueueGraphRebuild() after their commit so

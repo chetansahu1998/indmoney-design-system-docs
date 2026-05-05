@@ -230,6 +230,44 @@ func (c *Client) GetImages(ctx context.Context, fileKey string, nodeIDs []string
 	return raw.Images, nil
 }
 
+// GetFileImageFills fetches `/v1/files/<file_key>/images` — the imageRef
+// resolver, distinct from /v1/images which renders arbitrary nodes.
+//
+// Figma stores raster fills (photos, embedded illustrations, raster icons)
+// as content-addressed S3 blobs keyed by a sha1-derived `imageRef`. Every
+// IMAGE-type Paint in canonical_tree carries that `imageRef`, but the URL
+// is NOT included — the renderer must call this endpoint once per file to
+// get a `{imageRef → s3-url}` map.
+//
+// The S3 URLs returned here expire (~24h, undocumented but observed).
+// Callers MUST cache the bytes, not the URLs.
+//
+// Response shape (Figma API):
+//
+//	{ "error": false, "status": 200, "meta": { "images": { "<imageRef>": "<s3-url>", ... } } }
+func (c *Client) GetFileImageFills(ctx context.Context, fileKey string) (map[string]string, error) {
+	if fileKey == "" {
+		return nil, errors.New("fileKey is empty")
+	}
+	path := fmt.Sprintf("/v1/files/%s/images", fileKey)
+	var raw struct {
+		Error  any `json:"error"`
+		Status int `json:"status"`
+		Meta   struct {
+			Images map[string]string `json:"images"`
+		} `json:"meta"`
+	}
+	if err := c.get(ctx, path, &raw); err != nil {
+		return nil, err
+	}
+	// Figma returns `error: false` (boolean) on success. Treat any non-false,
+	// non-nil error field as a failure.
+	if raw.Error != nil && raw.Error != false {
+		return nil, fmt.Errorf("figma file-images api err: %v", raw.Error)
+	}
+	return raw.Meta.Images, nil
+}
+
 // Identity returns `/v1/me` — used for preflight smoke tests.
 func (c *Client) Identity(ctx context.Context) (map[string]any, error) {
 	var out map[string]any

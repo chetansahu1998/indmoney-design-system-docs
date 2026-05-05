@@ -196,6 +196,34 @@ func main() {
 		Now:     time.Now,
 	}
 
+	// Image-fill resolver — proxies Figma /v1/files/<key>/images so the
+	// canvas-v2 LeafFrameRenderer can resolve canonical_tree imageRef
+	// hashes to cached blobs. Reuses the same byte fetcher + data dir as
+	// the asset exporter; the URL fetcher is a separate stub so it can
+	// hit a different Figma endpoint without sharing /v1/images plumbing.
+	imageFillResolver := &projects.ImageFillResolver{
+		DB: dbConn.DB,
+		URLs: figmaImageFillURLFetcherFunc(func(ctx context.Context, fileKey string) (map[string]string, error) {
+			tenantID := projects.AssetExportTenantFromCtx(ctx)
+			if tenantID == "" {
+				return nil, fmt.Errorf("image-fill resolver: no tenant in ctx")
+			}
+			pat, err := figmaPATResolver(ctx, tenantID)
+			if err != nil {
+				return nil, err
+			}
+			if pat == "" {
+				return nil, fmt.Errorf("figma pat not configured for tenant %s", tenantID)
+			}
+			return client.New(pat).GetFileImageFills(ctx, fileKey)
+		}),
+		Bytes: &projects.HTTPAssetByteFetcher{
+			Client: &http.Client{Timeout: 5 * time.Minute},
+		},
+		DataDir: dataDir,
+		Now:     time.Now,
+	}
+
 	// Pr8 / D1 — asset-token signer for PNG/KTX2 image-loader auth. Derives
 	// the HMAC key from the encryption key (already 32 bytes, persisted in
 	// .env.local, rotates with the same operator workflow). Falls back to
@@ -284,8 +312,9 @@ func main() {
 		PipelineFactory:  pipelineFactory,
 		FigmaPATResolver: figmaPATResolver,
 		AssetSigner:      assetSigner,
-		AssetExporter:    assetExporter,
-		GraphRebuildPool: graphRebuildPool,
+		AssetExporter:     assetExporter,
+		ImageFillResolver: imageFillResolver,
+		GraphRebuildPool:  graphRebuildPool,
 		Log:              log,
 	})
 
@@ -652,6 +681,13 @@ func (s *server) routes(mux *http.ServeMux) {
 	// (tenant, bulk_id) for bulk zips.
 	mux.HandleFunc("POST /v1/projects/{slug}/assets/export-url",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleMintAssetExportToken())))
+	// Image-fill resolver routes — registered BEFORE the generic
+	// `/assets/{node_id}` route so the specific "raw" / "bulk" segments
+	// take precedence (Go 1.22 ServeMux picks the more specific pattern).
+	mux.HandleFunc("GET /v1/projects/{slug}/leaves/{leaf_id}/image-refs",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleListImageRefs)))
+	mux.HandleFunc("GET /v1/projects/{slug}/assets/raw/{imageRef}",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleServeRawAsset)))
 	mux.HandleFunc("GET /v1/projects/{slug}/assets/{node_id}",
 		s.projectsServer.HandleAssetDownload())
 	mux.HandleFunc("POST /v1/projects/{slug}/assets/bulk-export",
@@ -1355,4 +1391,14 @@ type figmaImageURLFetcherFunc func(ctx context.Context, fileKey string, nodeIDs 
 
 func (f figmaImageURLFetcherFunc) GetImages(ctx context.Context, fileKey string, nodeIDs []string, format string, scale int) (map[string]string, error) {
 	return f(ctx, fileKey, nodeIDs, format, scale)
+}
+
+// figmaImageFillURLFetcherFunc adapts a closure to the
+// projects.FigmaImageFillURLFetcher interface. Mirrors
+// figmaImageURLFetcherFunc above, but for the /v1/files/<key>/images
+// endpoint (imageRef → S3 URL map) instead of /v1/images (node renders).
+type figmaImageFillURLFetcherFunc func(ctx context.Context, fileKey string) (map[string]string, error)
+
+func (f figmaImageFillURLFetcherFunc) GetFileImageFills(ctx context.Context, fileKey string) (map[string]string, error) {
+	return f(ctx, fileKey)
 }
