@@ -325,19 +325,75 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 		}
 	}
 
+	// Pre-Stage-6 — read every screen's existing override rows BEFORE we
+	// open the canonical_tree write tx. SQLite serialises writers; if we
+	// held the tx open and then SELECTed for overrides we'd deadlock the
+	// single writer connection (same pattern as the Phase 7+8 graph-rebuild
+	// fix in docs/solutions/2026-05-01-003-phase-7-8-closure.md). The
+	// captured rows are passed straight into ReattachOverridesForScreen
+	// inside the tx — no additional reads happen there.
+	type screenReattach struct {
+		screenID  string
+		treeJSON  string
+		hash      string
+		overrides []ScreenOverride
+	}
+	reattaches := make([]screenReattach, 0, len(in.Frames))
+	for _, f := range in.Frames {
+		treeJSON, hash := extractCanonicalTree(canonicalNodes, f.FigmaFrameID)
+		overrides, oerr := p.Repo.ListActiveOverridesForScreen(ctx, f.ScreenID)
+		if oerr != nil {
+			return fmt.Errorf("list overrides for screen %s: %w", f.ScreenID, oerr)
+		}
+		reattaches = append(reattaches, screenReattach{
+			screenID:  f.ScreenID,
+			treeJSON:  treeJSON,
+			hash:      hash,
+			overrides: overrides,
+		})
+	}
+
 	// Stage 6 — single transaction: canonical_trees + screen_modes + status flip
-	// + audit_jobs row. All-or-nothing.
+	// + audit_jobs row + override re-anchor. All-or-nothing.
 	tx, err := p.Repo.BeginTx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Canonical trees: serialize the relevant slice of canonicalNodes per frame.
-	for _, f := range in.Frames {
-		treeJSON, hash := extractCanonicalTree(canonicalNodes, f.FigmaFrameID)
-		if err := p.Repo.InsertCanonicalTree(ctx, tx, f.ScreenID, treeJSON, hash); err != nil {
+	// Canonical trees + per-screen override re-anchor in the same tx. Order
+	// matters: InsertCanonicalTree first so the row exists for any tx-local
+	// integrity checks; ReattachOverridesForScreen rewrites override anchors
+	// to match the just-written tree.
+	auditWriter := OverrideAuditLogger{}
+	for _, r := range reattaches {
+		if err := p.Repo.InsertCanonicalTree(ctx, tx, r.screenID, r.treeJSON, r.hash); err != nil {
 			return fmt.Errorf("insert canonical tree: %w", err)
+		}
+		if len(r.overrides) == 0 {
+			continue
+		}
+		results, rerr := p.Repo.ReattachOverridesForScreen(ctx, tx, r.screenID, r.overrides, r.treeJSON, auditWriter)
+		if rerr != nil {
+			// A failure here means the UPDATE statement itself broke (DB
+			// error, not a per-override resolution miss). Fail the whole
+			// pipeline tx so the canonical_tree change rolls back too —
+			// otherwise we'd leave overrides pointing into a tree that's
+			// already been replaced.
+			return fmt.Errorf("reattach overrides for screen %s: %w", r.screenID, rerr)
+		}
+		if p.Log != nil && len(results) > 0 {
+			orphans := 0
+			for _, res := range results {
+				if res.NewStatus == ScreenOverrideStatusOrphaned {
+					orphans++
+				}
+			}
+			p.Log.Debug("override reattach",
+				"screen_id", r.screenID,
+				"total", len(results),
+				"orphaned", orphans,
+			)
 		}
 	}
 
@@ -731,10 +787,14 @@ func pipelineStageFromError(err error) string {
 		return "persist_png"
 	case strings.HasPrefix(msg, "update screen png_key"):
 		return "update_png_key"
+	case strings.HasPrefix(msg, "list overrides for screen"):
+		return "list_overrides"
 	case strings.HasPrefix(msg, "begin tx"):
 		return "stage6_tx_begin"
 	case strings.HasPrefix(msg, "insert canonical tree"):
 		return "insert_canonical_tree"
+	case strings.HasPrefix(msg, "reattach overrides for screen"):
+		return "reattach_overrides"
 	case strings.HasPrefix(msg, "insert screen_modes"):
 		return "insert_screen_modes"
 	case strings.HasPrefix(msg, "flip view_ready"):

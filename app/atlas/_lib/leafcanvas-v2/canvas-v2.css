@@ -1,0 +1,94 @@
+/* ============================================================
+   canvas-v2.css — styles for the strict-TS LeafFrameRenderer.
+
+   Mounted from `app/atlas/_lib/leafcanvas-v2/LeafFrameRenderer.tsx`.
+   Scope is `.leafcv2-*` so styles never collide with the original
+   `<window.PhoneFrame>` PNG path (which uses `.ph-screen*`).
+
+   Design tokens follow `app/atlas/_styles/leafcanvas.css` — same
+   surface colors, same shimmer keyframe, same skeleton border.
+   ============================================================ */
+
+/* ── Frame wrapper (wraps each per-frame walker output) ───── */
+
+.leafcv2-frame {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-1, #f8f8f8);
+  /* Children use position:absolute relative to this box. */
+  isolation: isolate;
+}
+
+.leafcv2-frame[data-status="loading"],
+.leafcv2-frame[data-status="idle"] {
+  background: var(--bg-1, #f8f8f8);
+}
+
+.leafcv2-frame[data-status="error"] {
+  background: rgba(255, 80, 80, 0.05);
+}
+
+/* ── Skeleton (off-screen + loading) ──────────────────────── */
+
+.leafcv2-skeleton {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.02) 0%,
+    rgba(0, 0, 0, 0.04) 100%
+  );
+  overflow: hidden;
+}
+
+.leafcv2-skeleton__shimmer {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.45) 35%,
+    transparent 70%
+  );
+  animation: leafcv2-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes leafcv2-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.leafcv2-skeleton--error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: rgba(180, 50, 50, 0.85);
+  font: 500 12px/1.4 Inter, system-ui, sans-serif;
+  background: rgba(255, 80, 80, 0.04);
+}
+
+.leafcv2-skeleton--error .leafcv2-skeleton__label {
+  font-weight: 600;
+}
+
+.leafcv2-skeleton--error .leafcv2-skeleton__sub {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.leafcv2-skeleton--empty {
+  background: transparent;
+}
+
+/* ── Cluster placeholder (until U7 ships asset-export) ────── */
+
+.leafcv2-frame [data-cluster-pending="true"] {
+  /* Placeholder visuals owned inline so static analyzers don't flag
+     dead `data-cluster-pending` selectors when the styles move. */
+}

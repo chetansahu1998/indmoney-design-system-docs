@@ -58,7 +58,7 @@ interface AtlasSelection {
 
 // ─── Per-leaf cache slot ─────────────────────────────────────────────────────
 
-interface LeafSlot {
+export interface LeafSlot {
   frames: Frame[];
   edges: LeafEdge[];
   overlays: {
@@ -69,6 +69,17 @@ interface LeafSlot {
     drd?: DRDDocument;
   };
   loadedAt: number;
+  /**
+   * Per-screen canonical_tree blobs lazy-loaded for the strict-TS
+   * LeafFrameRenderer (canvas v2). Keyed by screens.id.
+   *   - undefined entry  → not yet fetched (renderer triggers fetch).
+   *   - null entry       → fetch completed but no tree available
+   *                        (sheet-sync screens lack one until audit runs).
+   *   - object entry     → ready-to-walk canonical tree.
+   * Always present (initialized to `{}` in `loadLeaf`) so the renderer
+   * doesn't have to null-check the map itself.
+   */
+  canonicalTreeByScreenID: Record<string, unknown>;
 }
 
 // ─── Store contract ──────────────────────────────────────────────────────────
@@ -264,6 +275,10 @@ export const useAtlas = create<AtlasStoreState>()(
           edges: canvas.edges,
           overlays,
           loadedAt: Date.now(),
+          // Seeded by fetchLeafCanvas: per-screen canonical_tree is
+          // available for the first 20 screens (probe-walk for edge
+          // inference); the remainder lazy-load as the v2 renderer scrolls.
+          canonicalTreeByScreenID: canvas.canonicalTreeByScreenID ?? {},
         };
         set({ leafSlots: { ...get().leafSlots, [leafID]: slot } });
       },

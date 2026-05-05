@@ -90,6 +90,19 @@ func figmaCacheKey(tenantID, fileKey, nodeID string) string {
 	return tenantID + ":" + fileKey + ":" + nodeID
 }
 
+// figmaCacheKeyWithFormat extends figmaCacheKey with format + scale axes for
+// the asset-export proxy (U4). Asset exports under the same (tenant, file, node)
+// tuple may render at multiple format/scale variants (PNG@1x for thumbnails,
+// PNG@3x for retina, SVG for icons), each with its own pre-signed Figma URL —
+// the cache must keep them distinct or different consumers stomp each other.
+//
+// The base figmaCacheKey is preserved for the legacy thumbnailed-frame proxy
+// where format=png/scale=1 is implicit; this helper exists for callers that
+// need format/scale-aware keys without forking the cache shape.
+func figmaCacheKeyWithFormat(tenantID, fileKey, nodeID, format string, scale int) string {
+	return fmt.Sprintf("%s:%s:%s:%s:%d", tenantID, fileKey, nodeID, format, scale)
+}
+
 func (c *figmaProxyCache) get(key string) (FigmaFrameMetadata, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -226,4 +239,65 @@ func (rl *figmaRateLimiter) allow(tenantID string, now time.Time) bool {
 	b.tokens--
 	b.lastUsed = now
 	return true
+}
+
+// wait blocks until a token is available for tenantID under the provided
+// refill cadence + burst, or ctx is cancelled. Mirrors the Go stdlib
+// `golang.org/x/time/rate` Limiter.Wait semantics but stays in-house so we
+// don't take a new dep — tokens are computed from `refillEvery`/`burst` so
+// callers can run different limits per call site (URL-fetch vs bytes-download).
+//
+// Returns nil on success, ctx.Err() on cancel.
+func (rl *figmaRateLimiter) wait(ctx context.Context, tenantID string, burst int, refillEvery time.Duration) error {
+	if burst <= 0 {
+		burst = 1
+	}
+	if refillEvery <= 0 {
+		refillEvery = 200 * time.Millisecond
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		now := time.Now()
+		rl.mu.Lock()
+		b, ok := rl.buckets[tenantID]
+		if !ok {
+			rl.buckets[tenantID] = &figmaBucket{
+				tokens:   float64(burst - 1),
+				updated:  now,
+				lastUsed: now,
+			}
+			rl.mu.Unlock()
+			return nil
+		}
+		elapsed := now.Sub(b.updated)
+		if elapsed > 0 {
+			refill := float64(elapsed) / float64(refillEvery)
+			b.tokens += refill
+			if b.tokens > float64(burst) {
+				b.tokens = float64(burst)
+			}
+			b.updated = now
+		}
+		if b.tokens >= 1 {
+			b.tokens--
+			b.lastUsed = now
+			rl.mu.Unlock()
+			return nil
+		}
+		// Compute time until next token.
+		need := 1 - b.tokens
+		sleep := time.Duration(need * float64(refillEvery))
+		rl.mu.Unlock()
+		// Cap wait slice to keep ctx-cancel responsive.
+		if sleep > 50*time.Millisecond {
+			sleep = 50 * time.Millisecond
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(sleep):
+		}
+	}
 }

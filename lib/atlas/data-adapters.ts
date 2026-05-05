@@ -336,7 +336,13 @@ export async function fetchLeafCanvas(
   // canonical_tree hasn't been built yet (sheet-sync imports skip the
   // pipeline that fills the column), every screen 404s and we'd otherwise
   // spam 20 requests' worth of console noise on every leaf open.
+  //
+  // Side effect since U6: every fetched canonical_tree is also stashed in
+  // `canonicalTreeByScreenID` so the strict-TS LeafFrameRenderer can skip
+  // the network round-trip for above-the-fold frames. Frames not in this
+  // initial sample lazy-load their tree directly via lazyFetchCanonicalTree.
   const edges: LeafEdge[] = [];
+  const canonicalTreeByScreenID: Record<string, unknown> = {};
   const sample = screens.slice(0, 20);
   const screenIDs = new Set(screens.map((s) => s.ID));
   if (sample.length > 0) {
@@ -344,6 +350,7 @@ export async function fetchLeafCanvas(
       `/v1/projects/${encodeURIComponent(slug)}/screens/${encodeURIComponent(sample[0].ID)}/canonical-tree`,
     );
     if (probe.ok) {
+      canonicalTreeByScreenID[sample[0].ID] = probe.data.canonical_tree ?? null;
       const targets = collectNavigationTargets(probe.data.canonical_tree, screenIDs);
       targets.forEach((toID, j) => {
         edges.push({ from: sample[0].ID, to: toID, kind: j === 0 ? "main" : "branch" });
@@ -358,6 +365,7 @@ export async function fetchLeafCanvas(
       trees.forEach((t, i) => {
         if (t.status !== "fulfilled" || !t.value.ok) return;
         const fromScreen = sample[i + 1];
+        canonicalTreeByScreenID[fromScreen.ID] = t.value.data.canonical_tree ?? null;
         const targetIDs = collectNavigationTargets(t.value.data.canonical_tree, screenIDs);
         targetIDs.forEach((toID, j) => {
           edges.push({ from: fromScreen.ID, to: toID, kind: j === 0 ? "main" : "branch" });
@@ -368,7 +376,7 @@ export async function fetchLeafCanvas(
     // the parallel walk to avoid 20 redundant 404s in the network panel.
   }
 
-  return { frames, edges };
+  return { frames, edges, canonicalTreeByScreenID };
 }
 
 /**

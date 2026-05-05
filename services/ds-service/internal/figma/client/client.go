@@ -189,6 +189,47 @@ func (c *Client) GetPublishedVariables(ctx context.Context, fileKey string) (map
 	return out, nil
 }
 
+// GetImages fetches `/v1/images/<key>?ids=<csv>&format={png|svg}&scale={1|2|3}`.
+// Returns a node-id → signed CDN URL map. The URLs are short-lived; callers
+// must download the bytes promptly (the asset-export proxy in projects.U4
+// downloads inline under a separate per-tenant rate-limit bucket).
+//
+// nodeIDs MUST be in canonical "X:Y" form. format must be "png" or "svg".
+// scale must be 1, 2, or 3 (Figma rejects other values; for SVG it's silently
+// ignored but we still pass it for symmetry).
+//
+// Reuses Client.get's transport, 1 GB body cap, and APIError surface. 429s
+// surface as *APIError with RetryAfter populated; callers should backoff
+// (mirrors pipeline.go renderChunk's 3-attempt pattern).
+func (c *Client) GetImages(ctx context.Context, fileKey string, nodeIDs []string, format string, scale int) (map[string]string, error) {
+	if len(nodeIDs) == 0 {
+		return nil, errors.New("nodeIDs is empty")
+	}
+	if format != "png" && format != "svg" {
+		return nil, fmt.Errorf("unsupported format %q (want png|svg)", format)
+	}
+	if scale < 1 || scale > 3 {
+		return nil, fmt.Errorf("unsupported scale %d (want 1|2|3)", scale)
+	}
+	csv := nodeIDs[0]
+	for _, id := range nodeIDs[1:] {
+		csv += "," + id
+	}
+	path := fmt.Sprintf("/v1/images/%s?ids=%s&format=%s&scale=%d",
+		fileKey, csv, format, scale)
+	var raw struct {
+		Err    any               `json:"err"`
+		Images map[string]string `json:"images"`
+	}
+	if err := c.get(ctx, path, &raw); err != nil {
+		return nil, err
+	}
+	if raw.Err != nil {
+		return nil, fmt.Errorf("figma images api err: %v", raw.Err)
+	}
+	return raw.Images, nil
+}
+
 // Identity returns `/v1/me` — used for preflight smoke tests.
 func (c *Client) Identity(ctx context.Context) (map[string]any, error) {
 	var out map[string]any

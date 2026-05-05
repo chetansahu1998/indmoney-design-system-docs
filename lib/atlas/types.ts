@@ -128,6 +128,16 @@ export interface LeafEdge {
 export interface LeafCanvas {
   frames: Frame[];
   edges: LeafEdge[];
+  /**
+   * Per-screen canonical_tree blobs already pulled as part of the edge
+   * inference walk (first 20 screens). The strict-TS LeafFrameRenderer
+   * uses these to skip the network round-trip for above-the-fold frames;
+   * scrolled-into-view frames lazy-fetch their tree directly.
+   *
+   * undefined entry = not in this batch; null entry = fetched but no
+   * tree available; object = ready-to-walk canonical tree.
+   */
+  canonicalTreeByScreenID?: Record<string, unknown>;
 }
 
 // ─── Inspector overlays ──────────────────────────────────────────────────────
