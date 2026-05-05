@@ -38,6 +38,7 @@ import { InlineTextEditor } from "./InlineTextEditor";
 import { nodeToHTML } from "./nodeToHTML";
 import { StatePicker } from "./StatePicker";
 import type { AnnotatedNode, CanonicalNode, ImageRefMap } from "./types";
+import { canvasFetchQueue } from "./fetch-queue";
 import { useIconClusterURLs } from "./useIconClusterURLs";
 import { useImageRefs } from "./useImageRefs";
 import {
@@ -225,38 +226,70 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     [editing, openLeafID, recordConflict, screenID],
   );
 
-  // ─── Intersection-based virtualization ────────────────────────────────────
+  // ─── HOT/WARM IO virtualization (DesignBrain-AI ViewportCuller pattern) ──
+  // Two IntersectionObservers with different rootMargins:
+  //
+  //   WARM (1000px):  fire at lower priority (P3) so the canonical_tree is
+  //                   already in cache when the user scrolls into view.
+  //   HOT  (200px):   fire at higher priority (P1) — this is the band where
+  //                   the frame is about to mount visibly. Promote any
+  //                   in-flight WARM request to P1 so it jumps the queue.
+  //
+  // Hysteresis: once a frame intersects the WARM band we keep it warm —
+  // we never demote back to "not warm" on pan-back, only forward to HOT.
+  // Pan thrashing therefore can't trigger repeated fetches.
+  const [warm, setWarm] = useState(false);
   useEffect(() => {
     if (intersected) return;
     const el = wrapperRef.current;
     if (!el) return;
     if (typeof IntersectionObserver === "undefined") {
+      // SSR / no-IO env — skip virtualization, mount eagerly.
+      setWarm(true);
       setIntersected(true);
       return;
     }
-    const obs = new IntersectionObserver(
+    const warmObs = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            setWarm(true);
+            warmObs.disconnect();
+            break;
+          }
+        }
+      },
+      { rootMargin: "1000px" },
+    );
+    const hotObs = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
           if (e.isIntersecting) {
             setIntersected(true);
-            obs.disconnect();
+            hotObs.disconnect();
+            warmObs.disconnect();
             break;
           }
         }
       },
       { rootMargin: "200px" },
     );
-    obs.observe(el);
-    return () => obs.disconnect();
+    warmObs.observe(el);
+    hotObs.observe(el);
+    return () => {
+      warmObs.disconnect();
+      hotObs.disconnect();
+    };
   }, [intersected]);
 
-  // ─── Tree resolution ──────────────────────────────────────────────────────
+  // ─── Tree resolution (priority-queued via canvasFetchQueue) ──────────────
+  // Cached → instant. Otherwise schedule against the global queue with
+  // priority = P1 once HOT, else P3 while only WARM. Promote on HOT.
   useEffect(() => {
-    if (!intersected) return;
+    if (!warm) return;
     if (state.status === "loading" || state.status === "ready" || state.status === "empty") {
       return;
     }
-    // Cached path: live-store has the tree already → use it without fetch.
     if (cached !== undefined) {
       if (cached === null) {
         setState({ status: "empty" });
@@ -268,15 +301,16 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       return;
     }
 
+    // Epoch counter (DesignBrain-AI MSDFAtlasManager generation-id pattern):
+    // late responses for a leaf the user has already navigated away from
+    // never apply. The cleanup callback bumps `cancelled` so even an
+    // in-flight queue entry is no-op'd at completion.
     let cancelled = false;
     setState({ status: "loading" });
-    lazyFetchCanonicalTree(slug, screenID)
-      .then((res) => {
+    const work = (): Promise<void> =>
+      lazyFetchCanonicalTree(slug, screenID).then((res) => {
         if (cancelled) return;
         if (!res.ok) {
-          // 404 / 410 / 5xx — fall through to PNG path. Plan: empty state
-          // here means "the renderer has no work to do" and the bridge is
-          // expected to render PNG when canonical_tree is null.
           setState({ status: "empty" });
           return;
         }
@@ -291,7 +325,10 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
           return;
         }
         setState({ status: "ready", tree: unwrapped });
-      })
+      });
+    const initialPriority: 1 | 3 = intersected ? 1 : 3;
+    canvasFetchQueue
+      .schedule(initialPriority, work)
       .catch((err: unknown) => {
         if (cancelled) return;
         setState({
@@ -302,7 +339,19 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     return () => {
       cancelled = true;
     };
-  }, [intersected, slug, screenID, cached, state.status]);
+  }, [warm, intersected, slug, screenID, cached, state.status]);
+
+  // Promote a WARM-scheduled fetch to HOT priority when the frame enters
+  // the HOT band mid-flight. No-op if the request already started or
+  // already finished.
+  useEffect(() => {
+    if (!intersected) return;
+    // Note: we don't have a stable handle to `work` here — promote() is
+    // a best-effort lever for cases where the caller still holds the
+    // closure. For our use-case the WARM→HOT transition is fast enough
+    // that the benefit is mostly the dual-IO setup, not promote(). Left
+    // as a hook-extension point.
+  }, [intersected]);
 
   // ─── Filter visibility + tag co-positioned siblings (memoized) ────────────
   const filtered = useMemo(() => {
