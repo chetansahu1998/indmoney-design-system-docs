@@ -572,6 +572,21 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/projects/{slug}/flows/{flow_id}/drd",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandlePutDRD)))
 
+	// Plan 2026-05-05-002 U2 — text overrides (Zeplin-grade leaf canvas).
+	// Per-screen + per-leaf list paths, plus PUT/DELETE/bulk-upsert.
+	// Bodies capped at 16KB per override. Optimistic concurrency mirrors
+	// HandlePutDRD's contract (409 on stale expected_revision).
+	mux.HandleFunc("GET /v1/projects/{slug}/screens/{id}/text-overrides",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleListOverrides)))
+	mux.HandleFunc("GET /v1/projects/{slug}/leaves/{leaf_id}/text-overrides",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleListOverrides)))
+	mux.HandleFunc("PUT /v1/projects/{slug}/screens/{id}/text-overrides/{figma_node_id}",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandlePutOverride)))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/screens/{id}/text-overrides/{figma_node_id}",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleDeleteOverride)))
+	mux.HandleFunc("POST /v1/projects/{slug}/text-overrides/bulk",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleBulkUpsertOverrides)))
+
 	// Phase 2 U10 — Audit-by-slug read path. /files/[slug] in the docs site
 	// reads from this endpoint instead of importing the JSON sidecar at build
 	// time. Returns the same lib/audit/types.ts AuditResult shape so the
