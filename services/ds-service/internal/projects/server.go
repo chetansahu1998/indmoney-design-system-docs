@@ -604,12 +604,30 @@ func (s *Server) HandleVersionRetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only failed versions are retriable. `pending` is already running
-	// (a second retry would race with the in-flight pipeline goroutine);
-	// `view_ready` is already done (no-op).
-	if version.Status != "failed" {
+	// Only failed versions are retriable by default. `pending` is already
+	// running (a second retry would race with the in-flight pipeline
+	// goroutine); `view_ready` is already done.
+	//
+	// `?force=1` overrides the `view_ready` block so operators can re-run
+	// the pipeline against an already-rendered version when something
+	// downstream (e.g., the canonical_tree depth constant) changes and
+	// existing blobs need rebuilding. Pending versions are still rejected
+	// because forcing into a running pipeline would race state. The flag
+	// is intentionally undocumented in the public API surface — it's a
+	// recovery lever, not part of the normal export flow.
+	force := r.URL.Query().Get("force") == "1"
+	switch version.Status {
+	case "failed":
+		// always retriable
+	case "view_ready":
+		if !force {
+			writeJSONErr(w, http.StatusConflict, "not_retriable",
+				"version is view_ready; pass ?force=1 to re-run anyway")
+			return
+		}
+	default:
 		writeJSONErr(w, http.StatusConflict, "not_retriable",
-			"version is not in failed state (current="+version.Status+")")
+			"version status="+version.Status+" is not retriable")
 		return
 	}
 

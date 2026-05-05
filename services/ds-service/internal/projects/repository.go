@@ -1057,13 +1057,24 @@ func (t *TenantRepo) SetScreenPNG(ctx context.Context, screenID, storageKey stri
 }
 
 // InsertScreenModes is called inside the pipeline transaction; takes a *sql.Tx.
+//
+// Upserts on (screen_id, mode_label) — the table's UNIQUE constraint —
+// so retry calls (HandleVersionRetry, force=1 re-runs after the depth-10
+// bump) update the existing row's figma_frame_id + variable-mode JSON
+// instead of failing with "UNIQUE constraint failed". The `id` column
+// stays stable across retries because we use the existing row's id when
+// there's a conflict — refs from other tables (audit_log, screen_mode_*)
+// keep pointing at the same row id.
 func (t *TenantRepo) InsertScreenModes(ctx context.Context, tx *sql.Tx, modes []ScreenMode) error {
 	if t.tenantID == "" {
 		return errors.New("projects: tenant_id required")
 	}
 	stmt, err := tx.PrepareContext(ctx,
 		`INSERT INTO screen_modes (id, screen_id, tenant_id, mode_label, figma_frame_id, explicit_variable_modes_json)
-		 VALUES (?, ?, ?, ?, ?, ?)`)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (screen_id, mode_label) DO UPDATE SET
+		     figma_frame_id              = excluded.figma_frame_id,
+		     explicit_variable_modes_json = excluded.explicit_variable_modes_json`)
 	if err != nil {
 		return err
 	}
