@@ -123,6 +123,12 @@ type Pipeline struct {
 	// mid-StoreAsset write. nil is allowed (tests, embedded use); the
 	// stage-9 spawn falls back to context.Background() in that case.
 	ShutdownCtx context.Context
+	// PrerenderStatus — process-wide ring buffer that captures one
+	// PrerenderRun per Stage 9 invocation for operator triage. Wired in
+	// by main() and surfaced via GET /v1/admin/prerender/status. nil is
+	// allowed (tests, embedded use); the stage-9 spawn skips the
+	// recording cleanly via the buffer's nil-safe Append.
+	PrerenderStatus *PrerenderStatusBuffer
 }
 
 // PipelineInputs is what the HTTP handler hands off after persisting the
@@ -510,13 +516,48 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 					PreviewPyramid: p.PreviewPyramid,
 					AssetExporter:  p.AssetExporter,
 				}
-				if _, perr := PrerenderClusters(bgCtx, p.Log, deps, in, ids, DefaultClusterPrerenderConfig); perr != nil {
+				startedAt := time.Now().UTC()
+				rendered, perr := PrerenderClusters(bgCtx, p.Log, deps, in, ids, DefaultClusterPrerenderConfig)
+				if perr != nil {
 					if p.Log != nil {
 						p.Log.Warn("stage 9: cluster prerender failed",
 							"version_id", versionID,
 							"err", perr.Error(),
 						)
 					}
+				}
+				// Record the run into the status ring buffer for operator
+				// observability. nil-safe so tests / embedded callers don't
+				// need to wire one up. Failed count is len(ids) - rendered
+				// when PrerenderClusters returned without setup-error;
+				// when setup-error fired, total work was 0 and the
+				// outcome string carries the diagnostic.
+				if p.PrerenderStatus != nil {
+					finishedAt := time.Now().UTC()
+					failed := 0
+					if perr == nil {
+						failed = len(ids) - rendered
+						if failed < 0 {
+							failed = 0
+						}
+					}
+					setupErrStr := ""
+					if perr != nil {
+						setupErrStr = perr.Error()
+					}
+					p.PrerenderStatus.Append(PrerenderRun{
+						VersionID:     versionID,
+						FileID:        in.FileID,
+						TenantID:      in.TenantID,
+						StartedAt:     startedAt,
+						FinishedAt:    finishedAt,
+						DurationMs:    finishedAt.Sub(startedAt).Milliseconds(),
+						TotalClusters: len(ids),
+						Rendered:      rendered,
+						Failed:        failed,
+						Outcome:       ClassifyOutcome(len(ids), rendered, failed, perr),
+						SetupError:    setupErrStr,
+					})
 				}
 			}(in.VersionID, clusterIDs)
 		}

@@ -8,6 +8,7 @@
 //	GET  /v1/audit/:tenant              — recent audit log entries (auth: tenant_admin)
 //	POST /v1/admin/bootstrap            — one-shot create super-admin (header: X-Bootstrap-Token)
 //	POST /v1/admin/figma-token          — upload Figma PAT for a tenant (auth: super_admin)
+//	GET  /v1/admin/prerender/status     — Stage 9 prerender ring buffer (auth: super_admin)
 //
 // Configuration via env (loaded from .env.local at repo root if present):
 //
@@ -122,6 +123,11 @@ func main() {
 	// when missing, the transcoder is Available=false and every
 	// Transcode call short-circuits gracefully.
 	ktx2 := projects.NewKTX2Transcoder(log)
+	// Stage 9 (cluster prerender) status ring buffer. Process-wide,
+	// single instance, surfaced via GET /v1/admin/prerender/status.
+	// nil-safe Append in pipeline.go means tests / embedded callers
+	// that bypass this wiring still work.
+	prerenderStatus := projects.NewPrerenderStatusBuffer(0)
 	// Forward-declared so the pipelineFactory closure can pass them into
 	// the per-tenant Pipeline. Actual instances are built further below
 	// (they depend on the DB + figmaPATResolver which the closure path
@@ -162,9 +168,10 @@ func main() {
 			DataDir:        dataDir,
 			Log:            log,
 			KTX2:           ktx2,
-			PreviewPyramid: previewPyramid, // captured by reference; nil until below assigns
-			AssetExporter:  assetExporter,  // ditto
-			ShutdownCtx:    shutdownCtx,    // wires SIGTERM into Stage 9 background prerender
+			PreviewPyramid:  previewPyramid, // captured by reference; nil until below assigns
+			AssetExporter:   assetExporter,  // ditto
+			ShutdownCtx:     shutdownCtx,    // wires SIGTERM into Stage 9 background prerender
+			PrerenderStatus: prerenderStatus, // U8 — operator observability
 		}, nil
 	}
 
@@ -387,14 +394,15 @@ func main() {
 	}
 
 	srv := &server{
-		cfg:            cfg,
-		db:             dbConn,
-		jwt:            cfg.JWTKey,
-		enc:            cfg.EncryptionKey,
-		orch:           orch,
-		log:            log,
-		projectsServer: projectsServer,
-		broker:         broker,
+		cfg:             cfg,
+		db:              dbConn,
+		jwt:             cfg.JWTKey,
+		enc:             cfg.EncryptionKey,
+		orch:            orch,
+		log:             log,
+		projectsServer:  projectsServer,
+		broker:          broker,
+		prerenderStatus: prerenderStatus,
 	}
 
 	mux := http.NewServeMux()
@@ -621,10 +629,11 @@ type server struct {
 	db             *db.DB
 	jwt            *auth.SigningKey
 	enc            *auth.EncryptionKey
-	orch           *sync.Orchestrator
-	log            *slog.Logger
-	projectsServer *projects.Server
-	broker         projects.SSEPublisher // shared SSE publisher; used by Phase 2 fan-out + audit-job runs
+	orch            *sync.Orchestrator
+	log             *slog.Logger
+	projectsServer  *projects.Server
+	broker          projects.SSEPublisher // shared SSE publisher; used by Phase 2 fan-out + audit-job runs
+	prerenderStatus *projects.PrerenderStatusBuffer // U8 — operator observability for Stage 9
 }
 
 func (s *server) routes(mux *http.ServeMux) {
@@ -632,6 +641,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/login", s.handleLogin)
 	mux.HandleFunc("POST /v1/admin/bootstrap", s.handleBootstrap)
 	mux.HandleFunc("POST /v1/admin/figma-token", s.requireSuperAdmin(s.handleFigmaTokenUpload))
+	mux.HandleFunc("GET /v1/admin/prerender/status", s.requireSuperAdmin(projects.HandlePrerenderStatus(s.prerenderStatus)))
 	mux.HandleFunc("POST /v1/sync/{tenant}", s.requireAuth(s.handleSync))
 	mux.HandleFunc("GET /v1/audit/{tenant}", s.requireAuth(s.handleAudit))
 	mux.HandleFunc("GET /v1/me", s.requireAuth(s.handleMe))
