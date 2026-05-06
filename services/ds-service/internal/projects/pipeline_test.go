@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -21,11 +22,14 @@ import (
 type stubRenderer struct {
 	urls       map[string]string
 	pngs       map[string][]byte
-	fail429    int          // remaining 429s to return
-	failOnce   error        // single non-retryable error to return on first call
+	fail429    int           // remaining 429s to return
+	failOnce   error         // single non-retryable error to return on first call
+	delay      time.Duration // sleep inside DownloadPNG so concurrent calls overlap
 	mu         sync.Mutex
 	calls      int
 	downloads  int
+	inFlight   int // current in-flight DownloadPNG calls
+	maxInFlight int // observed max — used by parallelism test
 }
 
 func (s *stubRenderer) RenderPNGs(ctx context.Context, fileKey string, ids []string) (map[string]string, error) {
@@ -52,11 +56,32 @@ func (s *stubRenderer) RenderPNGs(ctx context.Context, fileKey string, ids []str
 
 func (s *stubRenderer) DownloadPNG(ctx context.Context, url string) ([]byte, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.downloads++
+	s.inFlight++
+	if s.inFlight > s.maxInFlight {
+		s.maxInFlight = s.inFlight
+	}
 	bs, ok := s.pngs[url]
+	delay := s.delay
+	s.mu.Unlock()
+
+	var err error
 	if !ok {
-		return nil, errors.New("stubRenderer: unknown url " + url)
+		err = errors.New("stubRenderer: unknown url " + url)
+	} else if delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			err = ctx.Err()
+		}
+	}
+
+	s.mu.Lock()
+	s.inFlight--
+	s.mu.Unlock()
+
+	if err != nil {
+		return nil, err
 	}
 	return bs, nil
 }
@@ -354,6 +379,105 @@ func TestRecoverStuckVersions_MarksOrphanedFailed(t *testing.T) {
 	}
 	if got.Error != "orphaned by server restart" {
 		t.Fatalf("expected orphaned message; got %q", got.Error)
+	}
+}
+
+// TestPipeline_Stage4_ParallelDownloads asserts Stage 4 runs DownloadPNG
+// concurrently up to Stage4DownloadConcurrency and never beyond. The 30ms
+// per-download delay keeps workers overlapping long enough for the in-flight
+// counter to climb past 1.
+func TestPipeline_Stage4_ParallelDownloads(t *testing.T) {
+	const frameCount = 16
+	png := makeTestPNG(t, 100, 100)
+
+	urls := make(map[string]string, frameCount)
+	pngs := make(map[string][]byte, frameCount)
+	frames := make(map[string]any, frameCount)
+	for i := 0; i < frameCount; i++ {
+		fid := "fig-" + strconv.Itoa(i)
+		u := "u-" + strconv.Itoa(i)
+		urls[fid] = u
+		pngs[u] = png
+		frames[fid] = map[string]any{"document": map[string]any{"id": fid, "type": "FRAME"}}
+	}
+	renderer := &stubRenderer{
+		urls:  urls,
+		pngs:  pngs,
+		delay: 30 * time.Millisecond,
+	}
+	fetcher := &stubNodeFetcher{frames: frames}
+
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	proj, err := repo.UpsertProject(ctx, Project{
+		Name: "Test", Platform: "mobile", Product: "Plutus", Path: "Onboarding", OwnerUserID: uA,
+	})
+	if err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	v, err := repo.CreateVersion(ctx, proj.ID, uA)
+	if err != nil {
+		t.Fatalf("version: %v", err)
+	}
+	flow, err := repo.UpsertFlow(ctx, Flow{ProjectID: proj.ID, FileID: "FILE-K", Name: "FlowA"})
+	if err != nil {
+		t.Fatalf("flow: %v", err)
+	}
+
+	screens := make([]Screen, frameCount)
+	for i := range screens {
+		screens[i] = Screen{VersionID: v.ID, FlowID: flow.ID, X: 0, Y: float64(i * 1000), Width: 375, Height: 812}
+	}
+	if err := repo.InsertScreens(ctx, screens); err != nil {
+		t.Fatalf("insert screens: %v", err)
+	}
+
+	pframes := make([]PipelineFrame, frameCount)
+	for i, s := range screens {
+		pframes[i] = PipelineFrame{
+			ScreenID: s.ID, FigmaFrameID: "fig-" + strconv.Itoa(i),
+			X: 0, Y: float64(i * 1000), Width: 375, Height: 812,
+			VariableCollectionID: "VC", ModeID: "light", ModeLabel: "light",
+		}
+	}
+
+	pipeline := &Pipeline{
+		Repo:          repo,
+		Renderer:      renderer,
+		NodeFetcher:   fetcher,
+		SSE:           &stubBroker{},
+		AuditEnqueuer: NewAuditEnqueuer(),
+		AuditLogger:   &AuditLogger{DB: d},
+		DataDir:       t.TempDir(),
+		Log:           slog.New(slog.NewTextHandler(os.Stderr, nil)),
+	}
+	in := PipelineInputs{
+		VersionID: v.ID, ProjectID: proj.ID, ProjectSlug: proj.Slug,
+		TenantID: tA, UserID: uA, FileID: "FILE-K",
+		IdempotencyKey: uuid.NewString(),
+		TraceID:        uuid.NewString(),
+		Frames:         pframes,
+	}
+
+	if err := pipeline.RunFastPreview(ctx, in); err != nil {
+		t.Fatalf("pipeline: %v", err)
+	}
+
+	renderer.mu.Lock()
+	max := renderer.maxInFlight
+	totalDownloads := renderer.downloads
+	renderer.mu.Unlock()
+
+	if max > Stage4DownloadConcurrency {
+		t.Errorf("max in-flight DownloadPNG = %d, want ≤ %d", max, Stage4DownloadConcurrency)
+	}
+	if max < 2 {
+		t.Errorf("expected concurrent downloads (max in-flight ≥ 2); got %d — workers ran serially", max)
+	}
+	if totalDownloads != frameCount {
+		t.Errorf("expected %d total downloads, got %d", frameCount, totalDownloads)
 	}
 }
 

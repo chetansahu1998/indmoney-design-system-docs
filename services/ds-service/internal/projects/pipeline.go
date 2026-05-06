@@ -24,6 +24,20 @@ import (
 // recovery sweeper won't false-positive a healthy pipeline.
 const PipelineHeartbeatInterval = 5 * time.Second
 
+// Stage4DownloadConcurrency caps concurrent Figma CDN PNG downloads. Mirrors
+// the per-leaf image-fill resolver (screen_image_fills.go) so both I/O waves
+// in Stage 4 share the same wall-clock budget shape; raise only with evidence
+// of CDN pushback.
+const Stage4DownloadConcurrency = 8
+
+// canonicalTreeEntry is the in-memory form of a single screen's extracted
+// canonical_tree, shared between Stage 4's image-fill warmer and Stage 6's
+// override-reattach pass so both consume one extraction.
+type canonicalTreeEntry struct {
+	treeJSON string
+	hash     string
+}
+
 // FigmaImagesAPIBase is overrideable in tests via SetFigmaImagesBase().
 var figmaImagesAPIBase = "https://api.figma.com"
 
@@ -278,29 +292,75 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 		return fmt.Errorf("figma images: %w", err)
 	}
 
-	// Stage 4 — download, downsample, persist.
-	pngKeys := make(map[string]string, len(in.Frames)) // figma_frame_id → storage key
+	// Pre-extract canonical trees once. Stage 6 (override reattach) and the
+	// optional Stage-4 image-fill warmer both consume them; doing it here
+	// avoids walking canonicalNodes twice.
+	extractedTrees := make(map[string]canonicalTreeEntry, len(in.Frames))
+	for _, f := range in.Frames {
+		treeJSON, hash := extractCanonicalTree(canonicalNodes, f.FigmaFrameID)
+		extractedTrees[f.FigmaFrameID] = canonicalTreeEntry{treeJSON: treeJSON, hash: hash}
+	}
+
 	for _, frame := range in.Frames {
-		url, ok := pngURLs[frame.FigmaFrameID]
-		if !ok || url == "" {
+		if url, ok := pngURLs[frame.FigmaFrameID]; !ok || url == "" {
 			return fmt.Errorf("figma rendered no URL for frame %s", frame.FigmaFrameID)
 		}
-		raw, err := p.Renderer.DownloadPNG(ctx, url)
-		if err != nil {
-			return fmt.Errorf("download png %s: %w", frame.FigmaFrameID, err)
-		}
-		downsampled, err := DownsampleLongEdge(raw, MaxLongEdgePx)
-		if err != nil {
-			return fmt.Errorf("downsample png %s: %w", frame.FigmaFrameID, err)
-		}
-		key, err := p.persistPNG(in.TenantID, in.VersionID, frame.ScreenID, downsampled)
-		if err != nil {
-			return fmt.Errorf("persist png %s: %w", frame.FigmaFrameID, err)
-		}
-		if err := p.Repo.SetScreenPNG(ctx, frame.ScreenID, key); err != nil {
-			return fmt.Errorf("update screen png_key %s: %w", frame.ScreenID, err)
-		}
-		pngKeys[frame.FigmaFrameID] = key
+	}
+
+	// Stage 4 — download, downsample, persist (parallel, bounded).
+	pngKeys := make(map[string]string, len(in.Frames))
+	var keysMu sync.Mutex
+
+	gctx, gcancel := context.WithCancel(ctx)
+	defer gcancel()
+	errCh := make(chan error, len(in.Frames))
+
+	var stage4WG sync.WaitGroup
+	sem := make(chan struct{}, Stage4DownloadConcurrency)
+	for _, frame := range in.Frames {
+		frame := frame
+		url := pngURLs[frame.FigmaFrameID]
+		stage4WG.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer stage4WG.Done()
+			defer func() { <-sem }()
+			if gctx.Err() != nil {
+				return
+			}
+			raw, err := p.Renderer.DownloadPNG(gctx, url)
+			if err != nil {
+				errCh <- fmt.Errorf("download png %s: %w", frame.FigmaFrameID, err)
+				gcancel()
+				return
+			}
+			downsampled, err := DownsampleLongEdge(raw, MaxLongEdgePx)
+			if err != nil {
+				errCh <- fmt.Errorf("downsample png %s: %w", frame.FigmaFrameID, err)
+				gcancel()
+				return
+			}
+			key, err := p.persistPNG(in.TenantID, in.VersionID, frame.ScreenID, downsampled)
+			if err != nil {
+				errCh <- fmt.Errorf("persist png %s: %w", frame.FigmaFrameID, err)
+				gcancel()
+				return
+			}
+			if err := p.Repo.SetScreenPNG(gctx, frame.ScreenID, key); err != nil {
+				errCh <- fmt.Errorf("update screen png_key %s: %w", frame.ScreenID, err)
+				gcancel()
+				return
+			}
+			keysMu.Lock()
+			pngKeys[frame.FigmaFrameID] = key
+			keysMu.Unlock()
+		}()
+	}
+
+	stage4WG.Wait()
+	close(errCh)
+	if firstErr, ok := <-errCh; ok {
+		return firstErr
 	}
 
 	// Stage 5 — re-run mode-pair detection on the server (canonicalize across
@@ -361,15 +421,15 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 	}
 	reattaches := make([]screenReattach, 0, len(in.Frames))
 	for _, f := range in.Frames {
-		treeJSON, hash := extractCanonicalTree(canonicalNodes, f.FigmaFrameID)
+		entry := extractedTrees[f.FigmaFrameID]
 		overrides, oerr := p.Repo.ListActiveOverridesForScreen(ctx, f.ScreenID)
 		if oerr != nil {
 			return fmt.Errorf("list overrides for screen %s: %w", f.ScreenID, oerr)
 		}
 		reattaches = append(reattaches, screenReattach{
 			screenID:  f.ScreenID,
-			treeJSON:  treeJSON,
-			hash:      hash,
+			treeJSON:  entry.treeJSON,
+			hash:      entry.hash,
 			overrides: overrides,
 		})
 	}
