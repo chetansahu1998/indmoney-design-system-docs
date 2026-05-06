@@ -700,12 +700,17 @@ func (t *TenantRepo) GetVersion(ctx context.Context, versionID string) (ProjectV
 	return v, nil
 }
 
-// AnyLeafIDForVersion returns any flow ID under the project that owns
+// GetAnyLeafIDForVersion returns any flow ID under the project that owns
 // the given version. Used by Stage 6.5 (cluster prerender) which needs
 // a leafID to feed into RenderAssetsForLeaf for the per-tenant PAT
 // resolver — the asset_cache key only depends on (tenant, file_id,
 // node_id, format, scale), so any flow on the project works.
-func (t *TenantRepo) AnyLeafIDForVersion(ctx context.Context, versionID string) (string, error) {
+//
+// Naming: Get* prefix matches the surrounding repo convention
+// (GetVersion, GetProjectBySlug, GetFigmaToken) — returns ErrNotFound
+// on miss. The "Any" infix carries the documented "any matching row"
+// semantic.
+func (t *TenantRepo) GetAnyLeafIDForVersion(ctx context.Context, versionID string) (string, error) {
 	// ORDER BY f.id ASC keeps the chosen flow stable across calls. Without
 	// the explicit ordering, SQLite's row order is undefined; under index
 	// changes / VACUUM / CTE-rewrite the chosen leaf can flip between
@@ -729,10 +734,14 @@ func (t *TenantRepo) AnyLeafIDForVersion(ctx context.Context, versionID string) 
 	return id, nil
 }
 
-// LookupVersionIndex returns the integer version_index for a version
+// GetVersionIndex returns the integer version_index for a version
 // row. Needed for the asset_cache primary key during Stage 6.5
 // (cluster prerender).
-func (t *TenantRepo) LookupVersionIndex(ctx context.Context, versionID string) (int, error) {
+//
+// Naming: Get* convention because miss returns ErrNotFound (not
+// (zero, false, nil) — that would be Lookup*). Renamed from
+// LookupVersionIndex to match the rest of the TenantRepo Get* methods.
+func (t *TenantRepo) GetVersionIndex(ctx context.Context, versionID string) (int, error) {
 	row := t.handle().QueryRowContext(ctx, `
 		SELECT version_index FROM project_versions
 		 WHERE id = ? AND tenant_id = ?

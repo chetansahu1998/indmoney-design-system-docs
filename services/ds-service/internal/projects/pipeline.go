@@ -466,7 +466,7 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 				// Outer goroutine panic recovery. PrerenderClusters spawns
 				// per-node goroutines with their own recover, but ExtractClusterIDs
 				// already ran upstream and any panic from setup logic
-				// (AnyLeafIDForVersion / LookupVersionIndex / type-assert) would
+				// (GetAnyLeafIDForVersion / GetVersionIndex / type-assert) would
 				// otherwise crash the entire ds-service process. Recover here
 				// and log; the on-demand HandleAssetDownload path is the
 				// safety net.

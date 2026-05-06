@@ -356,7 +356,7 @@ func PrerenderClusters(
 
 	// Resolve a leafID for this version. RenderAssetsForLeaf scopes its
 	// PAT lookup by leaf, so any flow on this version works.
-	leafID, err := deps.Repo.AnyLeafIDForVersion(ctx, in.VersionID)
+	leafID, err := deps.Repo.GetAnyLeafIDForVersion(ctx, in.VersionID)
 	if err != nil {
 		return 0, fmt.Errorf("any leaf for version %s: %w", in.VersionID, err)
 	}
@@ -365,7 +365,7 @@ func PrerenderClusters(
 	}
 
 	// Resolve version_index — needed for asset_cache primary key.
-	versionIndex, err := deps.Repo.LookupVersionIndex(ctx, in.VersionID)
+	versionIndex, err := deps.Repo.GetVersionIndex(ctx, in.VersionID)
 	if err != nil {
 		return 0, fmt.Errorf("version_index for %s: %w", in.VersionID, err)
 	}
@@ -662,8 +662,8 @@ type ClusterPrerenderDeps struct {
 // Mirrors the methods on TenantRepo so production wiring just passes the
 // repo straight in; tests can provide a fake.
 type PrerenderRepo interface {
-	AnyLeafIDForVersion(ctx context.Context, versionID string) (string, error)
-	LookupVersionIndex(ctx context.Context, versionID string) (int, error)
+	GetAnyLeafIDForVersion(ctx context.Context, versionID string) (string, error)
+	GetVersionIndex(ctx context.Context, versionID string) (int, error)
 	StoreAsset(ctx context.Context, row AssetCacheRow) error
 	// LookupAsset checks for an existing cache row. Used by Phase 2 to
 	// gate per-node downsampling on whether Phase 1 successfully cached
@@ -671,3 +671,12 @@ type PrerenderRepo interface {
 	// on-demand path fill it later (avoids per-node Figma 429 cascade).
 	LookupAsset(ctx context.Context, tenantID, fileID, nodeID, format string, scale, versionIndex int) (AssetCacheRow, bool, error)
 }
+
+// Compile-time guarantee that *TenantRepo satisfies PrerenderRepo.
+// Without this, a future signature change on TenantRepo (renaming a
+// method, changing a return type) would break the prerender wiring at
+// distance — caught only when the build resolves the type assertion at
+// PrerenderClusters:expCopy assignment, which is far from the source
+// of the breaking change. With the assertion, the build fails at the
+// declaration site of the offending method.
+var _ PrerenderRepo = (*TenantRepo)(nil)
