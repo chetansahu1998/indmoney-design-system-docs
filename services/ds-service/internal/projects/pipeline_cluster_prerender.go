@@ -377,6 +377,14 @@ func PrerenderClusters(
 	// chunks at 80 IDs per call (Figma's documented max), so 1000 unique
 	// clusters becomes ~12 rate-limited calls. The persisted PNG@scale=2
 	// rows then cache-hit during phase 2.
+	//
+	// phase1Cached: when Phase 1 runs, it captures the set of nodes that
+	// successfully reached cache (newly rendered OR pre-cached). Phase 2
+	// then gates per-node on this map instead of doing N LookupAsset
+	// SQLite reads — saves ~2000 reads on a 4400-cluster import. nil
+	// when AssetExporter is unwired (test/embedded path); Phase 2 falls
+	// back to LookupAsset in that case.
+	var phase1Cached map[string]struct{}
 	if deps.AssetExporter != nil {
 		exp := deps.AssetExporter
 		// AssetExporter requires its Repo to be tenant-scoped (the LookupAsset
@@ -423,6 +431,7 @@ func PrerenderClusters(
 		}
 		var ok, fail, consecutiveFails int
 		var phase1Aborted bool
+		phase1Cached = make(map[string]struct{}, len(clusterIDs))
 		for i := 0; i < len(clusterIDs); i += chunk {
 			j := i + chunk
 			if j > len(clusterIDs) {
@@ -431,6 +440,17 @@ func PrerenderClusters(
 			batch := clusterIDs[i:j]
 			results, batchErr := expCopy.RenderAssetsForLeaf(ctx, in.TenantID, leafID, batch, "png", 2)
 			ok += len(results)
+			// Capture every successfully-cached node into phase1Cached so
+			// Phase 2 doesn't need to LookupAsset per-node. RenderAssetsForLeaf
+			// pre-allocates results to len(batch) and leaves zero-value slots
+			// for nodes whose Figma URL was missing or whose byte fetch failed
+			// (their NodeID stays empty). Filter on NodeID != "" to capture
+			// only successes.
+			for _, r := range results {
+				if r.NodeID != "" {
+					phase1Cached[r.NodeID] = struct{}{}
+				}
+			}
 			if batchErr != nil {
 				fail++
 				consecutiveFails++
@@ -575,16 +595,31 @@ func PrerenderClusters(
 			rctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 			defer cancel()
 
-			// Skip nodes whose source PNG isn't cached, OR whose cache
-			// lookup failed (transient SQLite contention). Phase 1 has
+			// Skip nodes whose source PNG isn't cached. Phase 1 has
 			// already run for the whole cluster set; if Phase 1 didn't
 			// cache this node (Figma 429, deadline, etc), running
 			// RenderPreviewPyramid here would re-fetch via Figma per-node
 			// — exactly the 429 cascade we were trying to avoid. Let
 			// HandleAssetDownload's on-demand path handle these stragglers
 			// when a user opens the leaf.
-			if _, cached, lerr := deps.Repo.LookupAsset(rctx, in.TenantID, in.FileID, nodeID, "png", 2, versionIndex); lerr != nil || !cached {
-				return
+			//
+			// When Phase 1 ran (deps.AssetExporter != nil), gate on the
+			// in-memory phase1Cached map captured during Phase 1. Saves
+			// a per-node LookupAsset SQLite read (~2000 reads on a
+			// 4400-cluster import). When Phase 1 was unwired (test /
+			// embedded path), fall back to LookupAsset so callers that
+			// bypass Phase 1 but expect Phase 2 to render pyramids from
+			// pre-cached source PNGs still work. The DB-error path
+			// continues to skip (transient SQLite contention → defer to
+			// the on-demand path).
+			if phase1Cached != nil {
+				if _, ok := phase1Cached[nodeID]; !ok {
+					return
+				}
+			} else {
+				if _, cached, lerr := deps.Repo.LookupAsset(rctx, in.TenantID, in.FileID, nodeID, "png", 2, versionIndex); lerr != nil || !cached {
+					return
+				}
 			}
 
 			pyramidResults, perr := deps.PreviewPyramid.RenderPreviewPyramid(
