@@ -561,10 +561,22 @@ func (t *TenantRepo) LookupLeafFigmaContext(ctx context.Context, leafID string) 
 // bulk) writes an `asset.exported` row. Bulk exports share a `bulk_id` so
 // post-hoc analytics can re-aggregate them, mirroring HandleBulkAcknowledge.
 
-// AssetExportTokenTTL — single-asset signed-URL lifetime. Matches asset.token's
-// 60s default for screen PNGs (Pr8) — short enough that a leaked log entry is
-// mostly harmless, long enough that <img src=…> retries don't fall off a cliff.
-const AssetExportTokenTTL = 60 * time.Second
+// AssetExportTokenTTL — single-asset signed-URL lifetime.
+//
+// Was 60s, but a 79-frame leaf mints ~1500-2000 cluster URLs at leaf-open.
+// Browser HTTP/1.1 caps concurrent connections at 6 per origin, and each
+// fresh asset render takes 1-3s. ~300 sequential rounds × 2s = 10 minutes.
+// Most tokens expired in queue → 4239 / 9468 (45%) of asset GETs returned
+// 410 Gone, leaving illustrations unrendered (visible-frame canvas had
+// blank spots where icon-cluster <img> failed). Tokens remain MAC-signed
+// + tenant-scoped + node-scoped, so a longer TTL doesn't change the
+// attack surface — it just survives the queue.
+//
+// 1 hour is safe: bulk export tokens are 5 min single-shot, screen PNG
+// tokens are still 60s (separate constant). Asset cluster URLs are
+// referenced from <img> elements whose lifetime is the leaf-canvas
+// session anyway.
+const AssetExportTokenTTL = 60 * time.Minute
 
 // BulkExportTokenTTL — one-shot zip-download lifetime. The plan caps at 5 min:
 // "download_url expires in 5 min." Long enough for a slow connection on a
