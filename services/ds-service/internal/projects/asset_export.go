@@ -1683,6 +1683,14 @@ func withAssetExportTenant(ctx context.Context, tenantID string) context.Context
 	return context.WithValue(ctx, assetExportTenantCtxKey, tenantID)
 }
 
+// WithAssetExportTenant is the exported form for callers outside this
+// file (e.g. the pipeline's image-fill warmer) that need to seed the
+// tenantID into the context before invoking a tenant-aware
+// FigmaImageURLFetcher / FigmaImageFillURLFetcher.
+func WithAssetExportTenant(ctx context.Context, tenantID string) context.Context {
+	return withAssetExportTenant(ctx, tenantID)
+}
+
 // AssetExportTenantFromCtx retrieves the tenantID stashed by
 // RenderAssetsForLeaf so a tenant-aware FigmaImageURLFetcher implementation
 // can decrypt the right Figma PAT. Returns "" when not present.

@@ -253,6 +253,12 @@ func (r *ImageFillResolver) WarmImageFillsForVersion(
 		return nil
 	}
 
+	// Inject tenantID into ctx so a tenant-aware FigmaImageFillURLFetcher
+	// (production wiring in cmd/server/main.go) can decrypt the right
+	// per-tenant Figma PAT inside resolveMissesAndStore. Per-leaf callers
+	// of ResolveImageRefsForLeaf hit a tenant-bearing ctx via the HTTP
+	// middleware; the pipeline path doesn't, so we seed it explicitly.
+	ctx = WithAssetExportTenant(ctx, tenantID)
 	_, err = r.resolveMissesAndStore(ctx, tenantID, fileID, versionIndex, misses)
 	return err
 }
