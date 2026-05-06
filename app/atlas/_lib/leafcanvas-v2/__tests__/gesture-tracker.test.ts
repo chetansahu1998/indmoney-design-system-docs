@@ -41,7 +41,6 @@ class FakeClock {
 function make(endMs = 150): { t: GestureTracker; clk: FakeClock; events: boolean[] } {
   const clk = new FakeClock();
   const t = new GestureTracker(endMs, {
-    now: clk.now,
     setTimer: clk.setTimer,
     clearTimer: clk.clearTimer,
   });

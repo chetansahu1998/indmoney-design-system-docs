@@ -55,7 +55,6 @@ export const DEFAULT_GESTURE_END_MS = 150;
  */
 export class GestureTracker {
   private endMs: number;
-  private now: () => number;
   private setTimer: (cb: () => void, ms: number) => unknown;
   private clearTimer: (handle: unknown) => void;
   private listeners = new Set<GestureListener>();
@@ -65,13 +64,11 @@ export class GestureTracker {
   constructor(
     endMs: number = DEFAULT_GESTURE_END_MS,
     deps?: {
-      now?: () => number;
       setTimer?: (cb: () => void, ms: number) => unknown;
       clearTimer?: (handle: unknown) => void;
     },
   ) {
     this.endMs = endMs;
-    this.now = deps?.now ?? (() => Date.now());
     this.setTimer = deps?.setTimer ?? ((cb, ms) => globalThis.setTimeout(cb, ms));
     this.clearTimer =
       deps?.clearTimer ??

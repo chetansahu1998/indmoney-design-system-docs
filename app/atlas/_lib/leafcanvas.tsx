@@ -186,7 +186,15 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
       onPickFrame?.(null);
     }
   };
-  const onWheel = (e) => {
+  // useCallback with empty deps because the body only reads stable refs
+  // (stageRef, camRef) and module-level singletons (canvasGestureTracker,
+  // scheduleCameraFlush, clog). Without the wrap, onWheel was recreated
+  // every render but the useEffect at line ~250 had `[]` deps — so
+  // addEventListener captured first-render onWheel and removeEventListener
+  // referenced the latest identity, producing a no-op cleanup. Currently
+  // benign because the effect runs once and the DOM goes away on unmount,
+  // but a maintenance trap if any indirect dep becomes non-stable.
+  const onWheel = useCallback((e) => {
     e.preventDefault();
     const stage = stageRef.current;
     const rect = stage.getBoundingClientRect();
@@ -243,7 +251,7 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
       dx: e.deltaX, dy: e.deltaY, ctrl: e.ctrlKey, meta: e.metaKey,
       next: { ...camRef.current },
     });
-  };
+  }, []);
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -255,7 +263,7 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
         rafPendingRef.current = 0;
       }
     };
-  }, []);
+  }, [onWheel]);
 
   // ---- connectors (SVG) — drawn in world space, so put SVG at world coords
   // Compute bounding world box for SVG

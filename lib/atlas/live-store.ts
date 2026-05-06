@@ -138,6 +138,23 @@ export interface LeafSlot {
   overrides: Record<string, Map<string, TextOverride>>;
 }
 
+// ─── In-flight openLeaf tracking ─────────────────────────────────────────────
+//
+// Module-scoped (NOT in store state) on purpose: this is internal
+// concurrent-call deduplication and no UI subscribes to it. Putting it
+// on the store would trigger every selector subscriber on every
+// add/delete and add a slot-rebuild round trip for free.
+//
+// Race shape: AtlasShell's URL effect can re-fire openLeaf(X) while a
+// prior openLeaf(X) is still awaiting fetchLeafCanvas / fetchLeafOverlays.
+// Both calls pass the existingSlot guard (slot isn't in the store yet),
+// both run the unbounded N-parallel canonical_tree fan-out from
+// data-adapters.ts, both write the slot. The 60s remount loop is fixed
+// by the existingSlot guard alone, but the concurrent-fetch race is
+// not. This Set short-circuits the second call so only one fetch flight
+// runs per (leafID, lifecycle).
+const openLeafInFlight = new Set<string>();
+
 // ─── Store contract ──────────────────────────────────────────────────────────
 
 interface AtlasStoreState {
@@ -453,6 +470,28 @@ export const useAtlas = create<AtlasStoreState>()(
           });
           return;
         }
+
+        // Concurrent-call guard. The existingSlot guard above stops the
+        // 60s remount loop, but a second openLeaf(leafID) that fires
+        // BEFORE the first call's set() lands (URL effect re-fire +
+        // selection click within the fetchLeafCanvas+Overlays await
+        // window) would still pass existingSlot===undefined and double-
+        // fan-out the canonical_tree fetch. Short-circuit here so the
+        // second caller only updates the selection.
+        if (openLeafInFlight.has(leafID)) {
+          set({
+            selection: {
+              flowID: parentProductSlug,
+              leafID,
+              frameID: null,
+              selectedAtomicChild: null,
+              selectedAtomicChildren: new Map(),
+              activeStatesByFrame: new Map(),
+            },
+          });
+          return;
+        }
+        openLeafInFlight.add(leafID);
         set({
           selection: {
             flowID: parentProductSlug,
@@ -464,35 +503,39 @@ export const useAtlas = create<AtlasStoreState>()(
           },
         });
 
-        // Fetch canvas + overlays from the LEAF's own project slug. flowID=""
-        // tells fetchLeafCanvas/Overlays to pull the whole project (all flows
-        // collapsed) rather than filter to one section.
-        const projectSlug = leaf.id;
-        const canvas = await fetchLeafCanvas(projectSlug, "", undefined);
-        const framesByID = new Map(canvas.frames.map((f) => [f.id, f]));
-        const overlays = await fetchLeafOverlays(
-          projectSlug,
-          "",
-          undefined,
-          framesByID,
-          new Map(Object.entries(get().userDirectory)),
-        );
-        const slot: LeafSlot = {
-          frames: canvas.frames.map((f) => ({ ...f, appearedAt: 0 })),
-          edges: canvas.edges,
-          overlays,
-          loadedAt: Date.now(),
-          // Seeded by fetchLeafCanvas: per-screen canonical_tree is
-          // available for the first 20 screens (probe-walk for edge
-          // inference); the remainder lazy-load as the v2 renderer scrolls.
-          canonicalTreeByScreenID: canvas.canonicalTreeByScreenID ?? {},
-          // U8 — overrides map seeded by fetchLeafOverlays (per-screen
-          // GET .../text-overrides). Empty {} when the project has no
-          // overrides yet; per-screen Map<figmaNodeID, TextOverride> once
-          // populated.
-          overrides: overlays.overrides ?? {},
-        };
-        set({ leafSlots: { ...get().leafSlots, [leafID]: slot } });
+        try {
+          // Fetch canvas + overlays from the LEAF's own project slug. flowID=""
+          // tells fetchLeafCanvas/Overlays to pull the whole project (all flows
+          // collapsed) rather than filter to one section.
+          const projectSlug = leaf.id;
+          const canvas = await fetchLeafCanvas(projectSlug, "", undefined);
+          const framesByID = new Map(canvas.frames.map((f) => [f.id, f]));
+          const overlays = await fetchLeafOverlays(
+            projectSlug,
+            "",
+            undefined,
+            framesByID,
+            new Map(Object.entries(get().userDirectory)),
+          );
+          const slot: LeafSlot = {
+            frames: canvas.frames.map((f) => ({ ...f, appearedAt: 0 })),
+            edges: canvas.edges,
+            overlays,
+            loadedAt: Date.now(),
+            // Seeded by fetchLeafCanvas: per-screen canonical_tree is
+            // available for the first 20 screens (probe-walk for edge
+            // inference); the remainder lazy-load as the v2 renderer scrolls.
+            canonicalTreeByScreenID: canvas.canonicalTreeByScreenID ?? {},
+            // U8 — overrides map seeded by fetchLeafOverlays (per-screen
+            // GET .../text-overrides). Empty {} when the project has no
+            // overrides yet; per-screen Map<figmaNodeID, TextOverride> once
+            // populated.
+            overrides: overlays.overrides ?? {},
+          };
+          set({ leafSlots: { ...get().leafSlots, [leafID]: slot } });
+        } finally {
+          openLeafInFlight.delete(leafID);
+        }
       },
 
       closeLeaf: () => {

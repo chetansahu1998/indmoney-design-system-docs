@@ -113,7 +113,17 @@ export function useLeafZoomSettled(): number {
   return useSyncExternalStore(subscribeSettled, getLeafZoomSettled, () => 1);
 }
 
-/** Back-compat alias. New code should pick live or settled explicitly. */
+/**
+ * Back-compat alias for prior `useLeafZoom` callers — every existing
+ * use-site wanted tier-selection (debounced) behaviour, which is exactly
+ * what useLeafZoomSettled provides.
+ *
+ * @deprecated Pick `useLeafZoomLive` (gesture-tracking, zoom badge) or
+ * `useLeafZoomSettled` (tier selection, image mints) explicitly. The
+ * alias's silent debounce is a footgun for any new caller that wants
+ * the live value. Removal will land in a follow-up plan once call sites
+ * are renamed.
+ */
 export const useLeafZoom = useLeafZoomSettled;
 
 // ─── Gesture-end → settle latest live zoom into settledZoom ────────────
@@ -122,13 +132,26 @@ export const useLeafZoom = useLeafZoomSettled;
 // gets the right behaviour. The subscription is permanent — there's only
 // ever one gesture-tracker and one zoom-signal pair, both module-level.
 //
+// HMR / test re-evaluation guard: under Next.js fast-refresh and Vitest
+// module-reset, this module can re-evaluate. Without the flag, each
+// re-evaluation adds another listener with no path to remove it; over
+// a long dev session every gesture-end fires N redundant listeners that
+// all write the same settledZoom. The globalThis flag is idempotent.
+//
 // Note: server-side rendering runs this module too. canvasGestureTracker
 // is just a class instance with no DOM hooks of its own (those live in
 // leafcanvas.tsx's wheel/pointer handlers), so subscribing here is safe
 // in both SSR and CSR.
-canvasGestureTracker.subscribe((gesturing) => {
-  if (gesturing) return;
-  if (settledZoom === liveZoom) return;
-  settledZoom = liveZoom;
-  notify(settledListeners);
-});
+declare global {
+  // eslint-disable-next-line no-var
+  var __lcLeafZoomSignalWired: boolean | undefined;
+}
+if (!globalThis.__lcLeafZoomSignalWired) {
+  globalThis.__lcLeafZoomSignalWired = true;
+  canvasGestureTracker.subscribe((gesturing) => {
+    if (gesturing) return;
+    if (settledZoom === liveZoom) return;
+    settledZoom = liveZoom;
+    notify(settledListeners);
+  });
+}

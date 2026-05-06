@@ -272,6 +272,14 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
 
     let warmObs: IntersectionObserver | null = null;
     let hotObs: IntersectionObserver | null = null;
+    // Capture the element observed at attach time. The subscriber callback
+    // below uses THIS reference, not wrapperRef.current, so a future
+    // wrapper-element identity change (variant prune rebuild, virtualization
+    // remount keeping this effect alive) doesn't leak observation against
+    // a detached DOM node. observe() is additive in the IO spec — calling
+    // it on a different element wouldn't replace the prior target, it
+    // would add a second one. Capturing pins the contract.
+    let observedTarget: Element | null = null;
 
     // Gesture-deferred mount: if an intersection fires mid-pan/zoom, queue
     // the state flip and apply it on gesture-end. Prevents N frames from
@@ -281,33 +289,9 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     // "messed up zoom interactions during loading" felt jank.
     //
     // Each frame holds at most one pending flag per band (warm/hot) at
-    // a time; the gesture-tracker subscription drains them on settle.
+    // a time; the consolidated settle handler below drains them.
     let pendingWarm = false;
     let pendingHot = false;
-    let unsubGesture: (() => void) | null = null;
-    const ensureGestureSubscriber = (): void => {
-      if (unsubGesture) return;
-      unsubGesture = canvasGestureTracker.subscribe((gesturing) => {
-        if (gesturing) return;
-        // Settle: drain whichever bands fired during the gesture.
-        // React auto-batches the two setStates into one commit.
-        if (pendingHot) {
-          pendingHot = false;
-          setIntersected(true);
-          hotObs?.disconnect();
-          hotObs = null;
-          warmObs?.disconnect();
-          warmObs = null;
-        } else if (pendingWarm) {
-          pendingWarm = false;
-          setWarm(true);
-          warmObs?.disconnect();
-          warmObs = null;
-        }
-        unsubGesture?.();
-        unsubGesture = null;
-      });
-    };
 
     const attach = (): void => {
       if (warmObs || hotObs) return; // already attached
@@ -317,7 +301,6 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
             if (!e.isIntersecting) continue;
             if (getIsGesturing()) {
               pendingWarm = true;
-              ensureGestureSubscriber();
               clog("io", "warm deferred (gesturing)", { screenID });
               break;
             }
@@ -336,7 +319,6 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
             if (!e.isIntersecting) continue;
             if (getIsGesturing()) {
               pendingHot = true;
-              ensureGestureSubscriber();
               clog("io", "hot deferred (gesturing)", { screenID });
               break;
             }
@@ -351,26 +333,53 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
         },
         { rootMargin: "200px" },
       );
+      observedTarget = el;
       warmObs.observe(el);
       hotObs.observe(el);
       clog("io", "observers attached", { screenID });
     };
 
-    // Cause B (IO/transform footgun) quick-test: IntersectionObserver does not
-    // recompute when an ancestor's `transform` changes — only on scroll, resize,
-    // or target bbox changes. Our pan/zoom transforms .lc-world; IO observers
-    // on .leafcv2-frame descendants can therefore stop firing after a pan,
-    // leaving frames stuck on shimmer. The standard fix (Mozilla bug 1419339,
-    // WebKit bug 209264): on gesture-end, force IO to re-observe its targets
-    // so the browser recomputes intersection against current layout.
+    // ─── Consolidated settle handler ─────────────────────────────────
     //
-    // We subscribe to gesture-tracker unconditionally at IO setup. On every
-    // settle: unobserve + re-observe each still-attached band. The browser
-    // fires the IO callback synchronously with the current intersection
-    // state; if the frame is now in viewport, setWarm/setIntersected fires.
-    const unsubReobserve = canvasGestureTracker.subscribe((gesturing) => {
+    // ONE subscriber to canvasGestureTracker per IO effect; handles both
+    // responsibilities in deterministic order:
+    //
+    //   1. Drain pendingHot / pendingWarm deferred mounts (the "I would
+    //      have hydrated mid-gesture, do it now" case).
+    //   2. Re-observe still-attached bands so the browser recomputes
+    //      intersection against the post-pan layout. Workaround for
+    //      IntersectionObserver not recomputing when an ancestor's
+    //      `transform` changes (Mozilla bug 1419339, WebKit bug 209264).
+    //
+    // Pre-fix this was two subscribers in the same effect (lazy
+    // `ensureGestureSubscriber` for drain + eager `unsubReobserve` for
+    // re-observe). Set insertion order made the runtime sequence stable
+    // but a future edit reordering subscribe calls — or adding a third —
+    // would silently change behavior. Single subscriber removes the
+    // fragility.
+    const onSettle = (gesturing: boolean): void => {
       if (gesturing) return;
-      const target = wrapperRef.current;
+      // Drain first. React auto-batches the two setStates into one commit.
+      // After drain, the relevant observer(s) are disconnected and the
+      // re-observe step below null-checks them.
+      if (pendingHot) {
+        pendingHot = false;
+        setIntersected(true);
+        hotObs?.disconnect();
+        hotObs = null;
+        warmObs?.disconnect();
+        warmObs = null;
+      } else if (pendingWarm) {
+        pendingWarm = false;
+        setWarm(true);
+        warmObs?.disconnect();
+        warmObs = null;
+      }
+      // Re-observe whatever survived the drain so the browser recomputes
+      // intersection against current layout. Use the captured target
+      // from attach time, not wrapperRef.current — see observedTarget
+      // comment above.
+      const target = observedTarget;
       if (!target) return;
       if (warmObs) {
         warmObs.unobserve(target);
@@ -382,13 +391,15 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
         hotObs.observe(target);
         clog("io", "re-observe hot on settle", { screenID });
       }
-    });
+    };
+    const unsubSettle = canvasGestureTracker.subscribe(onSettle);
 
     const detach = (): void => {
       warmObs?.disconnect();
       hotObs?.disconnect();
       warmObs = null;
       hotObs = null;
+      observedTarget = null;
     };
 
     attach();
@@ -406,9 +417,7 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     }
     return () => {
       unsub?.();
-      unsubGesture?.();
-      unsubGesture = null;
-      unsubReobserve();
+      unsubSettle();
       detach();
     };
   }, [intersected, warm]);
