@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
 
 	"github.com/google/uuid"
 
@@ -479,6 +482,102 @@ func TestPipeline_Stage4_ParallelDownloads(t *testing.T) {
 	if totalDownloads != frameCount {
 		t.Errorf("expected %d total downloads, got %d", frameCount, totalDownloads)
 	}
+}
+
+// TestRetryHelpers_HonorRetryAfter asserts that when Figma returns a typed
+// *client.APIError with a Retry-After value, the retry helpers wait at
+// least that long (clamped to [MinRateLimitWait, MaxRateLimitWait]) before
+// the next attempt. The fixed-backoff regression would wait 500ms regardless
+// of the header.
+func TestRetryHelpers_HonorRetryAfter(t *testing.T) {
+	// Tighten clamps so the ceiling case doesn't push us past go test's
+	// default timeout. Production values are 500ms / 60s.
+	origMin, origMax := MinRateLimitWait, MaxRateLimitWait
+	MinRateLimitWait = 100 * time.Millisecond
+	MaxRateLimitWait = 600 * time.Millisecond
+	t.Cleanup(func() { MinRateLimitWait = origMin; MaxRateLimitWait = origMax })
+
+	cases := []struct {
+		name        string
+		retryAfter  time.Duration
+		wantAtLeast time.Duration
+		wantAtMost  time.Duration
+	}{
+		{
+			name:        "retry-after honored within bounds",
+			retryAfter:  300 * time.Millisecond,
+			wantAtLeast: 250 * time.Millisecond,
+			wantAtMost:  500 * time.Millisecond,
+		},
+		{
+			name:        "retry-after clamped to floor",
+			retryAfter:  20 * time.Millisecond,
+			wantAtLeast: MinRateLimitWait - 50*time.Millisecond,
+			wantAtMost:  MinRateLimitWait + 200*time.Millisecond,
+		},
+		{
+			name:        "retry-after clamped to ceiling",
+			retryAfter:  5 * time.Second,
+			wantAtLeast: MaxRateLimitWait - 50*time.Millisecond,
+			wantAtMost:  MaxRateLimitWait + 200*time.Millisecond,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			apiErr := &client.APIError{
+				Status:     http.StatusTooManyRequests,
+				Body:       "rate limit",
+				RetryAfter: tc.retryAfter,
+				URL:        "https://api.figma.com/v1/images/test",
+			}
+			fetcher := &retryAfterFetcher{err: apiErr, succeedAfter: 1}
+
+			p := &Pipeline{NodeFetcher: fetcher, Log: slog.New(slog.NewTextHandler(os.Stderr, nil))}
+
+			start := time.Now()
+			out, err := p.fetchNodesWithRetry(context.Background(), "FILE-K", []string{"n-1"})
+			elapsed := time.Since(start)
+
+			if err != nil {
+				t.Fatalf("expected success after one retry, got: %v", err)
+			}
+			if out == nil {
+				t.Fatal("expected non-nil result on success")
+			}
+			if elapsed < tc.wantAtLeast {
+				t.Errorf("wait too short: got %v, want ≥ %v — Retry-After likely ignored",
+					elapsed, tc.wantAtLeast)
+			}
+			if elapsed > tc.wantAtMost {
+				t.Errorf("wait too long: got %v, want ≤ %v — clamp not applied",
+					elapsed, tc.wantAtMost)
+			}
+		})
+	}
+}
+
+// retryAfterFetcher returns the supplied error for the first N calls,
+// then succeeds. Used to drive fetchNodesWithRetry through one backoff
+// cycle deterministically.
+type retryAfterFetcher struct {
+	mu           sync.Mutex
+	err          error
+	succeedAfter int
+	calls        int
+}
+
+func (r *retryAfterFetcher) GetFileNodes(ctx context.Context, fileKey string, ids []string, depth int) (map[string]any, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	if r.calls <= r.succeedAfter {
+		return nil, r.err
+	}
+	out := map[string]any{}
+	for _, id := range ids {
+		out[id] = map[string]any{"id": id}
+	}
+	return map[string]any{"nodes": out}, nil
 }
 
 func TestRecoverStuckVersions_LeavesFreshAlone(t *testing.T) {

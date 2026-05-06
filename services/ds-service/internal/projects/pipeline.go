@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/sse"
 )
 
@@ -742,11 +744,27 @@ func (p *Pipeline) fail(ctx context.Context, in PipelineInputs, err error) {
 // for the operator runbook.
 const CanonicalTreeFetchDepth = 10
 
+// MinRateLimitWait floors Retry-After-derived sleeps so a buggy or zero
+// header doesn't degenerate into a tight retry loop. Mirrors the prior
+// hard-coded backoff base. Exposed as a var so retry-helper tests can
+// lower it without busy-waiting on real-world durations.
+var MinRateLimitWait = 500 * time.Millisecond
+
+// MaxRateLimitWait caps Retry-After-derived sleeps so a pathological header
+// (Figma occasionally returns multi-minute values under sustained pressure)
+// can't hold a Stage 2/3 goroutine open beyond the pipeline's overall budget.
+// 60s is well over Figma's typical 30s ceiling and well under our 30-min
+// Stage 9 budget. Exposed as a var so retry-helper tests can lower it.
+var MaxRateLimitWait = 60 * time.Second
+
 // fetchNodesWithRetry calls /v1/files/{key}/nodes with 3-attempt backoff on 429.
-// Other non-2xx errors fail fast.
+// When the response carries a Retry-After header (typed-error path via
+// client.APIError), we honor it within [MinRateLimitWait, MaxRateLimitWait];
+// otherwise we fall back to 500ms→1s→2s exponential. Other non-2xx errors
+// fail fast.
 func (p *Pipeline) fetchNodesWithRetry(ctx context.Context, fileKey string, ids []string) (map[string]any, error) {
 	var lastErr error
-	delay := 500 * time.Millisecond
+	fallback := 500 * time.Millisecond
 	for attempt := 0; attempt < 3; attempt++ {
 		out, err := p.NodeFetcher.GetFileNodes(ctx, fileKey, ids, CanonicalTreeFetchDepth)
 		if err == nil {
@@ -757,21 +775,23 @@ func (p *Pipeline) fetchNodesWithRetry(ctx context.Context, fileKey string, ids 
 			return nil, err
 		}
 		if attempt < 2 {
+			delay := nextRateLimitDelay(err, fallback)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-time.After(delay):
 			}
-			delay *= 2
+			fallback *= 2
 		}
 	}
 	return nil, fmt.Errorf("figma nodes after 3 attempts: %w", lastErr)
 }
 
-// renderPNGsWithRetry calls the renderer with 3-attempt 429 backoff.
+// renderPNGsWithRetry calls the renderer with 3-attempt 429 backoff. Same
+// Retry-After handling as fetchNodesWithRetry.
 func (p *Pipeline) renderPNGsWithRetry(ctx context.Context, fileKey string, ids []string) (map[string]string, error) {
 	var lastErr error
-	delay := 500 * time.Millisecond
+	fallback := 500 * time.Millisecond
 	for attempt := 0; attempt < 3; attempt++ {
 		out, err := p.Renderer.RenderPNGs(ctx, fileKey, ids)
 		if err == nil {
@@ -782,25 +802,53 @@ func (p *Pipeline) renderPNGsWithRetry(ctx context.Context, fileKey string, ids 
 			return nil, err
 		}
 		if attempt < 2 {
+			delay := nextRateLimitDelay(err, fallback)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-time.After(delay):
 			}
-			delay *= 2
+			fallback *= 2
 		}
 	}
 	return nil, fmt.Errorf("figma images after 3 attempts: %w", lastErr)
 }
 
-// isRateLimitErr is intentionally string-based so the pipeline doesn't import
-// the figma client's APIError type. The renderer wrappers below format 429s
-// with a stable substring.
+// isRateLimitErr detects 429s. Primary path: errors.As to extract the
+// figma client's typed *APIError. Secondary path: substring match — the
+// renderer's HTTP wrappers (HTTPFigmaRenderer.RenderPNGs / DownloadPNG)
+// format 429 responses as plain errors with a stable "rate limit" or
+// "429" substring, and pipeline tests use stubRenderer that returns
+// the same shape.
 func isRateLimitErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "rate limit") || strings.Contains(err.Error(), "429")
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.IsRateLimit()
+	}
+	s := err.Error()
+	return strings.Contains(s, "rate limit") || strings.Contains(s, "429")
+}
+
+// nextRateLimitDelay extracts a Retry-After-derived wait from the error
+// when the typed *client.APIError is available, falling back to the
+// caller's exponential schedule otherwise. Result is clamped to
+// [MinRateLimitWait, MaxRateLimitWait].
+func nextRateLimitDelay(err error, fallback time.Duration) time.Duration {
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) && apiErr.RetryAfter > 0 {
+		d := apiErr.RetryAfter
+		if d < MinRateLimitWait {
+			d = MinRateLimitWait
+		}
+		if d > MaxRateLimitWait {
+			d = MaxRateLimitWait
+		}
+		return d
+	}
+	return fallback
 }
 
 // persistPNG writes data/screens/<tenant>/<version>/<screen>@2x.png atomically
