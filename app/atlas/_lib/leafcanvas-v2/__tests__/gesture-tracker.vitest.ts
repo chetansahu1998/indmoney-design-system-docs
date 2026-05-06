@@ -1,15 +1,15 @@
 /**
  * gesture-tracker.test.ts — exercise GestureTracker timing logic with
- * an injected fake clock. Mirrors idle-tracker.test.ts shape; throws
- * on assertion failure and exposes runAll() for Vitest/Jest pickup.
+ * an injected fake clock. Vitest test, picked up by vitest.config.ts.
  */
+
+import { describe, expect, it } from "vitest";
 
 import { GestureTracker } from "../gesture-tracker";
 
-function assert(cond: unknown, msg: string): void {
-  if (!cond) throw new Error(`assertion failed: ${msg}`);
-}
-
+// FakeClock — drives setTimer/clearTimer deterministically without
+// touching the real event loop. Same shape as production setTimeout
+// callback contract, just with explicit time advancement.
 class FakeClock {
   t = 0;
   pending: Array<{ id: number; due: number; cb: () => void }> = [];
@@ -49,120 +49,83 @@ function make(endMs = 150): { t: GestureTracker; clk: FakeClock; events: boolean
   return { t, clk, events };
 }
 
-// ─── lifecycle ────────────────────────────────────────────────────────
-
-function test_initially_settled(): void {
-  const { t } = make();
-  assert(t.isGesturing === false, "starts settled");
-}
-
-function test_tick_flips_to_gesturing(): void {
-  const { t, events } = make();
-  t.tick();
-  assert(t.isGesturing === true, "tick → gesturing");
-  assert(events.length === 1 && events[0] === true, "fires listener once with true");
-}
-
-function test_tick_burst_does_not_refire(): void {
-  // Many ticks in rapid succession should produce ONE 'true' event,
-  // not one per tick. (The consumer cares about edges, not every input.)
-  const { t, clk, events } = make();
-  t.tick();
-  clk.advance(20);
-  t.tick();
-  clk.advance(20);
-  t.tick();
-  assert(events.length === 1, `expected 1 event, got ${events.length}`);
-  assert(t.isGesturing === true, "still gesturing");
-}
-
-function test_settle_after_debounce(): void {
-  const { t, clk, events } = make(150);
-  t.tick();
-  clk.advance(150);
-  assert(t.isGesturing === false, "settled after 150ms");
-  assert(events.length === 2, `expected [true,false], got len=${events.length}`);
-  assert(events[1] === false, "second event is false");
-}
-
-function test_tick_resets_settle_timer(): void {
-  // 100ms tick, 100ms tick, 100ms tick → after 200ms total still
-  // gesturing because each tick reset the 150ms timer.
-  const { t, clk } = make(150);
-  t.tick();
-  clk.advance(100);
-  t.tick();
-  clk.advance(100);
-  t.tick();
-  clk.advance(100);
-  assert(t.isGesturing === true, "still gesturing — timer kept resetting");
-  // Now go quiet for the full window.
-  clk.advance(150);
-  assert(t.isGesturing === false, "settled after final 150ms idle");
-}
-
-function test_unsubscribe(): void {
-  const { t, clk } = make();
-  let count = 0;
-  const off = t.subscribe(() => count++);
-  t.tick();
-  clk.advance(150);
-  off();
-  t.tick();
-  clk.advance(150);
-  // First tick produced 2 events (true, false). After unsubscribe, no more.
-  assert(count === 2, `expected 2 events, got ${count}`);
-}
-
-function test_reset_clears_state(): void {
-  const { t, clk } = make();
-  t.tick();
-  assert(t.isGesturing === true, "gesturing after tick");
-  t.reset();
-  assert(t.isGesturing === false, "reset → settled");
-  // No timer should fire after reset.
-  clk.advance(500);
-  assert(t.isGesturing === false, "still settled");
-}
-
-function test_listener_error_does_not_sink_others(): void {
-  const { t } = make();
-  let goodFired = 0;
-  t.subscribe(() => {
-    throw new Error("first listener throws");
+describe("GestureTracker", () => {
+  it("starts settled", () => {
+    const { t } = make();
+    expect(t.isGesturing).toBe(false);
   });
-  t.subscribe(() => {
-    goodFired++;
+
+  it("flips to gesturing on first tick + fires listener once", () => {
+    const { t, events } = make();
+    t.tick();
+    expect(t.isGesturing).toBe(true);
+    expect(events).toEqual([true]);
   });
-  t.tick();
-  // Two listeners + the events-recorder from make() = 3 total. Two should fire.
-  assert(goodFired === 1, `good listener should fire despite bad one — got ${goodFired}`);
-}
 
-// ─── Driver ───────────────────────────────────────────────────────────
+  it("burst of ticks does not refire (consumer cares about edges)", () => {
+    const { t, clk, events } = make();
+    t.tick();
+    clk.advance(20);
+    t.tick();
+    clk.advance(20);
+    t.tick();
+    expect(events.length).toBe(1);
+    expect(t.isGesturing).toBe(true);
+  });
 
-export function runAll(): void {
-  const tests: Array<[string, () => void]> = [
-    ["initially settled", test_initially_settled],
-    ["tick flips to gesturing", test_tick_flips_to_gesturing],
-    ["tick burst does not refire", test_tick_burst_does_not_refire],
-    ["settle after debounce", test_settle_after_debounce],
-    ["tick resets settle timer", test_tick_resets_settle_timer],
-    ["unsubscribe stops events", test_unsubscribe],
-    ["reset clears state", test_reset_clears_state],
-    ["listener error does not sink others", test_listener_error_does_not_sink_others],
-  ];
-  let failed = 0;
-  for (const [name, fn] of tests) {
-    try {
-      fn();
-      // eslint-disable-next-line no-console
-      console.log(`ok  ${name}`);
-    } catch (err) {
-      failed++;
-      // eslint-disable-next-line no-console
-      console.error(`fail ${name}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  if (failed > 0) throw new Error(`${failed} gesture-tracker test(s) failed`);
-}
+  it("settles after the debounce window", () => {
+    const { t, clk, events } = make(150);
+    t.tick();
+    clk.advance(150);
+    expect(t.isGesturing).toBe(false);
+    expect(events).toEqual([true, false]);
+  });
+
+  it("each tick resets the settle timer (no settle until quiet window)", () => {
+    const { t, clk } = make(150);
+    t.tick();
+    clk.advance(100);
+    t.tick();
+    clk.advance(100);
+    t.tick();
+    clk.advance(100);
+    expect(t.isGesturing).toBe(true); // timer kept resetting
+    clk.advance(150);
+    expect(t.isGesturing).toBe(false); // settled after final 150ms idle
+  });
+
+  it("unsubscribe stops events", () => {
+    const { t, clk } = make();
+    let count = 0;
+    const off = t.subscribe(() => count++);
+    t.tick();
+    clk.advance(150);
+    off();
+    t.tick();
+    clk.advance(150);
+    expect(count).toBe(2); // first tick produced (true, false); after off, none
+  });
+
+  it("reset clears state and cancels pending timer", () => {
+    const { t, clk } = make();
+    t.tick();
+    expect(t.isGesturing).toBe(true);
+    t.reset();
+    expect(t.isGesturing).toBe(false);
+    clk.advance(500);
+    expect(t.isGesturing).toBe(false); // no zombie timer fired
+  });
+
+  it("listener exception does not sink other listeners", () => {
+    const { t } = make();
+    let goodFired = 0;
+    t.subscribe(() => {
+      throw new Error("first listener throws");
+    });
+    t.subscribe(() => {
+      goodFired++;
+    });
+    t.tick();
+    expect(goodFired).toBe(1);
+  });
+});
