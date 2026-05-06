@@ -45,18 +45,18 @@ export function collectClusterIDs(root: CanonicalNode | null): string[] {
 }
 
 function walk(node: CanonicalNode, acc: string[]): void {
-  // KNOWN GAP — the Go server-side walker (services/ds-service/internal/
-  // projects/pipeline_cluster_prerender.go::walkClusters) prunes
-  // invisible / removed nodes BEFORE classification; this walker does
-  // not. Surfaced by the parity fixture in
-  // __tests__/node-classifier-parity.test.ts which uses a test-side
-  // walker that mirrors Go's pruning. Production impact is wasted work
-  // (hidden nodes get cluster URLs minted but never render visibly,
-  // since nodeToHTML's renderer respects the visibility flag at draw
-  // time). Reconciliation: add the same `if (visible === false ||
-  // removed === true) return;` guard here. Deferred from plan
-  // 2026-05-06-003 U4/U7 because it's a frontend behavior change with
-  // its own scope (verify no canvas-test regression).
+  // Visibility pruning. Mirrors the Go server-side walker
+  // (services/ds-service/internal/projects/pipeline_cluster_prerender.go
+  // ::walkClusters lines 121-129). Hidden / removed nodes don't render
+  // (nodeToHTML respects the flags at draw time) so collecting cluster
+  // URLs for them mints unused signed URLs and wastes Phase 1 Figma
+  // calls during Stage 9 prerender. Pruning here matches Go-side
+  // behavior — confirmed by the parity fixture at __tests__/node-
+  // classifier-parity.test.ts which the test-side walker mirrors.
+  const visibleField = (node as unknown as { visible?: unknown }).visible;
+  if (typeof visibleField === "boolean" && !visibleField) return;
+  const removedField = (node as unknown as { removed?: unknown }).removed;
+  if (typeof removedField === "boolean" && removedField) return;
   if (shouldRasterize(node) && typeof node.id === "string") {
     acc.push(node.id);
     return;

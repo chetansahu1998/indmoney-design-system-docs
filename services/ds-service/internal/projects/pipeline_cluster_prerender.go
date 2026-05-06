@@ -97,7 +97,11 @@ func ReleasePrerenderSlot(versionID string) {
 }
 
 // clusterShapeTypes — Figma node types that are always shape-clusters
-// (rasterized as a single PNG). Mirrors node-classifier.ts kind="shape".
+// (rasterized as a single PNG) when seen at the top of isCluster.
+// Mirrors node-classifier.ts kind="shape". RECTANGLE is intentionally
+// NOT in this set: a standalone RECTANGLE renders as a themable <div>
+// (button background, status bar, surface tile) so live text overlay
+// + theme tinting + hover states keep working.
 var clusterShapeTypes = map[string]struct{}{
 	"VECTOR":            {},
 	"ELLIPSE":           {},
@@ -106,6 +110,40 @@ var clusterShapeTypes = map[string]struct{}{
 	"STAR":              {},
 	"POLYGON":           {},
 	"REGULAR_POLYGON":   {},
+}
+
+// vectorLeafShapeTypes — superset used ONLY inside vectorLeafSummary's
+// recursive walk. Adds RECTANGLE (and ELLIPSE — already in
+// clusterShapeTypes but listed here for explicit intent) so that an
+// illustration frame containing a mix of RECTANGLE backgrounds plus
+// VECTOR/GROUP candle shapes qualifies as a vector-only subtree and
+// the WHOLE FRAME clusters as one PNG. Without RECTANGLE here, a
+// chart-Frame with one image-fill RECTANGLE behind 200 vectors fails
+// the predicate, walker descends, and each inner GROUP becomes its
+// own /v1/images call — driving Figma into 429 cascade.
+//
+// Real example from canonical_tree of indstocks-performant-trade-screen-equity:
+//
+//   FRAME 'Frame 1321320970' [375x236]   <- the chart container
+//     RECTANGLE 'ChatGPT Image…' [628x628]   image-fill backdrop
+//     ELLIPSE  …                              decorative
+//     RECTANGLE × 3                          decorative tiles
+//     GROUP    …
+//       GROUP 'Group 1321319495' kids=90    90 individual candle vectors
+//       GROUP 'Group 1321319491' kids=90    90 individual candle vectors
+//       …
+//
+// With RECTANGLE in vectorLeafShapeTypes, the chart Frame qualifies as
+// a single cluster — one Figma render instead of ~200.
+var vectorLeafShapeTypes = map[string]struct{}{
+	"VECTOR":            {},
+	"ELLIPSE":           {},
+	"LINE":              {},
+	"BOOLEAN_OPERATION": {},
+	"STAR":              {},
+	"POLYGON":           {},
+	"REGULAR_POLYGON":   {},
+	"RECTANGLE":         {},
 }
 
 // Name patterns from node-classifier.ts. Anchored so a cluster hidden in
@@ -246,49 +284,79 @@ func isCluster(node map[string]any, nodeType, name string) bool {
 	if pureSizeVariantPattern.MatchString(name) {
 		return true
 	}
-	// Vector-only-subtree heuristic. Cluster the wrapper as a whole if
-	// every leaf in its subtree is a vector shape AND there are at
-	// least two vector leaves (a single-shape wrapper is just one
-	// VECTOR — no need to cluster the wrapper, the inner shape is
-	// already a cluster on its own).
-	leafCount, allShape := vectorLeafSummary(node)
-	if allShape && leafCount >= 2 {
-		return true
+	// Illustration-subtree heuristic. Cluster the wrapper as a whole if
+	// it's overwhelmingly shapes with at most a small amount of decorative
+	// text (e.g., "BUY", "SELL", "FLASH", "TRADING" stamped on a chart).
+	//
+	// Two thresholds work together:
+	//   - shapeLeaves >= 8: avoids clustering a tiny status-bar icon set.
+	//     A genuine illustration always has many vector leaves.
+	//   - textLeaves <= max(2, shapeLeaves/20): tolerates ~5% text. A UI
+	//     surface (phone screen with form fields, navigation bar with
+	//     time text) has higher text ratios and won't qualify; a chart
+	//     with two label words inside hundreds of candle vectors will.
+	shapeLeaves, textLeaves, valid := illustrationSubtreeSummary(node)
+	if !valid {
+		return false
 	}
-	return false
+	if shapeLeaves < 8 {
+		return false
+	}
+	textBudget := shapeLeaves / 20
+	if textBudget < 2 {
+		textBudget = 2
+	}
+	return textLeaves <= textBudget
 }
 
-// vectorLeafSummary counts vector-shape leaves in a subtree and reports
-// whether ALL leaves are vector shapes. A "leaf" is a node with no
-// children. Returns (leafCount, allLeavesAreVectorShapes).
+// illustrationSubtreeSummary counts shape leaves (VECTOR/ELLIPSE/etc
+// + RECTANGLE) and TEXT leaves separately within a subtree. A "leaf"
+// is a node with no children. Returns (shapeLeaves, textLeaves, valid).
+//
+// Caller decides clustering policy based on the ratio. Currently:
+// shapeLeaves >= 8 AND textLeaves <= 5% of shapeLeaves → cluster as
+// whole illustration. This is permissive enough to absorb chart
+// labels ("SELL", "BUY", "FLASH", "TRADING") embedded in candlestick
+// illustrations, while still excluding interactive UI surfaces (phone
+// screens with form fields, status bars with time text — those have
+// text ratios well above 5%).
+//
+// `valid` is false when the subtree contains an unknown node type;
+// caller should not cluster in that case.
 //
 // Skips invisible / removed nodes — they don't contribute to the
-// rendered output. Also skips TEXT nodes since they prove the subtree
-// isn't pure-vector.
-func vectorLeafSummary(node map[string]any) (int, bool) {
+// rendered output.
+func illustrationSubtreeSummary(node map[string]any) (shapes, texts int, valid bool) {
 	if node == nil {
-		return 0, false
+		return 0, 0, false
 	}
 	// Apply visibility filter on the wrapper itself.
 	if v, has := node["visible"].(bool); has && !v {
-		return 0, true
+		return 0, 0, true
 	}
 	if r, has := node["removed"].(bool); has && r {
-		return 0, true
+		return 0, 0, true
 	}
 	children, _ := node["children"].([]any)
 	if len(children) == 0 {
-		// This IS a leaf. Count it only if it's a vector shape.
 		nt, _ := node["type"].(string)
-		if _, isShape := clusterShapeTypes[nt]; isShape {
-			return 1, true
+		// vectorLeafShapeTypes is the SUPERSET of clusterShapeTypes
+		// that also includes RECTANGLE — a RECTANGLE-leaf inside an
+		// illustration subtree counts as a vector for clustering
+		// purposes (it's just a filled box, no live interactivity).
+		// At the top of isCluster the standalone-RECTANGLE case is
+		// excluded by clusterShapeTypes intentionally.
+		if _, isShape := vectorLeafShapeTypes[nt]; isShape {
+			return 1, 0, true
 		}
-		// Empty wrappers (no children, not a shape) — degenerate case;
-		// treat as zero leaves and false to prevent spurious clustering.
-		return 0, false
+		if nt == "TEXT" {
+			return 0, 1, true
+		}
+		// Empty wrappers (no children, not a shape, not text) —
+		// degenerate case; treat as zero leaves but valid=false to
+		// keep the parent from clustering on empty content alone.
+		return 0, 0, false
 	}
-	total := 0
-	allShape := true
 	for _, c := range children {
 		cm, ok := c.(map[string]any)
 		if !ok {
@@ -302,28 +370,31 @@ func vectorLeafSummary(node map[string]any) (int, bool) {
 			continue
 		}
 		ct, _ := cm["type"].(string)
-		// TEXT children prove not-pure-vector immediately.
+		// Direct shape leaves count toward shapes.
+		if _, isShape := vectorLeafShapeTypes[ct]; isShape {
+			shapes++
+			continue
+		}
+		// TEXT leaves count toward texts (no recurse — TEXT can't
+		// have shape children that matter for this heuristic).
 		if ct == "TEXT" {
-			return 0, false
-		}
-		// Direct shape leaves count toward total.
-		if _, isShape := clusterShapeTypes[ct]; isShape {
-			total++
+			texts++
 			continue
 		}
-		// Wrapper child — recurse.
+		// Wrapper child — recurse and accumulate.
 		if _, isWrapper := containerWrapperTypes[ct]; isWrapper {
-			cn, cAll := vectorLeafSummary(cm)
-			if !cAll {
-				return 0, false
+			cs, ct2, cv := illustrationSubtreeSummary(cm)
+			if !cv {
+				return 0, 0, false
 			}
-			total += cn
+			shapes += cs
+			texts += ct2
 			continue
 		}
-		// Unknown type — be conservative, treat as not-pure-vector.
-		return 0, false
+		// Unknown type — be conservative, treat as invalid.
+		return 0, 0, false
 	}
-	return total, allShape
+	return shapes, texts, true
 }
 
 // PrerenderClusters drives the per-tenant pyramid render for every

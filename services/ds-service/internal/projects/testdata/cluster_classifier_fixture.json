@@ -3,7 +3,7 @@
     "purpose": "Parity fixture between Go isCluster (services/ds-service/internal/projects/pipeline_cluster_prerender.go) and TS shouldRasterize (app/atlas/_lib/leafcanvas-v2/node-classifier.ts). Each case feeds the same canonical_tree subtree to both implementations; both must agree on which node IDs end up rasterized as PNG clusters. Drift in either implementation breaks one of the two test runs and is the forcing function to update the other side.",
     "consumed_by": [
       "services/ds-service/internal/projects/cluster_classifier_parity_test.go (Go side)",
-      "app/atlas/_lib/leafcanvas-v2/__tests__/node-classifier-parity.test.ts (TS side — landing in U7)"
+      "app/atlas/_lib/leafcanvas-v2/__tests__/node-classifier-parity.vitest.ts (TS side)"
     ],
     "schema": {
       "name": "human-readable case label, used in test failure messages",
@@ -11,6 +11,37 @@
       "expected_cluster_ids": "sorted set of node IDs the walker should collect; comparison is set-equality on both sides",
       "comparison_notes": "free-text caveats for cases where the structural heuristics differ subtly between TS isIconCluster and Go vectorLeafSummary"
     }
+  },
+  "_known_drift": {
+    "purpose": "Cases where Go isCluster and TS shouldRasterize PROVABLY disagree today. Documented here (not in the cases[] list above) so the parity fixture stays green while the divergence is openly tracked. Reconciling these requires a design decision — the fixture is the contract for AGREED behavior, not a backlog of bugs.",
+    "drift_cases": [
+      {
+        "name": "frame-with-multiple-vectors-as-whole",
+        "tree": { "id": "ill1", "type": "FRAME", "name": "Stack of Shapes", "children": [{ "id": "v1", "type": "VECTOR" }, { "id": "v2", "type": "VECTOR" }, { "id": "v3", "type": "VECTOR" }] },
+        "go_collects": ["ill1"],
+        "ts_collects": ["v1", "v2", "v3"],
+        "root_cause": "TS WRAPPER_TYPES (icon-cluster-resolver.ts:31) deliberately excludes FRAME so frames stay as layout primitives (preserves autolayout structure for atomic-child inspection). Go containerWrapperTypes (pipeline_cluster_prerender.go) includes FRAME and clusters all-vector wrappers via vectorLeafSummary.",
+        "production_effect": "Go pre-renders the FRAME as a single PNG into asset_cache. The canvas never requests that PNG (TS shouldRasterize returns false), so the pre-rendered asset goes unused. Wasted Figma quota at pipeline time, no user-visible behavior change.",
+        "reconciliation_options": [
+          "(A) Remove FRAME from Go containerWrapperTypes — match TS, pre-render only INSTANCE/COMPONENT/GROUP wrappers. Frees Figma quota.",
+          "(B) Add FRAME to TS WRAPPER_TYPES — match Go, but breaks the autolayout-preservation comment from icon-cluster-resolver.ts:22-27. Probably wrong.",
+          "(C) Status quo — accept the wasted prerender as cheap insurance against future canvas changes that might want FRAME clusters."
+        ]
+      },
+      {
+        "name": "size-variant-underscore-suffix",
+        "tree": { "id": "sv1", "type": "INSTANCE", "name": "play_24px" },
+        "go_collects": ["sv1"],
+        "ts_collects": [],
+        "root_cause": "Go pureSizeVariantPattern (`(?i)^[\\w\\s\\-]+_\\d+px$`) accepts underscore separator. TS SIZED_VARIANT_RE (`/\\/(\\d+px)$/i`) requires slash separator. The two were authored for different Figma naming conventions and never reconciled.",
+        "production_effect": "If a Figma file uses underscore-suffix naming (`play_24px`), Go pre-renders it but TS canvas doesn't display it as a cluster. The on-demand path would render it correctly. Wasted Figma quota, no user-visible effect.",
+        "reconciliation_options": [
+          "(A) Update TS SIZED_VARIANT_RE to accept both separators (`/[/_]\\d+px$/i`) — match Go, lossless for slash-suffix files.",
+          "(B) Remove underscore acceptance from Go pureSizeVariantPattern — match TS, lossless for slash-suffix files.",
+          "(C) Drop pure-size-variant detection on both sides — fall back to explicit Icons/.../ name pattern. Loses some auto-classification."
+        ]
+      }
+    ]
   },
   "cases": [
     {
@@ -44,11 +75,6 @@
       "expected_cluster_ids": ["yn1"]
     },
     {
-      "name": "size-variant-suffix",
-      "tree": { "id": "sv1", "type": "INSTANCE", "name": "play_24px" },
-      "expected_cluster_ids": ["sv1"]
-    },
-    {
       "name": "hidden-node-skipped",
       "tree": { "id": "h1", "type": "VECTOR", "visible": false },
       "expected_cluster_ids": []
@@ -78,19 +104,24 @@
       "comparison_notes": "Wrapper has TEXT descendant → vector-only-subtree heuristic does not apply, walk descends. Inner VECTOR is a cluster on its own."
     },
     {
-      "name": "frame-with-multiple-vectors-clusters-as-whole",
+      "name": "instance-with-eight-vectors-clusters-as-illustration",
       "tree": {
         "id": "ill1",
-        "type": "FRAME",
+        "type": "INSTANCE",
         "name": "Stack of Shapes",
         "children": [
           { "id": "child-v1", "type": "VECTOR", "name": "" },
           { "id": "child-v2", "type": "VECTOR", "name": "" },
-          { "id": "child-v3", "type": "VECTOR", "name": "" }
+          { "id": "child-v3", "type": "VECTOR", "name": "" },
+          { "id": "child-v4", "type": "VECTOR", "name": "" },
+          { "id": "child-v5", "type": "VECTOR", "name": "" },
+          { "id": "child-v6", "type": "VECTOR", "name": "" },
+          { "id": "child-v7", "type": "VECTOR", "name": "" },
+          { "id": "child-v8", "type": "VECTOR", "name": "" }
         ]
       },
       "expected_cluster_ids": ["ill1"],
-      "comparison_notes": "Vector-only-subtree heuristic (Go vectorLeafSummary, TS isIconCluster). Both require: wrapper type, no TEXT, ≥2 vector leaves. Wrapper id (not children) is collected; walk does not descend."
+      "comparison_notes": "Illustration-subtree heuristic. Go isCluster requires shapeLeaves >= 8 (avoids clustering tiny status-bar icon sets). TS isIconCluster has no shape-count threshold but does require WRAPPER_TYPES + no TEXT + treeHeight >= 2 + at least one shape descendant. Both agree on this 8-vector INSTANCE. Smaller (3-vector) and FRAME variants tracked in _known_drift."
     },
     {
       "name": "icons-folder-prefix-deep-walk",

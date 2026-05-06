@@ -49,11 +49,18 @@ export function isIconCluster(node: CanonicalNode): boolean {
   const t = node.type;
   if (!t || !WRAPPER_TYPES.has(t)) return false;
   if (!Array.isArray(node.children) || node.children.length === 0) return false;
-  if (hasTextDescendant(node)) return false;
   if (treeHeight(node) < 2) return false;
-  // At least one shape descendant — otherwise it's an empty wrapper that
-  // shouldn't render as a cluster placeholder.
-  return hasShapeDescendant(node);
+  // Pure-icon fast path — no TEXT descendants, just need ≥1 shape leaf.
+  if (!hasTextDescendant(node)) return hasShapeDescendant(node);
+  // Mixed-content path: illustration frames may embed a few labels
+  // (chart axes, "BUY"/"SELL" markers). Mirror the Go classifier's
+  // shapeLeaves≥8 && textLeaves≤max(2, shapeLeaves/20) heuristic so the
+  // whole illustration clusters as a single PNG instead of fanning out
+  // into per-vector placeholder pills.
+  const { shapes, texts } = countLeaves(node);
+  if (shapes < 8) return false;
+  const textBudget = Math.max(2, Math.floor(shapes / 20));
+  return texts <= textBudget;
 }
 
 export function hasTextDescendant(node: CanonicalNode): boolean {
@@ -72,6 +79,26 @@ function hasShapeDescendant(node: CanonicalNode): boolean {
     if (hasShapeDescendant(c)) return true;
   }
   return false;
+}
+
+function countLeaves(node: CanonicalNode): { shapes: number; texts: number } {
+  let shapes = 0;
+  let texts = 0;
+  const walk = (n: CanonicalNode): void => {
+    if (n.type === "TEXT") {
+      texts += 1;
+      return;
+    }
+    if (n.type && SHAPE_TYPES.has(n.type)) {
+      shapes += 1;
+      return;
+    }
+    if (Array.isArray(n.children)) {
+      for (const c of n.children) walk(c);
+    }
+  };
+  walk(node);
+  return { shapes, texts };
 }
 
 function treeHeight(node: CanonicalNode): number {
