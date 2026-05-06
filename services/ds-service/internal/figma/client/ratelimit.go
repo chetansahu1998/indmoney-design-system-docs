@@ -109,6 +109,33 @@ func newLimiters() *limiters {
 	}
 }
 
+// limitersForPAT returns a limiters set shared across every Client
+// constructed for the same PAT. Callers in cmd/server/main.go build a
+// fresh client.New(pat) inside per-request closures (figmaPATResolver,
+// the asset exporter URL fetcher, the image-fill URL fetcher, the
+// pipelineFactory). Without sharing, every concurrent request gets its
+// own bucket starting at full capacity — N concurrent Clients = N×
+// effective rate, which is exactly what we don't want. Figma's documented
+// limit is per PAT, so the cache key is the PAT itself.
+//
+// The map grows monotonically, but PATs in this codebase are bounded by
+// the tenant count (typically 1, max single digits). No eviction needed.
+func limitersForPAT(pat string) *limiters {
+	sharedLimitersMu.Lock()
+	defer sharedLimitersMu.Unlock()
+	if l, ok := sharedLimitersByPAT[pat]; ok {
+		return l
+	}
+	l := newLimiters()
+	sharedLimitersByPAT[pat] = l
+	return l
+}
+
+var (
+	sharedLimitersMu    sync.Mutex
+	sharedLimitersByPAT = make(map[string]*limiters)
+)
+
 func (l *limiters) wait(ctx context.Context, tier rateTier) error {
 	switch tier {
 	case tier1:

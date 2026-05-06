@@ -139,6 +139,25 @@ func TestClient_TierRouting(t *testing.T) {
 	}
 }
 
+// TestNew_SharesLimitersAcrossSamePAT locks in the regression where each
+// Client.New(pat) call constructed a fresh limiter — production main.go
+// builds new Clients per request, so per-Client buckets meant zero
+// effective rate limiting. Two Clients constructed for the same PAT must
+// share a bucket; different PATs get independent buckets.
+func TestNew_SharesLimitersAcrossSamePAT(t *testing.T) {
+	a := New("pat-A")
+	b := New("pat-A")
+	if a.limiters != b.limiters {
+		t.Errorf("two Clients with same PAT must share limiters; got distinct pointers (%p vs %p)",
+			a.limiters, b.limiters)
+	}
+	c := New("pat-B")
+	if a.limiters == c.limiters {
+		t.Errorf("Clients with different PATs must NOT share limiters; both at %p",
+			a.limiters)
+	}
+}
+
 // TestTokenBucket_ConcurrentSerialization confirms two goroutines waiting
 // on a single-token bucket don't both grab the same token — one waits.
 func TestTokenBucket_ConcurrentSerialization(t *testing.T) {

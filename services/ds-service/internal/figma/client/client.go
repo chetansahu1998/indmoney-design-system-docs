@@ -27,14 +27,17 @@ type Client struct {
 
 // New constructs a Client. PAT must include file_content:read. The Client
 // carries process-local per-tier token buckets (tier1=12 RPM, tier2=40 RPM,
-// tier3=80 RPM, all 80% of the documented Professional-plan caps). Buckets
-// are shared across all goroutines using this Client; for multi-process
-// deployments a shared limiter would be needed but isn't today.
+// tier3=80 RPM, all 80% of the documented Professional-plan caps). The
+// buckets are SHARED across every Client constructed for the same PAT
+// via limitersForPAT — production main.go builds a fresh client.New(pat)
+// per request inside several closures, so a per-Client limiter would be
+// no rate limit at all. Figma's documented cap is per PAT, so the shared
+// key is the PAT itself.
 func New(pat string) *Client {
 	return &Client{
 		token:    pat,
 		http:     &http.Client{Timeout: 5 * time.Minute},
-		limiters: newLimiters(),
+		limiters: limitersForPAT(pat),
 	}
 }
 
