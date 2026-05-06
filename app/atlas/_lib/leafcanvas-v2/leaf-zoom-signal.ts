@@ -1,34 +1,92 @@
 /**
  * leaf-zoom-signal.ts — module-level pub/sub for the active leaf
- * canvas's pan/zoom scale, so deep descendants can read it without
- * prop-drilling through the leaf canvas → real-data-bridge → frame
- * wrapper → renderer chain.
+ * canvas's pan/zoom scale. Two signals are exposed:
  *
- * Same pattern as canvasFetchQueue and canvasIdleTracker — one
- * singleton per app, lives outside React's render tree, components
- * subscribe via the `useLeafZoom` hook.
+ *   liveZoom    — updates on every producer call (every wheel tick)
+ *                 Use for affordances that should follow the gesture
+ *                 (e.g. the zoom-% badge in the bottom toolbar).
  *
- * Producer: `app/atlas/_lib/leafcanvas.tsx` writes `setLeafZoom(cam.z)`
- * inside its pan/zoom effect.
+ *   settledZoom — updates only when `canvasGestureTracker` reports
+ *                 that the gesture has ended (~150 ms after the last
+ *                 wheel/pan event). Use for expensive consumers that
+ *                 react to viewport change — preview-tier selection,
+ *                 image-fill prefetch, canonical_tree hydration.
+ *                 Reading settledZoom prevents mid-zoom <img> remounts
+ *                 when the user crosses a preview-tier boundary
+ *                 (e.g. 0.4 → 0.6 spans the 512→1024 px tier).
  *
- * Consumers: `LeafFrameRenderer` reads zoom via `useLeafZoom()` and
- * threads it into `useIconClusterURLs` for tier-aware URL minting.
+ * Producer: `app/atlas/_lib/leafcanvas.tsx` calls `setLeafZoom(z)` on
+ * every camera update. The producer doesn't know or care whether a
+ * gesture is in flight; this module routes the value to both signals
+ * based on gesture-tracker state.
  *
- * Default value `1` covers the SSR / no-leaf case (every consumer
- * sees zoom=1) so cluster mints still pick a sensible tier.
+ * Same singleton/useSyncExternalStore pattern as canvasFetchQueue and
+ * canvasIdleTracker — one instance per app, lives outside React's
+ * render tree.
+ *
+ * Backwards-compat: `useLeafZoom` is preserved as an alias for
+ * `useLeafZoomSettled`, since every existing caller uses it for tier
+ * selection and that's exactly what should now be debounced. Direct
+ * UI-feedback consumers (zoom badge) should switch to `useLeafZoomLive`.
  */
 
 import { useSyncExternalStore } from "react";
 
-let currentZoom = 1;
-const listeners = new Set<() => void>();
+import { canvasGestureTracker } from "./gesture-tracker";
 
-/** Producer side: leafcanvas.tsx calls this whenever cam.z changes. */
+let liveZoom = 1;
+let settledZoom = 1;
+const liveListeners = new Set<() => void>();
+const settledListeners = new Set<() => void>();
+
+/**
+ * Producer side: leafcanvas.tsx calls this whenever cam.z changes.
+ *
+ * Always updates the live signal. The settled signal updates only
+ * when the gesture-tracker reports we are NOT mid-gesture; otherwise
+ * the gesture-end subscriber (registered below) will sync settled to
+ * the latest live value once the gesture finishes.
+ */
 export function setLeafZoom(z: number): void {
   if (!Number.isFinite(z) || z <= 0) return;
-  if (currentZoom === z) return;
-  currentZoom = z;
-  for (const fn of [...listeners]) {
+  if (liveZoom !== z) {
+    liveZoom = z;
+    notify(liveListeners);
+  }
+  if (!canvasGestureTracker.isGesturing && settledZoom !== z) {
+    settledZoom = z;
+    notify(settledListeners);
+  }
+}
+
+/** Imperative read for non-React contexts. */
+export function getLeafZoomLive(): number {
+  return liveZoom;
+}
+export function getLeafZoomSettled(): number {
+  return settledZoom;
+}
+
+/** Back-compat alias — pre-split callers expected the (now-settled) signal. */
+export const getLeafZoom = getLeafZoomSettled;
+
+function subscribeLive(cb: () => void): () => void {
+  liveListeners.add(cb);
+  return () => {
+    liveListeners.delete(cb);
+  };
+}
+function subscribeSettled(cb: () => void): () => void {
+  settledListeners.add(cb);
+  return () => {
+    settledListeners.delete(cb);
+  };
+}
+
+function notify(set: Set<() => void>): void {
+  // Snapshot so unsubscribe-during-callback doesn't mutate iteration.
+  const snapshot = [...set];
+  for (const fn of snapshot) {
     try {
       fn();
     } catch {
@@ -37,24 +95,40 @@ export function setLeafZoom(z: number): void {
   }
 }
 
-/** Imperative read for non-React contexts. */
-export function getLeafZoom(): number {
-  return currentZoom;
-}
-
-/** Module-level subscribe (used by useSyncExternalStore). */
-function subscribe(cb: () => void): () => void {
-  listeners.add(cb);
-  return () => {
-    listeners.delete(cb);
-  };
+/**
+ * Live zoom — re-renders on every producer call. Use for UI that
+ * should track the gesture in real time (zoom-percent badge).
+ */
+export function useLeafZoomLive(): number {
+  return useSyncExternalStore(subscribeLive, getLeafZoomLive, () => 1);
 }
 
 /**
- * React hook — returns the current leaf-canvas zoom and re-renders
- * the consumer when it changes. Uses useSyncExternalStore for
- * concurrent-mode safety; SSR snapshot returns 1.
+ * Settled zoom — re-renders only when zoom changes AND the gesture
+ * has ended. Use for tier selection / image mints / canonical-tree
+ * hydration triggers. Default export point for prior `useLeafZoom`
+ * callers since they all wanted this behaviour.
  */
-export function useLeafZoom(): number {
-  return useSyncExternalStore(subscribe, getLeafZoom, () => 1);
+export function useLeafZoomSettled(): number {
+  return useSyncExternalStore(subscribeSettled, getLeafZoomSettled, () => 1);
 }
+
+/** Back-compat alias. New code should pick live or settled explicitly. */
+export const useLeafZoom = useLeafZoomSettled;
+
+// ─── Gesture-end → settle latest live zoom into settledZoom ────────────
+//
+// Subscribe at module load so the first leaf canvas pickup automatically
+// gets the right behaviour. The subscription is permanent — there's only
+// ever one gesture-tracker and one zoom-signal pair, both module-level.
+//
+// Note: server-side rendering runs this module too. canvasGestureTracker
+// is just a class instance with no DOM hooks of its own (those live in
+// leafcanvas.tsx's wheel/pointer handlers), so subscribing here is safe
+// in both SSR and CSR.
+canvasGestureTracker.subscribe((gesturing) => {
+  if (gesturing) return;
+  if (settledZoom === liveZoom) return;
+  settledZoom = liveZoom;
+  notify(settledListeners);
+});

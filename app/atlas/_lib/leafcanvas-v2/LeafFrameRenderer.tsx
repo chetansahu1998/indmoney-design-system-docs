@@ -39,8 +39,10 @@ import { nodeToHTML } from "./nodeToHTML";
 import { StatePicker } from "./StatePicker";
 import type { AnnotatedNode, CanonicalNode, ImageRefMap } from "./types";
 import { canvasFetchQueue } from "./fetch-queue";
+import { canvasGestureTracker, getIsGesturing } from "./gesture-tracker";
 import { canvasIdleTracker } from "./idle-tracker";
-import { useLeafZoom } from "./leaf-zoom-signal";
+import { useLeafZoomSettled } from "./leaf-zoom-signal";
+import { clog } from "./canvas-log";
 import { useIconClusterURLs } from "./useIconClusterURLs";
 import { useImageRefs } from "./useImageRefs";
 import {
@@ -117,6 +119,16 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
   const [state, setState] = useState<CanonicalState>(INITIAL_STATE);
   const [intersected, setIntersected] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  // Diagnostic: log mount/unmount + state transitions. Off unless
+  // window.__CANVAS_LOG is set.
+  useEffect(() => {
+    clog("io", "LeafFrameRenderer mount", { screenID, cached: cached !== undefined ? (cached === null ? "null" : "tree") : "miss" });
+    return () => clog("io", "LeafFrameRenderer unmount", { screenID });
+  }, [screenID, cached]);
+  useEffect(() => {
+    clog("io", "state.status", { screenID, status: state.status });
+  }, [state.status, screenID]);
 
   // ─── Atomic-child selection (U7 + U9) ─────────────────────────────────────
   // Single-click any TEXT / icon-cluster / RECTANGLE / ELLIPSE / VECTOR
@@ -261,17 +273,59 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     let warmObs: IntersectionObserver | null = null;
     let hotObs: IntersectionObserver | null = null;
 
+    // Gesture-deferred mount: if an intersection fires mid-pan/zoom, queue
+    // the state flip and apply it on gesture-end. Prevents N frames from
+    // hydrating exactly when the user is panning across them — that
+    // (canonical_tree fetch + walker re-evaluation per frame) was
+    // competing with the wheel→RAF→paint pipeline and causing the
+    // "messed up zoom interactions during loading" felt jank.
+    //
+    // Each frame holds at most one pending flag per band (warm/hot) at
+    // a time; the gesture-tracker subscription drains them on settle.
+    let pendingWarm = false;
+    let pendingHot = false;
+    let unsubGesture: (() => void) | null = null;
+    const ensureGestureSubscriber = (): void => {
+      if (unsubGesture) return;
+      unsubGesture = canvasGestureTracker.subscribe((gesturing) => {
+        if (gesturing) return;
+        // Settle: drain whichever bands fired during the gesture.
+        // React auto-batches the two setStates into one commit.
+        if (pendingHot) {
+          pendingHot = false;
+          setIntersected(true);
+          hotObs?.disconnect();
+          hotObs = null;
+          warmObs?.disconnect();
+          warmObs = null;
+        } else if (pendingWarm) {
+          pendingWarm = false;
+          setWarm(true);
+          warmObs?.disconnect();
+          warmObs = null;
+        }
+        unsubGesture?.();
+        unsubGesture = null;
+      });
+    };
+
     const attach = (): void => {
       if (warmObs || hotObs) return; // already attached
       warmObs = new IntersectionObserver(
         (entries) => {
           for (const e of entries) {
-            if (e.isIntersecting) {
-              setWarm(true);
-              warmObs?.disconnect();
-              warmObs = null;
+            if (!e.isIntersecting) continue;
+            if (getIsGesturing()) {
+              pendingWarm = true;
+              ensureGestureSubscriber();
+              clog("io", "warm deferred (gesturing)", { screenID });
               break;
             }
+            setWarm(true);
+            warmObs?.disconnect();
+            warmObs = null;
+            clog("io", "warm fired", { screenID });
+            break;
           }
         },
         { rootMargin: "1000px" },
@@ -279,21 +333,56 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       hotObs = new IntersectionObserver(
         (entries) => {
           for (const e of entries) {
-            if (e.isIntersecting) {
-              setIntersected(true);
-              hotObs?.disconnect();
-              hotObs = null;
-              warmObs?.disconnect();
-              warmObs = null;
+            if (!e.isIntersecting) continue;
+            if (getIsGesturing()) {
+              pendingHot = true;
+              ensureGestureSubscriber();
+              clog("io", "hot deferred (gesturing)", { screenID });
               break;
             }
+            setIntersected(true);
+            hotObs?.disconnect();
+            hotObs = null;
+            warmObs?.disconnect();
+            warmObs = null;
+            clog("io", "hot fired", { screenID });
+            break;
           }
         },
         { rootMargin: "200px" },
       );
       warmObs.observe(el);
       hotObs.observe(el);
+      clog("io", "observers attached", { screenID });
     };
+
+    // Cause B (IO/transform footgun) quick-test: IntersectionObserver does not
+    // recompute when an ancestor's `transform` changes — only on scroll, resize,
+    // or target bbox changes. Our pan/zoom transforms .lc-world; IO observers
+    // on .leafcv2-frame descendants can therefore stop firing after a pan,
+    // leaving frames stuck on shimmer. The standard fix (Mozilla bug 1419339,
+    // WebKit bug 209264): on gesture-end, force IO to re-observe its targets
+    // so the browser recomputes intersection against current layout.
+    //
+    // We subscribe to gesture-tracker unconditionally at IO setup. On every
+    // settle: unobserve + re-observe each still-attached band. The browser
+    // fires the IO callback synchronously with the current intersection
+    // state; if the frame is now in viewport, setWarm/setIntersected fires.
+    const unsubReobserve = canvasGestureTracker.subscribe((gesturing) => {
+      if (gesturing) return;
+      const target = wrapperRef.current;
+      if (!target) return;
+      if (warmObs) {
+        warmObs.unobserve(target);
+        warmObs.observe(target);
+        clog("io", "re-observe warm on settle", { screenID });
+      }
+      if (hotObs) {
+        hotObs.unobserve(target);
+        hotObs.observe(target);
+        clog("io", "re-observe hot on settle", { screenID });
+      }
+    });
 
     const detach = (): void => {
       warmObs?.disconnect();
@@ -317,6 +406,9 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     }
     return () => {
       unsub?.();
+      unsubGesture?.();
+      unsubGesture = null;
+      unsubReobserve();
       detach();
     };
   }, [intersected, warm]);
@@ -338,40 +430,61 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
   // a dep — promotion mid-fetch is handled by canvasFetchQueue.promote()
   // separately, not by re-running this effect.
   useEffect(() => {
-    if (!warm) return;
+    // Cache hit short-circuits the warm-gate — we already have the tree
+    // in the live store (data-adapters' bulk fetch + bridge populate it
+    // for the first 20 screens). The original code gated EVEN cache
+    // reads behind `warm`, so 71/79 frames stayed in idle until the
+    // user panned them into view. (Bug pre-existed CZ4; the gesture-
+    // gate just made it more visible.)
     if (cached !== undefined) {
       if (cached === null) {
+        clog("tree", "cached → empty", { screenID });
         setState({ status: "empty" });
       } else {
         const unwrapped = unwrapCanonicalTree(cached);
-        if (unwrapped) setState({ status: "ready", tree: unwrapped });
-        else setState({ status: "empty" });
+        if (unwrapped) {
+          clog("tree", "cached → ready", { screenID });
+          setState({ status: "ready", tree: unwrapped });
+        } else {
+          clog("tree", "cached → empty (unwrap failed)", { screenID });
+          setState({ status: "empty" });
+        }
       }
       return;
     }
+    // No cache: must wait for warm before firing HTTP.
+    if (!warm) return;
 
     // Epoch counter (DesignBrain-AI MSDFAtlasManager generation-id pattern):
     // cleanup runs ONLY on unmount or when slug/screenID changes — both
     // legitimate reasons to discard a late response.
     let cancelled = false;
     setState({ status: "loading" });
+    clog("tree", "fetch start", { screenID, intersected });
     const work = (): Promise<void> =>
       lazyFetchCanonicalTree(slug, screenID).then((res) => {
-        if (cancelled) return;
+        if (cancelled) {
+          clog("tree", "fetch cancelled", { screenID });
+          return;
+        }
         if (!res.ok) {
+          clog("tree", "fetch !ok", { screenID, err: (res as { error?: unknown }).error });
           setState({ status: "empty" });
           return;
         }
         const tree = res.data.canonical_tree;
         if (!tree || typeof tree !== "object") {
+          clog("tree", "fetch ok but no tree", { screenID });
           setState({ status: "empty" });
           return;
         }
         const unwrapped = unwrapCanonicalTree(tree);
         if (!unwrapped) {
+          clog("tree", "fetch ok but unwrap failed", { screenID });
           setState({ status: "empty" });
           return;
         }
+        clog("tree", "fetch done", { screenID });
         setState({ status: "ready", tree: unwrapped });
       });
     // Capture initial priority via a ref-free read; promotion is the
@@ -462,15 +575,16 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
   // Empty map until the first batch resolves; the renderer falls back to
   // the placeholder for any unmatched cluster id (failed mints, slow
   // network, etc.) — graceful degradation, no broken layout.
-  // Live leaf-canvas zoom drives preview-tier selection per cluster.
+  // Settled (debounced) leaf-canvas zoom drives preview-tier selection.
   // Source: leafcanvas.tsx writes setLeafZoom(cam.z) on every camera
-  // update. When zoom flips into a new tier band the hook re-mints
-  // and the <img> src updates — browser swaps to the new tier. For
-  // tiny zoom deltas inside the same tier band the URLs are identical
-  // (pickPreviewTier returns the same value) so React's useMemo on
-  // the URL map doesn't trigger a re-render of every cluster.
-  const liveZoom = useLeafZoom();
-  const clusterURLs = useIconClusterURLs(slug, openLeafID, prunedTree, liveZoom, 2);
+  // update; leaf-zoom-signal routes that to the settled signal only
+  // after canvasGestureTracker reports gesture-end (~150 ms idle).
+  // Reading the settled signal here means we don't remount cluster
+  // <img> elements with new URLs while the user is still zooming —
+  // a tier transition fires once when they let go, not 60×/sec
+  // mid-gesture as they cross the 0.4→0.6 (512→1024 px) boundary.
+  const settledZoom = useLeafZoomSettled();
+  const clusterURLs = useIconClusterURLs(slug, openLeafID, prunedTree, settledZoom, 2);
   const rendered = useMemo(() => {
     if (!prunedTree || !prunedTree.absoluteBoundingBox) return null;
     return nodeToHTML(

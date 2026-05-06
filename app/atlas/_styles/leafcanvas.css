@@ -203,6 +203,14 @@
   cursor: pointer;
   overflow: visible;
   transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+  /* NOTE: content-visibility:auto was tried here but interferes with the
+   * IntersectionObserver inside LeafFrameRenderer — the IO target lives
+   * inside the lc-frame subtree and content-visibility skips the descendant
+   * box altogether when off-viewport, so IO never fires for off-screen
+   * frames even after the user pans them in. Manual virtualization via
+   * IO + canvasFetchQueue gives us the same "don't render off-screen
+   * frames" win without that conflict. Leaving the prop unset.
+   */
 }
 .lc-frame:hover { border-color: rgba(126,184,255,0.35); }
 .lc-frame.is-sel {

@@ -185,7 +185,16 @@ function PhoneFrameWrapper(props: any) {
           ? React.createElement("img", {
               src: frame.pngUrl,
               alt: frame.label || "Screen",
-              loading: "lazy",
+              // NOTE: removed `loading: "lazy"`. Native lazy-loading uses an
+              // internal IntersectionObserver against the viewport, and IO
+              // does NOT recompute when an ancestor's `transform` changes
+              // (Mozilla bug 1419339, WebKit bug 209264). With our
+              // pan/zoom transform on .lc-world, off-viewport-at-mount
+              // frames stay loading=pending forever even after panning
+              // them into view. Eager-load relies on the browser's HTTP/1.1
+              // 6-conn-per-origin throttle for fairness; HTTP/2 (Fly prod)
+              // handles parallelism better. Manual IO virtualization in
+              // LeafFrameRenderer.tsx still gates the canonical_tree fetch.
               decoding: "async",
               draggable: false,
               style: { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", display: "block" },
@@ -228,7 +237,6 @@ function PhoneFrameWrapper(props: any) {
       React.createElement("img", {
         src: frame.pngUrl,
         alt: frame.label || "Screen",
-        loading: "lazy",
         decoding: "async",
         draggable: false,
         style: { width: "100%", height: "100%", objectFit: "cover", display: "block" },

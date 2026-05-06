@@ -345,20 +345,37 @@ export async function fetchLeafCanvas(
   // initial sample lazy-load their tree directly via lazyFetchCanonicalTree.
   const edges: LeafEdge[] = [];
   const canonicalTreeByScreenID: Record<string, unknown> = {};
-  const sample = screens.slice(0, 20);
   const screenIDs = new Set(screens.map((s) => s.ID));
-  if (sample.length > 0) {
+  if (screens.length > 0) {
+    // Probe-first pattern: fetch screen[0] serially. If it 404s, this
+    // project has no canonical trees yet (sheet-sync imports skip the
+    // pipeline that fills the column) — bail out early so we don't spam
+    // N 404s into the network panel. If it succeeds, fetch ALL remaining
+    // screens in parallel.
+    //
+    // Was: bulk fetch limited to first 20. That meant projects with 79+
+    // frames had their last 59 left to lazy-fetch via IO — which only
+    // fires when frames intersect the viewport. At fit-zoom most frames
+    // are off-viewport so their canonical_tree never loaded, leaving
+    // them stuck on shimmer until the user panned each one into view.
+    // Symptom: "only 1 or 2 frames are showing the data".
+    //
+    // Cost of fetching all: ~N parallel HTTP calls on first leaf-open.
+    // ds-service serves canonical_tree from a SQLite blob in ~2-5 ms,
+    // so 80 parallel fetches return in well under a second. After that
+    // every frame hits the cache-hit short-circuit instantly.
     const probe = await getJSON<{ canonical_tree: unknown; hash: string | null }>(
-      `/v1/projects/${encodeURIComponent(slug)}/screens/${encodeURIComponent(sample[0].ID)}/canonical-tree`,
+      `/v1/projects/${encodeURIComponent(slug)}/screens/${encodeURIComponent(screens[0].ID)}/canonical-tree`,
     );
     if (probe.ok) {
-      canonicalTreeByScreenID[sample[0].ID] = probe.data.canonical_tree ?? null;
+      canonicalTreeByScreenID[screens[0].ID] = probe.data.canonical_tree ?? null;
       const targets = collectNavigationTargets(probe.data.canonical_tree, screenIDs);
       targets.forEach((toID, j) => {
-        edges.push({ from: sample[0].ID, to: toID, kind: j === 0 ? "main" : "branch" });
+        edges.push({ from: screens[0].ID, to: toID, kind: j === 0 ? "main" : "branch" });
       });
+      const remaining = screens.slice(1);
       const trees = await Promise.allSettled(
-        sample.slice(1).map((s) =>
+        remaining.map((s) =>
           getJSON<{ canonical_tree: unknown; hash: string | null }>(
             `/v1/projects/${encodeURIComponent(slug)}/screens/${encodeURIComponent(s.ID)}/canonical-tree`,
           ),
@@ -366,7 +383,7 @@ export async function fetchLeafCanvas(
       );
       trees.forEach((t, i) => {
         if (t.status !== "fulfilled" || !t.value.ok) return;
-        const fromScreen = sample[i + 1];
+        const fromScreen = remaining[i];
         canonicalTreeByScreenID[fromScreen.ID] = t.value.data.canonical_tree ?? null;
         const targetIDs = collectNavigationTargets(t.value.data.canonical_tree, screenIDs);
         targetIDs.forEach((toID, j) => {
@@ -375,7 +392,7 @@ export async function fetchLeafCanvas(
       });
     }
     // probe.ok === false → the project has no canonical trees built; skip
-    // the parallel walk to avoid 20 redundant 404s in the network panel.
+    // the parallel walk to avoid N redundant 404s in the network panel.
   }
 
   return { frames, edges, canonicalTreeByScreenID };

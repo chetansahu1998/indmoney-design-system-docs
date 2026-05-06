@@ -1,9 +1,11 @@
 // @ts-nocheck
 "use client";
 // Ported verbatim from INDmoney Docs/leafcanvas.jsx.
-import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from "react";
 import { CopyOverridesTab } from "./leafcanvas-v2/CopyOverridesTab";
 import { setLeafZoom } from "./leafcanvas-v2/leaf-zoom-signal";
+import { canvasGestureTracker } from "./leafcanvas-v2/gesture-tracker";
+import { clog } from "./leafcanvas-v2/canvas-log";
 // ============================================================
 // LEAF CANVAS — Figma-like infinite board for a single sub-flow.
 // Renders an array of "frames" (phone-mockup screens) on a
@@ -19,27 +21,113 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
   const layout = useMemo(() => window.buildLeafCanvas(leaf), [leaf.id]);
   const stageRef = useRef(null);
 
-  // ---- camera (pan + zoom)
-  const [cam, setCam] = useState({ x: 0, y: 0, z: 0.6 });
-  const camRef = useRef(cam);
-  useEffect(() => { camRef.current = cam; }, [cam]);
-
-  // Broadcast the canvas zoom to the canvas-v2 surface so its preview-tier
-  // selector picks the right PNG size as the user zooms in/out. Module-
-  // level signal (leaf-zoom-signal.ts) avoids prop-drilling through the
-  // real-data-bridge → PhoneFrameWrapper → LeafFrameRenderer chain.
+  // Diagnostic — mount/unmount counter so we can SEE if the canvas is
+  // remounting on every SSE event / overlay refresh / etc.
   useEffect(() => {
-    setLeafZoom(cam.z);
-  }, [cam.z]);
+    if (typeof window !== "undefined") {
+      window.__LC_MOUNTS = (window.__LC_MOUNTS || 0) + 1;
+      clog("camera", "LeafCanvas MOUNT", { leafId: leaf.id, n: window.__LC_MOUNTS });
+    }
+    return () => {
+      if (typeof window !== "undefined") {
+        window.__LC_UNMOUNTS = (window.__LC_UNMOUNTS || 0) + 1;
+        clog("camera", "LeafCanvas UNMOUNT", { leafId: leaf.id, n: window.__LC_UNMOUNTS });
+      }
+    };
+  }, [leaf.id]);
+
+  // ---- camera (pan + zoom) — RAF-driven outside React
+  //
+  // Camera state lives in a ref, not React state. Wheel and pointer
+  // handlers mutate the ref and schedule a single RAF tick that:
+  //   (a) writes `transform` directly to the .lc-world DOM node
+  //   (b) writes the dotted-grid offsets to the .lc-stage CSS vars
+  //   (c) calls setLeafZoom(z) for the live zoom signal (cheap)
+  //   (d) calls canvasGestureTracker.tick() so consumers know we're
+  //       mid-gesture (LeafFrameRenderer queues mounts; the settled
+  //       zoom signal holds back tier transitions until we settle)
+  //
+  // React only re-renders for the bottom-bar zoom % display — and
+  // that's debounced to fire once per gesture-end via the gesture
+  // tracker's settle callback. That removes the 60-Hz reconciliation
+  // pass over 87 frames during a zoom gesture, which was the core
+  // cause of "messed up zoom interactions during loading".
+  // ------------------------------------------------------------------
+  const camRef = useRef({ x: 0, y: 0, z: 0.6 });
+  const worldRef = useRef(null);
+  const rafPendingRef = useRef(0);
+  const [zoomPct, setZoomPct] = useState(60);
+
+  // Apply the current camRef to the DOM. Cheap: two style writes.
+  // Called from RAF or directly from one-shot setters (fitAll etc).
+  const applyCameraToDOM = useCallback(() => {
+    const c = camRef.current;
+    const world = worldRef.current;
+    if (world) {
+      world.style.transform = `scale(${c.z}) translate(${-c.x}px, ${-c.y}px)`;
+    }
+    const stage = stageRef.current;
+    if (stage) {
+      stage.style.backgroundSize = `${24 * c.z}px ${24 * c.z}px`;
+      stage.style.backgroundPosition = `calc(50% - ${c.x * c.z}px) calc(50% - ${c.y * c.z}px)`;
+    }
+    setLeafZoom(c.z);
+    clog("camera", "apply", { x: c.x, y: c.y, z: c.z, hasWorld: !!world });
+  }, []);
+
+  // Schedule a RAF flush. Coalesces N wheel events per frame into 1
+  // DOM write. willChange: transform (in CSS) keeps the GPU layer hot.
+  const scheduleCameraFlush = useCallback(() => {
+    if (rafPendingRef.current) return;
+    rafPendingRef.current = requestAnimationFrame(() => {
+      rafPendingRef.current = 0;
+      applyCameraToDOM();
+    });
+  }, [applyCameraToDOM]);
+
+  // Debounced React-state sync — fires when the gesture-tracker
+  // reports settle (~150 ms after the last wheel/pan event). Updates
+  // the bottom-bar zoom percentage exactly once per gesture.
+  useEffect(() => {
+    const off = canvasGestureTracker.subscribe((gesturing) => {
+      if (gesturing) return;
+      const next = Math.round(camRef.current.z * 100);
+      setZoomPct((prev) => (prev === next ? prev : next));
+    });
+    return off;
+  }, []);
 
   // Auto-fit to layout on mount. Guards an empty `frames` array (real-data
   // case where the project has no rendered screens yet) so Math.min/max of
   // an empty spread doesn't yield -Infinity → NaN camera.
-  useEffect(() => {
+  //
+  // Auto-fit MUST NOT re-run after the user has interacted with this leaf,
+  // otherwise the camera snaps back to the landing zone whenever this effect
+  // re-fires (e.g. on layout.frames.length changing because data streams in
+  // late, or — the bug we just hit — on dep-identity churn). Track which
+  // leaf we've fit for; only fit once per leaf.
+  //
+  // Critical: useLayoutEffect (not useEffect) so the world transform is
+  // applied BEFORE first paint. With useEffect the browser paints once
+  // with no transform (frames at world coords, way off-screen), the
+  // IntersectionObserver fires `isIntersecting:false` for everything,
+  // and 71/79 frames stay stuck on shimmer until the user wiggles the
+  // viewport. (Confirmed via headless audit 2026-05-06.)
+  const fitDoneForLeafRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
+    if (fitDoneForLeafRef.current === leaf.id) {
+      clog("camera", "auto-fit skipped (already fit this leaf)", { leafId: leaf.id });
+      return;
+    }
     if (!layout.frames || layout.frames.length === 0) {
-      setCam({ x: 0, y: 0, z: 0.6 });
+      clog("camera", "auto-fit (empty layout) → 0,0,0.6");
+      camRef.current = { x: 0, y: 0, z: 0.6 };
+      applyCameraToDOM();
+      setZoomPct(60);
+      // Don't mark fit-done for empty layout — a later effect run with
+      // populated frames should still fit.
       return;
     }
     const rect = stage.getBoundingClientRect();
@@ -54,8 +142,15 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
     const z = Math.max(0.18, Math.min(1.0, Math.min(zx, zy)));
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
-    setCam({ x: cx, y: cy, z });
-  }, [leaf.id, layout.frames.length]);
+    camRef.current = { x: cx, y: cy, z };
+    applyCameraToDOM();
+    setZoomPct(Math.round(z * 100));
+    fitDoneForLeafRef.current = leaf.id;
+    clog("camera", "auto-fit (initial)", {
+      cx, cy, z, frames: layout.frames.length,
+      stageW: rect.width, stageH: rect.height,
+    });
+  }, [leaf.id, layout.frames.length, applyCameraToDOM]);
 
   // ---- pan/zoom event handlers
   const dragRef = useRef({ active: false, startX: 0, startY: 0, camX: 0, camY: 0, moved: false });
@@ -75,7 +170,13 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
     const dy = e.clientY - dragRef.current.startY;
     if (Math.hypot(dx, dy) > 3) dragRef.current.moved = true;
     const z = camRef.current.z;
-    setCam(c => ({ ...c, x: dragRef.current.camX - dx / z, y: dragRef.current.camY - dy / z }));
+    camRef.current = {
+      ...camRef.current,
+      x: dragRef.current.camX - dx / z,
+      y: dragRef.current.camY - dy / z,
+    };
+    canvasGestureTracker.tick();
+    scheduleCameraFlush();
   };
   const onPointerUp = (e) => {
     const wasMoved = dragRef.current.moved;
@@ -125,25 +226,36 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
       const z = Math.max(0.18, Math.min(2.0, c.z * factor));
       const nx = wx - (sx - rect.width / 2) / z;
       const ny = wy - (sy - rect.height / 2) / z;
-      setCam({ x: nx, y: ny, z });
+      camRef.current = { x: nx, y: ny, z };
     } else {
       // Two-finger PAN — translate camera in world space.
       // Shift+wheel on a mouse swaps axes (browser convention) — already
       // reflected in deltaX, so we just consume both axes directly.
-      setCam({ x: c.x + e.deltaX / c.z, y: c.y + e.deltaY / c.z, z: c.z });
+      camRef.current = {
+        x: c.x + e.deltaX / c.z,
+        y: c.y + e.deltaY / c.z,
+        z: c.z,
+      };
     }
+    canvasGestureTracker.tick();
+    scheduleCameraFlush();
+    clog("camera", shouldZoom ? "wheel-zoom" : "wheel-pan", {
+      dx: e.deltaX, dy: e.deltaY, ctrl: e.ctrlKey, meta: e.metaKey,
+      next: { ...camRef.current },
+    });
   };
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
     stage.addEventListener("wheel", onWheel, { passive: false });
-    return () => stage.removeEventListener("wheel", onWheel);
+    return () => {
+      stage.removeEventListener("wheel", onWheel);
+      if (rafPendingRef.current) {
+        cancelAnimationFrame(rafPendingRef.current);
+        rafPendingRef.current = 0;
+      }
+    };
   }, []);
-
-  // ---- transform applied to "world" group: scale, then offset by -cam.
-  // The .lc-world element is positioned at left:50%; top:50% in CSS,
-  // which gives us the canvas-center origin we need.
-  const transform = `scale(${cam.z}) translate(${-cam.x}px, ${-cam.y}px)`;
 
   // ---- connectors (SVG) — drawn in world space, so put SVG at world coords
   // Compute bounding world box for SVG
@@ -168,12 +280,20 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
     return m;
   }, [violations]);
 
-  // ---- helpers
+  // ---- helpers — one-shot camera writes (buttons, focus, etc.)
+  // These set camRef + flush DOM + sync zoomPct synchronously since
+  // they fire on a single user click, not a continuous gesture.
+  const writeCamera = useCallback((next) => {
+    camRef.current = next;
+    applyCameraToDOM();
+    setZoomPct(Math.round(next.z * 100));
+  }, [applyCameraToDOM]);
+
   const fitAll = () => {
     const stage = stageRef.current;
     if (!stage) return;
     if (!layout.frames || layout.frames.length === 0) {
-      setCam({ x: 0, y: 0, z: 0.6 });
+      writeCamera({ x: 0, y: 0, z: 0.6 });
       return;
     }
     const rect = stage.getBoundingClientRect();
@@ -186,14 +306,20 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
     const zx = (rect.width - 380 - padding * 2) / w;
     const zy = (rect.height - 100 - padding * 2) / h;
     const z = Math.max(0.18, Math.min(1.0, Math.min(zx, zy)));
-    setCam({ x: (minX + maxX) / 2, y: (minY + maxY) / 2, z });
+    writeCamera({ x: (minX + maxX) / 2, y: (minY + maxY) / 2, z });
   };
-  const zoomIn = () => setCam(c => ({ ...c, z: Math.min(2.0, c.z * 1.25) }));
-  const zoomOut = () => setCam(c => ({ ...c, z: Math.max(0.18, c.z / 1.25) }));
+  const zoomIn = () => {
+    const c = camRef.current;
+    writeCamera({ ...c, z: Math.min(2.0, c.z * 1.25) });
+  };
+  const zoomOut = () => {
+    const c = camRef.current;
+    writeCamera({ ...c, z: Math.max(0.18, c.z / 1.25) });
+  };
   const focusOnFrame = (id) => {
     const f = layout.frames.find(x => x.id === id);
     if (!f) return;
-    setCam({ x: f.x + f.w / 2, y: f.y + f.h / 2, z: 0.85 });
+    writeCamera({ x: f.x + f.w / 2, y: f.y + f.h / 2, z: 0.85 });
   };
 
   // ---- when a frame becomes selected externally, focus on it
@@ -203,7 +329,7 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
 
   return (
     <div className="leafcanvas">
-      <LeafTopBar leaf={leaf} onClose={onClose} onPickLeaf={(id) => { window.__openLeaf?.(id); }} violations={violations.length} cam={cam} />
+      <LeafTopBar leaf={leaf} onClose={onClose} onPickLeaf={(id) => { window.__openLeaf?.(id); }} violations={violations.length} />
       <div
         className="lc-stage"
         ref={stageRef}
@@ -213,11 +339,16 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
         style={{
           backgroundImage:
             "radial-gradient(rgba(255,255,255,0.045) 1px, transparent 1px)",
-          backgroundSize: `${24 * cam.z}px ${24 * cam.z}px`,
-          backgroundPosition: `calc(50% - ${cam.x * cam.z}px) calc(50% - ${cam.y * cam.z}px)`,
+          // backgroundSize / backgroundPosition are written imperatively
+          // via applyCameraToDOM (RAF-driven). Initial values get set by
+          // the auto-fit effect on mount before first paint.
         }}
       >
-        <div className="lc-world" style={{ transform, transformOrigin: "0 0" }}>
+        <div
+          ref={worldRef}
+          className="lc-world"
+          style={{ transformOrigin: "0 0", willChange: "transform" }}
+        >
           {/* SVG connectors layer */}
           <svg
             className="lc-edges"
@@ -327,7 +458,7 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
       {/* Bottom-left zoom & nav */}
       <div className="lc-zoom">
         <button onClick={zoomOut} title="Zoom out">−</button>
-        <button className="lc-zoom-num" onClick={fitAll} title="Fit to canvas">{Math.round(cam.z * 100)}%</button>
+        <button className="lc-zoom-num" onClick={fitAll} title="Fit to canvas">{zoomPct}%</button>
         <button onClick={zoomIn} title="Zoom in">+</button>
         <span className="lc-zoom-sep" />
         <button onClick={fitAll} title="Fit all">
@@ -371,7 +502,7 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
 //   - Prev / Next arrows → cycle through siblings
 //   - Frames + violations stats on the right
 // ============================================================
-function LeafTopBar({ leaf, onClose, onPickLeaf, violations, cam }) {
+function LeafTopBar({ leaf, onClose, onPickLeaf, violations }) {
   const flow = window.FLOWS_BY_ID?.[leaf.flow];
   const allLeaves = window.LEAVES || [];
   // siblings = sub-flows under the same parent flow

@@ -388,6 +388,41 @@ export const useAtlas = create<AtlasStoreState>()(
           });
           return;
         }
+
+        // Idempotency: AtlasShell's URL effect has `flows` in its deps,
+        // so it re-fires `openLeaf(url.leaf)` every 60 s when refreshBrain
+        // mutates the flows reference. Pre-fix, every fire rebuilt the
+        // slot with a new `loadedAt`, which in turn changed `slotVersion`
+        // (the key on `<LeafCanvas>` in AtlasShellInner.tsx:300), forcing
+        // React to unmount and remount the entire 79-frame canvas tree
+        // every minute. Symptom: "canvas refreshing every time".
+        //
+        // If the slot is already loaded for this leaf, just update the
+        // selection so the URL stays consistent — leave the slot alone.
+        const existingSlot = get().leafSlots[leafID];
+        if (existingSlot) {
+          if (get().selection.leafID !== leafID) {
+            // Re-derive parent product slug for the selection update.
+            let parentForSelection: string | undefined;
+            for (const [productSlug, leaves] of Object.entries(get().leavesByFlow)) {
+              if (leaves.some((l) => l.id === leafID)) {
+                parentForSelection = productSlug;
+                break;
+              }
+            }
+            set({
+              selection: {
+                flowID: parentForSelection ?? get().selection.flowID,
+                leafID,
+                frameID: null,
+                selectedAtomicChild: null,
+                selectedAtomicChildren: new Map(),
+                activeStatesByFrame: new Map(),
+              },
+            });
+          }
+          return;
+        }
         // After the brain-products migration: leafID is a ds-service project
         // slug; the parent flow on the brain is a taxonomy product. Walk the
         // map to find which product owns this leaf so the URL/state stay
