@@ -131,7 +131,7 @@ func walkClusters(node any, acc *[]string) {
 	nodeType, _ := m["type"].(string)
 	name, _ := m["name"].(string)
 
-	if id != "" && isCluster(nodeType, name) {
+	if id != "" && isCluster(m, nodeType, name) {
 		*acc = append(*acc, id)
 		// Cluster encompasses its subtree — do not descend.
 		return
@@ -150,7 +150,16 @@ func walkClusters(node any, acc *[]string) {
 // name matches an icon or illustration taxonomy pattern. Layout-named
 // containers ("Status Bar", "Rounded Rectangle", etc.) do NOT match any
 // of these patterns and so correctly fall through to walk-children.
-func isCluster(nodeType, name string) bool {
+//
+// `node` is supplied so we can apply the vector-only-group heuristic:
+// a wrapper (FRAME/GROUP/etc.) whose entire descendant subtree is
+// vector shapes — like an illustration with 4 stacked vectors — should
+// cluster as a single PNG, not get walked into and split into 4
+// separate cluster nodes. Without this, an illustration of N vectors
+// becomes N separate /v1/images calls AND the canvas renders the
+// pieces individually (no shared composition), which the user reported
+// as "the black background holds 4 vectors but it's all one group".
+func isCluster(node map[string]any, nodeType, name string) bool {
 	if nodeType == "" {
 		return false
 	}
@@ -169,7 +178,84 @@ func isCluster(nodeType, name string) bool {
 	if pureSizeVariantPattern.MatchString(name) {
 		return true
 	}
+	// Vector-only-subtree heuristic. Cluster the wrapper as a whole if
+	// every leaf in its subtree is a vector shape AND there are at
+	// least two vector leaves (a single-shape wrapper is just one
+	// VECTOR — no need to cluster the wrapper, the inner shape is
+	// already a cluster on its own).
+	leafCount, allShape := vectorLeafSummary(node)
+	if allShape && leafCount >= 2 {
+		return true
+	}
 	return false
+}
+
+// vectorLeafSummary counts vector-shape leaves in a subtree and reports
+// whether ALL leaves are vector shapes. A "leaf" is a node with no
+// children. Returns (leafCount, allLeavesAreVectorShapes).
+//
+// Skips invisible / removed nodes — they don't contribute to the
+// rendered output. Also skips TEXT nodes since they prove the subtree
+// isn't pure-vector.
+func vectorLeafSummary(node map[string]any) (int, bool) {
+	if node == nil {
+		return 0, false
+	}
+	// Apply visibility filter on the wrapper itself.
+	if v, has := node["visible"].(bool); has && !v {
+		return 0, true
+	}
+	if r, has := node["removed"].(bool); has && r {
+		return 0, true
+	}
+	children, _ := node["children"].([]any)
+	if len(children) == 0 {
+		// This IS a leaf. Count it only if it's a vector shape.
+		nt, _ := node["type"].(string)
+		if _, isShape := clusterShapeTypes[nt]; isShape {
+			return 1, true
+		}
+		// Empty wrappers (no children, not a shape) — degenerate case;
+		// treat as zero leaves and false to prevent spurious clustering.
+		return 0, false
+	}
+	total := 0
+	allShape := true
+	for _, c := range children {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		// Skip invisible children.
+		if v, has := cm["visible"].(bool); has && !v {
+			continue
+		}
+		if r, has := cm["removed"].(bool); has && r {
+			continue
+		}
+		ct, _ := cm["type"].(string)
+		// TEXT children prove not-pure-vector immediately.
+		if ct == "TEXT" {
+			return 0, false
+		}
+		// Direct shape leaves count toward total.
+		if _, isShape := clusterShapeTypes[ct]; isShape {
+			total++
+			continue
+		}
+		// Wrapper child — recurse.
+		if _, isWrapper := containerWrapperTypes[ct]; isWrapper {
+			cn, cAll := vectorLeafSummary(cm)
+			if !cAll {
+				return 0, false
+			}
+			total += cn
+			continue
+		}
+		// Unknown type — be conservative, treat as not-pure-vector.
+		return 0, false
+	}
+	return total, allShape
 }
 
 // PrerenderClusters drives the per-tenant pyramid render for every

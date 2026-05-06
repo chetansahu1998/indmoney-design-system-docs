@@ -283,7 +283,21 @@ func (a *AssetExporter) RenderAssetsForLeaf(ctx context.Context, tenantID, leafI
 	for _, nid := range misses {
 		u, ok := urlMap[nid]
 		if !ok || u == "" {
-			return nil, &errFigmaNoSVGForNode{nodeID: nid, format: format}
+			// Figma returned no URL for this node (typically deeply-nested
+			// instance overrides, hidden vectors, or nodes whose subtree
+			// is empty). Behaviour split by call shape:
+			//
+			// - Single-node call (on-demand HandleAssetDownload): preserve
+			//   the existing 422 node_not_renderable semantics so the
+			//   client knows this exact node will never render.
+			// - Multi-node call (Stage 9 Phase 1, bulk export): skip the
+			//   bad node and continue persisting the rest. Pre-fix the
+			//   first bad node aborted all 80 in the chunk, costing
+			//   ~93% of the work to one missing-render.
+			if len(nodeIDs) == 1 {
+				return nil, &errFigmaNoSVGForNode{nodeID: nid, format: format}
+			}
+			continue
 		}
 		if err := assetByteLimiter.wait(ctx, tenantID, AssetExportBytesBurst, AssetExportBytesRefill); err != nil {
 			return nil, fmt.Errorf("asset exporter: bytes rate limit wait: %w", err)
