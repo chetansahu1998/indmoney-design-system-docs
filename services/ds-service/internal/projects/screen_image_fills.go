@@ -184,20 +184,108 @@ func (r *ImageFillResolver) ResolveImageRefsForLeaf(
 		return out, nil
 	}
 
-	// 5) One Figma call per leaf for the URL map. Caller is rate-limited
-	//    upstream (HTTP layer enforces leaf-level concurrency).
+	resolved, err := r.resolveMissesAndStore(ctx, tenantID, fileID, versionIndex, misses)
+	if err != nil {
+		return out, err
+	}
+	for k, v := range resolved {
+		out[k] = v
+	}
+	return out, nil
+}
+
+// WarmImageFillsForVersion populates asset_cache for every imageRef
+// referenced anywhere in the supplied canonical_tree JSONs. Called by
+// the pipeline as a sibling I/O wave to Stage 4 PNG downloads so the
+// first canvas render hits warm cache instead of fanning out to
+// /v1/files/.../images + N CDN GETs synchronously.
+//
+// Per-blob failures are swallowed (download errors, missing refs in
+// Figma's response). Returns non-nil only on infra failures
+// (version-index lookup, GetFileImageFills total failure).
+func (r *ImageFillResolver) WarmImageFillsForVersion(
+	ctx context.Context,
+	tenantID, fileID, versionID string,
+	treesJSON []string,
+) error {
+	if r == nil {
+		return errors.New("nil ImageFillResolver")
+	}
+	if tenantID == "" || fileID == "" || versionID == "" {
+		return errors.New("tenantID, fileID, versionID required")
+	}
+	repo := NewTenantRepo(r.DB, tenantID)
+	versionIndex, err := repo.GetVersionIndex(ctx, versionID)
+	if err != nil {
+		return fmt.Errorf("lookup version index: %w", err)
+	}
+
+	refs := map[string]struct{}{}
+	for _, tj := range treesJSON {
+		if tj == "" {
+			continue
+		}
+		// One bad tree shouldn't sink the whole warm; skip it.
+		_ = collectImageRefsInto(tj, refs)
+		if len(refs) >= MaxImageRefsPerLeaf*8 {
+			break
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+
+	misses := make([]string, 0, len(refs))
+	for ref := range refs {
+		row, hit, lerr := repo.LookupAsset(ctx, tenantID, fileID, ref, ImageFillFormat, ImageFillScale, versionIndex)
+		if lerr != nil {
+			return fmt.Errorf("cache lookup %s: %w", ref, lerr)
+		}
+		if hit {
+			abs := filepath.Join(r.DataDir, row.StorageKey)
+			if _, serr := os.Stat(abs); serr == nil {
+				continue
+			}
+		}
+		misses = append(misses, ref)
+	}
+	if len(misses) == 0 {
+		return nil
+	}
+
+	_, err = r.resolveMissesAndStore(ctx, tenantID, fileID, versionIndex, misses)
+	return err
+}
+
+// resolveMissesAndStore fetches the Figma image-fill URL map, downloads
+// bytes for each miss with bounded concurrency, persists files under
+// DataDir, and writes asset_cache rows. Per-blob failures are silently
+// dropped (logged at higher layers if needed) so a single bad ref
+// doesn't sink the whole batch. Returns the resolved map for the leaf
+// caller; the version-wide warmer ignores the return value.
+func (r *ImageFillResolver) resolveMissesAndStore(
+	ctx context.Context,
+	tenantID, fileID string,
+	versionIndex int,
+	misses []string,
+) (map[string]ImageFillRef, error) {
+	out := make(map[string]ImageFillRef, len(misses))
+	if len(misses) == 0 {
+		return out, nil
+	}
+	repo := NewTenantRepo(r.DB, tenantID)
+
 	urls, err := r.URLs.GetFileImageFills(ctx, fileID)
 	if err != nil {
 		return nil, fmt.Errorf("figma file-images: %w", err)
 	}
 
-	// 6) Download bytes for misses with bounded concurrency.
 	const concurrency = 8
 	type fetchResult struct {
 		ref  string
 		row  AssetCacheRow
 		err  error
-		skip bool // ref absent from Figma's response
+		skip bool
 	}
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
@@ -253,14 +341,8 @@ func (r *ImageFillResolver) ResolveImageRefsForLeaf(
 	}
 	wg.Wait()
 
-	// 7) Persist the rows + populate the result map.
 	for _, res := range results {
-		if res.skip {
-			continue
-		}
-		if res.err != nil {
-			// Log via context but don't sink the whole leaf for one bad blob.
-			// Caller's logger isn't visible here; we silently drop the row.
+		if res.skip || res.err != nil {
 			continue
 		}
 		if err := repo.StoreAsset(ctx, res.row); err != nil {

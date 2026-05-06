@@ -130,6 +130,13 @@ type Pipeline struct {
 	// /v1/images call per chunk-of-80-clusters, vs the per-node
 	// thrashing that previously 429'd Figma for the entire budget.
 	AssetExporter *AssetExporter
+	// ImageFillResolver — when set, Stage 4 runs a sibling goroutine
+	// alongside the PNG download pool that pre-warms asset_cache for
+	// every imageRef in the version's canonical_trees. Without it the
+	// per-leaf lazy fallback in ResolveImageRefsForLeaf still works,
+	// just adds a /v1/files/.../images round-trip and N CDN GETs to
+	// first-render latency.
+	ImageFillResolver *ImageFillResolver
 	// ShutdownCtx — process-wide cancellation signal wired in by main()
 	// from signal.NotifyContext(SIGTERM, SIGINT). Background work (Stage 9
 	// cluster prerender) derives its bgCtx from this so a graceful deploy
@@ -308,6 +315,9 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 	}
 
 	// Stage 4 — download, downsample, persist (parallel, bounded).
+	// Sibling goroutine pre-warms image-fill cache when ImageFillResolver
+	// is wired so first canvas render hits warm asset_cache rows instead
+	// of waiting on /v1/files/.../images.
 	pngKeys := make(map[string]string, len(in.Frames))
 	var keysMu sync.Mutex
 
@@ -316,6 +326,28 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 	errCh := make(chan error, len(in.Frames))
 
 	var stage4WG sync.WaitGroup
+
+	if p.ImageFillResolver != nil {
+		treesJSON := make([]string, 0, len(extractedTrees))
+		for _, e := range extractedTrees {
+			if e.treeJSON != "" {
+				treesJSON = append(treesJSON, e.treeJSON)
+			}
+		}
+		stage4WG.Add(1)
+		go func() {
+			defer stage4WG.Done()
+			if werr := p.ImageFillResolver.WarmImageFillsForVersion(gctx, in.TenantID, in.FileID, in.VersionID, treesJSON); werr != nil {
+				if p.Log != nil {
+					p.Log.Warn("image-fill warm failed (lazy fallback active)",
+						"version_id", in.VersionID,
+						"err", werr,
+					)
+				}
+			}
+		}()
+	}
+
 	sem := make(chan struct{}, Stage4DownloadConcurrency)
 	for _, frame := range in.Frames {
 		frame := frame

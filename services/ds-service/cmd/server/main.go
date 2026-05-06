@@ -134,6 +134,7 @@ func main() {
 	// also threads through). Stage 9 (cluster prerender) needs both.
 	var previewPyramid *projects.PreviewPyramidGenerator
 	var assetExporter *projects.AssetExporter
+	var imageFillResolver *projects.ImageFillResolver
 	pipelineFactory := func(ctx context.Context, tenantID string, repo *projects.TenantRepo) (*projects.Pipeline, error) {
 		// Decrypt per-tenant Figma PAT. When decrypt fails it usually means
 		// the row was encrypted under a different ENCRYPTION_KEY (typical
@@ -168,10 +169,11 @@ func main() {
 			DataDir:        dataDir,
 			Log:            log,
 			KTX2:           ktx2,
-			PreviewPyramid:  previewPyramid, // captured by reference; nil until below assigns
-			AssetExporter:   assetExporter,  // ditto
-			ShutdownCtx:     shutdownCtx,    // wires SIGTERM into Stage 9 background prerender
-			PrerenderStatus: prerenderStatus, // U8 — operator observability
+			PreviewPyramid:    previewPyramid,    // captured by reference; nil until below assigns
+			AssetExporter:     assetExporter,     // ditto
+			ImageFillResolver: imageFillResolver, // ditto — pre-warms image-fill cache during Stage 4
+			ShutdownCtx:       shutdownCtx,       // wires SIGTERM into Stage 9 background prerender
+			PrerenderStatus:   prerenderStatus,   // U8 — operator observability
 		}, nil
 	}
 
@@ -227,7 +229,7 @@ func main() {
 	// hashes to cached blobs. Reuses the same byte fetcher + data dir as
 	// the asset exporter; the URL fetcher is a separate stub so it can
 	// hit a different Figma endpoint without sharing /v1/images plumbing.
-	imageFillResolver := &projects.ImageFillResolver{
+	imageFillResolver = &projects.ImageFillResolver{
 		DB: dbConn.DB,
 		URLs: figmaImageFillURLFetcherFunc(func(ctx context.Context, fileKey string) (map[string]string, error) {
 			tenantID := projects.AssetExportTenantFromCtx(ctx)
