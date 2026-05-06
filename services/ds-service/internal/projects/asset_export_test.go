@@ -693,6 +693,65 @@ func TestHandleMintAssetExportToken_HappyPath(t *testing.T) {
 	}
 }
 
+// TestHandleMintAssetExportToken_ExpiresInMatchesConstant pins the contract
+// between the AssetExportTokenTTL constant and the public expires_in
+// response field. Plan U6 of 2026-05-06-003. If someone bumps the constant
+// without thinking about clients hardcoded against the previous value, this
+// fails. The previous loose check (expires_in <= 3600) admits a 60s value
+// just as readily as a 1h one — this assertion is exact.
+func TestHandleMintAssetExportToken_ExpiresInMatchesConstant(t *testing.T) {
+	srv, tA, uA, slug, _, _, _ := newAssetU5Server(t)
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}}
+	body := []byte(`{"node_id":"1:2","format":"svg","scale":1}`)
+
+	r := httptest.NewRequest(http.MethodPost,
+		fmt.Sprintf("/v1/projects/%s/assets/export-url", slug),
+		bytes.NewReader(body))
+	r.SetPathValue("slug", slug)
+	r = r.WithContext(WithClaims(context.Background(), claims))
+
+	w := httptest.NewRecorder()
+	srv.HandleMintAssetExportToken()(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ExpiresIn int `json:"expires_in"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	want := int(AssetExportTokenTTL.Seconds())
+	if resp.ExpiresIn != want {
+		t.Fatalf("expires_in mismatch: got %d, want %d (AssetExportTokenTTL.Seconds())",
+			resp.ExpiresIn, want)
+	}
+	// Sanity: also pin the constant itself so an accidental constant
+	// edit doesn't silently shift the public contract. Update both this
+	// assertion and the operator runbook if the value intentionally
+	// changes.
+	const wantTTLSeconds = 3600 // 1 hour, see asset_export.go:578-592 rationale
+	if want != wantTTLSeconds {
+		t.Fatalf("AssetExportTokenTTL drifted: got %d s, expected %d s; "+
+			"intentional change? update this test + ops docs.",
+			want, wantTTLSeconds)
+	}
+}
+
+// TestAssetExportTokenTTL_RoundTripAtConfiguredTTL verifies that a token
+// minted with the actual AssetExportTokenTTL value (1h) validates immediately
+// after mint. Catches the regression where someone could accidentally pass a
+// negative or zero TTL through a refactor — the signer would mint an
+// already-expired token and Verify would reject it. Plan U6 of 2026-05-06-003.
+func TestAssetExportTokenTTL_RoundTripAtConfiguredTTL(t *testing.T) {
+	srv, tA, _, _, fileID, _, _ := newAssetU5Server(t)
+	composite := singleAssetTokenKey(fileID, "1:2", "svg", 1)
+	token := srv.deps.AssetSigner.Mint(tA, composite, AssetExportTokenTTL)
+	if err := srv.deps.AssetSigner.Verify(token, tA, composite); err != nil {
+		t.Fatalf("token minted at AssetExportTokenTTL failed verify immediately: %v", err)
+	}
+}
+
 func TestHandleMintAssetExportToken_BadFormat(t *testing.T) {
 	srv, tA, uA, slug, _, _, _ := newAssetU5Server(t)
 	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}}

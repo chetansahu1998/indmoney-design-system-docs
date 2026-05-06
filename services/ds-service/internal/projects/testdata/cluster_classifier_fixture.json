@@ -1,0 +1,117 @@
+{
+  "_doc": {
+    "purpose": "Parity fixture between Go isCluster (services/ds-service/internal/projects/pipeline_cluster_prerender.go) and TS shouldRasterize (app/atlas/_lib/leafcanvas-v2/node-classifier.ts). Each case feeds the same canonical_tree subtree to both implementations; both must agree on which node IDs end up rasterized as PNG clusters. Drift in either implementation breaks one of the two test runs and is the forcing function to update the other side.",
+    "consumed_by": [
+      "services/ds-service/internal/projects/cluster_classifier_parity_test.go (Go side)",
+      "app/atlas/_lib/leafcanvas-v2/__tests__/node-classifier-parity.test.ts (TS side — landing in U7)"
+    ],
+    "schema": {
+      "name": "human-readable case label, used in test failure messages",
+      "tree": "canonical_tree subtree as it would appear in storage; the Go side wraps in {document: tree} only if the production extractor would (it doesn't here, the wrap is preserved through this fixture)",
+      "expected_cluster_ids": "sorted set of node IDs the walker should collect; comparison is set-equality on both sides",
+      "comparison_notes": "free-text caveats for cases where the structural heuristics differ subtly between TS isIconCluster and Go vectorLeafSummary"
+    }
+  },
+  "cases": [
+    {
+      "name": "always-cluster-shape-vector",
+      "tree": { "id": "v1", "type": "VECTOR", "name": "" },
+      "expected_cluster_ids": ["v1"]
+    },
+    {
+      "name": "always-cluster-shape-ellipse",
+      "tree": { "id": "e1", "type": "ELLIPSE", "name": "" },
+      "expected_cluster_ids": ["e1"]
+    },
+    {
+      "name": "always-cluster-shape-boolean-op",
+      "tree": { "id": "b1", "type": "BOOLEAN_OPERATION", "name": "" },
+      "expected_cluster_ids": ["b1"]
+    },
+    {
+      "name": "icon-name-pattern-instance",
+      "tree": { "id": "i1", "type": "INSTANCE", "name": "Icons/Help/24px" },
+      "expected_cluster_ids": ["i1"]
+    },
+    {
+      "name": "illustration-name-pattern-frame",
+      "tree": { "id": "il1", "type": "FRAME", "name": "Illustrations/Empty State" },
+      "expected_cluster_ids": ["il1"]
+    },
+    {
+      "name": "yes-no-slash-variant",
+      "tree": { "id": "yn1", "type": "INSTANCE", "name": "Help/Yes/24px" },
+      "expected_cluster_ids": ["yn1"]
+    },
+    {
+      "name": "size-variant-suffix",
+      "tree": { "id": "sv1", "type": "INSTANCE", "name": "play_24px" },
+      "expected_cluster_ids": ["sv1"]
+    },
+    {
+      "name": "hidden-node-skipped",
+      "tree": { "id": "h1", "type": "VECTOR", "visible": false },
+      "expected_cluster_ids": []
+    },
+    {
+      "name": "removed-node-skipped",
+      "tree": { "id": "r1", "type": "VECTOR", "removed": true },
+      "expected_cluster_ids": []
+    },
+    {
+      "name": "plain-empty-frame-not-clustered",
+      "tree": { "id": "f1", "type": "FRAME", "name": "Container", "children": [] },
+      "expected_cluster_ids": []
+    },
+    {
+      "name": "wrapper-with-text-walks-into-children",
+      "tree": {
+        "id": "wrap1",
+        "type": "FRAME",
+        "name": "Some Section",
+        "children": [
+          { "id": "t1", "type": "TEXT", "name": "label" },
+          { "id": "v2", "type": "VECTOR", "name": "" }
+        ]
+      },
+      "expected_cluster_ids": ["v2"],
+      "comparison_notes": "Wrapper has TEXT descendant → vector-only-subtree heuristic does not apply, walk descends. Inner VECTOR is a cluster on its own."
+    },
+    {
+      "name": "frame-with-multiple-vectors-clusters-as-whole",
+      "tree": {
+        "id": "ill1",
+        "type": "FRAME",
+        "name": "Stack of Shapes",
+        "children": [
+          { "id": "child-v1", "type": "VECTOR", "name": "" },
+          { "id": "child-v2", "type": "VECTOR", "name": "" },
+          { "id": "child-v3", "type": "VECTOR", "name": "" }
+        ]
+      },
+      "expected_cluster_ids": ["ill1"],
+      "comparison_notes": "Vector-only-subtree heuristic (Go vectorLeafSummary, TS isIconCluster). Both require: wrapper type, no TEXT, ≥2 vector leaves. Wrapper id (not children) is collected; walk does not descend."
+    },
+    {
+      "name": "icons-folder-prefix-deep-walk",
+      "tree": {
+        "id": "root",
+        "type": "FRAME",
+        "name": "Page",
+        "children": [
+          {
+            "id": "section",
+            "type": "FRAME",
+            "name": "Toolbar",
+            "children": [
+              { "id": "icon-help", "type": "INSTANCE", "name": "Icons/Help/24px" },
+              { "id": "icon-cog", "type": "INSTANCE", "name": "Icons/Cog/24px" }
+            ]
+          }
+        ]
+      },
+      "expected_cluster_ids": ["icon-help", "icon-cog"],
+      "comparison_notes": "Outer Toolbar wrapper is not name-matched; walk descends. Inner instances are explicit icon-name matches."
+    }
+  ]
+}
