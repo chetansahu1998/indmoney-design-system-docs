@@ -706,11 +706,17 @@ func (t *TenantRepo) GetVersion(ctx context.Context, versionID string) (ProjectV
 // resolver — the asset_cache key only depends on (tenant, file_id,
 // node_id, format, scale), so any flow on the project works.
 func (t *TenantRepo) AnyLeafIDForVersion(ctx context.Context, versionID string) (string, error) {
+	// ORDER BY f.id ASC keeps the chosen flow stable across calls. Without
+	// the explicit ordering, SQLite's row order is undefined; under index
+	// changes / VACUUM / CTE-rewrite the chosen leaf can flip between
+	// calls, producing non-reproducible Stage 9 logs and flapping outcomes
+	// when one flow on the project happens to have a corrupted PAT mapping.
 	row := t.handle().QueryRowContext(ctx, `
 		SELECT f.id
 		  FROM project_versions v
 		  JOIN flows f ON f.project_id = v.project_id AND f.tenant_id = v.tenant_id
 		 WHERE v.id = ? AND v.tenant_id = ? AND f.deleted_at IS NULL
+		 ORDER BY f.id ASC
 		 LIMIT 1
 	`, versionID, t.tenantID)
 	var id string

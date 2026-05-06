@@ -478,6 +478,20 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 						)
 					}
 				}()
+				// Per-version dedup. HandleVersionRetry + a quick-fire
+				// double-export must not double-spend Figma quota or
+				// double-write asset_cache. If another goroutine is already
+				// prerendering this version, log + skip; the on-demand path
+				// covers any caller that needed the result fresh.
+				if !AcquirePrerenderSlot(versionID) {
+					if p.Log != nil {
+						p.Log.Info("stage 9: skip — prerender already running for this version",
+							"version_id", versionID,
+						)
+					}
+					return
+				}
+				defer ReleasePrerenderSlot(versionID)
 				// Derive bgCtx from the process-wide shutdown context so
 				// SIGTERM cancels in-flight prerenders. Falls back to
 				// Background() for tests / embedded callers that don't wire

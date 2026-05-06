@@ -47,12 +47,53 @@ type ClusterPrerenderConfig struct {
 	// downsample + persist). Bigger than the synchronous request budget
 	// because we have no user waiting.
 	Timeout time.Duration
+	// Phase1MaxConsecutiveFailures bounds the Phase 1 chunk loop's
+	// tolerance for sustained Figma 429/5xx. RenderAssetsForLeaf already
+	// retries internally 3× per chunk; this catches the case where Figma
+	// is genuinely degraded across multiple chunks and we'd otherwise
+	// burn the rest of TotalBudget churning through ~50 doomed chunks.
+	// Sporadic single-chunk failures don't trip this; only N in a row do.
+	Phase1MaxConsecutiveFailures int
+	// SampleErrorCap bounds the number of distinct per-cluster Warn
+	// lines emitted per Phase 2 run. Beyond this, errors are counted in
+	// the failed counter but not individually logged. Final aggregate
+	// log includes the captured samples for triage.
+	SampleErrorCap int
 }
 
 // DefaultClusterPrerenderConfig — sensible defaults for first-class import.
 var DefaultClusterPrerenderConfig = ClusterPrerenderConfig{
-	Concurrency: 4,
-	Timeout:     45 * time.Second,
+	Concurrency:                  4,
+	Timeout:                      45 * time.Second,
+	Phase1MaxConsecutiveFailures: 3,
+	SampleErrorCap:               5,
+}
+
+// prerenderInFlight gates concurrent Stage 9 invocations on the same
+// version_id. Mirrors the audit_jobs idempotency pattern: HandleVersionRetry
+// + a quick-fire double-export should not double-spend Figma quota or
+// double-write asset_cache rows. Process-global (not Pipeline-scoped)
+// because Pipeline is constructed per-tenant per-request via
+// pipelineFactory; we need a single source of truth across all pipeline
+// instances. Process restart drops the map — that's fine, the on-demand
+// path is the recovery mechanism.
+//
+// Held only for the lifetime of the Stage 9 goroutine (~30 min worst case);
+// memory cost is negligible (one struct{} per concurrent prerender).
+var prerenderInFlight sync.Map // map[string]struct{} keyed on versionID
+
+// AcquirePrerenderSlot is exposed for tests + the Stage 9 spawn site.
+// Returns true if the slot was acquired (caller proceeds and MUST call
+// ReleasePrerenderSlot on completion); false if another goroutine is
+// already prerendering this version.
+func AcquirePrerenderSlot(versionID string) bool {
+	_, loaded := prerenderInFlight.LoadOrStore(versionID, struct{}{})
+	return !loaded
+}
+
+// ReleasePrerenderSlot frees the dedup slot. Safe to call multiple times.
+func ReleasePrerenderSlot(versionID string) {
+	prerenderInFlight.Delete(versionID)
 }
 
 // clusterShapeTypes — Figma node types that are always shape-clusters
@@ -109,11 +150,37 @@ func ExtractClusterIDs(canonicalTreeJSON []byte) []string {
 		}
 	}
 	out := make([]string, 0, 32)
-	walkClusters(root, &out)
+	walkClusters(root, &out, 0)
 	return out
 }
 
-func walkClusters(node any, acc *[]string) {
+// walkClusterMaxDepth caps recursion in walkClusters. Real Figma files
+// nest under ~10 levels typical (the UI doesn't surface deeper); 256
+// is well above any legitimate input but small enough to bound the
+// goroutine stack on adversarial / corrupted canonical_tree blobs.
+// Hitting the cap is benign: walkClusters returns early, the affected
+// subtree gets under-counted, and HandleAssetDownload's on-demand path
+// renders any missed nodes when a user opens the leaf.
+const walkClusterMaxDepth = 256
+
+// walkClusterMaxAccLen caps the number of cluster IDs per call. A
+// pathologically large tree (50K+ clusters in one screen) would push
+// the JSON encoder for the prerender_runs status row past sensible
+// limits and dwarf the 30-min budget. Cap and warn — the on-demand
+// path is the safety net for over-cap nodes.
+const walkClusterMaxAccLen = 50000
+
+// walkClusters recursively walks the canonical_tree node graph and
+// accumulates cluster IDs into acc. depth is the call-stack depth;
+// returns early at walkClusterMaxDepth. Visibility / removed nodes are
+// pruned. Accumulator size is capped at walkClusterMaxAccLen.
+func walkClusters(node any, acc *[]string, depth int) {
+	if depth > walkClusterMaxDepth {
+		return
+	}
+	if len(*acc) >= walkClusterMaxAccLen {
+		return
+	}
 	m, ok := node.(map[string]any)
 	if !ok {
 		return
@@ -140,7 +207,7 @@ func walkClusters(node any, acc *[]string) {
 
 	if children, ok := m["children"].([]any); ok {
 		for _, c := range children {
-			walkClusters(c, acc)
+			walkClusters(c, acc, depth+1)
 		}
 	}
 }
@@ -342,7 +409,20 @@ func PrerenderClusters(
 		// it once per chunk-of-80 here, a 429 only loses that chunk —
 		// the remaining ~50 chunks still complete.
 		const chunk = AssetExportChunkSize // 80
-		var ok, fail int
+		// Circuit-breaker on consecutive chunk failures. RenderAssetsForLeaf
+		// already does internal 3-attempt 429 backoff, so a chunk-level
+		// error here means Figma was sustained-degraded across that retry
+		// window. If multiple chunks in a row hit that wall, Figma is
+		// genuinely down for this tenant — keep going just burns the
+		// remaining 30-min budget on doomed calls. Bail early; on-demand
+		// path covers the rest. Threshold is configurable; sporadic
+		// single-chunk failures don't trip it.
+		maxConsecFails := cfg.Phase1MaxConsecutiveFailures
+		if maxConsecFails <= 0 {
+			maxConsecFails = DefaultClusterPrerenderConfig.Phase1MaxConsecutiveFailures
+		}
+		var ok, fail, consecutiveFails int
+		var phase1Aborted bool
 		for i := 0; i < len(clusterIDs); i += chunk {
 			j := i + chunk
 			if j > len(clusterIDs) {
@@ -353,16 +433,32 @@ func PrerenderClusters(
 			ok += len(results)
 			if batchErr != nil {
 				fail++
+				consecutiveFails++
 				if log != nil {
 					log.Warn("cluster prerender: phase 1 chunk failed",
 						"version_id", in.VersionID,
 						"chunk_start", i,
+						"consecutive_fails", consecutiveFails,
 						"err", batchErr.Error(),
 					)
 				}
+				if consecutiveFails >= maxConsecFails {
+					if log != nil {
+						log.Warn("cluster prerender: phase 1 circuit-breaker tripped — figma sustained-degraded",
+							"version_id", in.VersionID,
+							"consecutive_fails", consecutiveFails,
+							"chunks_completed", i/chunk+1,
+							"chunks_total", (len(clusterIDs)+chunk-1)/chunk,
+						)
+					}
+					phase1Aborted = true
+					break
+				}
 				// Continue to next chunk — don't abort the whole batch.
+			} else {
+				consecutiveFails = 0
 			}
-			// Bail early if the parent context is dying (5-min budget).
+			// Bail early if the parent context is dying (30-min budget).
 			if ctx.Err() != nil {
 				if log != nil {
 					log.Warn("cluster prerender: phase 1 ctx done",
@@ -379,6 +475,7 @@ func PrerenderClusters(
 				"png_results", ok,
 				"failed_chunks", fail,
 				"total_chunks", (len(clusterIDs)+chunk-1)/chunk,
+				"aborted", phase1Aborted,
 			)
 		}
 	}
@@ -392,6 +489,52 @@ func PrerenderClusters(
 	var failed atomic.Int64
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, cfg.Concurrency)
+
+	// Sampled error logging. ~4400 clusters × 3 Warn sites pre-fix could
+	// emit up to ~17,600 Warn lines from a single failed import on
+	// degraded Figma. Cap distinct samples per error class; keep all of
+	// them for the aggregate log line at the end. Errors past the cap
+	// still increment failed.Add(1), they just don't get a per-cluster
+	// Warn — the aggregate covers the operator's diagnostic need.
+	sampleCap := cfg.SampleErrorCap
+	if sampleCap <= 0 {
+		sampleCap = DefaultClusterPrerenderConfig.SampleErrorCap
+	}
+	var sampleMu sync.Mutex
+	var renderErrSamples []string
+	var cacheErrSamples []string
+	var renderErrTotal, cacheErrTotal int64
+	recordRenderErr := func(nodeID, errMsg string) {
+		sampleMu.Lock()
+		defer sampleMu.Unlock()
+		renderErrTotal++
+		if len(renderErrSamples) < sampleCap {
+			renderErrSamples = append(renderErrSamples, fmt.Sprintf("%s: %s", nodeID, errMsg))
+			if log != nil {
+				log.Warn("cluster prerender: render failed (sampled)",
+					"node_id", nodeID,
+					"err", errMsg,
+					"sample", fmt.Sprintf("%d/%d", len(renderErrSamples), sampleCap),
+				)
+			}
+		}
+	}
+	recordCacheErr := func(nodeID, tier, errMsg string) {
+		sampleMu.Lock()
+		defer sampleMu.Unlock()
+		cacheErrTotal++
+		if len(cacheErrSamples) < sampleCap {
+			cacheErrSamples = append(cacheErrSamples, fmt.Sprintf("%s/%s: %s", nodeID, tier, errMsg))
+			if log != nil {
+				log.Warn("cluster prerender: cache row write failed (sampled)",
+					"node_id", nodeID,
+					"tier", tier,
+					"err", errMsg,
+					"sample", fmt.Sprintf("%d/%d", len(cacheErrSamples), sampleCap),
+				)
+			}
+		}
+	}
 
 	for _, nodeID := range clusterIDs {
 		// Bail out of dispatch if the parent ctx has died. Mirror Phase 1's
@@ -449,12 +592,7 @@ func PrerenderClusters(
 			)
 			if perr != nil && len(pyramidResults) == 0 {
 				failed.Add(1)
-				if log != nil {
-					log.Warn("cluster prerender: render failed",
-						"node_id", nodeID,
-						"err", perr.Error(),
-					)
-				}
+				recordRenderErr(nodeID, perr.Error())
 				return
 			}
 			// Persist each successfully-rendered tier as an asset_cache row.
@@ -474,13 +612,7 @@ func PrerenderClusters(
 					CreatedAt:    now,
 				}
 				if perr := deps.Repo.StoreAsset(rctx, row); perr != nil {
-					if log != nil {
-						log.Warn("cluster prerender: cache row write failed",
-							"node_id", nodeID,
-							"tier", pr.Tier,
-							"err", perr.Error(),
-						)
-					}
+					recordCacheErr(nodeID, fmt.Sprintf("%v", pr.Tier), perr.Error())
 					continue
 				}
 				persistedAny = true
@@ -498,6 +630,10 @@ func PrerenderClusters(
 			"version_id", in.VersionID,
 			"file_id", in.FileID,
 			"total_clusters", len(clusterIDs),
+			"render_err_total", renderErrTotal,
+			"render_err_samples", renderErrSamples,
+			"cache_err_total", cacheErrTotal,
+			"cache_err_samples", cacheErrSamples,
 			"rendered", rendered.Load(),
 			"failed", failed.Load(),
 		)
