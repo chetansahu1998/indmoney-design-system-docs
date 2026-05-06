@@ -108,6 +108,14 @@ type Pipeline struct {
 	// after the rename. Failure is non-fatal — the PNG is the source
 	// of truth and the frontend falls back when .ktx2 is missing.
 	KTX2 *KTX2Transcoder
+	// Stage 6.5 (cluster prerender) deps. Optional — when nil, Stage 6.5
+	// is skipped and the frontend falls back to on-demand cluster render
+	// via HandleAssetDownload.
+	PreviewPyramid *PreviewPyramidGenerator
+	// AssetExporter — used by Stage 9 phase 1 to do ONE batched
+	// /v1/images call per chunk-of-80-clusters, vs the per-node
+	// thrashing that previously 429'd Figma for the entire budget.
+	AssetExporter *AssetExporter
 }
 
 // PipelineInputs is what the HTTP handler hands off after persisting the
@@ -419,13 +427,77 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 		})
 	}
 
-	// Stage 8 — notify the worker.
+	// Stage 8 — notify the audit worker.
 	if p.AuditEnqueuer != nil {
 		p.AuditEnqueuer.EnqueueAuditJob(in.VersionID, in.TraceID)
 	}
 
+	// Stage 9 — cluster pre-render. Walk every screen's canonical_tree,
+	// extract icon/illustration/shape clusters, and render the preview
+	// pyramid for each so the frontend gets cache-only GETs at leaf-open.
+	// Pre-fix the frontend raced ~1500-2000 concurrent /assets/<node>
+	// fetches at leaf-open against Figma's render budget; most timed out
+	// or 502'd, leaving illustrations blank in random frames.
+	//
+	// Spawned in a goroutine with a fresh context so view_ready isn't
+	// blocked. Failures are logged but never re-surface — the existing
+	// HandleAssetDownload on-demand path remains as a safety net.
+	if p.PreviewPyramid != nil {
+		seen := make(map[string]struct{})
+		clusterIDs := make([]string, 0, 256)
+		for _, r := range reattaches {
+			for _, id := range ExtractClusterIDs([]byte(r.treeJSON)) {
+				if _, dup := seen[id]; dup {
+					continue
+				}
+				seen[id] = struct{}{}
+				clusterIDs = append(clusterIDs, id)
+			}
+		}
+		if len(clusterIDs) > 0 {
+			go func(versionID string, ids []string) {
+				bgCtx, cancel := context.WithTimeout(
+					context.Background(),
+					ClusterPrerenderTotalBudget,
+				)
+				defer cancel()
+				deps := ClusterPrerenderDeps{
+					Repo:           p.Repo,
+					PreviewPyramid: p.PreviewPyramid,
+					AssetExporter:  p.AssetExporter,
+				}
+				if _, perr := PrerenderClusters(bgCtx, p.Log, deps, in, ids, DefaultClusterPrerenderConfig); perr != nil {
+					if p.Log != nil {
+						p.Log.Warn("stage 9: cluster prerender failed",
+							"version_id", versionID,
+							"err", perr.Error(),
+						)
+					}
+				}
+			}(in.VersionID, clusterIDs)
+		}
+	}
+
 	return nil
 }
+
+// ClusterPrerenderTotalBudget caps Stage 9's wall-clock so a stuck
+// Figma render (e.g., a malformed node) can't hold the prerender
+// goroutine open forever. Real-world sizing for the NRI VKYC dataset:
+//
+//   ~4400 unique cluster IDs across two concurrently-running export
+//   pipelines, each chunked at 80 IDs per Figma /v1/images call.
+//   Per-chunk: ~5-15s for URL fetch (rate-limited 5 req/s shared) +
+//   per-node bytes download (50/s) + persist. Round-trip per chunk
+//   averages ~12s, so 55 chunks × 2 projects on shared limiter = ~25
+//   min worst case. Phase 2 then downsamples each cached node
+//   locally (~50ms each) — bounded by Phase 1's success count.
+//
+// 30 min covers a fresh export of two large NRI projects without
+// cutting Phase 2 off; smaller exports finish well inside this and
+// Phase 2 short-circuits on cache lookups.
+const ClusterPrerenderTotalBudget = 30 * time.Minute
+
 
 // fail is the centralized failure path. Marks the version failed, writes the
 // audit log row, and publishes ProjectExportFailed.

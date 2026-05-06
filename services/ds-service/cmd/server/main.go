@@ -112,6 +112,12 @@ func main() {
 	// when missing, the transcoder is Available=false and every
 	// Transcode call short-circuits gracefully.
 	ktx2 := projects.NewKTX2Transcoder(log)
+	// Forward-declared so the pipelineFactory closure can pass them into
+	// the per-tenant Pipeline. Actual instances are built further below
+	// (they depend on the DB + figmaPATResolver which the closure path
+	// also threads through). Stage 9 (cluster prerender) needs both.
+	var previewPyramid *projects.PreviewPyramidGenerator
+	var assetExporter *projects.AssetExporter
 	pipelineFactory := func(ctx context.Context, tenantID string, repo *projects.TenantRepo) (*projects.Pipeline, error) {
 		// Decrypt per-tenant Figma PAT. When decrypt fails it usually means
 		// the row was encrypted under a different ENCRYPTION_KEY (typical
@@ -137,15 +143,17 @@ func main() {
 		fc := client.New(string(pat))
 		renderer := projects.NewHTTPFigmaRenderer(string(pat))
 		return &projects.Pipeline{
-			Repo:          repo,
-			Renderer:      renderer,
-			NodeFetcher:   fc,
-			SSE:           broker,
-			AuditEnqueuer: auditEnqueuer,
-			AuditLogger:   projectsAuditLogger,
-			DataDir:       dataDir,
-			Log:           log,
-			KTX2:          ktx2,
+			Repo:           repo,
+			Renderer:       renderer,
+			NodeFetcher:    fc,
+			SSE:            broker,
+			AuditEnqueuer:  auditEnqueuer,
+			AuditLogger:    projectsAuditLogger,
+			DataDir:        dataDir,
+			Log:            log,
+			KTX2:           ktx2,
+			PreviewPyramid: previewPyramid, // captured by reference; nil until below assigns
+			AssetExporter:  assetExporter,  // ditto
 		}, nil
 	}
 
@@ -173,7 +181,7 @@ func main() {
 	// table. The per-tenant Figma PAT is decrypted on each call via
 	// figmaPATResolver above; tenantID is read from the ctx that
 	// RenderAssetsForLeaf stashes before invoking GetImages.
-	assetExporter := &projects.AssetExporter{
+	assetExporter = &projects.AssetExporter{
 		Repo: projects.NewTenantRepo(dbConn.DB, ""),
 		URLs: figmaImageURLFetcherFunc(func(ctx context.Context, fileKey string, nodeIDs []string, format string, scale int) (map[string]string, error) {
 			tenantID := projects.AssetExportTenantFromCtx(ctx)
@@ -229,7 +237,11 @@ func main() {
 	// to 128/512/1024/2048 tiers. Lives next to the asset exporter so
 	// they share dataDir + the bytes fetcher implicitly via the source
 	// path's RenderAssetsForLeaf call.
-	previewPyramid := &projects.PreviewPyramidGenerator{
+	//
+	// Assigns into the previewPyramid forward-declaration above so the
+	// pipelineFactory closure picks it up — every Pipeline built from
+	// this point on will run Stage 9 (cluster prerender).
+	previewPyramid = &projects.PreviewPyramidGenerator{
 		Source: &projects.AssetExporterPreviewSource{
 			Exporter: assetExporter,
 			TenantBoundExporter: func(tenantID string) *projects.AssetExporter {

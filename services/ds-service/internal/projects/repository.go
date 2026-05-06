@@ -700,6 +700,47 @@ func (t *TenantRepo) GetVersion(ctx context.Context, versionID string) (ProjectV
 	return v, nil
 }
 
+// AnyLeafIDForVersion returns any flow ID under the project that owns
+// the given version. Used by Stage 6.5 (cluster prerender) which needs
+// a leafID to feed into RenderAssetsForLeaf for the per-tenant PAT
+// resolver — the asset_cache key only depends on (tenant, file_id,
+// node_id, format, scale), so any flow on the project works.
+func (t *TenantRepo) AnyLeafIDForVersion(ctx context.Context, versionID string) (string, error) {
+	row := t.handle().QueryRowContext(ctx, `
+		SELECT f.id
+		  FROM project_versions v
+		  JOIN flows f ON f.project_id = v.project_id AND f.tenant_id = v.tenant_id
+		 WHERE v.id = ? AND v.tenant_id = ? AND f.deleted_at IS NULL
+		 LIMIT 1
+	`, versionID, t.tenantID)
+	var id string
+	if err := row.Scan(&id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return id, nil
+}
+
+// LookupVersionIndex returns the integer version_index for a version
+// row. Needed for the asset_cache primary key during Stage 6.5
+// (cluster prerender).
+func (t *TenantRepo) LookupVersionIndex(ctx context.Context, versionID string) (int, error) {
+	row := t.handle().QueryRowContext(ctx, `
+		SELECT version_index FROM project_versions
+		 WHERE id = ? AND tenant_id = ?
+	`, versionID, t.tenantID)
+	var idx int
+	if err := row.Scan(&idx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	return idx, nil
+}
+
 // ListProjects returns active projects for the tenant ordered by updated_at DESC.
 func (t *TenantRepo) ListProjects(ctx context.Context, limit int) ([]Project, error) {
 	if t.tenantID == "" {
