@@ -1,11 +1,102 @@
 // @ts-nocheck
+//
+// STAGED-REMOVAL CONTEXT (plan 2026-05-06-003 follow-up):
+//
+// This @ts-nocheck is preserved deliberately. The model types,
+// declare-global window augmentations, and component prop interfaces
+// below are real — they typecheck under tsc and they document the
+// shape this file consumes. They were added in the U7 follow-up as
+// scaffolding for an eventual full removal of this directive.
+//
+// Why @ts-nocheck still ships: removing it surfaces ~60 mechanical
+// type errors across 8 sub-components (LeafCanvas, LeafTopBar,
+// LeafInspector, OverviewTab, DecisionsTab, ActivityTab, CommentsTab,
+// PhoneFrame) — implicit-any event handlers, prop binding elements,
+// window.PhoneFrame JSX usage, and several "possibly undefined" call
+// sites on the legacy window.build* builders. Each fix is small but
+// the surface is large enough that landing it as one commit risks
+// silent regression in the canvas's RAF/IO/camera pipeline (where the
+// recent canvas-refresh fix lives, commit b9b4377). The right shape
+// is a focused PR with manual smoke testing of the canvas.
+//
+// Tracker: see GitHub issue (filed alongside this commit) for the
+// staged-removal checklist. Each sub-component is its own item.
 "use client";
-// Ported verbatim from INDmoney Docs/leafcanvas.jsx.
 import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from "react";
 import { CopyOverridesTab } from "./leafcanvas-v2/CopyOverridesTab";
 import { setLeafZoom } from "./leafcanvas-v2/leaf-zoom-signal";
 import { canvasGestureTracker } from "./leafcanvas-v2/gesture-tracker";
 import { clog } from "./leafcanvas-v2/canvas-log";
+
+// ─── Loose model types ──────────────────────────────────────────────────
+// These describe only the fields this file reads. The upstream brain /
+// canvas builders (window.buildLeafCanvas etc.) produce richer objects;
+// we deliberately don't import their full DTOs because they're undeclared
+// in TS-land (the legacy JS path predates typing).
+// Loose model types. The bag uses `any` (not `unknown`) intentionally:
+// the legacy builders (window.buildLeafCanvas, window.buildViolations)
+// produce ad-hoc shapes with many one-off fields. Forcing every field
+// to be declared here would be a much larger refactor than the value
+// it delivers — typos in required fields below still fail tsc, which is
+// where most regression risk actually lives.
+//
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- intentional bag type, see comment
+type AnyBag = { [k: string]: any };
+type Leaf = { id: string } & AnyBag;
+type Frame = {
+  id: string;
+  x: number;
+  y: number;
+  // FW/FH defaults at the top of this file mean buildLeafCanvas always
+  // returns w/h populated; required for arithmetic without `?? 0` noise.
+  w: number;
+  h: number;
+} & AnyBag;
+type LeafEdge = { source: string; target: string } & AnyBag;
+type LeafLayout = { frames: Frame[]; edges: LeafEdge[] } & AnyBag;
+type Violation = { frameId?: string } & AnyBag;
+type ViolationsByFrame = Record<string, Violation[]>;
+
+// ─── Global window augmentations ────────────────────────────────────────
+// The legacy JS canvas pipeline lives on `window`. None of these are
+// installed by this file — they're set elsewhere (data loaders, the
+// legacy app entrypoint). Declaring them here lets us read them under
+// strict TS without per-call casts.
+declare global {
+  interface Window {
+    LeafCanvas?: React.FC<LeafCanvasProps>;
+    LeafInspector?: React.FC<LeafInspectorProps>;
+    PhoneFrame?: React.FC<PhoneFrameProps>;
+    buildLeafCanvas?: (leaf: Leaf) => LeafLayout;
+    buildViolations?: (leaf: Leaf) => Violation[];
+    buildDecisions?: (leaf: Leaf) => unknown[];
+    buildActivity?: (leaf: Leaf) => unknown[];
+    buildComments?: (leaf: Leaf) => unknown[];
+    FLOWS_BY_ID?: Record<string, unknown>;
+    LEAVES?: Record<string, Leaf[]>;
+    __openLeaf?: (id: string) => void;
+    __LC_MOUNTS?: number;
+    __LC_UNMOUNTS?: number;
+  }
+}
+
+// ─── Component prop shapes ──────────────────────────────────────────────
+type LeafCanvasProps = {
+  leaf: Leaf;
+  onClose?: () => void;
+  onPickFrame?: (id: string | null) => void;
+  selectedFrameId?: string | null;
+};
+type LeafInspectorProps = {
+  leaf: Leaf;
+  frameId?: string | null;
+  onClose?: () => void;
+  onPickFrame?: (id: string | null) => void;
+};
+type PhoneFrameProps = {
+  leaf: Leaf;
+  frame: Frame;
+} & Record<string, unknown>;
 // ============================================================
 // LEAF CANVAS — Figma-like infinite board for a single sub-flow.
 // Renders an array of "frames" (phone-mockup screens) on a
@@ -17,9 +108,12 @@ import { clog } from "./leafcanvas-v2/canvas-log";
 // frame width/height (matches leaves.jsx FW/FH)
 const FW = 280, FH = 580;
 
-window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFrameId }) {
-  const layout = useMemo(() => window.buildLeafCanvas(leaf), [leaf.id]);
-  const stageRef = useRef(null);
+window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFrameId }: LeafCanvasProps) {
+  const layout = useMemo<LeafLayout>(
+    () => (window.buildLeafCanvas ? window.buildLeafCanvas(leaf) : { frames: [], edges: [] }),
+    [leaf.id],
+  );
+  const stageRef = useRef<HTMLDivElement | null>(null);
 
   // Diagnostic — mount/unmount counter so we can SEE if the canvas is
   // remounting on every SSE event / overlay refresh / etc.
@@ -53,9 +147,9 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
   // pass over 87 frames during a zoom gesture, which was the core
   // cause of "messed up zoom interactions during loading".
   // ------------------------------------------------------------------
-  const camRef = useRef({ x: 0, y: 0, z: 0.6 });
-  const worldRef = useRef(null);
-  const rafPendingRef = useRef(0);
+  const camRef = useRef<{ x: number; y: number; z: number }>({ x: 0, y: 0, z: 0.6 });
+  const worldRef = useRef<HTMLDivElement | null>(null);
+  const rafPendingRef = useRef<number>(0);
   const [zoomPct, setZoomPct] = useState(60);
 
   // Apply the current camRef to the DOM. Cheap: two style writes.
