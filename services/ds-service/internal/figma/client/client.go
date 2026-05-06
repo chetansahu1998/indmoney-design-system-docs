@@ -20,15 +20,21 @@ const baseURL = "https://api.figma.com"
 
 // Client wraps an authenticated Figma PAT.
 type Client struct {
-	token string
-	http  *http.Client
+	token    string
+	http     *http.Client
+	limiters *limiters
 }
 
-// New constructs a Client. PAT must include file_content:read.
+// New constructs a Client. PAT must include file_content:read. The Client
+// carries process-local per-tier token buckets (tier1=12 RPM, tier2=40 RPM,
+// tier3=80 RPM, all 80% of the documented Professional-plan caps). Buckets
+// are shared across all goroutines using this Client; for multi-process
+// deployments a shared limiter would be needed but isn't today.
 func New(pat string) *Client {
 	return &Client{
-		token: pat,
-		http:  &http.Client{Timeout: 5 * time.Minute},
+		token:    pat,
+		http:     &http.Client{Timeout: 5 * time.Minute},
+		limiters: newLimiters(),
 	}
 }
 
@@ -52,7 +58,12 @@ func (e *APIError) IsAuth() bool {
 	return e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden
 }
 
-func (c *Client) get(ctx context.Context, path string, out any) error {
+func (c *Client) get(ctx context.Context, path string, out any, tier rateTier) error {
+	if c.limiters != nil {
+		if err := c.limiters.wait(ctx, tier); err != nil {
+			return err
+		}
+	}
 	url := baseURL + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -104,7 +115,7 @@ func (c *Client) GetFile(ctx context.Context, fileKey string, depth int) (map[st
 		path += "?depth=" + strconv.Itoa(depth)
 	}
 	var out map[string]any
-	if err := c.get(ctx, path, &out); err != nil {
+	if err := c.get(ctx, path, &out, tier1); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -133,7 +144,7 @@ func (c *Client) GetFileNodes(ctx context.Context, fileKey string, nodeIDs []str
 		path += "&depth=" + strconv.Itoa(depth)
 	}
 	var out map[string]any
-	if err := c.get(ctx, path, &out); err != nil {
+	if err := c.get(ctx, path, &out, tier1); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -146,7 +157,7 @@ func (c *Client) GetFileNodes(ctx context.Context, fileKey string, nodeIDs []str
 // Plugin API uses for `importComponentByKeyAsync`.
 func (c *Client) GetFileComponents(ctx context.Context, fileKey string) (map[string]any, error) {
 	var out map[string]any
-	if err := c.get(ctx, "/v1/files/"+fileKey+"/components", &out); err != nil {
+	if err := c.get(ctx, "/v1/files/"+fileKey+"/components", &out, tier3); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -158,7 +169,7 @@ func (c *Client) GetFileComponents(ctx context.Context, fileKey string) (map[str
 // the docs site and the audit; their key is what survives publish-cycles.
 func (c *Client) GetFileComponentSets(ctx context.Context, fileKey string) (map[string]any, error) {
 	var out map[string]any
-	if err := c.get(ctx, "/v1/files/"+fileKey+"/component_sets", &out); err != nil {
+	if err := c.get(ctx, "/v1/files/"+fileKey+"/component_sets", &out, tier3); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -168,7 +179,7 @@ func (c *Client) GetFileComponentSets(ctx context.Context, fileKey string) (map[
 // Used to extract typography (TEXT styles) which Glyph DOES expose.
 func (c *Client) GetStyles(ctx context.Context, fileKey string) (map[string]any, error) {
 	var out map[string]any
-	if err := c.get(ctx, "/v1/files/"+fileKey+"/styles", &out); err != nil {
+	if err := c.get(ctx, "/v1/files/"+fileKey+"/styles", &out, tier3); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -180,7 +191,7 @@ func (c *Client) GetStyles(ctx context.Context, fileKey string) (map[string]any,
 // Returns a 403 with helpful message on Free plans — caller can degrade gracefully.
 func (c *Client) GetLocalVariables(ctx context.Context, fileKey string) (map[string]any, error) {
 	var out map[string]any
-	if err := c.get(ctx, "/v1/files/"+fileKey+"/variables/local", &out); err != nil {
+	if err := c.get(ctx, "/v1/files/"+fileKey+"/variables/local", &out, tier2); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -191,7 +202,7 @@ func (c *Client) GetLocalVariables(ctx context.Context, fileKey string) (map[str
 // `file_variables:read`. Useful when consuming a downstream design-system file.
 func (c *Client) GetPublishedVariables(ctx context.Context, fileKey string) (map[string]any, error) {
 	var out map[string]any
-	if err := c.get(ctx, "/v1/files/"+fileKey+"/variables/published", &out); err != nil {
+	if err := c.get(ctx, "/v1/files/"+fileKey+"/variables/published", &out, tier2); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -229,7 +240,7 @@ func (c *Client) GetImages(ctx context.Context, fileKey string, nodeIDs []string
 		Err    any               `json:"err"`
 		Images map[string]string `json:"images"`
 	}
-	if err := c.get(ctx, path, &raw); err != nil {
+	if err := c.get(ctx, path, &raw, tier1); err != nil {
 		return nil, err
 	}
 	if raw.Err != nil {
@@ -265,7 +276,7 @@ func (c *Client) GetFileImageFills(ctx context.Context, fileKey string) (map[str
 			Images map[string]string `json:"images"`
 		} `json:"meta"`
 	}
-	if err := c.get(ctx, path, &raw); err != nil {
+	if err := c.get(ctx, path, &raw, tier2); err != nil {
 		return nil, err
 	}
 	// Figma returns `error: false` (boolean) on success. Treat any non-false,
@@ -279,7 +290,7 @@ func (c *Client) GetFileImageFills(ctx context.Context, fileKey string) (map[str
 // Identity returns `/v1/me` — used for preflight smoke tests.
 func (c *Client) Identity(ctx context.Context) (map[string]any, error) {
 	var out map[string]any
-	if err := c.get(ctx, "/v1/me", &out); err != nil {
+	if err := c.get(ctx, "/v1/me", &out, tier3); err != nil {
 		return nil, err
 	}
 	return out, nil
