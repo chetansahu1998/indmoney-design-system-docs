@@ -31,9 +31,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -73,6 +75,14 @@ type config struct {
 func main() {
 	loadDotEnv()
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	// Process-wide shutdown context. Cancelled on SIGTERM / SIGINT so
+	// background goroutines (currently Stage 9 cluster prerender) can
+	// observe the signal and exit cleanly rather than getting killed
+	// mid-write. HTTP handlers continue to use request-scoped contexts;
+	// only background work derives from this.
+	shutdownCtx, stopShutdown := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stopShutdown()
 
 	cfg, err := loadConfig(log)
 	if err != nil {
@@ -154,6 +164,7 @@ func main() {
 			KTX2:           ktx2,
 			PreviewPyramid: previewPyramid, // captured by reference; nil until below assigns
 			AssetExporter:  assetExporter,  // ditto
+			ShutdownCtx:    shutdownCtx,    // wires SIGTERM into Stage 9 background prerender
 		}, nil
 	}
 

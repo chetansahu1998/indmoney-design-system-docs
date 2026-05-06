@@ -116,6 +116,13 @@ type Pipeline struct {
 	// /v1/images call per chunk-of-80-clusters, vs the per-node
 	// thrashing that previously 429'd Figma for the entire budget.
 	AssetExporter *AssetExporter
+	// ShutdownCtx — process-wide cancellation signal wired in by main()
+	// from signal.NotifyContext(SIGTERM, SIGINT). Background work (Stage 9
+	// cluster prerender) derives its bgCtx from this so a graceful deploy
+	// cancels in-flight prerenders instead of killing the goroutine
+	// mid-StoreAsset write. nil is allowed (tests, embedded use); the
+	// stage-9 spawn falls back to context.Background() in that case.
+	ShutdownCtx context.Context
 }
 
 // PipelineInputs is what the HTTP handler hands off after persisting the
@@ -456,8 +463,31 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 		}
 		if len(clusterIDs) > 0 {
 			go func(versionID string, ids []string) {
+				// Outer goroutine panic recovery. PrerenderClusters spawns
+				// per-node goroutines with their own recover, but ExtractClusterIDs
+				// already ran upstream and any panic from setup logic
+				// (AnyLeafIDForVersion / LookupVersionIndex / type-assert) would
+				// otherwise crash the entire ds-service process. Recover here
+				// and log; the on-demand HandleAssetDownload path is the
+				// safety net.
+				defer func() {
+					if r := recover(); r != nil && p.Log != nil {
+						p.Log.Error("stage 9: panic in prerender goroutine",
+							"version_id", versionID,
+							"panic", fmt.Sprintf("%v", r),
+						)
+					}
+				}()
+				// Derive bgCtx from the process-wide shutdown context so
+				// SIGTERM cancels in-flight prerenders. Falls back to
+				// Background() for tests / embedded callers that don't wire
+				// ShutdownCtx.
+				parent := p.ShutdownCtx
+				if parent == nil {
+					parent = context.Background()
+				}
 				bgCtx, cancel := context.WithTimeout(
-					context.Background(),
+					parent,
 					ClusterPrerenderTotalBudget,
 				)
 				defer cancel()

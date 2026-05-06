@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -317,11 +318,17 @@ func PrerenderClusters(
 		expCopy := *exp
 		// `deps.Repo` is the prerender-specific narrow interface; the
 		// pipeline-level p.Repo is the actual *TenantRepo. We need it
-		// here. Since ClusterPrerenderDeps was set up with deps.Repo
-		// AS the *TenantRepo (concrete type), type-assert.
-		if tr, ok := deps.Repo.(*TenantRepo); ok {
-			expCopy.Repo = tr
+		// here for the AssetExporter's LookupAsset chain. Fail loud if
+		// the concrete type isn't *TenantRepo: silent fallthrough would
+		// leave expCopy.Repo pointing at the server-wide AssetExporter's
+		// Repo (constructed at boot with tenantID="") and cross-tenant
+		// asset_cache writes would become possible under any future
+		// repo wrapper or fake.
+		tr, isTenantRepo := deps.Repo.(*TenantRepo)
+		if !isTenantRepo {
+			return 0, errors.New("cluster prerender: deps.Repo must be *TenantRepo (got incompatible type)")
 		}
+		expCopy.Repo = tr
 		if log != nil {
 			log.Info("cluster prerender: phase 1 — batched source PNG render",
 				"version_id", in.VersionID,
@@ -383,27 +390,57 @@ func PrerenderClusters(
 	// no Figma calls happen here.
 	var rendered atomic.Int64
 	var failed atomic.Int64
+	var wg sync.WaitGroup
 	sem := make(chan struct{}, cfg.Concurrency)
-	done := make(chan struct{}, len(clusterIDs))
 
 	for _, nodeID := range clusterIDs {
+		// Bail out of dispatch if the parent ctx has died. Mirror Phase 1's
+		// pattern at the top of the loop so a cancelled parent doesn't queue
+		// thousands of context-cancelled goroutines that immediately fail.
+		if ctx.Err() != nil {
+			if log != nil {
+				log.Warn("cluster prerender: phase 2 ctx done before dispatch complete",
+					"version_id", in.VersionID,
+				)
+			}
+			break
+		}
 		nodeID := nodeID // capture
 		sem <- struct{}{}
+		wg.Add(1)
 		go func() {
+			// Per-node panic recovery. Without this, any nil-deref or
+			// out-of-bounds inside RenderPreviewPyramid (image decode,
+			// slice indexing) crashes the entire ds-service process.
+			// Recover here, count the cluster as failed, and let the
+			// other goroutines continue.
+			defer func() {
+				if r := recover(); r != nil {
+					failed.Add(1)
+					if log != nil {
+						log.Error("cluster prerender: panic in per-node goroutine",
+							"node_id", nodeID,
+							"panic", fmt.Sprintf("%v", r),
+						)
+					}
+				}
+			}()
 			defer func() {
 				<-sem
-				done <- struct{}{}
+				wg.Done()
 			}()
 			rctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 			defer cancel()
 
-			// Skip nodes whose source PNG isn't cached. Phase 1 has already
-			// run for the whole cluster set; if it didn't cache this node
-			// (Figma 429, deadline, etc), running RenderPreviewPyramid here
-			// would re-fetch via Figma per-node — exactly the 429 cascade we
-			// were trying to avoid. Let HandleAssetDownload's on-demand
-			// path handle these stragglers when a user opens the leaf.
-			if _, cached, lerr := deps.Repo.LookupAsset(rctx, in.TenantID, in.FileID, nodeID, "png", 2, versionIndex); lerr == nil && !cached {
+			// Skip nodes whose source PNG isn't cached, OR whose cache
+			// lookup failed (transient SQLite contention). Phase 1 has
+			// already run for the whole cluster set; if Phase 1 didn't
+			// cache this node (Figma 429, deadline, etc), running
+			// RenderPreviewPyramid here would re-fetch via Figma per-node
+			// — exactly the 429 cascade we were trying to avoid. Let
+			// HandleAssetDownload's on-demand path handle these stragglers
+			// when a user opens the leaf.
+			if _, cached, lerr := deps.Repo.LookupAsset(rctx, in.TenantID, in.FileID, nodeID, "png", 2, versionIndex); lerr != nil || !cached {
 				return
 			}
 
@@ -455,9 +492,7 @@ func PrerenderClusters(
 			}
 		}()
 	}
-	for range clusterIDs {
-		<-done
-	}
+	wg.Wait()
 	if log != nil {
 		log.Info("cluster prerender: complete",
 			"version_id", in.VersionID,
