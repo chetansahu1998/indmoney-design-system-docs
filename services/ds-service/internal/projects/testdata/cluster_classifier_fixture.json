@@ -12,22 +12,20 @@
       "comparison_notes": "free-text caveats for cases where the structural heuristics differ subtly between TS isIconCluster and Go vectorLeafSummary"
     }
   },
+  "_resolved_drift": {
+    "purpose": "Drift cases that have been reconciled. Kept here for history.",
+    "resolved_cases": [
+      {
+        "name": "frame-with-multiple-vectors-as-whole",
+        "resolved_at": "2026-05-08",
+        "resolved_by": "Added FRAME to TS WRAPPER_TYPES gated on size ceiling (CLUSTER_MAX_W=400, CLUSTER_MAX_H=600). Phone-screen FRAMEs still walk normally (>600 height); illustration-shaped FRAMEs (e.g. NRI VKYC bank-statement at 343×224) cluster as single PNGs. Symptom pre-fix: passport/bank-statement vector illustrations rendered as gray placeholders because Go produced cluster PNGs the frontend ignored. New fixture case 'frame-vector-illustration-clusters-with-size-guard' covers the agreed behavior."
+      }
+    ]
+  },
+
   "_known_drift": {
     "purpose": "Cases where Go isCluster and TS shouldRasterize PROVABLY disagree today. Documented here (not in the cases[] list above) so the parity fixture stays green while the divergence is openly tracked. Reconciling these requires a design decision — the fixture is the contract for AGREED behavior, not a backlog of bugs.",
     "drift_cases": [
-      {
-        "name": "frame-with-multiple-vectors-as-whole",
-        "tree": { "id": "ill1", "type": "FRAME", "name": "Stack of Shapes", "children": [{ "id": "v1", "type": "VECTOR" }, { "id": "v2", "type": "VECTOR" }, { "id": "v3", "type": "VECTOR" }] },
-        "go_collects": ["ill1"],
-        "ts_collects": ["v1", "v2", "v3"],
-        "root_cause": "TS WRAPPER_TYPES (icon-cluster-resolver.ts:31) deliberately excludes FRAME so frames stay as layout primitives (preserves autolayout structure for atomic-child inspection). Go containerWrapperTypes (pipeline_cluster_prerender.go) includes FRAME and clusters all-vector wrappers via vectorLeafSummary.",
-        "production_effect": "Go pre-renders the FRAME as a single PNG into asset_cache. The canvas never requests that PNG (TS shouldRasterize returns false), so the pre-rendered asset goes unused. Wasted Figma quota at pipeline time, no user-visible behavior change.",
-        "reconciliation_options": [
-          "(A) Remove FRAME from Go containerWrapperTypes — match TS, pre-render only INSTANCE/COMPONENT/GROUP wrappers. Frees Figma quota.",
-          "(B) Add FRAME to TS WRAPPER_TYPES — match Go, but breaks the autolayout-preservation comment from icon-cluster-resolver.ts:22-27. Probably wrong.",
-          "(C) Status quo — accept the wasted prerender as cheap insurance against future canvas changes that might want FRAME clusters."
-        ]
-      },
       {
         "name": "size-variant-underscore-suffix",
         "tree": { "id": "sv1", "type": "INSTANCE", "name": "play_24px" },
@@ -122,6 +120,41 @@
       },
       "expected_cluster_ids": ["ill1"],
       "comparison_notes": "Illustration-subtree heuristic. Go isCluster requires shapeLeaves >= 8 (avoids clustering tiny status-bar icon sets). TS isIconCluster has no shape-count threshold but does require WRAPPER_TYPES + no TEXT + treeHeight >= 2 + at least one shape descendant. Both agree on this 8-vector INSTANCE. Smaller (3-vector) and FRAME variants tracked in _known_drift."
+    },
+    {
+      "name": "frame-vector-illustration-clusters-with-size-guard",
+      "tree": {
+        "id": "ill-frame",
+        "type": "FRAME",
+        "name": "Frame 1686556186",
+        "absoluteBoundingBox": { "x": 0, "y": 0, "width": 343, "height": 224 },
+        "children": [
+          { "id": "v1", "type": "VECTOR" },
+          { "id": "v2", "type": "VECTOR" },
+          { "id": "v3", "type": "VECTOR" },
+          { "id": "v4", "type": "VECTOR" },
+          { "id": "v5", "type": "VECTOR" },
+          { "id": "v6", "type": "VECTOR" },
+          { "id": "v7", "type": "VECTOR" },
+          { "id": "v8", "type": "VECTOR" }
+        ]
+      },
+      "expected_cluster_ids": ["ill-frame"],
+      "comparison_notes": "Bank-statement / passport illustration shape (real production case from NRI VKYC, 2026-05-08). FRAME wrapper at chart-bounded size (343×224 ≤ 400×600 ceiling) with all-vector children, no TEXT. Go: containerWrapperTypes includes FRAME; isCluster passes via the no-TEXT/illustration heuristic. TS: WRAPPER_TYPES now includes FRAME (gated by exceedsClusterSize); pure-icon fast path returns true. Both clusters as one PNG. Pre-2026-05-08 this was tracked in _known_drift; resolution is option (B) with size ceiling."
+    },
+    {
+      "name": "frame-vector-illustration-phone-sized-walks-into-children",
+      "tree": {
+        "id": "phone",
+        "type": "FRAME",
+        "name": "Quick Buy: indstock chart",
+        "absoluteBoundingBox": { "x": 0, "y": 0, "width": 375, "height": 1687 },
+        "children": [
+          { "id": "v-leaf", "type": "VECTOR" }
+        ]
+      },
+      "expected_cluster_ids": ["v-leaf"],
+      "comparison_notes": "Counter-case to size-guard: a FRAME at 375×1687 (phone-screen-sized) MUST NOT cluster as one PNG even when its children are all vectors. Both Go (exceedsClusterSize → reject before budget) and TS (FRAME branch in isIconCluster checks exceedsClusterSize → reject) walk into the FRAME. Inner VECTOR clusters as a shape primitive (default behaviour). Without the size guard, a phone screen named 'chart' or full-vector would be rasterized — destroys autolayout."
     },
     {
       "name": "icons-folder-prefix-deep-walk",

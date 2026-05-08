@@ -165,6 +165,72 @@ function test_should_rasterize_illustration_yes(): void {
   );
 }
 
+// ─── Chart-name fast path ─────────────────────────────────────────────────
+
+function test_chart_name_at_chart_size_is_illustration(): void {
+  const c = classifyNode(
+    node("FRAME", "Stock Chart", {
+      absoluteBoundingBox: { x: 0, y: 0, width: 375, height: 403 },
+    }),
+  );
+  assert(c.kind === "illustration", `kind=${c.kind} (want illustration)`);
+}
+
+function test_chart_name_at_phone_size_is_container(): void {
+  // 375×1687 — full phone screen named "Quick Buy: indstock chart".
+  // Must NOT classify as illustration (would rasterize the whole phone
+  // as one PNG and destroy autolayout).
+  const c = classifyNode(
+    node("FRAME", "Quick Buy: indstock chart", {
+      absoluteBoundingBox: { x: 0, y: 0, width: 375, height: 1687 },
+    }),
+  );
+  assert(c.kind === "container", `kind=${c.kind} (want container — size guard)`);
+}
+
+function test_chart_name_no_bbox_falls_through(): void {
+  // No bbox → cannot verify chart-sizedness → fast path skipped.
+  // Falls through to isIconCluster (which excludes FRAME) → container.
+  const c = classifyNode(node("FRAME", "trend graph"));
+  assert(c.kind === "container", `kind=${c.kind} (want container — no bbox)`);
+}
+
+function test_chart_name_with_punctuation_match(): void {
+  // Real-world Figma names: "Frame 2147226503 / Stock-Chart" or
+  // "Page_1: candlestick".  Any of `[ /:_-]` boundary should match.
+  const c = classifyNode(
+    node("FRAME", "Page_1: candlestick", {
+      absoluteBoundingBox: { x: 0, y: 0, width: 343, height: 403 },
+    }),
+  );
+  assert(c.kind === "illustration", `kind=${c.kind} (want illustration)`);
+}
+
+function test_research_does_not_match_chart(): void {
+  // "research" contains "chart" only as a substring without a boundary;
+  // regex requires a [ /:_-] before "chart" so it must NOT match.
+  const c = classifyNode(
+    node("FRAME", "research", {
+      absoluteBoundingBox: { x: 0, y: 0, width: 343, height: 403 },
+    }),
+  );
+  assert(
+    c.kind !== "illustration",
+    `expected non-illustration for word 'research', got kind=${c.kind}`,
+  );
+}
+
+function test_should_rasterize_chart_named_yes(): void {
+  // End-to-end check: shouldRasterize should return true for chart-named
+  // nodes inside size limits, so collectClusterIDs picks them up.
+  const got = shouldRasterize(
+    node("FRAME", "Stock Chart", {
+      absoluteBoundingBox: { x: 0, y: 0, width: 375, height: 403 },
+    }),
+  );
+  assert(got === true, `shouldRasterize=${got} (want true)`);
+}
+
 function test_should_rasterize_text_no(): void {
   assert(!shouldRasterize(node("TEXT", "Hello")), "TEXT must not rasterize");
 }
@@ -194,6 +260,12 @@ export function runAll(): void {
     ["shouldRasterize layout false", test_should_rasterize_layout_no],
     ["shouldRasterize illustration true", test_should_rasterize_illustration_yes],
     ["shouldRasterize text false", test_should_rasterize_text_no],
+    ["chart-name at chart size → illustration", test_chart_name_at_chart_size_is_illustration],
+    ["chart-name at phone size → container (size guard)", test_chart_name_at_phone_size_is_container],
+    ["chart-name without bbox → fallback container", test_chart_name_no_bbox_falls_through],
+    ["chart-name with punctuation boundary matches", test_chart_name_with_punctuation_match],
+    ["'research' substring does not match chart", test_research_does_not_match_chart],
+    ["shouldRasterize chart-named true", test_should_rasterize_chart_named_yes],
   ];
   let failed = 0;
   for (const [name, fn] of tests) {

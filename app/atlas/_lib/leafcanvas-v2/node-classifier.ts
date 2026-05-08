@@ -86,12 +86,45 @@ export interface ClassifiedNode {
 
 const ICON_NAME_RE = /^\s*icons?\s*\//i;
 const ILLUSTRATION_NAME_RE = /^\s*illustrations?\s*\//i;
+/**
+ * Wrappers whose name signals a data-viz region (chart / graph / trend /
+ * sparkline / candlestick / plot). Mirror of `chartNamePattern` in
+ * `services/ds-service/internal/projects/pipeline_cluster_prerender.go`
+ * — the two MUST stay in sync so the Go pre-renderer and the TS frontend
+ * agree on which subtrees rasterize.
+ *
+ * Used as a fast-path: when matched AND the wrapper is chart-sized
+ * (CLUSTER_MAX_*), the wrapper rasterizes as a single PNG instead of
+ * fragmenting into per-vector placeholders. The size gate is critical
+ * because a phone-screen FRAME may be named "Quick Buy: indstock
+ * chart" — the whole 375×1687 surface, which must NOT cluster.
+ */
+const CHART_NAME_RE = /(?:^|[\s/:_-])(?:chart|graph|trend|sparkline|candlesticks?|plot)(?:[\s/:_-]|$)/i;
 /** `/Yes/24px` or `/No/24px` style — Figma's slash-segmented variant suffix. */
 const SLASH_VARIANT_RE = /\/(yes|no)\/(\d+px)/i;
 /** `<thing>/(some-state)/<NN>px` — broader icon variant suffix without Yes/No. */
 const SIZED_VARIANT_RE = /\/(\d+px)$/i;
 /** Figma component-variant property like `Type=Primary, Size=Large`. */
 const VARIANT_PROP_RE = /(\w[\w- ]*)\s*=\s*([^,/]+)/g;
+
+/**
+ * Cluster size ceiling. Mirror of `clusterMaxWidth/Height` in the Go
+ * pre-renderer. Wrappers larger than this are full-screen surfaces
+ * (status bars are smaller; phone screens are taller); clustering them
+ * as one PNG would lose autolayout structure and prevent atomic-child
+ * inspection.
+ */
+const CLUSTER_MAX_WIDTH = 400;
+const CLUSTER_MAX_HEIGHT = 600;
+
+function withinClusterSize(node: CanonicalNode): boolean {
+  const bb = node.absoluteBoundingBox;
+  if (!bb) return false;
+  const w = typeof bb.width === "number" ? bb.width : 0;
+  const h = typeof bb.height === "number" ? bb.height : 0;
+  if (w <= 0 || h <= 0) return false;
+  return w <= CLUSTER_MAX_WIDTH && h <= CLUSTER_MAX_HEIGHT;
+}
 
 /** Names that look like layout containers — exclude from rasterization
  *  even when the structural heuristic would call them clusters. */
@@ -181,6 +214,19 @@ export function classifyNode(node: CanonicalNode): ClassifiedNode {
     return {
       kind: "illustration",
       role: rawName.replace(/\s*\/\s*/g, "/").toLowerCase(),
+      taxonomy,
+      variantProps,
+    };
+  }
+
+  // Chart-name fast path. Force-classifies chart-named wrappers as
+  // illustrations so they take the rasterized path — even FRAME types
+  // that `isIconCluster` deliberately excludes. Size-gated to avoid
+  // catching phone-screen FRAMEs whose name happens to contain "chart".
+  if (CHART_NAME_RE.test(rawName) && withinClusterSize(node)) {
+    return {
+      kind: "illustration",
+      role: rawName.toLowerCase(),
       taxonomy,
       variantProps,
     };

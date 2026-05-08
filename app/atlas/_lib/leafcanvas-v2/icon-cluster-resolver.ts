@@ -21,19 +21,49 @@ import type { CanonicalNode } from "./types";
 /**
  * Wrapper types that may collapse into a single icon-cluster export.
  *
- * NB: FRAME is intentionally excluded. FRAMEs are layout containers
- * (status bars, cards, sections) — even if a FRAME has no TEXT
- * descendants today, treating it as a single rasterized icon would
- * destroy autolayout structure and prevent atomic-child inspection.
- * Icon clusters in our codebase always come in via INSTANCE
- * (component-of-icon) or GROUP/BOOLEAN_OPERATION on raw shapes.
+ * FRAME inclusion update (2026-05-08): the Go side (isCluster in
+ * pipeline_cluster_prerender.go) clusters FRAME-typed wrappers when
+ * the structural heuristic passes. Excluding FRAME here created a
+ * parity drift: Go produced cluster PNGs keyed by the FRAME's id,
+ * while this side walked into the FRAME and looked up URLs by the
+ * children's ids — none existed → dashed placeholders. Symptom:
+ * vector illustrations inside FRAME wrappers (passport doc render,
+ * bank-statement check graphic, RM-call robot) showed as gray.
+ *
+ * Why FRAME used to be excluded: rasterizing a phone-screen FRAME as
+ * one PNG destroys autolayout. That concern is now handled by:
+ *   1. CLUSTER_MAX_W/H size ceiling — phone-screen FRAMEs (375×1687)
+ *      exceed the ceiling and skip the fast path, walking normally.
+ *   2. The shape/text budget — form-shaped FRAMEs (with many TEXT
+ *      labels) flunk the budget and walk normally.
+ * Together these protect the original autolayout case while letting
+ * structural illustrations cluster.
  */
 const WRAPPER_TYPES: ReadonlySet<string> = new Set([
   "GROUP",
   "INSTANCE",
   "COMPONENT",
   "BOOLEAN_OPERATION",
+  "FRAME",
 ]);
+
+/**
+ * Cluster size ceiling — mirror of CLUSTER_MAX_WIDTH/HEIGHT in
+ * node-classifier.ts and clusterMaxWidth/Height in the Go
+ * pre-renderer. Wrappers larger than this are full-screen surfaces;
+ * clustering them as one PNG would lose autolayout structure.
+ */
+const CLUSTER_MAX_W = 400;
+const CLUSTER_MAX_H = 600;
+
+function exceedsClusterSize(node: CanonicalNode): boolean {
+  const bb = node.absoluteBoundingBox;
+  if (!bb) return false;
+  const w = typeof bb.width === "number" ? bb.width : 0;
+  const h = typeof bb.height === "number" ? bb.height : 0;
+  if (w <= 0 || h <= 0) return false;
+  return w > CLUSTER_MAX_W || h > CLUSTER_MAX_H;
+}
 
 const SHAPE_TYPES: ReadonlySet<string> = new Set([
   "VECTOR",
@@ -50,16 +80,26 @@ export function isIconCluster(node: CanonicalNode): boolean {
   if (!t || !WRAPPER_TYPES.has(t)) return false;
   if (!Array.isArray(node.children) || node.children.length === 0) return false;
   if (treeHeight(node) < 2) return false;
+  // FRAME-only safety: phone-screen wrappers and other large layout FRAMEs
+  // must NOT cluster as one PNG. Apply the size ceiling so 375×1687 phone
+  // screens fall through to the container path. GROUP/INSTANCE/COMPONENT/
+  // BOOLEAN_OPERATION historically passed without size gating; preserve
+  // that for parity with the pre-2026-05-08 behaviour.
+  if (t === "FRAME" && exceedsClusterSize(node)) return false;
   // Pure-icon fast path — no TEXT descendants, just need ≥1 shape leaf.
   if (!hasTextDescendant(node)) return hasShapeDescendant(node);
   // Mixed-content path: illustration frames may embed a few labels
-  // (chart axes, "BUY"/"SELL" markers). Mirror the Go classifier's
-  // shapeLeaves≥8 && textLeaves≤max(2, shapeLeaves/20) heuristic so the
-  // whole illustration clusters as a single PNG instead of fanning out
-  // into per-vector placeholder pills.
+  // (chart axes, "BUY"/"SELL" markers, value ticks). Mirror the Go
+  // classifier's shapeLeaves≥8 && textLeaves≤max(4, shapes*3/2)
+  // heuristic — keeps `services/ds-service/internal/projects/
+  // pipeline_cluster_prerender.go::isCluster` and this side in lockstep
+  // so the Go pre-renderer never produces a PNG the frontend ignores.
+  // Pre-fix the budget was max(2, shapes/20) (5% text). That's right
+  // for icons; charts run 100%+ text per shape (every candle has a
+  // tick), so they were locked out.
   const { shapes, texts } = countLeaves(node);
   if (shapes < 8) return false;
-  const textBudget = Math.max(2, Math.floor(shapes / 20));
+  const textBudget = Math.max(4, Math.floor((shapes * 3) / 2));
   return texts <= textBudget;
 }
 

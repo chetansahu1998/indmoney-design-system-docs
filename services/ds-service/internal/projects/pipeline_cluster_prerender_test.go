@@ -560,3 +560,128 @@ func TestPrerenderClusters_AssetExporterWithFakeRepo_FailsLoud(t *testing.T) {
 		t.Fatalf("want *TenantRepo error, got %v", err)
 	}
 }
+
+// ─── isCluster: chart-name fast path + relaxed budget ─────────────────────
+//
+// Test fixture builders. Each "shape leaf" is a VECTOR child with no
+// children; each "text leaf" is a TEXT child with no children. The
+// outer FRAME carries the bbox and name we want to test.
+
+func chartFixture(name string, w, h, shapes, texts int) string {
+	var children []string
+	for i := 0; i < shapes; i++ {
+		children = append(children, fmt.Sprintf(`{"id":"s%d","type":"VECTOR"}`, i))
+	}
+	for i := 0; i < texts; i++ {
+		children = append(children, fmt.Sprintf(`{"id":"t%d","type":"TEXT"}`, i))
+	}
+	return fmt.Sprintf(
+		`{"id":"wrapper","type":"FRAME","name":%q,"absoluteBoundingBox":{"width":%d,"height":%d},"children":[%s]}`,
+		name, w, h, strings.Join(children, ","),
+	)
+}
+
+func TestIsCluster_ChartNameFastPath_AtChartSize_Clusters(t *testing.T) {
+	// 19 shapes, 23 texts — pre-fix budget rejected this. Chart-named
+	// wrapper at chart size should now pass via the fast path.
+	tree := chartFixture("Stock Chart", 375, 403, 19, 23)
+	ids := ExtractClusterIDs([]byte(tree))
+	if len(ids) != 1 || ids[0] != "wrapper" {
+		t.Fatalf("expected [wrapper], got %v", ids)
+	}
+}
+
+func TestIsCluster_ChartNameFastPath_AtPhoneSize_DoesNotCluster(t *testing.T) {
+	// "Quick Buy: indstock chart" matches CHART_NAME_RE but the wrapper
+	// is the whole 375×1687 phone screen — must NOT cluster as one PNG.
+	// Walker descends to children; with all leaf VECTORs as siblings,
+	// each is a shape primitive and individually clusters.
+	tree := chartFixture("Quick Buy: indstock chart", 375, 1687, 19, 23)
+	ids := ExtractClusterIDs([]byte(tree))
+	for _, id := range ids {
+		if id == "wrapper" {
+			t.Fatalf("did not expect phone-sized wrapper to cluster, got %v", ids)
+		}
+	}
+}
+
+func TestIsCluster_RelaxedBudget_ChartShape_Clusters(t *testing.T) {
+	// Wrapper not chart-named, but shape/text ratio is chart-shaped
+	// (19 shapes : 23 texts ≈ 121% text/shape) — within the 150% budget.
+	tree := chartFixture("Frame 2147226503", 375, 403, 19, 23)
+	ids := ExtractClusterIDs([]byte(tree))
+	if len(ids) != 1 || ids[0] != "wrapper" {
+		t.Fatalf("expected [wrapper] via relaxed budget, got %v", ids)
+	}
+}
+
+func TestIsCluster_RelaxedBudget_FormShape_DoesNotCluster(t *testing.T) {
+	// 5 shapes (input borders) : 30 texts (labels + placeholders + helper
+	// copy) = 600% text/shape — way past the 150% budget. Login forms
+	// must NOT cluster.
+	tree := chartFixture("Login Form", 375, 500, 5, 30)
+	ids := ExtractClusterIDs([]byte(tree))
+	for _, id := range ids {
+		if id == "wrapper" {
+			t.Fatalf("did not expect form-shaped wrapper to cluster, got %v", ids)
+		}
+	}
+}
+
+func TestIsCluster_SizeCeiling_RejectsOversizedWrapper(t *testing.T) {
+	// 19 shapes : 23 texts (would qualify by ratio) but height is 700,
+	// over the 600 ceiling. Should NOT cluster as one PNG.
+	tree := chartFixture("Big Chart-ish", 380, 700, 19, 23)
+	ids := ExtractClusterIDs([]byte(tree))
+	for _, id := range ids {
+		if id == "wrapper" {
+			t.Fatalf("did not expect oversize wrapper to cluster, got %v", ids)
+		}
+	}
+}
+
+func TestIsCluster_NoBBox_ChartNameFastPath_FallsThrough(t *testing.T) {
+	// The chart-name fast path requires a bbox to verify chart-sizedness.
+	// Without one we cannot blind-cluster (could be a phone-screen
+	// labelled with "chart"). Single-VECTOR child without bbox doesn't
+	// reach the >=8 shape budget either, so this wrapper does not
+	// cluster and the walker recurses to the inner shape.
+	tree := `{"id":"wrapper","type":"FRAME","name":"Stock Chart","children":[
+		{"id":"v","type":"VECTOR"}
+	]}`
+	ids := ExtractClusterIDs([]byte(tree))
+	for _, id := range ids {
+		if id == "wrapper" {
+			t.Fatalf("did not expect bbox-less wrapper to cluster via chart-name fast path, got %v", ids)
+		}
+	}
+}
+
+func TestIsCluster_NoBBox_BudgetPath_StillClustersOnRatio(t *testing.T) {
+	// Pre-fix parity: a wrapper without bbox but with shape-heavy
+	// children (8 vectors, 0 text) should still cluster. The size
+	// guard only kicks in when bbox IS present and exceeds limits.
+	// This protects canonical-tree fixtures that omit bbox.
+	var children []string
+	for i := 0; i < 8; i++ {
+		children = append(children, fmt.Sprintf(`{"id":"v%d","type":"VECTOR"}`, i))
+	}
+	tree := fmt.Sprintf(`{"id":"wrapper","type":"INSTANCE","name":"Generic","children":[%s]}`,
+		strings.Join(children, ","))
+	ids := ExtractClusterIDs([]byte(tree))
+	if len(ids) != 1 || ids[0] != "wrapper" {
+		t.Fatalf("expected bbox-less 8-vector wrapper to cluster on ratio, got %v", ids)
+	}
+}
+
+func TestIsCluster_ExistingIconPath_StillClusters(t *testing.T) {
+	// Regression: the icon-name fast path (Icons/.../Help) must still
+	// fire regardless of size and budget logic.
+	tree := `{"id":"icn","type":"INSTANCE","name":"Icons/ 2D/ Help",
+		"absoluteBoundingBox":{"width":24,"height":24},
+		"children":[{"id":"v","type":"VECTOR"}]}`
+	ids := ExtractClusterIDs([]byte(tree))
+	if len(ids) != 1 || ids[0] != "icn" {
+		t.Fatalf("expected icon to cluster via name pattern, got %v", ids)
+	}
+}

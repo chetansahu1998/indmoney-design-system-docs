@@ -154,12 +154,28 @@ var (
 	iconNamePattern         = regexp.MustCompile(`(?i)(?:^|/)\s*(?:icons?|illustrations?)\s*/`)
 	yesNoVariantPattern     = regexp.MustCompile(`(?i)/(?:yes|no|on|off)/\d+\s*px\s*$`)
 	pureSizeVariantPattern  = regexp.MustCompile(`(?i)^[\w\s\-]+_\d+px$`)
+	// chartNamePattern matches wrappers whose name signals a data-viz
+	// region: stock charts, sparklines, trend lines, candlestick views.
+	// Used as a fast-path: when matched AND the wrapper is chart-sized
+	// (see clusterMaxWidth/Height), the wrapper rasterizes as a single
+	// PNG instead of fragmenting into per-vector placeholders.
+	chartNamePattern = regexp.MustCompile(`(?i)(?:^|[\s/:_-])(?:chart|graph|trend|sparkline|candlesticks?|plot)(?:[\s/:_-]|$)`)
 	containerWrapperTypes   = map[string]struct{}{
 		"INSTANCE":  {},
 		"FRAME":     {},
 		"COMPONENT": {},
 		"GROUP":     {},
 	}
+)
+
+// Cluster size ceiling. Wrappers larger than this are full-screen
+// containers (status bars, phone screens, dashboards) — clustering them
+// as one PNG would lose autolayout structure and prevent atomic-child
+// inspection. The ceiling deliberately exceeds typical chart bounds
+// (~375×400) but stays under common screen heights (≥667).
+const (
+	clusterMaxWidth  = 400
+	clusterMaxHeight = 600
 )
 
 // ExtractClusterIDs walks the JSON-encoded canonical_tree blob and returns
@@ -284,17 +300,42 @@ func isCluster(node map[string]any, nodeType, name string) bool {
 	if pureSizeVariantPattern.MatchString(name) {
 		return true
 	}
-	// Illustration-subtree heuristic. Cluster the wrapper as a whole if
-	// it's overwhelmingly shapes with at most a small amount of decorative
-	// text (e.g., "BUY", "SELL", "FLASH", "TRADING" stamped on a chart).
+	// Chart-name fast path. A wrapper whose name signals a data-viz
+	// region clusters as one PNG even when its text-to-shape ratio
+	// would otherwise reject it (axis ticks, value labels, legends —
+	// charts have lots of legitimate inline text). Gated on size to
+	// prevent clustering full phone screens whose name happens to
+	// contain "chart" (e.g., "Quick Buy: indstock chart" wraps the
+	// whole 375×1687 screen — that must NOT cluster as one PNG, but
+	// the inner ~375×400 chart frame inside it should). The fast
+	// path requires a bbox: if one isn't present we cannot verify
+	// chart-sizedness, so we fall through to the existing rules.
+	if chartNamePattern.MatchString(name) && hasBBoxWithinClusterSize(node) {
+		return true
+	}
+	// Illustration-subtree heuristic. Cluster the wrapper as a whole
+	// if it's a chart-sized region whose shape/text mix looks like a
+	// data-viz or illustration.
 	//
-	// Two thresholds work together:
-	//   - shapeLeaves >= 8: avoids clustering a tiny status-bar icon set.
-	//     A genuine illustration always has many vector leaves.
-	//   - textLeaves <= max(2, shapeLeaves/20): tolerates ~5% text. A UI
-	//     surface (phone screen with form fields, navigation bar with
-	//     time text) has higher text ratios and won't qualify; a chart
-	//     with two label words inside hundreds of candle vectors will.
+	// Pre-fix the budget was max(2, shapeLeaves/20) (5% text). That's
+	// calibrated for icons/illustrations where text is incidental
+	// ("BUY"/"SELL" stamps). Real charts run 100%+ text-to-shape (every
+	// vector candle has a numeric tick, every legend dot has a label),
+	// so the old budget locked them out. Bumping to 1.5× shapes covers
+	// chart cases without inviting login-form-style UI surfaces (those
+	// run 200%+ text/shape).
+	//
+	// Three guards work together:
+	//   - shapeLeaves >= 8: avoids clustering tiny icon sets.
+	//   - !exceedsClusterSize: keeps phone-sized FRAMEs out (only when
+	//     bbox is present — bbox-less wrappers fall through to the
+	//     budget check, preserving pre-fix behaviour for canonical-tree
+	//     fixtures that omit bbox).
+	//   - textLeaves <= max(4, shapeLeaves*3/2): tolerates up to 150%
+	//     text-per-shape (chart-shaped) but not 200%+ (form-shaped).
+	if exceedsClusterSize(node) {
+		return false
+	}
 	shapeLeaves, textLeaves, valid := illustrationSubtreeSummary(node)
 	if !valid {
 		return false
@@ -302,11 +343,48 @@ func isCluster(node map[string]any, nodeType, name string) bool {
 	if shapeLeaves < 8 {
 		return false
 	}
-	textBudget := shapeLeaves / 20
-	if textBudget < 2 {
-		textBudget = 2
+	textBudget := shapeLeaves * 3 / 2
+	if textBudget < 4 {
+		textBudget = 4
 	}
 	return textLeaves <= textBudget
+}
+
+// hasBBoxWithinClusterSize requires a present bbox AND that the bbox
+// fits the cluster size ceiling. Used by the chart-name fast path —
+// without a bbox we can't verify the wrapper is chart-sized so we must
+// not blind-cluster.
+func hasBBoxWithinClusterSize(node map[string]any) bool {
+	w, h, ok := bboxDims(node)
+	if !ok {
+		return false
+	}
+	return w <= clusterMaxWidth && h <= clusterMaxHeight
+}
+
+// exceedsClusterSize is true ONLY when a bbox is present and it goes
+// over the ceiling. Returns false for missing/zero bboxes — the budget
+// path then decides on its own. This preserves pre-fix behaviour for
+// canonical-tree nodes that lack absoluteBoundingBox.
+func exceedsClusterSize(node map[string]any) bool {
+	w, h, ok := bboxDims(node)
+	if !ok {
+		return false
+	}
+	return w > clusterMaxWidth || h > clusterMaxHeight
+}
+
+func bboxDims(node map[string]any) (w, h float64, ok bool) {
+	bbox, isMap := node["absoluteBoundingBox"].(map[string]any)
+	if !isMap {
+		return 0, 0, false
+	}
+	w, _ = bbox["width"].(float64)
+	h, _ = bbox["height"].(float64)
+	if w <= 0 || h <= 0 {
+		return 0, 0, false
+	}
+	return w, h, true
 }
 
 // illustrationSubtreeSummary counts shape leaves (VECTOR/ELLIPSE/etc
