@@ -27,6 +27,14 @@ import { CopyOverridesTab } from "./leafcanvas-v2/CopyOverridesTab";
 import { setLeafZoom } from "./leafcanvas-v2/leaf-zoom-signal";
 import { canvasGestureTracker } from "./leafcanvas-v2/gesture-tracker";
 import { clog } from "./leafcanvas-v2/canvas-log";
+import {
+  animateCamera,
+  computeFitCamera,
+  registerSnapTarget,
+  SNAP_DURATION_MS,
+  type CancelToken,
+  type SnapBBox,
+} from "./leafcanvas-v2/camera-snap";
 
 // ─── Loose model types ──────────────────────────────────────────────────
 // These describe only the fields this file reads. The upstream brain /
@@ -148,6 +156,8 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
   // cause of "messed up zoom interactions during loading".
   // ------------------------------------------------------------------
   const camRef = useRef<{ x: number; y: number; z: number }>({ x: 0, y: 0, z: 0.6 });
+  // U7 — running snap-animation token; cancelled on user input.
+  const snapAnimRef = useRef<CancelToken | null>(null);
   const worldRef = useRef<HTMLDivElement | null>(null);
   const rafPendingRef = useRef<number>(0);
   const [zoomPct, setZoomPct] = useState(60);
@@ -178,6 +188,64 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
       applyCameraToDOM();
     });
   }, [applyCameraToDOM]);
+
+  // U7 — snap-to-bbox. Pure animation; the camera ref + DOM transform
+  // are written on each rAF tick by the helper. Cancels any in-flight
+  // snap before starting a new one (rapid Shift+2 presses are
+  // common). Cancellation on user input lives in the pointer/wheel
+  // handlers — they call snapAnimRef.current?.cancel() before
+  // mutating the camera themselves, so a drag mid-snap aborts the
+  // animation cleanly.
+  const snapToBBox = useCallback(
+    (bbox: SnapBBox) => {
+      const stage = stageRef.current;
+      if (!stage) return;
+      const rect = stage.getBoundingClientRect();
+      // Reserve 380px on the right for the inspector pane + 100px
+      // chrome on top and bottom — same constants the auto-fit
+      // useLayoutEffect uses, so the framing matches.
+      const inspectorReserve = 380;
+      const chromeReserve = 100;
+      const usableW = Math.max(1, rect.width - inspectorReserve);
+      const usableH = Math.max(1, rect.height - chromeReserve);
+      const target = computeFitCamera(bbox, { width: usableW, height: usableH });
+      if (!target) return;
+      // Cancel any currently running snap before starting a new one.
+      snapAnimRef.current?.cancel();
+      const from = { ...camRef.current };
+      const onTick = (s: { x: number; y: number; z: number }) => {
+        camRef.current = { x: s.x, y: s.y, z: s.z };
+        applyCameraToDOM();
+        // Mark the canvas as gesturing so MeasurementOverlay etc.
+        // know to suppress paint until the snap settles. Tick
+        // also prevents the gesture-tracker idle from firing a
+        // settle while the camera is still moving.
+        canvasGestureTracker.tick();
+      };
+      const onDone = () => {
+        setZoomPct(Math.round(camRef.current.z * 100));
+        clog("camera", "snap-done", { ...camRef.current });
+        snapAnimRef.current = null;
+      };
+      clog("camera", "snap-start", { from, to: target, bbox });
+      snapAnimRef.current = animateCamera(
+        from,
+        target,
+        SNAP_DURATION_MS,
+        onTick,
+        onDone,
+      );
+    },
+    [applyCameraToDOM],
+  );
+
+  // Register/unregister the snap target on mount so external callers
+  // (Shift+2 in AtlasShellInner, "Scroll into view" button in
+  // AtomicChildInspector) can request a snap without prop-drilling.
+  useEffect(() => {
+    const off = registerSnapTarget(snapToBBox);
+    return off;
+  }, [snapToBBox]);
 
   // Debounced React-state sync — fires when the gesture-tracker
   // reports settle (~150 ms after the last wheel/pan event). Updates
@@ -250,6 +318,9 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
   const dragRef = useRef({ active: false, startX: 0, startY: 0, camX: 0, camY: 0, moved: false });
   const onPointerDown = (e) => {
     if (e.target.closest(".lc-frame")) return; // let frame click bubble
+    // Cancel any in-flight camera snap so the user's drag wins.
+    snapAnimRef.current?.cancel();
+    snapAnimRef.current = null;
     dragRef.current = {
       active: true,
       startX: e.clientX, startY: e.clientY,
@@ -290,6 +361,9 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
   // but a maintenance trap if any indirect dep becomes non-stable.
   const onWheel = useCallback((e) => {
     e.preventDefault();
+    // Cancel any in-flight camera snap so the user's wheel input wins.
+    snapAnimRef.current?.cancel();
+    snapAnimRef.current = null;
     const stage = stageRef.current;
     const rect = stage.getBoundingClientRect();
     const sx = e.clientX - rect.left;

@@ -34,6 +34,7 @@ import {
 } from "../../../../lib/projects/client";
 import { lookupTokenByHex } from "../../../../lib/tokens/hex-to-token";
 
+import { requestCameraSnap } from "./camera-snap";
 import type { AnnotatedNode, BoundingBox, CanonicalNode, Paint } from "./types";
 import {
   type ScreenTextOverride,
@@ -129,11 +130,32 @@ export function AtomicChildInspector(props: AtomicChildInspectorProps) {
             ) : null}
           </div>
         </div>
-        {onClose && (
-          <button className="lc-ins-close" onClick={onClose} aria-label="Close inspector">
-            ✕
-          </button>
-        )}
+        <div className="lc-ins-head-actions">
+          {node.absoluteBoundingBox && (
+            <button
+              className="lc-ins-snap"
+              onClick={() => {
+                if (!node.absoluteBoundingBox) return;
+                const bb = node.absoluteBoundingBox;
+                requestCameraSnap({
+                  x: bb.x,
+                  y: bb.y,
+                  width: bb.width,
+                  height: bb.height,
+                });
+              }}
+              aria-label="Scroll layer into view"
+              title="Scroll into view (Shift+2)"
+            >
+              ⌖
+            </button>
+          )}
+          {onClose && (
+            <button className="lc-ins-close" onClick={onClose} aria-label="Close inspector">
+              ✕
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="lc-ins-tabs">

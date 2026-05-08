@@ -467,6 +467,40 @@
   font-feature-settings: "tnum";
 }
 
+/* ── Phase 2 U7: inspector head actions (snap + close) ─────────
+   The atomic inspector head used to host only a close button. U7
+   adds a "Scroll into view" button next to it. Both buttons sit
+   in a flex row at the top-right of .lc-ins-head. */
+.lc-ins-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.lc-ins-snap {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.7);
+  padding: 0;
+  line-height: 1;
+}
+.lc-ins-snap:hover {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.5);
+  color: #0369a1;
+}
+.lc-ins-snap:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 1px;
+}
+
 /* ── Phase 2 U3-U8: measurement overlay layer ─────────────────
    <svg> sibling to nodeToHTML output, hosts distance lines
    (U4), padding bands (U5), gap markers (U6), selected chips

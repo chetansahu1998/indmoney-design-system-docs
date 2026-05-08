@@ -19,7 +19,8 @@ import { subscribeProjectEvents } from "../../../lib/projects/client";
 import { subscribeGraphEvents } from "../../../lib/atlas/data-adapters";
 import { useAtlas } from "../../../lib/atlas/live-store";
 import { AtlasShellProvider, type AtlasShellContextShape } from "./AtlasShellContext";
-import { AtomicChildInspector } from "./leafcanvas-v2/AtomicChildInspector";
+import { AtomicChildInspector, findByFigmaID } from "./leafcanvas-v2/AtomicChildInspector";
+import { requestCameraSnap } from "./leafcanvas-v2/camera-snap";
 
 // Side-effect imports — order matters; see AtlasShell for rationale.
 import "./tweaks-panel";
@@ -103,6 +104,34 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
 
   // Atomic-inspector close is layered into the existing Esc handler
   // below — see "Esc layered close" useEffect.
+
+  // U7 — Shift+2 camera snap to selected atomic. Mirrors Figma's
+  // "Zoom to Selection" shortcut. No-op when no atomic is selected.
+  // Look up bbox from the cached canonical_tree slot and request a
+  // snap via the module-level channel; LeafCanvas (which registers
+  // the snap target on mount) handles the rAF animation.
+  const requestSnapToSelected = useCallback(() => {
+    if (!selectedAtomicChild || !atomicCanonicalTree) return;
+    const found = findByFigmaID(atomicCanonicalTree, selectedAtomicChild.figmaNodeID);
+    if (!found || !found.node.absoluteBoundingBox) return;
+    const bb = found.node.absoluteBoundingBox;
+    requestCameraSnap({ x: bb.x, y: bb.y, width: bb.width, height: bb.height });
+  }, [selectedAtomicChild, atomicCanonicalTree]);
+
+  useEffect(() => {
+    if (!leafID) return;
+    const onKey = (e: KeyboardEvent) => {
+      // Shift+2 (Figma's "Zoom to Selection" shortcut). Use code !==
+      // key to handle layouts where Shift+2 produces a different
+      // character (e.g. UK keyboard sends `"`).
+      if (e.shiftKey && (e.code === "Digit2" || e.key === "@")) {
+        e.preventDefault();
+        requestSnapToSelected();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [leafID, requestSnapToSelected]);
 
   // Open a leaf — awaits the leaf-slot load BEFORE flipping local state
   // so LeafCanvas mounts with the data already present in the live store.
