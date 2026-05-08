@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -118,46 +119,88 @@ func (f *FigmaClient) fetchAndWalk(ctx context.Context, fileID, nodeID string, s
 }
 
 // walkScreens recurses through SECTION / GROUP nodes and collects every
-// FRAME / COMPONENT / INSTANCE child whose absolute bounding box is at
-// least 280×400. Critically: STOPS at the FRAME boundary — we never
-// recurse into a frame's children. This is what filters "every nested
-// button/icon/sub-card" out of the screen list.
+// FRAME / COMPONENT / INSTANCE / image-filled RECTANGLE child whose
+// absolute bounding box is screen-shaped. Critically: STOPS at the FRAME
+// boundary — we never recurse into a frame's children. This is what
+// filters "every nested button/icon/sub-card" out of the screen list.
 //
-// The size threshold matches the validated /tmp/figma_test.py threshold
-// from 2026-05-04. Screen-sized frames at 280×400 minimum cover mobile
-// (375×812, 360×800, 414×896) and web (1440×900+).
+// Size gate: width ≥ minScreenWidth (excludes icon-tier debris); height
+// ≥ minScreenHeight (low floor — designers also lay out short popup /
+// info-card frames alongside fullscreens, e.g. 375×146 tooltips in the
+// Gold-Silver flow, that pre-2026-05-08 were silently dropped).
+//
+// RECTANGLE handling: in flows like NRI VKYC the section contains
+// screen-sized RECTANGLE nodes that are pasted screenshot references
+// (Android/iOS captures, image fills) the team treats as part of the
+// flow. We accept those by gating on hasImageFill — plain shape
+// rectangles without an image fill are still ignored.
 func walkScreens(node figmaNode) []Screen {
 	var out []Screen
 	walk(node, &out)
 	return out
 }
 
+const (
+	minScreenWidth  = 280
+	minScreenHeight = 80
+)
+
 func walk(n figmaNode, out *[]Screen) {
 	for _, c := range n.Children {
 		switch c.Type {
 		case "FRAME", "COMPONENT", "INSTANCE":
-			b := c.AbsoluteBoundingBox
-			if b == nil {
+			if !appendIfScreenSized(c, out) {
 				continue
 			}
-			if b.Width < 280 || b.Height < 400 {
-				continue
-			}
-			*out = append(*out, Screen{
-				ID:     c.ID,
-				Name:   c.Name,
-				Type:   c.Type,
-				X:      b.X,
-				Y:      b.Y,
-				Width:  b.Width,
-				Height: b.Height,
-			})
 			// DO NOT recurse into FRAME — its children are sub-elements,
 			// not screens.
+		case "RECTANGLE":
+			if !hasImageFill(c) {
+				continue
+			}
+			appendIfScreenSized(c, out)
 		case "SECTION", "GROUP":
 			walk(c, out)
 		}
 	}
+}
+
+// appendIfScreenSized adds c to out when its bounding box passes the
+// size gate. Returns false when skipped (and emits a debug log so we
+// can audit dropped nodes when a leaf comes up short).
+func appendIfScreenSized(c figmaNode, out *[]Screen) bool {
+	b := c.AbsoluteBoundingBox
+	if b == nil {
+		slog.Debug("walk: skip (no bbox)", "id", c.ID, "name", c.Name, "type", c.Type)
+		return false
+	}
+	if b.Width < minScreenWidth || b.Height < minScreenHeight {
+		slog.Debug("walk: skip (under size floor)",
+			"id", c.ID, "name", c.Name, "type", c.Type,
+			"width", b.Width, "height", b.Height,
+			"min_width", minScreenWidth, "min_height", minScreenHeight,
+		)
+		return false
+	}
+	*out = append(*out, Screen{
+		ID:     c.ID,
+		Name:   c.Name,
+		Type:   c.Type,
+		X:      b.X,
+		Y:      b.Y,
+		Width:  b.Width,
+		Height: b.Height,
+	})
+	return true
+}
+
+func hasImageFill(c figmaNode) bool {
+	for _, f := range c.Fills {
+		if f.Type == "IMAGE" {
+			return true
+		}
+	}
+	return false
 }
 
 // ─── Wire shapes (Figma REST API) ──────────────────────────────────────────
@@ -169,11 +212,12 @@ type figmaNodesResponse struct {
 }
 
 type figmaNode struct {
-	ID                  string         `json:"id"`
-	Name                string         `json:"name"`
-	Type                string         `json:"type"`
-	Children            []figmaNode    `json:"children"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	Type                string            `json:"type"`
+	Children            []figmaNode       `json:"children"`
 	AbsoluteBoundingBox *figmaBoundingBox `json:"absoluteBoundingBox"`
+	Fills               []figmaFill       `json:"fills"`
 }
 
 type figmaBoundingBox struct {
@@ -181,6 +225,12 @@ type figmaBoundingBox struct {
 	Y      float64 `json:"y"`
 	Width  float64 `json:"width"`
 	Height float64 `json:"height"`
+}
+
+// figmaFill is a minimal projection of the Figma fill object — we only
+// need the type discriminator to gate RECTANGLE acceptance on IMAGE.
+type figmaFill struct {
+	Type string `json:"type"`
 }
 
 // ─── Errors ────────────────────────────────────────────────────────────────
