@@ -38,6 +38,7 @@ import { InlineTextEditor } from "./InlineTextEditor";
 import { nodeToHTML } from "./nodeToHTML";
 import { StatePicker } from "./StatePicker";
 import { HoverTooltip } from "./HoverTooltip";
+import { MeasurementOverlay } from "./MeasurementOverlay";
 import type { AnnotatedNode, CanonicalNode, ImageRefMap } from "./types";
 import { canvasFetchQueue } from "./fetch-queue";
 import { canvasGestureTracker, getIsGesturing } from "./gesture-tracker";
@@ -890,6 +891,15 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
           frame isn't the hovered one. */}
       {prunedTree?.absoluteBoundingBox && (
         <HoverTooltip
+          screenID={screenID}
+          frameBBox={prunedTree.absoluteBoundingBox}
+          tree={prunedTree}
+        />
+      )}
+      {/* Phase 2 U3 — measurement overlay scaffold. U4-U8 content lands
+          inside the same <svg> in subsequent commits. */}
+      {prunedTree?.absoluteBoundingBox && (
+        <MeasurementOverlay
           screenID={screenID}
           frameBBox={prunedTree.absoluteBoundingBox}
           tree={prunedTree}

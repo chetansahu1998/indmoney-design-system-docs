@@ -467,6 +467,17 @@
   font-feature-settings: "tnum";
 }
 
+/* ── Phase 2 U3-U8: measurement overlay layer ─────────────────
+   <svg> sibling to nodeToHTML output, hosts distance lines
+   (U4), padding bands (U5), gap markers (U6), selected chips
+   (U8). z-index 92 places it above selection outlines (default)
+   and below the lasso rect (90 but stacked later) and bulk
+   panel (200). pointer-events: none — never swallow clicks. */
+.leafcv2-measurement {
+  z-index: 92;
+  overflow: visible; /* labels may stick outside the bbox */
+}
+
 .leafcv2-lasso {
   position: absolute;
   pointer-events: none;
