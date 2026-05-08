@@ -21,6 +21,7 @@ import { useAtlas } from "../../../lib/atlas/live-store";
 import { AtlasShellProvider, type AtlasShellContextShape } from "./AtlasShellContext";
 import { AtomicChildInspector, findByFigmaID } from "./leafcanvas-v2/AtomicChildInspector";
 import { requestCameraSnap } from "./leafcanvas-v2/camera-snap";
+import { getHoveredAtomicChild, setHoveredAtomicChild } from "./leafcanvas-v2/hover-signal";
 
 // Side-effect imports — order matters; see AtlasShell for rationale.
 import "./tweaks-panel";
@@ -163,14 +164,22 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
   }, [closeLeafFromStore]);
 
   // Esc layered close. Order (innermost → outermost):
-  //   1. atomic-child selection → clear it (D8 spec)
-  //   2. selected frame → deselect
-  //   3. leaf open → close leaf
+  //   1. hover state → clear it (Phase 2 U9)
+  //   2. atomic-child selection → clear it (D8 spec)
+  //   3. selected frame → deselect
+  //   4. leaf open → close leaf
   // Each layer consumes the keystroke; user must press Esc again to
-  // pop the next layer.
+  // pop the next layer. Hover is the cheapest layer (synchronous
+  // module-level state mutation, no React re-render fan-out for the
+  // existing hover painters since they'll see the cleared signal on
+  // the next subscription tick).
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || !leafID) return;
+      if (getHoveredAtomicChild() !== null) {
+        setHoveredAtomicChild(null);
+        return;
+      }
       if (selectedAtomicChild) {
         closeAtomicInspector();
         return;
