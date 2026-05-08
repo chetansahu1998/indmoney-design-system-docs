@@ -520,8 +520,99 @@ describe("MeasurementOverlay — U6 gap markers", () => {
       'svg.leafcv2-measurement g.leafcv2-measurement__gap-markers g[data-band="gap"] rect',
     );
     expect(band).not.toBeNull();
-    // gap = 8, between col1 right (150) and col2 left (158)
     expect(band?.getAttribute("x")).toBe("150");
     expect(band?.getAttribute("width")).toBe("8");
+  });
+});
+
+// ─── U8 — selection chip ─────────────────────────────────────────────
+
+const u8Tree: AnnotatedNode = {
+  id: "root",
+  type: "FRAME",
+  name: "Screen",
+  absoluteBoundingBox: { x: 0, y: 0, width: 400, height: 600 },
+  children: [
+    {
+      id: "header",
+      type: "INSTANCE",
+      name: "Header",
+      absoluteBoundingBox: { x: 50, y: 50, width: 343, height: 56 },
+    } as unknown as AnnotatedNode,
+    {
+      id: "footer-cta",
+      type: "INSTANCE",
+      name: "Footer CTA",
+      absoluteBoundingBox: { x: 50, y: 580, width: 343, height: 56 },
+    } as unknown as AnnotatedNode,
+  ],
+};
+
+describe("MeasurementOverlay — U8 selection chip", () => {
+  afterEach(() => {
+    act(() => useAtlas.getState().selectAtomicChild("", ""));
+  });
+
+  it("renders a chip with rounded W×H when a node is selected", () => {
+    act(() => useAtlas.getState().selectAtomicChild("screen-1", "header"));
+    const wrapper = mount({
+      screenID: "screen-1",
+      frameBBox: { x: 0, y: 0, width: 400, height: 600 },
+      tree: u8Tree,
+    });
+    const chip = wrapper.querySelector("g.leafcv2-measurement__selection-chip");
+    expect(chip).not.toBeNull();
+    expect(chip?.querySelector("text")?.textContent).toBe("343 × 56");
+  });
+
+  it("flips chip above bbox when default position would clip below frame", () => {
+    act(() => useAtlas.getState().selectAtomicChild("screen-1", "footer-cta"));
+    const wrapper = mount({
+      screenID: "screen-1",
+      frameBBox: { x: 0, y: 0, width: 400, height: 600 },
+      tree: u8Tree,
+    });
+    // footer-cta abs (50, 580, 343x56) → local (50, 580). Default chip
+    // at bottom-right + 4px offset would put y at 580+56+4=640 > 600
+    // (frame height) → flips to above bbox: y = 580 - 16 - 4 = 560.
+    const rect = wrapper.querySelector(
+      "g.leafcv2-measurement__selection-chip rect",
+    );
+    expect(rect?.getAttribute("y")).toBe("560");
+  });
+
+  it("renders nothing when no atomic is selected", () => {
+    const wrapper = mount({
+      screenID: "screen-1",
+      frameBBox: { x: 0, y: 0, width: 400, height: 600 },
+      tree: u8Tree,
+    });
+    expect(
+      wrapper.querySelector("g.leafcv2-measurement__selection-chip"),
+    ).toBeNull();
+  });
+
+  it("renders nothing when selection is in a different screen", () => {
+    act(() => useAtlas.getState().selectAtomicChild("other-screen", "header"));
+    const wrapper = mount({
+      screenID: "screen-1",
+      frameBBox: { x: 0, y: 0, width: 400, height: 600 },
+      tree: u8Tree,
+    });
+    expect(
+      wrapper.querySelector("g.leafcv2-measurement__selection-chip"),
+    ).toBeNull();
+  });
+
+  it("exposes scene-coords X/Y as data-attributes for QA", () => {
+    act(() => useAtlas.getState().selectAtomicChild("screen-1", "header"));
+    const wrapper = mount({
+      screenID: "screen-1",
+      frameBBox: { x: 0, y: 0, width: 400, height: 600 },
+      tree: u8Tree,
+    });
+    const grp = wrapper.querySelector("g.leafcv2-measurement__selection-chip");
+    expect(grp?.getAttribute("data-x")).toBe("50");
+    expect(grp?.getAttribute("data-y")).toBe("50");
   });
 });

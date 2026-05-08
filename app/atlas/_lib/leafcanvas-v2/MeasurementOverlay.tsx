@@ -205,7 +205,12 @@ export function MeasurementOverlay(props: MeasurementOverlayProps) {
         frameBBox={frameBBox}
         hoveredFigmaID={hoveredHere ? hovered.figmaNodeID : null}
       />
-      {/* U8 lands here in a subsequent commit. */}
+      {/* U8 — persistent W×H + (X,Y) chip on the selected node. */}
+      <SelectionChip
+        tree={tree}
+        frameBBox={frameBBox}
+        selectedFigmaID={selectedHere ? selected.figmaNodeID : null}
+      />
     </svg>
   );
 }
@@ -608,6 +613,93 @@ function GapBand(props: {
         style={{ fontVariantNumeric: "tabular-nums" }}
       >
         {label}
+      </text>
+    </g>
+  );
+}
+
+/**
+ * U8 — persistent W×H chip on the selected atomic.
+ *
+ * Distinct from the hover tooltip (U2) which fires only while the
+ * cursor is over an atomic. The selection chip stays visible for
+ * the entire duration of the selection so engineers can keep
+ * reading dimensions while moving the cursor elsewhere on the
+ * canvas (or off-canvas to take notes).
+ *
+ * Position: bottom-right of the selected bbox + 4px offset. If
+ * that would clip outside the frame, flip to top-right (above the
+ * bbox + 4px offset) so the chip stays visible in tight cases like
+ * footer CTAs at the bottom edge of a screen.
+ */
+function SelectionChip(props: {
+  tree: AnnotatedNode;
+  frameBBox: BoundingBox;
+  selectedFigmaID: string | null;
+}): ReactElement | null {
+  const { tree, frameBBox, selectedFigmaID } = props;
+  const data = useMemo(() => {
+    if (!selectedFigmaID) return null;
+    const local = lookupBBox(tree, selectedFigmaID, frameBBox);
+    if (!local) return null;
+    const found = findByFigmaID(tree, selectedFigmaID);
+    if (!found) return null;
+    const abs = found.node.absoluteBoundingBox;
+    if (!abs) return null;
+    return { local, abs };
+  }, [tree, frameBBox, selectedFigmaID]);
+
+  if (!data) return null;
+
+  const { local, abs } = data;
+  const text = `${Math.round(local.width)} × ${Math.round(local.height)}`;
+  // Approximate chip width — same monospace digit width assumption
+  // as DistanceLabel; pad slightly for the × glyph.
+  const charW = 7;
+  const w = text.length * charW + 12;
+  const h = 16;
+  const offset = 4;
+
+  // Default: bottom-right of the bbox.
+  let chipX = local.x + local.width - w;
+  let chipY = local.y + local.height + offset;
+  // Flip up if it would clip below the frame.
+  if (chipY + h > frameBBox.height) {
+    chipY = local.y - h - offset;
+  }
+  // Clamp left edge inside the frame.
+  if (chipX < 0) chipX = 0;
+  // Clamp right edge inside the frame.
+  if (chipX + w > frameBBox.width) chipX = frameBBox.width - w;
+
+  return (
+    <g
+      className="leafcv2-measurement__selection-chip"
+      data-figma-id={selectedFigmaID}
+      data-x={Math.round(abs.x)}
+      data-y={Math.round(abs.y)}
+    >
+      <rect
+        x={chipX}
+        y={chipY}
+        width={w}
+        height={h}
+        rx={3}
+        ry={3}
+        fill="#0284c7"
+      />
+      <text
+        x={chipX + w / 2}
+        y={chipY + h / 2 + 1}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill="#ffffff"
+        fontSize={11}
+        fontWeight={600}
+        fontFamily="-apple-system, BlinkMacSystemFont, Inter, system-ui, sans-serif"
+        style={{ fontVariantNumeric: "tabular-nums" }}
+      >
+        {text}
       </text>
     </g>
   );
