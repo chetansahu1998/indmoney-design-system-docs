@@ -40,7 +40,12 @@ export const EMPTY_CLUSTER_URLS: ReadonlyMap<string, string> = new Map();
 export function collectClusterIDs(root: CanonicalNode | null): string[] {
   if (!root) return [];
   const out: string[] = [];
-  walk(root, out);
+  // Skip the screen-root for the same reason as collectClusterIDsWithBBox.
+  // The root is always a container in nodeToHTML; clustering it would
+  // both waste a URL mint and prevent descent into real inner clusters.
+  if (Array.isArray(root.children)) {
+    for (const c of root.children) walk(c, out);
+  }
   return out;
 }
 
@@ -81,7 +86,13 @@ export function collectClusterIDsWithBBox(
 ): ClusterIDWithBBox[] {
   if (!root) return [];
   const out: ClusterIDWithBBox[] = [];
-  walkWithBBox(root, out);
+  // Skip the screen-root from clustering — it always renders as
+  // container in nodeToHTML (see the isScreenRoot guard there), so
+  // minting a cluster URL for it is wasted work AND would short-circuit
+  // descent into real inner clusters. Walk the root's children directly.
+  if (Array.isArray(root.children)) {
+    for (const c of root.children) walkWithBBox(c, out);
+  }
   return out;
 }
 

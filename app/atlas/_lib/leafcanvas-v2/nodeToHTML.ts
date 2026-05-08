@@ -69,13 +69,29 @@ export function nodeToHTML(
 ): ReactElement | null {
   const annotated = node as AnnotatedNode;
 
+  // Screen-root guard. The canonical_tree's document root is by
+  // definition a layout surface (a phone screen, an overlay/bottomsheet,
+  // a card stack), never an icon or illustration. The cluster heuristic
+  // can match a small-enough screen FRAME (e.g. a 375×521 overlay with
+  // shape-heavy content like a chart + Footer CTA) and rasterize the
+  // ENTIRE screen as one PNG — losing all atomic interactivity, text
+  // selection, override editing, and the inspector. Pin the root to the
+  // container path regardless of classification.
+  //
+  // Detection: keyHint==="root" matches the call site in
+  // LeafFrameRenderer (line 597). Recursive descents pass keyHint like
+  // "root.0.1.f3" so they never collide with this guard. Pre-2026-05-08
+  // overlay screens in insurance-insurance-whatsapp-creative rendered
+  // as single cluster <img>s with childCount=1 and zero hasContent.
+  const isScreenRoot = keyHint === "root";
+
   // GROUP / BOOLEAN_OPERATION — flatten: their children render as if they
   // were children of `node`'s parent. Returning the children directly
   // would lose React key uniqueness, so we wrap in a Fragment-shaped
   // container element, but in practice we recurse and let the caller
   // splat. To keep the function signature single-element, we render a
   // `<div>` with `display:contents` so it doesn't affect layout.
-  if (isFlattenedWrapper(annotated)) {
+  if (!isScreenRoot && isFlattenedWrapper(annotated)) {
     return renderFlattenedChildren(annotated, parentBBox, parentLayoutMode, ctx, keyHint);
   }
 
@@ -88,9 +104,11 @@ export function nodeToHTML(
   // Yes/No/24px slash variants) with the structural icon-cluster
   // heuristic. Single source of truth for "should this rasterize?" so
   // useIconClusterURLs's collector and this renderer can never disagree.
-  const klass = classifyNode(annotated);
-  if (klass.kind === "icon" || klass.kind === "illustration" || klass.kind === "shape") {
-    return renderClusterPlaceholder(annotated, parentBBox, parentLayoutMode, ctx, keyHint);
+  if (!isScreenRoot) {
+    const klass = classifyNode(annotated);
+    if (klass.kind === "icon" || klass.kind === "illustration" || klass.kind === "shape") {
+      return renderClusterPlaceholder(annotated, parentBBox, parentLayoutMode, ctx, keyHint);
+    }
   }
 
   // Default: container (layouts, named UI components, generic FRAMEs).
@@ -99,12 +117,23 @@ export function nodeToHTML(
 
 // ─── Wrapper flattening ──────────────────────────────────────────────────────
 
-function isFlattenedWrapper(node: AnnotatedNode): boolean {
-  // BOOLEAN_OPERATION is a graphical wrapper that the icon-cluster path
-  // already catches when it has shape children — but if it's a top-level
-  // boolean op without shapes we still flatten its children rather than
-  // emitting an empty div.
-  if (node.type === "GROUP") return true;
+export function isFlattenedWrapper(node: AnnotatedNode): boolean {
+  // GROUP and BOOLEAN_OPERATION are both graphical wrappers that the
+  // icon-cluster path catches when their subtree is shape-heavy. If the
+  // wrapper qualifies as a cluster we want it to rasterize as one PNG
+  // (via renderClusterPlaceholder) — flattening here would render the
+  // children individually and orphan the parent's pre-rendered cluster
+  // PNG (Go's walkClusters captured the wrapper id; TS picking child ids
+  // means each child mints a URL the cache doesn't have → 404 → dashed
+  // placeholders). Real production case from indlearn-learn-revamp 2026-
+  // 05-08: course-tile GROUPs (180×218, 30 vector leaves, 3 text leaves)
+  // were unconditionally flattened, leaving the FRAME child to claim
+  // cluster — that FRAME id has no cache entry, so 100 thumbnails
+  // rendered as gradient-only placeholders instead of full illustrations.
+  //
+  // Pre-fix: GROUP was unconditionally flattened, BOOLEAN_OPERATION
+  // already had the guard. Symmetry restored here.
+  if (node.type === "GROUP" && !isIconCluster(node)) return true;
   if (node.type === "BOOLEAN_OPERATION" && !isIconCluster(node)) return true;
   return false;
 }
