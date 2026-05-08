@@ -121,6 +121,25 @@ func (r *ImageFillResolver) ResolveImageRefsForLeaf(
 	}
 	repo := NewTenantRepo(r.DB, tenantID)
 
+	// Slug fallback (post brain-products migration). Frontend `useImageRefs`
+	// receives `useAtlas.selection.leafID`, which after the migration is the
+	// project slug — not a flow UUID. The downstream lookups expect a flow
+	// UUID, so a direct call returns ErrNotFound and the renderer paints
+	// every IMAGE-fill RECTANGLE as a grey placeholder (symptom: passport /
+	// bank-statement images on NRI VKYC screens 28-29 went missing).
+	//
+	// Detection: leafID == slug implies the caller passed a slug. Resolve
+	// to the project's primary flow once and reuse for both lookups below.
+	// Backwards-compatible: when leafID is a real flow UUID it never equals
+	// the slug, so this branch is a no-op for legitimate callers.
+	if leafID == slug {
+		flowID, ferr := repo.PrimaryFlowIDForSlug(ctx, slug)
+		if ferr != nil {
+			return nil, fmt.Errorf("resolve primary flow for slug %q: %w", slug, ferr)
+		}
+		leafID = flowID
+	}
+
 	// 1) Resolve (file_id, version_index) for the leaf — same lookup the
 	//    asset_export path uses.
 	fileID, versionIndex, err := repo.LookupLeafFigmaContext(ctx, leafID)

@@ -288,3 +288,146 @@ func TestPipeline_Stage4_TriggersImageFillWarm(t *testing.T) {
 		}
 	}
 }
+
+// ─── Slug-as-leafID fallback (Bug B fix, 2026-05-08) ──────────────────────
+
+// TestPrimaryFlowIDForSlug_ReturnsOldestFlow exercises the helper used by
+// ResolveImageRefsForLeaf when the caller hands us a project slug instead
+// of a flow UUID (post brain-products migration: useAtlas.selection.leafID
+// is the project slug). Returns the oldest flow under the project.
+func TestPrimaryFlowIDForSlug_ReturnsOldestFlow(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	proj, err := repo.UpsertProject(ctx, Project{
+		Name: "Test", Platform: "mobile", Product: "P", Path: "Path", OwnerUserID: uA,
+	})
+	if err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	first, err := repo.UpsertFlow(ctx, Flow{ProjectID: proj.ID, FileID: "F1", Name: "First"})
+	if err != nil {
+		t.Fatalf("flow1: %v", err)
+	}
+	// Tiny delay so created_at differs (SQLite RFC3339 millisecond resolution).
+	time.Sleep(10 * time.Millisecond)
+	if _, err := repo.UpsertFlow(ctx, Flow{ProjectID: proj.ID, FileID: "F1", Name: "Second"}); err != nil {
+		t.Fatalf("flow2: %v", err)
+	}
+
+	got, err := repo.PrimaryFlowIDForSlug(ctx, proj.Slug)
+	if err != nil {
+		t.Fatalf("PrimaryFlowIDForSlug: %v", err)
+	}
+	if got != first.ID {
+		t.Errorf("expected oldest flow %s, got %s", first.ID, got)
+	}
+}
+
+func TestPrimaryFlowIDForSlug_UnknownSlug_ErrNotFound(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	if _, err := repo.PrimaryFlowIDForSlug(context.Background(), "no-such-slug"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for unknown slug, got %v", err)
+	}
+}
+
+// TestResolveImageRefsForLeaf_SlugAsLeafID_FallsBackToPrimaryFlow is the
+// regression test for Bug B. Frontend useImageRefs passes
+// useAtlas.selection.leafID — which post brain-products IS the project
+// slug — to this resolver. Pre-fix the call returned ErrNotFound from
+// LookupLeafFigmaContext (which expects a flow UUID); the renderer then
+// painted every IMAGE-fill RECTANGLE as a grey placeholder. Symptom: the
+// passport photo on NRI VKYC screen 28 (Figma node 1582:112247) showed
+// flat grey instead of the cached PNG that ds-service had on disk.
+//
+// Post-fix the resolver detects leafID == slug and resolves to the
+// project's primary flow before downstream lookups. The returned map
+// matches what the flow-UUID call returns.
+func TestResolveImageRefsForLeaf_SlugAsLeafID_FallsBackToPrimaryFlow(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	proj, _ := repo.UpsertProject(ctx, Project{
+		Name: "T", Platform: "mobile", Product: "P", Path: "X", OwnerUserID: uA,
+	})
+	v, _ := repo.CreateVersion(ctx, proj.ID, uA)
+	flow, _ := repo.UpsertFlow(ctx, Flow{ProjectID: proj.ID, FileID: "FILE-K", Name: "Only"})
+
+	// Insert one screen with a canonical_tree carrying an IMAGE fill.
+	scr := []Screen{
+		{VersionID: v.ID, FlowID: flow.ID, X: 0, Y: 0, Width: 375, Height: 812},
+	}
+	if err := repo.InsertScreens(ctx, scr); err != nil {
+		t.Fatalf("insert screens: %v", err)
+	}
+	tree := `{"document":{"fills":[{"type":"IMAGE","imageRef":"refPassport"}]}}`
+	if _, err := d.DB.ExecContext(ctx,
+		`INSERT INTO screen_canonical_trees(screen_id, canonical_tree, hash, updated_at)
+		 VALUES (?, ?, ?, datetime('now'))`,
+		scr[0].ID, tree, "h"); err != nil {
+		t.Fatalf("insert canonical tree: %v", err)
+	}
+
+	urls := &stubFillURLFetcher{urls: map[string]string{
+		"refPassport": "https://cdn.example/passport",
+	}}
+	bytes := &stubByteFetcher{contents: map[string][]byte{
+		"https://cdn.example/passport": minimalPNG,
+	}}
+	resolver := &ImageFillResolver{
+		DB: d.DB, URLs: urls, Bytes: bytes, DataDir: t.TempDir(), Now: time.Now,
+	}
+
+	// Sanity: with a real flow UUID, the resolver returns the imageRef.
+	gotByUUID, err := resolver.ResolveImageRefsForLeaf(ctx, tA, proj.Slug, flow.ID)
+	if err != nil {
+		t.Fatalf("flow-UUID call: %v", err)
+	}
+	if _, ok := gotByUUID["refPassport"]; !ok {
+		t.Fatalf("flow-UUID call missing refPassport, got keys=%v", keys(gotByUUID))
+	}
+
+	// Bug B repro: pre-fix this call would fail at LookupLeafFigmaContext.
+	// Post-fix it resolves slug → primary flow internally and matches.
+	gotBySlug, err := resolver.ResolveImageRefsForLeaf(ctx, tA, proj.Slug, proj.Slug)
+	if err != nil {
+		t.Fatalf("slug-as-leafID call: %v", err)
+	}
+	if _, ok := gotBySlug["refPassport"]; !ok {
+		t.Fatalf("slug-as-leafID call missing refPassport, got keys=%v", keys(gotBySlug))
+	}
+	if len(gotByUUID) != len(gotBySlug) {
+		t.Errorf("UUID and slug calls returned different sizes: uuid=%d slug=%d",
+			len(gotByUUID), len(gotBySlug))
+	}
+}
+
+func TestResolveImageRefsForLeaf_SlugWithNoFlows_ErrNotFound(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+	// Project but NO flows.
+	proj, _ := repo.UpsertProject(ctx, Project{
+		Name: "T", Platform: "mobile", Product: "P", Path: "X", OwnerUserID: uA,
+	})
+
+	resolver := &ImageFillResolver{
+		DB: d.DB, URLs: &stubFillURLFetcher{}, Bytes: &stubByteFetcher{},
+		DataDir: t.TempDir(), Now: time.Now,
+	}
+	_, err := resolver.ResolveImageRefsForLeaf(ctx, tA, proj.Slug, proj.Slug)
+	if err == nil || !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for slug with no flows, got %v", err)
+	}
+}
+
+func keys(m map[string]ImageFillRef) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}

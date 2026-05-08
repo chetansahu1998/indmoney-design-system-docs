@@ -512,6 +512,43 @@ func (t *TenantRepo) StoreAsset(ctx context.Context, r AssetCacheRow) error {
 	return err
 }
 
+// PrimaryFlowIDForSlug returns ANY flow id for the given project slug, or
+// ErrNotFound if the project has no flows. Used post brain-products
+// migration: callers that hold the project slug (not a flow UUID) can
+// resolve to a flow before calling LookupLeafFigmaContext + the
+// per-flow listLeafScreensForCSV. For projects with multiple flows we
+// return the oldest flow — every flow under a project shares (file_id,
+// version_index), and listLeafScreensForCSV scopes screens to the chosen
+// flow only, so we deliberately favour the canonical/primary flow.
+func (t *TenantRepo) PrimaryFlowIDForSlug(ctx context.Context, slug string) (string, error) {
+	if t == nil {
+		return "", errors.New("nil repo")
+	}
+	if t.tenantID == "" {
+		return "", errors.New("projects: tenant_id required")
+	}
+	row := t.handle().QueryRowContext(ctx, `
+		SELECT f.id
+		  FROM flows f
+		  JOIN projects p ON p.id = f.project_id
+		 WHERE p.slug = ?
+		   AND p.tenant_id = ?
+		   AND p.deleted_at IS NULL
+		   AND f.tenant_id = ?
+		   AND f.deleted_at IS NULL
+		 ORDER BY f.created_at ASC
+		 LIMIT 1
+	`, slug, t.tenantID, t.tenantID)
+	var flowID string
+	if err := row.Scan(&flowID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return flowID, nil
+}
+
 // LookupLeafFigmaContext resolves a leafID (≡ flow.id) to the (file_id,
 // version_index) pair the asset_cache PK needs.
 //
