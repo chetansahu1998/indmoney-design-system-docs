@@ -199,7 +199,13 @@ export function MeasurementOverlay(props: MeasurementOverlayProps) {
         frameBBox={frameBBox}
         hoveredFigmaID={hoveredHere ? hovered.figmaNodeID : null}
       />
-      {/* U6/U8 land here in subsequent commits. */}
+      {/* U6 — gap markers between siblings of hovered autolayout FRAME. */}
+      <GapMarkers
+        tree={tree}
+        frameBBox={frameBBox}
+        hoveredFigmaID={hoveredHere ? hovered.figmaNodeID : null}
+      />
+      {/* U8 lands here in a subsequent commit. */}
     </svg>
   );
 }
@@ -446,6 +452,165 @@ function PaddingBand(props: {
 
 function numberOr(v: unknown, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+/**
+ * U6 — gap markers between siblings of a hovered autolayout FRAME.
+ *
+ * Direct-on-canvas (Figma Dev Mode pattern, not Zeplin's panel-
+ * mediated model). Hover an autolayout parent → pink bands appear
+ * automatically between consecutive children with the gap value.
+ *
+ * Skips:
+ *   - Non-FRAME hovered nodes
+ *   - layoutMode === NONE
+ *   - itemSpacing === 0 (no gap to show)
+ *   - Fewer than 2 children (no pairs)
+ *   - primaryAxisAlignItems === SPACE_BETWEEN (gap is dynamic; the
+ *     itemSpacing field is unused — surface a "Variable gap" hint
+ *     so the user understands the gap value isn't fixed)
+ */
+function GapMarkers(props: {
+  tree: AnnotatedNode;
+  frameBBox: BoundingBox;
+  hoveredFigmaID: string | null;
+}): ReactElement | null {
+  const { tree, frameBBox, hoveredFigmaID } = props;
+
+  const data = useMemo(() => {
+    if (!hoveredFigmaID) return null;
+    const found = findByFigmaID(tree, hoveredFigmaID);
+    if (!found) return null;
+    const node = found.node as CanonicalNode;
+    if (node.type !== "FRAME") return null;
+    const layoutMode = node.layoutMode;
+    if (layoutMode !== "HORIZONTAL" && layoutMode !== "VERTICAL") return null;
+    const itemSpacing = numberOr(node.itemSpacing, 0);
+    const primary = (node as { primaryAxisAlignItems?: string }).primaryAxisAlignItems;
+    const isSpaceBetween = primary === "SPACE_BETWEEN";
+    const children = Array.isArray(node.children) ? node.children : [];
+    if (children.length < 2) return null;
+    if (itemSpacing === 0 && !isSpaceBetween) return null;
+    // Convert each child's bbox to wrapper-local coords + filter to
+    // ones with valid bboxes.
+    const childBoxes: BoundingBox[] = [];
+    for (const c of children) {
+      const cn = c as CanonicalNode;
+      const bb = cn.absoluteBoundingBox;
+      if (!bb) continue;
+      childBoxes.push({
+        x: bb.x - frameBBox.x,
+        y: bb.y - frameBBox.y,
+        width: bb.width,
+        height: bb.height,
+      });
+    }
+    if (childBoxes.length < 2) return null;
+    return {
+      layoutMode,
+      itemSpacing,
+      isSpaceBetween,
+      childBoxes,
+    };
+  }, [tree, frameBBox, hoveredFigmaID]);
+
+  if (!data) return null;
+
+  const fill = "rgba(236, 72, 153, 0.22)";
+  const stroke = "rgba(236, 72, 153, 0.55)";
+
+  // SPACE_BETWEEN — render a single "Variable gap" badge centered on
+  // the parent rather than per-pair (the gap is dynamic).
+  if (data.isSpaceBetween) {
+    return (
+      <g
+        className="leafcv2-measurement__gap-markers"
+        data-figma-id={hoveredFigmaID}
+        data-variable-gap="true"
+      >
+        {/* No band for SPACE_BETWEEN — emitting a hint via DOM only;
+            visual treatment is the inspector's job (U10). */}
+      </g>
+    );
+  }
+
+  return (
+    <g className="leafcv2-measurement__gap-markers" data-figma-id={hoveredFigmaID}>
+      {data.childBoxes.slice(0, -1).map((curr, i) => {
+        const next = data.childBoxes[i + 1];
+        const gap = data.itemSpacing;
+        if (data.layoutMode === "VERTICAL") {
+          // Gap is between curr.bottom and next.top.
+          const top = curr.y + curr.height;
+          const left = Math.max(curr.x, next.x);
+          const right = Math.min(curr.x + curr.width, next.x + next.width);
+          if (right <= left) return null; // no horizontal overlap
+          return (
+            <GapBand
+              key={i}
+              x={left}
+              y={top}
+              w={right - left}
+              h={gap}
+              fill={fill}
+              stroke={stroke}
+              label={String(Math.round(gap))}
+            />
+          );
+        }
+        // HORIZONTAL: gap between curr.right and next.left
+        const leftEdge = curr.x + curr.width;
+        const top = Math.max(curr.y, next.y);
+        const bot = Math.min(curr.y + curr.height, next.y + next.height);
+        if (bot <= top) return null;
+        return (
+          <GapBand
+            key={i}
+            x={leftEdge}
+            y={top}
+            w={gap}
+            h={bot - top}
+            fill={fill}
+            stroke={stroke}
+            label={String(Math.round(gap))}
+          />
+        );
+      })}
+    </g>
+  );
+}
+
+function GapBand(props: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fill: string;
+  stroke: string;
+  label: string;
+}): ReactElement | null {
+  const { x, y, w, h, fill, stroke, label } = props;
+  // Skip degenerate (zero-area) bands so we don't litter SVG with
+  // invisible <rect>s.
+  if (w <= 0 || h <= 0) return null;
+  return (
+    <g data-band="gap">
+      <rect x={x} y={y} width={w} height={h} fill={fill} stroke={stroke} strokeWidth={0.5} />
+      <text
+        x={x + w / 2}
+        y={y + h / 2}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill="#9d174d"
+        fontSize={11}
+        fontWeight={600}
+        fontFamily="-apple-system, BlinkMacSystemFont, Inter, system-ui, sans-serif"
+        style={{ fontVariantNumeric: "tabular-nums" }}
+      >
+        {label}
+      </text>
+    </g>
+  );
 }
 
 /**

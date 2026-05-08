@@ -371,3 +371,157 @@ describe("MeasurementOverlay — U5 padding bands", () => {
     expect(top?.getAttribute("height")).toBe("24");
   });
 });
+
+// ─── U6 — gap markers between siblings ───────────────────────────────
+
+const u6FrameBBox = { x: 0, y: 0, width: 400, height: 600 };
+
+function buildVerticalListTree(itemSpacing: number, primary?: string): AnnotatedNode {
+  return {
+    id: "root",
+    type: "FRAME",
+    name: "Screen",
+    absoluteBoundingBox: { x: 0, y: 0, width: 400, height: 600 },
+    children: [
+      {
+        id: "vlist",
+        type: "FRAME",
+        name: "List",
+        layoutMode: "VERTICAL",
+        itemSpacing,
+        primaryAxisAlignItems: primary,
+        absoluteBoundingBox: { x: 50, y: 50, width: 300, height: 200 },
+        children: [
+          {
+            id: "row1",
+            type: "FRAME",
+            name: "Row 1",
+            absoluteBoundingBox: { x: 50, y: 50, width: 300, height: 60 },
+          } as unknown as AnnotatedNode,
+          {
+            id: "row2",
+            type: "FRAME",
+            name: "Row 2",
+            absoluteBoundingBox: { x: 50, y: 50 + 60 + itemSpacing, width: 300, height: 60 },
+          } as unknown as AnnotatedNode,
+          {
+            id: "row3",
+            type: "FRAME",
+            name: "Row 3",
+            absoluteBoundingBox: {
+              x: 50,
+              y: 50 + (60 + itemSpacing) * 2,
+              width: 300,
+              height: 60,
+            },
+          } as unknown as AnnotatedNode,
+        ],
+      } as unknown as AnnotatedNode,
+    ],
+  };
+}
+
+describe("MeasurementOverlay — U6 gap markers", () => {
+  it("emits N-1 gap bands for VERTICAL list with N children", () => {
+    const tree = buildVerticalListTree(12);
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "vlist" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u6FrameBBox, tree });
+    const bands = wrapper.querySelectorAll(
+      'svg.leafcv2-measurement g.leafcv2-measurement__gap-markers g[data-band="gap"]',
+    );
+    // 3 children → 2 gaps
+    expect(bands.length).toBe(2);
+    const labels = Array.from(bands).map((b) => b.querySelector("text")?.textContent);
+    expect(labels).toEqual(["12", "12"]);
+  });
+
+  it("renders no bands when itemSpacing is 0", () => {
+    const tree = buildVerticalListTree(0);
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "vlist" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u6FrameBBox, tree });
+    expect(
+      wrapper.querySelectorAll('g.leafcv2-measurement__gap-markers g[data-band="gap"]').length,
+    ).toBe(0);
+  });
+
+  it("renders no bands for non-FRAME hovered nodes", () => {
+    const tree: AnnotatedNode = {
+      id: "root",
+      type: "FRAME",
+      name: "Screen",
+      absoluteBoundingBox: { x: 0, y: 0, width: 400, height: 600 },
+      children: [
+        {
+          id: "instance",
+          type: "INSTANCE",
+          name: "Component",
+          layoutMode: "VERTICAL",
+          itemSpacing: 12,
+          absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 100 },
+          children: [],
+        } as unknown as AnnotatedNode,
+      ],
+    };
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "instance" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u6FrameBBox, tree });
+    expect(wrapper.querySelector("g.leafcv2-measurement__gap-markers")).toBeNull();
+  });
+
+  it("emits a SPACE_BETWEEN hint instead of bands", () => {
+    const tree = buildVerticalListTree(12, "SPACE_BETWEEN");
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "vlist" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u6FrameBBox, tree });
+    const grp = wrapper.querySelector(
+      'svg.leafcv2-measurement g.leafcv2-measurement__gap-markers[data-variable-gap="true"]',
+    );
+    expect(grp).not.toBeNull();
+    // No bands rendered for SPACE_BETWEEN.
+    expect(grp?.querySelectorAll('g[data-band="gap"]').length).toBe(0);
+  });
+
+  it("HORIZONTAL list emits gap bands between columns", () => {
+    const tree: AnnotatedNode = {
+      id: "root",
+      type: "FRAME",
+      name: "Screen",
+      absoluteBoundingBox: { x: 0, y: 0, width: 800, height: 200 },
+      children: [
+        {
+          id: "hlist",
+          type: "FRAME",
+          name: "Row",
+          layoutMode: "HORIZONTAL",
+          itemSpacing: 8,
+          absoluteBoundingBox: { x: 50, y: 50, width: 700, height: 100 },
+          children: [
+            {
+              id: "col1",
+              type: "FRAME",
+              name: "Col 1",
+              absoluteBoundingBox: { x: 50, y: 50, width: 100, height: 100 },
+            } as unknown as AnnotatedNode,
+            {
+              id: "col2",
+              type: "FRAME",
+              name: "Col 2",
+              absoluteBoundingBox: { x: 158, y: 50, width: 100, height: 100 },
+            } as unknown as AnnotatedNode,
+          ],
+        } as unknown as AnnotatedNode,
+      ],
+    };
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "hlist" });
+    const wrapper = mount({
+      screenID: "screen-1",
+      frameBBox: { x: 0, y: 0, width: 800, height: 200 },
+      tree,
+    });
+    const band = wrapper.querySelector(
+      'svg.leafcv2-measurement g.leafcv2-measurement__gap-markers g[data-band="gap"] rect',
+    );
+    expect(band).not.toBeNull();
+    // gap = 8, between col1 right (150) and col2 left (158)
+    expect(band?.getAttribute("x")).toBe("150");
+    expect(band?.getAttribute("width")).toBe("8");
+  });
+});
