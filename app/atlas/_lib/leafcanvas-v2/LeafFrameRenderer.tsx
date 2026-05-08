@@ -37,6 +37,7 @@ import {
 import { InlineTextEditor } from "./InlineTextEditor";
 import { nodeToHTML } from "./nodeToHTML";
 import { StatePicker } from "./StatePicker";
+import { HoverTooltip } from "./HoverTooltip";
 import type { AnnotatedNode, CanonicalNode, ImageRefMap } from "./types";
 import { canvasFetchQueue } from "./fetch-queue";
 import { canvasGestureTracker, getIsGesturing } from "./gesture-tracker";
@@ -884,6 +885,15 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
           nothing to show. */}
       {allGroups.length > 0 && (
         <StatePicker frameID={screenID} groups={allGroups} />
+      )}
+      {/* Phase 2 U2 — hover tooltip pill. Renders null cheaply when this
+          frame isn't the hovered one. */}
+      {prunedTree?.absoluteBoundingBox && (
+        <HoverTooltip
+          screenID={screenID}
+          frameBBox={prunedTree.absoluteBoundingBox}
+          tree={prunedTree}
+        />
       )}
       {editing && openLeafID && (
         <div

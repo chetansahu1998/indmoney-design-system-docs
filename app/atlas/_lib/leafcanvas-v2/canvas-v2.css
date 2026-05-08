@@ -414,6 +414,59 @@
   box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
 }
 
+/* ── Phase 2 U2: hover atomic outline ─────────────────────────
+   Orange — matches Zeplin's hover convention. Sits below the
+   selected outline visually so a hovered-and-selected node
+   shows the cyan selection ring (selection wins). 2px solid
+   for visibility at typical canvas zoom levels. The hover
+   outline coexists with the selection outline when they're on
+   different atomics: cyan stays on the selected, orange paints
+   the hovered. */
+.leafcv2-frame [data-atomic-hovered="true"] {
+  outline: 2px solid #fb923c;
+  outline-offset: 1px;
+}
+/* When hover and select land on the same node, suppress hover
+   so the cyan selection ring isn't doubled with orange. */
+.leafcv2-frame [data-atomic-hovered="true"][data-atomic-selected="true"] {
+  outline: 2px solid #38bdf8;
+}
+
+/* ── Phase 2 U2: hover tooltip pill ────────────────────────────
+   Floating "Name  W×H" badge. position:absolute against the
+   .leafcv2-frame wrapper (which is position:relative); X/Y
+   inline-styled by the React component per-node. pointer-events:
+   none so it never swallows a click. Lives at z-index 91 — above
+   data-atomic-* outlines (default), below the lasso overlay (90)
+   and BulkExportPanel (200). */
+.leafcv2-hover-tooltip {
+  position: absolute;
+  z-index: 91;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
+  font: 500 11px/1.2 -apple-system, BlinkMacSystemFont, "Inter",
+    "Segoe UI", sans-serif;
+  font-feature-settings: "tnum";
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  user-select: none;
+}
+.leafcv2-hover-tooltip__name {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.leafcv2-hover-tooltip__dims {
+  color: #fbbf24;
+  font-feature-settings: "tnum";
+}
+
 .leafcv2-lasso {
   position: absolute;
   pointer-events: none;
