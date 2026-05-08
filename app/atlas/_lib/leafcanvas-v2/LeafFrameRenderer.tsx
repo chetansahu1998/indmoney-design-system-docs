@@ -45,6 +45,7 @@ import { useLeafZoomSettled } from "./leaf-zoom-signal";
 import { clog } from "./canvas-log";
 import { useIconClusterURLs } from "./useIconClusterURLs";
 import { useImageRefs } from "./useImageRefs";
+import { setHoveredAtomicChild, useHoveredAtomicChild } from "./hover-signal";
 import {
   collectStateGroups,
   filterVisible,
@@ -640,7 +641,18 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
   const onPointerMove = useCallback(
     (e: ReactMouseEvent<HTMLDivElement>) => {
       const start = lassoStartRef.current;
-      if (!start) return;
+      // Hover branch — fires only when no lasso is in flight. While the
+      // user is dragging a selection rectangle, hovering individual
+      // atomics underneath the lasso would conflict with the bulk-
+      // select intent, so we suppress the hover signal during lasso.
+      // Resolved via findAtomicTarget so hover/click/lasso all agree
+      // on what's selectable (Phase 2 D5 spec).
+      if (!start) {
+        const target = e.target as HTMLElement | null;
+        const figmaID = target ? findAtomicTarget(target, wrapperRef.current) : null;
+        setHoveredAtomicChild(figmaID ? { screenID, figmaNodeID: figmaID } : null);
+        return;
+      }
       const wrapper = wrapperRef.current;
       if (!wrapper) return;
       const rect = wrapper.getBoundingClientRect();
@@ -653,8 +665,15 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
         height: Math.abs(y - start.y),
       });
     },
-    [],
+    [screenID],
   );
+
+  // Clear hover when the cursor leaves the wrapper. Without this,
+  // panning out of a frame leaves a stale hover signal that could
+  // mis-target the next frame the cursor enters.
+  const onPointerLeave = useCallback(() => {
+    setHoveredAtomicChild(null);
+  }, []);
 
   const onPointerUp = useCallback(() => {
     const start = lassoStartRef.current;
@@ -758,6 +777,27 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     if (el) el.setAttribute("data-atomic-selected", "true");
   }, [singleSelected, screenID, rendered]);
 
+  // ─── Paint hover outline (Phase 2 U1 — D5/D8 hover affordance) ───────────
+  // Mirrors the single-selected painter: tag the hovered atomic with
+  // data-atomic-hovered="true" so canvas-v2.css can paint the outline
+  // without a per-atomic React render. Hover state lives in a module-
+  // level pub/sub (hover-signal.ts) — pointer-move fires up to 60×/sec
+  // and pushing through Zustand would chew the frame budget.
+  const hovered = useHoveredAtomicChild();
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const stale = wrapper.querySelectorAll<HTMLElement>('[data-atomic-hovered="true"]');
+    for (const el of Array.from(stale)) {
+      el.removeAttribute("data-atomic-hovered");
+    }
+    if (!hovered || hovered.screenID !== screenID) return;
+    const el = wrapper.querySelector<HTMLElement>(
+      `[data-figma-id="${cssEscapeAttr(hovered.figmaNodeID)}"]`,
+    );
+    if (el) el.setAttribute("data-atomic-hovered", "true");
+  }, [hovered, screenID, rendered]);
+
   // ─── U11 — orphan re-attach drop target ───────────────────────────────────
   // Drag-over: walk the click target up to the nearest TEXT atomic. If
   // we land on one, allow the drop; otherwise mark the cursor "no-drop".
@@ -832,6 +872,7 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
+      onPointerLeave={onPointerLeave}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
