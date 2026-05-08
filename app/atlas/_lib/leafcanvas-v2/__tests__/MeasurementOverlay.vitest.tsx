@@ -18,8 +18,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 
-import { MeasurementOverlay, type MeasurementOverlayProps } from "../MeasurementOverlay";
+import {
+  MeasurementOverlay,
+  computeDistanceSegments,
+  type MeasurementOverlayProps,
+} from "../MeasurementOverlay";
 import { setHoveredAtomicChild } from "../hover-signal";
+import { useAtlas } from "../../../../../lib/atlas/live-store";
 import type { AnnotatedNode } from "../types";
 
 let container: HTMLDivElement | null = null;
@@ -106,5 +111,159 @@ describe("MeasurementOverlay — scaffold", () => {
     // Empty svg present (the no-hovered/selected branch fires).
     expect(svg).not.toBeNull();
     expect(svg?.getAttribute("viewBox")).toBeNull();
+  });
+});
+
+// ─── U4 — distance line math (pure helper) ─────────────────────────────
+
+describe("computeDistanceSegments — pure math", () => {
+  // Canonical reference rectangles in wrapper-local coords.
+  const S = { x: 100, y: 100, width: 100, height: 50 }; // 100,100 → 200,150
+
+  it("H above S — emits top segment with correct distance", () => {
+    const H = { x: 110, y: 30, width: 80, height: 40 }; // 110,30 → 190,70 (gap = 30)
+    const segs = computeDistanceSegments(S, H);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].direction).toBe("top");
+    expect(segs[0].distancePx).toBe(30);
+    // Line drawn from S top-edge midpoint (sCenterX=150, y=100) up to (150, 70).
+    expect(segs[0].x1).toBe(150);
+    expect(segs[0].y1).toBe(100);
+    expect(segs[0].x2).toBe(150);
+    expect(segs[0].y2).toBe(70);
+  });
+
+  it("H below S — emits bottom segment", () => {
+    const H = { x: 110, y: 200, width: 80, height: 40 }; // gap = 50
+    const segs = computeDistanceSegments(S, H);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].direction).toBe("bottom");
+    expect(segs[0].distancePx).toBe(50);
+  });
+
+  it("H left of S — emits left segment", () => {
+    const H = { x: 30, y: 110, width: 50, height: 30 }; // hRight=80, gap=20
+    const segs = computeDistanceSegments(S, H);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].direction).toBe("left");
+    expect(segs[0].distancePx).toBe(20);
+  });
+
+  it("H right of S — emits right segment", () => {
+    const H = { x: 250, y: 110, width: 50, height: 30 }; // gap=50
+    const segs = computeDistanceSegments(S, H);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].direction).toBe("right");
+    expect(segs[0].distancePx).toBe(50);
+  });
+
+  it("H overlaps S vertically and below-right — emits bottom + right", () => {
+    // S: 100..200 / 100..150
+    // H: 250..300 / 130..180 — overlaps Y axis (130..150 inside 100..150)
+    //   so no top/bottom (H not entirely above/below S).
+    //   H is right of S (h.x > sRight=200) → right
+    const H = { x: 250, y: 130, width: 50, height: 50 };
+    const segs = computeDistanceSegments(S, H);
+    const dirs = segs.map((s) => s.direction).sort();
+    expect(dirs).toEqual(["right"]);
+  });
+
+  it("H overlaps both axes (inside S) — emits no segments", () => {
+    const H = { x: 110, y: 110, width: 30, height: 20 };
+    expect(computeDistanceSegments(S, H)).toEqual([]);
+  });
+
+  it("H is identical to S — emits no segments", () => {
+    expect(computeDistanceSegments(S, S)).toEqual([]);
+  });
+
+  it("H abuts S exactly (touching but no gap) — emits no segments", () => {
+    // hRight = 100 = s.x → not "entirely left of S" by strict <
+    const H = { x: 50, y: 110, width: 50, height: 30 };
+    expect(computeDistanceSegments(S, H)).toEqual([]);
+  });
+
+  it("H far below-left — emits bottom + left", () => {
+    // S 100..200 / 100..150
+    // H 30..70 / 200..240 — h.x+w=70 < s.x=100 (left), h.y=200 > sBottom=150 (below)
+    const H = { x: 30, y: 200, width: 40, height: 40 };
+    const dirs = computeDistanceSegments(S, H)
+      .map((s) => s.direction)
+      .sort();
+    expect(dirs).toEqual(["bottom", "left"]);
+  });
+
+  it("rounds fractional gaps in label rendering (mid-point math is exact)", () => {
+    const H = { x: 110, y: 60, width: 80, height: 30 }; // hBottom=90, gap=10
+    const Sf = { x: 100, y: 100.5, width: 100, height: 50 };
+    const segs = computeDistanceSegments(Sf, H);
+    expect(segs).toHaveLength(1);
+    expect(segs[0].distancePx).toBeCloseTo(10.5, 5);
+    // The visible label rounds to integer; pure math returns the float.
+  });
+});
+
+// ─── U4 — DOM-level rendering smoke check ─────────────────────────────
+//
+// Renders MeasurementOverlay with a small tree where hover and select
+// land on different nodes; verifies <line> elements appear in the SVG.
+
+const u4Tree: AnnotatedNode = {
+  id: "root",
+  type: "FRAME",
+  name: "Screen",
+  absoluteBoundingBox: { x: 0, y: 0, width: 400, height: 300 },
+  children: [
+    {
+      id: "selected-node",
+      type: "INSTANCE",
+      name: "Header",
+      absoluteBoundingBox: { x: 50, y: 50, width: 100, height: 50 },
+    } as unknown as AnnotatedNode,
+    {
+      id: "hovered-node",
+      type: "INSTANCE",
+      name: "Footer",
+      absoluteBoundingBox: { x: 50, y: 200, width: 100, height: 50 },
+    } as unknown as AnnotatedNode,
+  ],
+};
+
+const u4FrameBBox = { x: 0, y: 0, width: 400, height: 300 };
+
+describe("MeasurementOverlay — U4 distance lines DOM", () => {
+  afterEach(() => {
+    // Reset live-store selection between tests.
+    act(() => useAtlas.getState().selectAtomicChild("", ""));
+  });
+
+  it("emits <line> + <text> when hover and select differ", () => {
+    act(() => {
+      useAtlas.getState().selectAtomicChild("screen-1", "selected-node");
+    });
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "hovered-node" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u4FrameBBox, tree: u4Tree });
+    const lines = wrapper.querySelectorAll("svg.leafcv2-measurement line");
+    // selected at (50, 50, 100×50) — bottom = 100
+    // hovered at (50, 200, 100×50) — top = 200
+    // gap = 100 (bottom direction)
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    const text = wrapper.querySelector("svg.leafcv2-measurement text");
+    expect(text?.textContent).toBe("100");
+  });
+
+  it("renders no lines when hover === select (same node)", () => {
+    act(() => {
+      useAtlas.getState().selectAtomicChild("screen-1", "selected-node");
+    });
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "selected-node" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u4FrameBBox, tree: u4Tree });
+    expect(wrapper.querySelectorAll("svg.leafcv2-measurement line").length).toBe(0);
+  });
+
+  it("renders no lines when only one of hover/select is set", () => {
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "hovered-node" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u4FrameBBox, tree: u4Tree });
+    expect(wrapper.querySelectorAll("svg.leafcv2-measurement line").length).toBe(0);
   });
 });
