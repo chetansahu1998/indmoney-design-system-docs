@@ -35,6 +35,7 @@ import {
 import { lookupTokenByHex } from "../../../../lib/tokens/hex-to-token";
 
 import { requestCameraSnap } from "./camera-snap";
+import { setHoveredBandHint, type HoveredBandHint } from "./hover-signal";
 import type { AnnotatedNode, BoundingBox, CanonicalNode, Paint } from "./types";
 import {
   type ScreenTextOverride,
@@ -231,6 +232,8 @@ function LayerTab({
       {parent?.layoutMode && parent.layoutMode !== "NONE" && (
         <Row label="Parent layout" value={parent.layoutMode.toLowerCase()} />
       )}
+
+      <LayoutWidget node={node} />
 
       {fillHexes.length > 0 && (
         <div className="lcv2-ins-block">
@@ -525,6 +528,99 @@ function Row({ label, value }: { label: string; value: string }) {
       <span className="lcv2-ins-row-v">{value}</span>
     </div>
   );
+}
+
+/**
+ * Phase 2 U10 — Layout Widget. Shows padding (T/R/B/L) + gap rows
+ * for autolayout FRAMEs/INSTANCEs. Each row pushes a hoveredBandHint
+ * on mouseenter so MeasurementOverlay can highlight the matching
+ * canvas band; clears on mouseleave. Symmetric: when MeasurementOverlay
+ * raises a hint from canvas hover, the corresponding row here gets
+ * a `data-band-active="true"` attribute via the same signal (read in
+ * a future commit).
+ */
+function LayoutWidget({ node }: { node: CanonicalNode | AnnotatedNode }) {
+  const layoutMode = node.layoutMode;
+  if (layoutMode !== "HORIZONTAL" && layoutMode !== "VERTICAL") return null;
+  const padTop = numberOrNull(node.paddingTop);
+  const padRight = numberOrNull(node.paddingRight);
+  const padBottom = numberOrNull(node.paddingBottom);
+  const padLeft = numberOrNull(node.paddingLeft);
+  const gap = numberOrNull(node.itemSpacing);
+  const nodeID = typeof node.id === "string" ? node.id : null;
+  const hasAny =
+    padTop !== null || padRight !== null || padBottom !== null || padLeft !== null || gap !== null;
+  if (!hasAny || !nodeID) return null;
+
+  const onEnter = (band: HoveredBandHint extends infer T ? (T extends { band: infer B } ? B : never) : never) => () => {
+    setHoveredBandHint({ nodeID, band: band as never });
+  };
+  const onLeave = () => setHoveredBandHint(null);
+
+  return (
+    <div className="lcv2-ins-block lcv2-ins-layout-widget">
+      <div className="lcv2-ins-block-h">Layout · {layoutMode.toLowerCase()}</div>
+      {padTop !== null && (
+        <div
+          className="lcv2-ins-row"
+          onMouseEnter={onEnter("paddingTop")}
+          onMouseLeave={onLeave}
+          data-band-row="paddingTop"
+        >
+          <span className="lcv2-ins-row-l">Padding top</span>
+          <span className="lcv2-ins-row-v">{padTop}px</span>
+        </div>
+      )}
+      {padRight !== null && (
+        <div
+          className="lcv2-ins-row"
+          onMouseEnter={onEnter("paddingRight")}
+          onMouseLeave={onLeave}
+          data-band-row="paddingRight"
+        >
+          <span className="lcv2-ins-row-l">Padding right</span>
+          <span className="lcv2-ins-row-v">{padRight}px</span>
+        </div>
+      )}
+      {padBottom !== null && (
+        <div
+          className="lcv2-ins-row"
+          onMouseEnter={onEnter("paddingBottom")}
+          onMouseLeave={onLeave}
+          data-band-row="paddingBottom"
+        >
+          <span className="lcv2-ins-row-l">Padding bottom</span>
+          <span className="lcv2-ins-row-v">{padBottom}px</span>
+        </div>
+      )}
+      {padLeft !== null && (
+        <div
+          className="lcv2-ins-row"
+          onMouseEnter={onEnter("paddingLeft")}
+          onMouseLeave={onLeave}
+          data-band-row="paddingLeft"
+        >
+          <span className="lcv2-ins-row-l">Padding left</span>
+          <span className="lcv2-ins-row-v">{padLeft}px</span>
+        </div>
+      )}
+      {gap !== null && (
+        <div
+          className="lcv2-ins-row"
+          onMouseEnter={onEnter("gap")}
+          onMouseLeave={onLeave}
+          data-band-row="gap"
+        >
+          <span className="lcv2-ins-row-l">Gap</span>
+          <span className="lcv2-ins-row-v">{gap}px</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function numberOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
 function ColorChip({ hex, brand }: { hex: string; brand: string }) {

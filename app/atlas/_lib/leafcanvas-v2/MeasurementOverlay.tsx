@@ -41,7 +41,7 @@ import { useEffect, useMemo, useState, type ReactElement } from "react";
 
 import { findByFigmaID } from "./AtomicChildInspector";
 import { canvasGestureTracker, getIsGesturing } from "./gesture-tracker";
-import { useHoveredAtomicChild } from "./hover-signal";
+import { useHoveredAtomicChild, useHoveredBandHint } from "./hover-signal";
 import { useAtlas } from "../../../../lib/atlas/live-store";
 import type { AnnotatedNode, BoundingBox, CanonicalNode } from "./types";
 
@@ -162,11 +162,22 @@ export function MeasurementOverlay(props: MeasurementOverlayProps) {
 
   const hoveredHere = hovered && hovered.screenID === screenID;
   const selectedHere = selected && selected.screenID === screenID;
+  // U10 — band-hint can fire bands even without canvas hover/select
+  // when the inspector pushes a hint targeting a node in this frame.
+  // Subscribe at the top level so the component re-renders when the
+  // hint flips on/off.
+  const bandHint = useHoveredBandHint();
+  // Cheap pre-check: does the hint reference a node that lives in
+  // this frame? PaddingBands and GapMarkers do their own per-frame
+  // walks; this gate only decides whether to render the sized <svg>
+  // wrapper at all (otherwise the early exit returns the placeholder).
+  const hintFramesThisScreen =
+    bandHint && bandHint.nodeID && treeContainsNode(tree, bandHint.nodeID);
 
   // Nothing to draw — render an empty <svg> so React's reconciliation
   // stays cheap and DOM presence is consistent for downstream Playwright
   // queries.
-  if (!hoveredHere && !selectedHere) {
+  if (!hoveredHere && !selectedHere && !hintFramesThisScreen) {
     return <svg className="leafcv2-measurement" data-screen-id={screenID} />;
   }
 
@@ -193,13 +204,15 @@ export function MeasurementOverlay(props: MeasurementOverlayProps) {
         hoveredFigmaID={hoveredHere ? hovered.figmaNodeID : null}
         selectedFigmaID={selectedHere ? selected.figmaNodeID : null}
       />
-      {/* U5 — padding bands on hovered autolayout FRAME. */}
+      {/* U5 — padding bands on hovered autolayout FRAME. U10 also shows
+          bands when the inspector pushes a band-hint targeting an
+          autolayout FRAME (selected or hovered). */}
       <PaddingBands
         tree={tree}
         frameBBox={frameBBox}
         hoveredFigmaID={hoveredHere ? hovered.figmaNodeID : null}
       />
-      {/* U6 — gap markers between siblings of hovered autolayout FRAME. */}
+      {/* U6 — gap markers. Same hint composition as PaddingBands. */}
       <GapMarkers
         tree={tree}
         frameBBox={frameBBox}
@@ -331,10 +344,19 @@ function PaddingBands(props: {
   hoveredFigmaID: string | null;
 }): ReactElement | null {
   const { tree, frameBBox, hoveredFigmaID } = props;
+  const hint = useHoveredBandHint();
+  // Fallback trigger: if the user hovers a Layout Widget row in the
+  // inspector for a node that's NOT the currently-hovered atomic on
+  // canvas (e.g. they have a card selected and are reading its
+  // Layout Widget without hovering the canvas), render the bands
+  // for that hint's nodeID. The visual outcome is identical to
+  // canvas-hover: bands appear on the autolayout FRAME they belong to.
+  const focusFigmaID = hoveredFigmaID ?? hint?.nodeID ?? null;
+  const highlightedBand = hint?.band ?? null;
 
   const data = useMemo(() => {
-    if (!hoveredFigmaID) return null;
-    const found = findByFigmaID(tree, hoveredFigmaID);
+    if (!focusFigmaID) return null;
+    const found = findByFigmaID(tree, focusFigmaID);
     if (!found) return null;
     const node = found.node as CanonicalNode;
     if (node.type !== "FRAME") return null;
@@ -349,13 +371,14 @@ function PaddingBands(props: {
       height: bb.height,
     };
     return {
+      figmaID: focusFigmaID,
       bbox: localBBox,
       paddingTop: numberOr(node.paddingTop, 0),
       paddingRight: numberOr(node.paddingRight, 0),
       paddingBottom: numberOr(node.paddingBottom, 0),
       paddingLeft: numberOr(node.paddingLeft, 0),
     };
-  }, [tree, frameBBox, hoveredFigmaID]);
+  }, [tree, frameBBox, focusFigmaID]);
 
   if (!data) return null;
   const { bbox, paddingTop, paddingRight, paddingBottom, paddingLeft } = data;
@@ -363,59 +386,68 @@ function PaddingBands(props: {
     return null;
   }
 
-  const fill = "rgba(255, 152, 0, 0.18)";
-  const stroke = "rgba(255, 152, 0, 0.45)";
+  const baseFill = "rgba(255, 152, 0, 0.18)";
+  const baseStroke = "rgba(255, 152, 0, 0.45)";
+  // U10 highlight: when the inspector pushes a band hint matching one
+  // of these bands, brighten its outline so the eye lands on it. No
+  // color change to the fill (the hue is already orange-on-orange).
+  const hiStroke = "rgba(234, 88, 12, 1.0)";
+
+  const bandFor = (band: string, props: {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    label: string;
+  }) => (
+    <PaddingBand
+      key={band}
+      x={props.x}
+      y={props.y}
+      w={props.w}
+      h={props.h}
+      fill={baseFill}
+      stroke={highlightedBand === band ? hiStroke : baseStroke}
+      strokeWidth={highlightedBand === band ? 1.5 : 0.5}
+      band={band}
+      label={props.label}
+    />
+  );
 
   return (
-    <g className="leafcv2-measurement__padding-bands" data-figma-id={hoveredFigmaID}>
-      {paddingTop > 0 && (
-        <PaddingBand
-          x={bbox.x}
-          y={bbox.y}
-          w={bbox.width}
-          h={paddingTop}
-          fill={fill}
-          stroke={stroke}
-          band="paddingTop"
-          label={String(Math.round(paddingTop))}
-        />
-      )}
-      {paddingBottom > 0 && (
-        <PaddingBand
-          x={bbox.x}
-          y={bbox.y + bbox.height - paddingBottom}
-          w={bbox.width}
-          h={paddingBottom}
-          fill={fill}
-          stroke={stroke}
-          band="paddingBottom"
-          label={String(Math.round(paddingBottom))}
-        />
-      )}
-      {paddingLeft > 0 && (
-        <PaddingBand
-          x={bbox.x}
-          y={bbox.y + paddingTop}
-          w={paddingLeft}
-          h={bbox.height - paddingTop - paddingBottom}
-          fill={fill}
-          stroke={stroke}
-          band="paddingLeft"
-          label={String(Math.round(paddingLeft))}
-        />
-      )}
-      {paddingRight > 0 && (
-        <PaddingBand
-          x={bbox.x + bbox.width - paddingRight}
-          y={bbox.y + paddingTop}
-          w={paddingRight}
-          h={bbox.height - paddingTop - paddingBottom}
-          fill={fill}
-          stroke={stroke}
-          band="paddingRight"
-          label={String(Math.round(paddingRight))}
-        />
-      )}
+    <g className="leafcv2-measurement__padding-bands" data-figma-id={data.figmaID}>
+      {paddingTop > 0 &&
+        bandFor("paddingTop", {
+          x: bbox.x,
+          y: bbox.y,
+          w: bbox.width,
+          h: paddingTop,
+          label: String(Math.round(paddingTop)),
+        })}
+      {paddingBottom > 0 &&
+        bandFor("paddingBottom", {
+          x: bbox.x,
+          y: bbox.y + bbox.height - paddingBottom,
+          w: bbox.width,
+          h: paddingBottom,
+          label: String(Math.round(paddingBottom)),
+        })}
+      {paddingLeft > 0 &&
+        bandFor("paddingLeft", {
+          x: bbox.x,
+          y: bbox.y + paddingTop,
+          w: paddingLeft,
+          h: bbox.height - paddingTop - paddingBottom,
+          label: String(Math.round(paddingLeft)),
+        })}
+      {paddingRight > 0 &&
+        bandFor("paddingRight", {
+          x: bbox.x + bbox.width - paddingRight,
+          y: bbox.y + paddingTop,
+          w: paddingRight,
+          h: bbox.height - paddingTop - paddingBottom,
+          label: String(Math.round(paddingRight)),
+        })}
     </g>
   );
 }
@@ -427,17 +459,18 @@ function PaddingBand(props: {
   h: number;
   fill: string;
   stroke: string;
+  strokeWidth?: number;
   band: string;
   label: string;
 }): ReactElement {
-  const { x, y, w, h, fill, stroke, band, label } = props;
+  const { x, y, w, h, fill, stroke, strokeWidth = 0.5, band, label } = props;
   // Label centered in the band. For thin bands (≤ 12px in the short
   // axis), the label may overflow — that's fine, SVG overflow:visible.
   const labelX = x + w / 2;
   const labelY = y + h / 2;
   return (
     <g data-band={band}>
-      <rect x={x} y={y} width={w} height={h} fill={fill} stroke={stroke} strokeWidth={0.5} />
+      <rect x={x} y={y} width={w} height={h} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />
       <text
         x={labelX}
         y={labelY}
@@ -457,6 +490,17 @@ function PaddingBand(props: {
 
 function numberOr(v: unknown, fallback: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+/**
+ * Cheap presence check: does the canonical_tree contain a node with
+ * the given figmaID? Used as a per-frame gate on the band-hint
+ * fallback so the sized SVG renders only for the frame that owns
+ * the hinted node. Walks the tree once; short-circuits on first hit.
+ */
+function treeContainsNode(tree: AnnotatedNode | null, figmaID: string): boolean {
+  if (!tree) return false;
+  return findByFigmaID(tree, figmaID) !== null;
 }
 
 /**
@@ -481,10 +525,16 @@ function GapMarkers(props: {
   hoveredFigmaID: string | null;
 }): ReactElement | null {
   const { tree, frameBBox, hoveredFigmaID } = props;
+  const hint = useHoveredBandHint();
+  // U10 — hint fallback. Matches PaddingBands: when the inspector
+  // pushes a band hint (gap row hovered), render gap markers for
+  // that hint's nodeID even if the canvas isn't hovering it.
+  const focusFigmaID = hoveredFigmaID ?? hint?.nodeID ?? null;
+  const highlighted = hint?.band === "gap";
 
   const data = useMemo(() => {
-    if (!hoveredFigmaID) return null;
-    const found = findByFigmaID(tree, hoveredFigmaID);
+    if (!focusFigmaID) return null;
+    const found = findByFigmaID(tree, focusFigmaID);
     if (!found) return null;
     const node = found.node as CanonicalNode;
     if (node.type !== "FRAME") return null;
@@ -512,17 +562,19 @@ function GapMarkers(props: {
     }
     if (childBoxes.length < 2) return null;
     return {
+      figmaID: focusFigmaID,
       layoutMode,
       itemSpacing,
       isSpaceBetween,
       childBoxes,
     };
-  }, [tree, frameBBox, hoveredFigmaID]);
+  }, [tree, frameBBox, focusFigmaID]);
 
   if (!data) return null;
 
   const fill = "rgba(236, 72, 153, 0.22)";
-  const stroke = "rgba(236, 72, 153, 0.55)";
+  const stroke = highlighted ? "rgba(190, 24, 93, 1.0)" : "rgba(236, 72, 153, 0.55)";
+  const strokeWidth = highlighted ? 1.5 : 0.5;
 
   // SPACE_BETWEEN — render a single "Variable gap" badge centered on
   // the parent rather than per-pair (the gap is dynamic).
@@ -530,7 +582,7 @@ function GapMarkers(props: {
     return (
       <g
         className="leafcv2-measurement__gap-markers"
-        data-figma-id={hoveredFigmaID}
+        data-figma-id={data.figmaID}
         data-variable-gap="true"
       >
         {/* No band for SPACE_BETWEEN — emitting a hint via DOM only;
@@ -540,16 +592,15 @@ function GapMarkers(props: {
   }
 
   return (
-    <g className="leafcv2-measurement__gap-markers" data-figma-id={hoveredFigmaID}>
+    <g className="leafcv2-measurement__gap-markers" data-figma-id={data.figmaID}>
       {data.childBoxes.slice(0, -1).map((curr, i) => {
         const next = data.childBoxes[i + 1];
         const gap = data.itemSpacing;
         if (data.layoutMode === "VERTICAL") {
-          // Gap is between curr.bottom and next.top.
           const top = curr.y + curr.height;
           const left = Math.max(curr.x, next.x);
           const right = Math.min(curr.x + curr.width, next.x + next.width);
-          if (right <= left) return null; // no horizontal overlap
+          if (right <= left) return null;
           return (
             <GapBand
               key={i}
@@ -559,11 +610,11 @@ function GapMarkers(props: {
               h={gap}
               fill={fill}
               stroke={stroke}
+              strokeWidth={strokeWidth}
               label={String(Math.round(gap))}
             />
           );
         }
-        // HORIZONTAL: gap between curr.right and next.left
         const leftEdge = curr.x + curr.width;
         const top = Math.max(curr.y, next.y);
         const bot = Math.min(curr.y + curr.height, next.y + next.height);
@@ -577,6 +628,7 @@ function GapMarkers(props: {
             h={bot - top}
             fill={fill}
             stroke={stroke}
+            strokeWidth={strokeWidth}
             label={String(Math.round(gap))}
           />
         );
@@ -592,15 +644,16 @@ function GapBand(props: {
   h: number;
   fill: string;
   stroke: string;
+  strokeWidth?: number;
   label: string;
 }): ReactElement | null {
-  const { x, y, w, h, fill, stroke, label } = props;
+  const { x, y, w, h, fill, stroke, strokeWidth = 0.5, label } = props;
   // Skip degenerate (zero-area) bands so we don't litter SVG with
   // invisible <rect>s.
   if (w <= 0 || h <= 0) return null;
   return (
     <g data-band="gap">
-      <rect x={x} y={y} width={w} height={h} fill={fill} stroke={stroke} strokeWidth={0.5} />
+      <rect x={x} y={y} width={w} height={h} fill={fill} stroke={stroke} strokeWidth={strokeWidth} />
       <text
         x={x + w / 2}
         y={y + h / 2}

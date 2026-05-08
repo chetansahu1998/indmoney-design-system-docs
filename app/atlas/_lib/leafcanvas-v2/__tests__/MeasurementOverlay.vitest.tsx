@@ -23,7 +23,7 @@ import {
   computeDistanceSegments,
   type MeasurementOverlayProps,
 } from "../MeasurementOverlay";
-import { setHoveredAtomicChild } from "../hover-signal";
+import { setHoveredAtomicChild, setHoveredBandHint } from "../hover-signal";
 import { useAtlas } from "../../../../../lib/atlas/live-store";
 import type { AnnotatedNode } from "../types";
 
@@ -42,6 +42,7 @@ function mount(props: MeasurementOverlayProps): HTMLElement {
 
 afterEach(() => {
   setHoveredAtomicChild(null);
+  setHoveredBandHint(null);
   if (root) {
     act(() => root!.unmount());
     root = null;
@@ -614,5 +615,97 @@ describe("MeasurementOverlay — U8 selection chip", () => {
     const grp = wrapper.querySelector("g.leafcv2-measurement__selection-chip");
     expect(grp?.getAttribute("data-x")).toBe("50");
     expect(grp?.getAttribute("data-y")).toBe("50");
+  });
+});
+
+// ─── U10 — inspector ↔ canvas hover binding ──────────────────────────
+
+describe("MeasurementOverlay — U10 band-hint fallback", () => {
+  it("padding bands appear when only a band-hint is set (no canvas hover)", () => {
+    // Simulates: user has nothing hovered on canvas, but pushed a hint
+    // by hovering the inspector's "Padding top" row. PaddingBands
+    // should still render the bands for the hinted node.
+    setHoveredAtomicChild(null);
+    setHoveredBandHint({ nodeID: "card-with-padding", band: "paddingTop" });
+    const wrapper = mount({
+      screenID: "screen-1",
+      frameBBox: u5FrameBBox,
+      tree: u5Tree,
+    });
+    const bands = wrapper.querySelectorAll(
+      "g.leafcv2-measurement__padding-bands g[data-band]",
+    );
+    expect(bands.length).toBe(4);
+  });
+
+  it("hinted padding band gets a thicker stroke (highlighted)", () => {
+    setHoveredBandHint({ nodeID: "card-with-padding", band: "paddingTop" });
+    const wrapper = mount({
+      screenID: "screen-1",
+      frameBBox: u5FrameBBox,
+      tree: u5Tree,
+    });
+    const top = wrapper.querySelector('g[data-band="paddingTop"] rect');
+    const bottom = wrapper.querySelector('g[data-band="paddingBottom"] rect');
+    expect(Number(top?.getAttribute("stroke-width"))).toBeGreaterThan(
+      Number(bottom?.getAttribute("stroke-width")),
+    );
+  });
+
+  it("gap markers appear when only a gap-hint is set", () => {
+    setHoveredAtomicChild(null);
+    const tree = buildVerticalListTree(12);
+    setHoveredBandHint({ nodeID: "vlist", band: "gap" });
+    const wrapper = mount({
+      screenID: "screen-1",
+      frameBBox: u6FrameBBox,
+      tree,
+    });
+    const bands = wrapper.querySelectorAll(
+      'g.leafcv2-measurement__gap-markers g[data-band="gap"]',
+    );
+    expect(bands.length).toBe(2);
+  });
+
+  it("hinted gap markers have thicker stroke", () => {
+    const tree = buildVerticalListTree(12);
+    setHoveredBandHint({ nodeID: "vlist", band: "gap" });
+    const wrapper = mount({
+      screenID: "screen-1",
+      frameBBox: u6FrameBBox,
+      tree,
+    });
+    const rect = wrapper.querySelector(
+      'g.leafcv2-measurement__gap-markers g[data-band="gap"] rect',
+    );
+    expect(Number(rect?.getAttribute("stroke-width"))).toBeGreaterThan(0.5);
+  });
+
+  it("clearing the hint removes the bands when no canvas hover is active", () => {
+    setHoveredBandHint({ nodeID: "card-with-padding", band: "paddingTop" });
+    const wrapper = mount({
+      screenID: "screen-1",
+      frameBBox: u5FrameBBox,
+      tree: u5Tree,
+    });
+    expect(
+      wrapper.querySelectorAll("g.leafcv2-measurement__padding-bands g[data-band]").length,
+    ).toBe(4);
+    // Clear hint, force re-render by re-mounting (simulates hover-out).
+    act(() => root!.unmount());
+    setHoveredBandHint(null);
+    root = createRoot(container!);
+    act(() => {
+      root!.render(
+        <MeasurementOverlay
+          screenID="screen-1"
+          frameBBox={u5FrameBBox}
+          tree={u5Tree}
+        />,
+      );
+    });
+    expect(
+      wrapper.querySelectorAll("g.leafcv2-measurement__padding-bands g[data-band]").length,
+    ).toBe(0);
   });
 });
