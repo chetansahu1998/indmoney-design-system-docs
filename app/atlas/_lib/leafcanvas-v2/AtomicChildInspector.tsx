@@ -591,7 +591,25 @@ interface FoundNode {
  */
 export function findByFigmaID(tree: unknown, id: string): FoundNode | null {
   if (!tree || typeof tree !== "object") return null;
-  const root = tree as CanonicalNode;
+  // Envelope unwrap. The store's canonicalTreeByScreenID slot can hold
+  // either:
+  //   1. The bare document node (id, type, children, ...)
+  //   2. A Figma /v1/files response envelope: { document, styles,
+  //      components, componentSets, schemaVersion }
+  // Pre-2026-05-08 we walked the envelope verbatim; the envelope itself
+  // has no `id` and no `children`, so the search returned null and the
+  // inspector showed "No layer selected" even when the click was valid.
+  // Mirror unwrapCanonicalTree() in LeafFrameRenderer.tsx — a true bare
+  // node has an id; an envelope exposes a `.document` child.
+  const obj = tree as Record<string, unknown>;
+  let root: CanonicalNode;
+  if (typeof obj.id === "string") {
+    root = obj as CanonicalNode;
+  } else if (obj.document && typeof obj.document === "object") {
+    root = obj.document as CanonicalNode;
+  } else {
+    return null;
+  }
   if (root.id === id) return { node: root, parent: null };
   const stack: Array<{ node: CanonicalNode; parent: CanonicalNode | null }> = [
     { node: root, parent: null },

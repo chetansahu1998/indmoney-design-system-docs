@@ -19,6 +19,7 @@ import { subscribeProjectEvents } from "../../../lib/projects/client";
 import { subscribeGraphEvents } from "../../../lib/atlas/data-adapters";
 import { useAtlas } from "../../../lib/atlas/live-store";
 import { AtlasShellProvider, type AtlasShellContextShape } from "./AtlasShellContext";
+import { AtomicChildInspector } from "./leafcanvas-v2/AtomicChildInspector";
 
 // Side-effect imports — order matters; see AtlasShell for rationale.
 import "./tweaks-panel";
@@ -67,6 +68,42 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
   const [leafID, setLeafID] = useState<string | null>(null);
   const [selectedFrameID, setSelectedFrameID] = useState<string | null>(null);
 
+  // ─── Atomic-child selection wiring (D5/D8/D10 — Zeplin v1) ────────────────
+  // The leaf-canvas-v2 renderer fires `selectAtomicChild` on click; the
+  // store updates `selection.selectedAtomicChild`. This pane mounts the
+  // Zeplin-style sidebar against the selected node and routes Esc / close
+  // back to clearing the store. Pre-2026-05-08 these signals were dropped
+  // on the floor — the inspector component existed but was never imported.
+  const selectedAtomicChild = useAtlas((s) => s.selection.selectedAtomicChild);
+  const selectAtomicChild = useAtlas((s) => s.selectAtomicChild);
+  const removeOverride = useAtlas((s) => s.removeOverride);
+  const atomicCanonicalTree = useAtlas((s) => {
+    const sel = s.selection.selectedAtomicChild;
+    if (!sel) return null;
+    const slot = leafID ? s.leafSlots[leafID] : null;
+    if (!slot) return null;
+    return slot.canonicalTreeByScreenID?.[sel.screenID] ?? null;
+  });
+  const atomicOverride = useAtlas((s) => {
+    const sel = s.selection.selectedAtomicChild;
+    if (!sel) return null;
+    const slot = leafID ? s.leafSlots[leafID] : null;
+    if (!slot) return null;
+    return slot.overrides?.[sel.screenID]?.get(sel.figmaNodeID) ?? null;
+  });
+
+  const closeAtomicInspector = useCallback(() => {
+    selectAtomicChild("", "");
+  }, [selectAtomicChild]);
+
+  const handleAtomicOverrideReset = useCallback(() => {
+    if (!leafID || !selectedAtomicChild) return;
+    removeOverride(leafID, selectedAtomicChild.screenID, selectedAtomicChild.figmaNodeID);
+  }, [leafID, selectedAtomicChild, removeOverride]);
+
+  // Atomic-inspector close is layered into the existing Esc handler
+  // below — see "Esc layered close" useEffect.
+
   // Open a leaf — awaits the leaf-slot load BEFORE flipping local state
   // so LeafCanvas mounts with the data already present in the live store.
   // Otherwise the bridge falls through to mock for one render frame and
@@ -96,17 +133,28 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
     closeLeafFromStore();
   }, [closeLeafFromStore]);
 
-  // Esc layered close.
+  // Esc layered close. Order (innermost → outermost):
+  //   1. atomic-child selection → clear it (D8 spec)
+  //   2. selected frame → deselect
+  //   3. leaf open → close leaf
+  // Each layer consumes the keystroke; user must press Esc again to
+  // pop the next layer.
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && leafID) {
-        if (selectedFrameID) setSelectedFrameID(null);
-        else closeLeaf();
+      if (e.key !== "Escape" || !leafID) return;
+      if (selectedAtomicChild) {
+        closeAtomicInspector();
+        return;
       }
+      if (selectedFrameID) {
+        setSelectedFrameID(null);
+        return;
+      }
+      closeLeaf();
     };
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
-  }, [leafID, selectedFrameID, closeLeaf]);
+  }, [leafID, selectedFrameID, closeLeaf, selectedAtomicChild, closeAtomicInspector]);
 
   // window globals for backward compat with the ported modules.
   useEffect(() => {
@@ -305,13 +353,26 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
             />
           </div>
           <div className="atlas-leaf-inspector-wrap">
-            <LeafInspector
-              key={`inspector-${leafSticky.id}-${slotVersion}`}
-              leaf={leafSticky}
-              frameId={selectedFrameID}
-              onClose={closeLeaf}
-              onPickFrame={setSelectedFrameID}
-            />
+            {selectedAtomicChild ? (
+              <AtomicChildInspector
+                key={`atomic-${selectedAtomicChild.screenID}-${selectedAtomicChild.figmaNodeID}`}
+                screenID={selectedAtomicChild.screenID}
+                figmaNodeID={selectedAtomicChild.figmaNodeID}
+                canonicalTree={atomicCanonicalTree}
+                override={atomicOverride}
+                slug={leafSticky.id}
+                onClose={closeAtomicInspector}
+                onOverrideReset={handleAtomicOverrideReset}
+              />
+            ) : (
+              <LeafInspector
+                key={`inspector-${leafSticky.id}-${slotVersion}`}
+                leaf={leafSticky}
+                frameId={selectedFrameID}
+                onClose={closeLeaf}
+                onPickFrame={setSelectedFrameID}
+              />
+            )}
             {/* Resize handle — sits on the LEFT edge of the inspector so
                the user can drag it inward/outward to set width. Position
                is computed off the inspector's right-anchored layout. */}

@@ -736,6 +736,28 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     }
   }, [bulkSelected, screenID, rendered]);
 
+  // ─── Paint single-selected outline (D5/D8 — Zeplin v1) ───────────────────
+  // Mirrors the bulk-selected pattern for the single-click selection. The
+  // AtomicChildInspector reads selection.selectedAtomicChild from the same
+  // store; this effect only owns the visual outline. When the user clicks
+  // a different atomic (or clears selection), we strip the prior flag
+  // before painting the next one. Pre-2026-05-08 there was NO visual
+  // feedback on single-click — selection state updated silently.
+  const singleSelected = useAtlas((s) => s.selection.selectedAtomicChild);
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    if (!wrapper) return;
+    const stale = wrapper.querySelectorAll<HTMLElement>('[data-atomic-selected="true"]');
+    for (const el of Array.from(stale)) {
+      el.removeAttribute("data-atomic-selected");
+    }
+    if (!singleSelected || singleSelected.screenID !== screenID) return;
+    const el = wrapper.querySelector<HTMLElement>(
+      `[data-figma-id="${cssEscapeAttr(singleSelected.figmaNodeID)}"]`,
+    );
+    if (el) el.setAttribute("data-atomic-selected", "true");
+  }, [singleSelected, screenID, rendered]);
+
   // ─── U11 — orphan re-attach drop target ───────────────────────────────────
   // Drag-over: walk the click target up to the nearest TEXT atomic. If
   // we land on one, allow the drop; otherwise mark the cursor "no-drop".

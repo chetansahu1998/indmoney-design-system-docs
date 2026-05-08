@@ -403,6 +403,17 @@
   outline-offset: 1px;
 }
 
+/* ── D5/D8: single-click atomic-child selection (Zeplin v1) ───
+   Brighter accent (cyan-leaning) to differentiate from the bulk-
+   selection navy. Inset offset so the outline hugs the bbox.
+   `pointer-events: none` is NOT set — the user can still click a
+   nearby atomic to swap selection without first clearing this one. */
+.leafcv2-frame [data-atomic-selected="true"] {
+  outline: 2px solid #38bdf8;
+  outline-offset: 1px;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+}
+
 .leafcv2-lasso {
   position: absolute;
   pointer-events: none;
