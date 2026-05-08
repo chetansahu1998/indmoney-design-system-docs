@@ -193,7 +193,13 @@ export function MeasurementOverlay(props: MeasurementOverlayProps) {
         hoveredFigmaID={hoveredHere ? hovered.figmaNodeID : null}
         selectedFigmaID={selectedHere ? selected.figmaNodeID : null}
       />
-      {/* U5/U6/U8 land here in subsequent commits. */}
+      {/* U5 — padding bands on hovered autolayout FRAME. */}
+      <PaddingBands
+        tree={tree}
+        frameBBox={frameBBox}
+        hoveredFigmaID={hoveredHere ? hovered.figmaNodeID : null}
+      />
+      {/* U6/U8 land here in subsequent commits. */}
     </svg>
   );
 }
@@ -294,6 +300,152 @@ function DistanceLabel(props: { x: number; y: number; text: string }): ReactElem
       </text>
     </g>
   );
+}
+
+/**
+ * U5 — padding bands on a hovered autolayout FRAME.
+ *
+ * When the hovered node is a FRAME with layoutMode "HORIZONTAL" or
+ * "VERTICAL", paint up to 4 translucent bands inside its bbox at
+ * the top/right/bottom/left edges sized to paddingTop/Right/
+ * Bottom/Left from canonical_tree. Skip bands where padding=0.
+ *
+ * Direct-on-canvas (Figma Dev Mode pattern), not panel-mediated.
+ * Lower cognitive load than Zeplin's "hover the panel row to
+ * highlight on canvas" model.
+ */
+function PaddingBands(props: {
+  tree: AnnotatedNode;
+  frameBBox: BoundingBox;
+  hoveredFigmaID: string | null;
+}): ReactElement | null {
+  const { tree, frameBBox, hoveredFigmaID } = props;
+
+  const data = useMemo(() => {
+    if (!hoveredFigmaID) return null;
+    const found = findByFigmaID(tree, hoveredFigmaID);
+    if (!found) return null;
+    const node = found.node as CanonicalNode;
+    if (node.type !== "FRAME") return null;
+    const layoutMode = node.layoutMode;
+    if (layoutMode !== "HORIZONTAL" && layoutMode !== "VERTICAL") return null;
+    const bb = node.absoluteBoundingBox;
+    if (!bb) return null;
+    const localBBox: BoundingBox = {
+      x: bb.x - frameBBox.x,
+      y: bb.y - frameBBox.y,
+      width: bb.width,
+      height: bb.height,
+    };
+    return {
+      bbox: localBBox,
+      paddingTop: numberOr(node.paddingTop, 0),
+      paddingRight: numberOr(node.paddingRight, 0),
+      paddingBottom: numberOr(node.paddingBottom, 0),
+      paddingLeft: numberOr(node.paddingLeft, 0),
+    };
+  }, [tree, frameBBox, hoveredFigmaID]);
+
+  if (!data) return null;
+  const { bbox, paddingTop, paddingRight, paddingBottom, paddingLeft } = data;
+  if (paddingTop === 0 && paddingRight === 0 && paddingBottom === 0 && paddingLeft === 0) {
+    return null;
+  }
+
+  const fill = "rgba(255, 152, 0, 0.18)";
+  const stroke = "rgba(255, 152, 0, 0.45)";
+
+  return (
+    <g className="leafcv2-measurement__padding-bands" data-figma-id={hoveredFigmaID}>
+      {paddingTop > 0 && (
+        <PaddingBand
+          x={bbox.x}
+          y={bbox.y}
+          w={bbox.width}
+          h={paddingTop}
+          fill={fill}
+          stroke={stroke}
+          band="paddingTop"
+          label={String(Math.round(paddingTop))}
+        />
+      )}
+      {paddingBottom > 0 && (
+        <PaddingBand
+          x={bbox.x}
+          y={bbox.y + bbox.height - paddingBottom}
+          w={bbox.width}
+          h={paddingBottom}
+          fill={fill}
+          stroke={stroke}
+          band="paddingBottom"
+          label={String(Math.round(paddingBottom))}
+        />
+      )}
+      {paddingLeft > 0 && (
+        <PaddingBand
+          x={bbox.x}
+          y={bbox.y + paddingTop}
+          w={paddingLeft}
+          h={bbox.height - paddingTop - paddingBottom}
+          fill={fill}
+          stroke={stroke}
+          band="paddingLeft"
+          label={String(Math.round(paddingLeft))}
+        />
+      )}
+      {paddingRight > 0 && (
+        <PaddingBand
+          x={bbox.x + bbox.width - paddingRight}
+          y={bbox.y + paddingTop}
+          w={paddingRight}
+          h={bbox.height - paddingTop - paddingBottom}
+          fill={fill}
+          stroke={stroke}
+          band="paddingRight"
+          label={String(Math.round(paddingRight))}
+        />
+      )}
+    </g>
+  );
+}
+
+function PaddingBand(props: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fill: string;
+  stroke: string;
+  band: string;
+  label: string;
+}): ReactElement {
+  const { x, y, w, h, fill, stroke, band, label } = props;
+  // Label centered in the band. For thin bands (≤ 12px in the short
+  // axis), the label may overflow — that's fine, SVG overflow:visible.
+  const labelX = x + w / 2;
+  const labelY = y + h / 2;
+  return (
+    <g data-band={band}>
+      <rect x={x} y={y} width={w} height={h} fill={fill} stroke={stroke} strokeWidth={0.5} />
+      <text
+        x={labelX}
+        y={labelY}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill="#92400e"
+        fontSize={11}
+        fontWeight={600}
+        fontFamily="-apple-system, BlinkMacSystemFont, Inter, system-ui, sans-serif"
+        style={{ fontVariantNumeric: "tabular-nums" }}
+      >
+        {label}
+      </text>
+    </g>
+  );
+}
+
+function numberOr(v: unknown, fallback: number): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }
 
 /**

@@ -267,3 +267,107 @@ describe("MeasurementOverlay — U4 distance lines DOM", () => {
     expect(wrapper.querySelectorAll("svg.leafcv2-measurement line").length).toBe(0);
   });
 });
+
+// ─── U5 — padding bands ───────────────────────────────────────────────
+
+const u5Tree: AnnotatedNode = {
+  id: "root",
+  type: "FRAME",
+  name: "Screen",
+  absoluteBoundingBox: { x: 0, y: 0, width: 400, height: 600 },
+  children: [
+    {
+      id: "card-with-padding",
+      type: "FRAME",
+      name: "Card",
+      layoutMode: "VERTICAL",
+      paddingTop: 24,
+      paddingRight: 16,
+      paddingBottom: 24,
+      paddingLeft: 16,
+      absoluteBoundingBox: { x: 50, y: 100, width: 300, height: 200 },
+    } as unknown as AnnotatedNode,
+    {
+      id: "card-no-autolayout",
+      type: "FRAME",
+      name: "AbsCard",
+      layoutMode: "NONE",
+      paddingTop: 24,
+      absoluteBoundingBox: { x: 50, y: 350, width: 300, height: 100 },
+    } as unknown as AnnotatedNode,
+    {
+      id: "instance-with-padding",
+      type: "INSTANCE",
+      name: "ButtonInstance",
+      layoutMode: "HORIZONTAL",
+      paddingLeft: 12,
+      absoluteBoundingBox: { x: 50, y: 480, width: 200, height: 60 },
+    } as unknown as AnnotatedNode,
+  ],
+};
+
+const u5FrameBBox = { x: 0, y: 0, width: 400, height: 600 };
+
+describe("MeasurementOverlay — U5 padding bands", () => {
+  it("renders 4 bands when hovered FRAME has all 4 paddings", () => {
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "card-with-padding" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u5FrameBBox, tree: u5Tree });
+    const bands = wrapper.querySelectorAll(
+      "svg.leafcv2-measurement g.leafcv2-measurement__padding-bands g[data-band]",
+    );
+    expect(bands.length).toBe(4);
+    const dirs = Array.from(bands).map((b) => b.getAttribute("data-band")).sort();
+    expect(dirs).toEqual([
+      "paddingBottom",
+      "paddingLeft",
+      "paddingRight",
+      "paddingTop",
+    ]);
+  });
+
+  it("emits the correct numeric labels", () => {
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "card-with-padding" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u5FrameBBox, tree: u5Tree });
+    const labels = Array.from(
+      wrapper.querySelectorAll("g[data-band] text"),
+    ).map((t) => t.textContent);
+    // 4 padding values: top=24, right=16, bottom=24, left=16
+    expect(labels.sort()).toEqual(["16", "16", "24", "24"]);
+  });
+
+  it("renders nothing when hovered FRAME has layoutMode=NONE", () => {
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "card-no-autolayout" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u5FrameBBox, tree: u5Tree });
+    expect(
+      wrapper.querySelectorAll("g.leafcv2-measurement__padding-bands g[data-band]").length,
+    ).toBe(0);
+  });
+
+  it("renders only the non-zero paddings (instance with paddingLeft only)", () => {
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "instance-with-padding" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u5FrameBBox, tree: u5Tree });
+    // INSTANCE not FRAME → no bands rendered (we gate on FRAME)
+    expect(
+      wrapper.querySelectorAll("g.leafcv2-measurement__padding-bands g[data-band]").length,
+    ).toBe(0);
+  });
+
+  it("does not render padding bands for non-FRAME hovered nodes", () => {
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "instance-with-padding" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u5FrameBBox, tree: u5Tree });
+    expect(
+      wrapper.querySelector("g.leafcv2-measurement__padding-bands"),
+    ).toBeNull();
+  });
+
+  it("padding bands position correctly in wrapper-local coords", () => {
+    setHoveredAtomicChild({ screenID: "screen-1", figmaNodeID: "card-with-padding" });
+    const wrapper = mount({ screenID: "screen-1", frameBBox: u5FrameBBox, tree: u5Tree });
+    // card abs (50, 100, 300×200), frame origin (0, 0) → local (50, 100)
+    const top = wrapper.querySelector('g[data-band="paddingTop"] rect');
+    expect(top?.getAttribute("x")).toBe("50");
+    expect(top?.getAttribute("y")).toBe("100");
+    expect(top?.getAttribute("width")).toBe("300");
+    expect(top?.getAttribute("height")).toBe("24");
+  });
+});
