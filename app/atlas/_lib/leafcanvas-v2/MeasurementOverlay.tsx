@@ -139,8 +139,11 @@ export function computeDistanceSegments(s: BoundingBox, h: BoundingBox): Distanc
 export function MeasurementOverlay(props: MeasurementOverlayProps) {
   const { screenID, frameBBox, tree } = props;
 
+  // ALL hooks first — React's rule of hooks. No early returns above
+  // this block; conditional returns live after every useFoo call.
   const hovered = useHoveredAtomicChild();
   const selected = useAtlas((s) => s.selection.selectedAtomicChild);
+  const bandHint = useHoveredBandHint();
 
   // Force re-render on gesture-end so the overlay paints at the
   // settled camera position. We don't render during an active
@@ -154,7 +157,7 @@ export function MeasurementOverlay(props: MeasurementOverlayProps) {
     return off;
   }, []);
 
-  // Cheap exits.
+  // Cheap exits — all hooks have already run.
   if (!tree) return null;
   // Suppress paint mid-gesture; the settle subscriber will trigger
   // the next paint.
@@ -164,9 +167,6 @@ export function MeasurementOverlay(props: MeasurementOverlayProps) {
   const selectedHere = selected && selected.screenID === screenID;
   // U10 — band-hint can fire bands even without canvas hover/select
   // when the inspector pushes a hint targeting a node in this frame.
-  // Subscribe at the top level so the component re-renders when the
-  // hint flips on/off.
-  const bandHint = useHoveredBandHint();
   // Cheap pre-check: does the hint reference a node that lives in
   // this frame? PaddingBands and GapMarkers do their own per-frame
   // walks; this gate only decides whether to render the sized <svg>
@@ -240,12 +240,14 @@ function DistanceLines(props: {
 }): ReactElement | null {
   const { tree, frameBBox, hoveredFigmaID, selectedFigmaID } = props;
 
-  // Need both a hover and a selection to draw distance lines.
-  if (!hoveredFigmaID || !selectedFigmaID) return null;
-  // No-op when same node hovered and selected.
-  if (hoveredFigmaID === selectedFigmaID) return null;
-
+  // Hook FIRST — early returns BEFORE useMemo would violate the
+  // rule of hooks across re-renders (when hovered/selected flip
+  // from null → set, the second render would call a hook the first
+  // render didn't, producing "Rendered fewer hooks than expected"
+  // in dev). Move all conditions into the memo's body and return [].
   const segments = useMemo<DistanceSegment[]>(() => {
+    if (!hoveredFigmaID || !selectedFigmaID) return [];
+    if (hoveredFigmaID === selectedFigmaID) return [];
     const sBBox = lookupBBox(tree, selectedFigmaID, frameBBox);
     const hBBox = lookupBBox(tree, hoveredFigmaID, frameBBox);
     if (!sBBox || !hBBox) return [];
