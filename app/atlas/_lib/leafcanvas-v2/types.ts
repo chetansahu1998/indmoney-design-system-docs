@@ -200,25 +200,40 @@ export interface CanonicalNode {
   characters?: string;
   style?: TextStyle;
   /**
-   * Figma's autoresize mode for TEXT nodes. Controls how the text-node bbox
-   * relates to the rendered glyph run.
+   * Legacy autoresize mode for non-autolayout TEXT nodes. See the comment on
+   * `layoutSizingHorizontal` for the modern equivalent. When present, this
+   * wins over `layoutSizingHorizontal` because Figma exports it only for
+   * standalone (non-autolayout) text where the auto-layout fields don't
+   * apply.
    *
-   *   WIDTH_AND_HEIGHT — bbox grows on both axes to fit the text. Renderer
-   *                      should emit width=auto + white-space=nowrap so the
-   *                      box hugs the natural single-line width. Forcing the
-   *                      bbox width onto the box would clip or wrap text the
-   *                      designer intended to flow.
-   *   HEIGHT           — width is fixed (designer-set), height grows. Wrap
-   *                      with white-space=pre-wrap and let the box expand
-   *                      vertically.
-   *   NONE             — both axes fixed; clip overflow with overflow=hidden.
-   *   TRUNCATE         — width fixed, single line, truncate with ellipsis.
-   *
-   * Production case: INDmoney splash "AES-256 SSL Secured" labels were
-   * exported with WIDTH_AND_HEIGHT but the renderer ignored the field and
-   * applied a fixed-width box, so the text wrapped to two lines (2026-05-09).
+   *   WIDTH_AND_HEIGHT — bbox grows on both axes to fit the text.
+   *   HEIGHT           — width fixed, height grows.
+   *   NONE             — both fixed; clip overflow.
+   *   TRUNCATE         — width fixed, single line, ellipsis.
    */
   textAutoResize?: "WIDTH_AND_HEIGHT" | "HEIGHT" | "NONE" | "TRUNCATE";
+  /**
+   * Auto-layout sizing for any node (TEXT, FRAME, INSTANCE, COMPONENT) whose
+   * parent runs auto-layout. This is the modern field — Figma's REST API
+   * returns it on every auto-layout child, while `textAutoResize` only
+   * appears on standalone TEXT nodes that aren't in auto-layout.
+   *
+   *   HUG   — size to content (width hugs the glyph run for TEXT, hugs the
+   *           inner-children sum for containers). Renderer emits
+   *           width=auto + white-space=nowrap for TEXT, width=auto for
+   *           containers.
+   *   FILL  — fill the parent's cross-axis. Renderer uses bbox-derived
+   *           width and wraps text inside it.
+   *   FIXED — use the bbox dimension exactly. Renderer uses bbox width
+   *           with overflow clipped.
+   *
+   * Production case: INDmoney splash "AES-256 SSL Secured" had
+   * layoutSizingHorizontal=HUG but the renderer treated TEXT as fixed-
+   * width-wrap by default, forcing the natural-width label onto two lines
+   * (2026-05-09). Extending the renderer to honor HUG width=auto fixes it.
+   */
+  layoutSizingHorizontal?: "HUG" | "FILL" | "FIXED";
+  layoutSizingVertical?: "HUG" | "FILL" | "FIXED";
   children?: CanonicalNode[];
 }
 

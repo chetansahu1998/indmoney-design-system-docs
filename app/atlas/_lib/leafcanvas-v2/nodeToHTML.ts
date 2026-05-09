@@ -293,36 +293,72 @@ function renderText(
   // (production case: INDmoney splash "SSL Secured" wrapping to two
   // lines because the bbox width was forced from the rendered box,
   // not from the natural single-line glyph run).
-  switch (node.textAutoResize) {
-    case "WIDTH_AND_HEIGHT":
+  // Resolve the effective sizing mode. Figma exposes TWO ways to express
+  // text-box sizing — and they appear on different node populations:
+  //   1. `textAutoResize` — legacy field. Returned for standalone (non-
+  //      autolayout) TEXT nodes. Values: WIDTH_AND_HEIGHT | HEIGHT |
+  //      NONE | TRUNCATE.
+  //   2. `layoutSizingHorizontal/Vertical` — modern field. Returned for
+  //      every auto-layout child (TEXT or container). Values: HUG | FILL
+  //      | FIXED.
+  //
+  // Real production canonical_trees (audited 2026-05-09) show 100% of
+  // TEXT nodes inside auto-layout use the modern field with
+  // `textAutoResize` ABSENT. The pre-fix renderer only honored
+  // `textAutoResize` and so applied a fixed-width-wrap default to every
+  // modern TEXT — wrapping single-line labels like "AES-256 SSL Secured"
+  // (HUG) onto two lines.
+  //
+  // Resolution order: textAutoResize wins when present (older standalone
+  // TEXT). Otherwise read layoutSizingHorizontal. If neither is set,
+  // default to "size to content" (matches Figma's WIDTH_AND_HEIGHT
+  // default for text without explicit sizing) so anonymous labels render
+  // without surprise wrapping.
+  type TextMode = "fit" | "fixed-wrap" | "fixed-clip" | "fixed-truncate";
+  const resolved: TextMode = (() => {
+    switch (node.textAutoResize) {
+      case "WIDTH_AND_HEIGHT": return "fit";
+      case "HEIGHT":           return "fixed-wrap";
+      case "NONE":             return "fixed-clip";
+      case "TRUNCATE":         return "fixed-truncate";
+    }
+    switch (node.layoutSizingHorizontal) {
+      case "HUG":   return "fit";
+      case "FILL":  return "fixed-wrap";
+      case "FIXED": return "fixed-wrap"; // FIXED in autolayout still wraps to box, doesn't clip
+    }
+    // Neither set — Figma's default for unsized TEXT is auto-width.
+    return "fit";
+  })();
+
+  switch (resolved) {
+    case "fit":
       // Box hugs the single-line glyph run. Override the bbox width
-      // applied by sizeStyle so the text-measure step decides the
-      // width — Figma already sized the bbox to fit; the renderer
-      // doesn't need to recompute it. Position (left/top) still comes
-      // from positionStyle.
+      // applied by sizeStyle so text measures naturally — Figma already
+      // sized the bbox to fit; the renderer doesn't need to recompute.
+      // Position (left/top) still comes from positionStyle.
       textStyle.width = "auto";
       textStyle.height = "auto";
       textStyle.whiteSpace = "nowrap";
-      // No overflow clip — designer-controlled WIDTH_AND_HEIGHT text
-      // is sized by Figma to fit; clipping would falsify that contract.
+      // No overflow clip — HUG/WIDTH_AND_HEIGHT text is sized by Figma
+      // to fit; clipping would falsify that contract.
       break;
-    case "TRUNCATE":
+    case "fixed-truncate":
       // Single line, fixed width, ellipsis on overflow.
       textStyle.whiteSpace = "nowrap";
       textStyle.overflow = "hidden";
       textStyle.textOverflow = "ellipsis";
       break;
-    case "NONE":
+    case "fixed-clip":
       // Both axes fixed — wrap and clip overflow.
       textStyle.whiteSpace = "pre-wrap";
       textStyle.wordBreak = "break-word";
       textStyle.overflow = "hidden";
       break;
-    case "HEIGHT":
+    case "fixed-wrap":
     default:
-      // Width fixed, height auto. pre-wrap honors explicit `\n` AND
-      // wraps long lines. This is also the safe fallback for legacy
-      // canonical_trees that pre-date textAutoResize canonicalization.
+      // Width fixed (from bbox), height auto. pre-wrap honors explicit
+      // `\n` and wraps long lines.
       textStyle.whiteSpace = "pre-wrap";
       textStyle.wordBreak = "break-word";
       textStyle.overflow = "hidden";
