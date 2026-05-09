@@ -31,7 +31,11 @@ import { useEffect, useState } from "react";
 
 import type { CanonicalNode } from "./types";
 import { shouldRasterize } from "./node-classifier";
-import { getDeviceDPR, pickPreviewTier, type PreviewTier } from "./preview-tier";
+import {
+  getDeviceDPR,
+  pickRasterRender,
+  type RasterRenderChoice,
+} from "./preview-tier";
 import { getToken } from "@/lib/auth-client";
 import {
   subscribeLeafAssets,
@@ -222,41 +226,72 @@ export function useIconClusterURLs(
     // render failure that surfaced as asset-failed). Mirrors the
     // pre-2026-05-09 Promise.all path so we never regress when the
     // stream is unavailable.
+    //
+    // High-zoom escalation (Phase 2.3): on a settled zoom past
+    // tier-2048's display ceiling, ALSO re-mint raster clusters that
+    // the stream delivered at preview-128 — otherwise the browser
+    // upscales the small tier and the canvas pixelates. SVG-eligible
+    // clusters served by the stream (URL contains `format=svg`) skip
+    // escalation: vector content is already infinite-zoom.
     (async () => {
       await waitForLeafStreamSettled(slug, leafID);
       if (cancelled) return;
       const have = projectStreamFiltered(sub.snapshot);
-      const missing = idsWithBBox.filter(({ id }) => !have.has(id) && !sub.snapshot().failedIDs.has(id));
-      if (missing.length === 0) {
-        // Stream covered everything — final state already pushed via
-        // the subscriber callback. Nothing left to do.
+      const failedIDs = sub.snapshot().failedIDs;
+      // Build the work list: any ID that needs (re-)minting.
+      //   • Missing from stream → mint at the picked tier.
+      //   • Stream delivered SVG → skip; vector handles any zoom.
+      //   • Stream delivered raster (preview-N) AND zoom requires
+      //     high-res → re-mint with the highres choice.
+      const toMint = idsWithBBox.filter(({ id, longestEdgePx }) => {
+        if (failedIDs.has(id)) return false;
+        const existing = have.get(id);
+        if (!existing) return true; // missing from stream
+        if (existing.includes("format=svg")) return false; // SVG = no escalation
+        const choice = pickRasterRender(longestEdgePx, zoom, dpr);
+        // Only re-mint when the picked choice is high-res (the
+        // stream-delivered preview-128 isn't going to satisfy the
+        // requested px). For ordinary zoom levels the existing
+        // preview URL is fine.
+        return choice.kind === "highres";
+      });
+      if (toMint.length === 0) {
+        // Stream covered everything at the current zoom — final state
+        // already pushed via the subscriber callback. Nothing to do.
         return;
       }
       const next = new Map(have);
       const failures: string[] = [];
       await Promise.all(
-        missing.map(async ({ id, longestEdgePx }) => {
+        toMint.map(async ({ id, longestEdgePx }) => {
           try {
-            const tier: PreviewTier = pickPreviewTier(longestEdgePx, zoom, dpr);
+            const choice: RasterRenderChoice = pickRasterRender(
+              longestEdgePx,
+              zoom,
+              dpr,
+            );
+            const body =
+              choice.kind === "preview"
+                ? { node_id: id, format: `preview-${choice.tier}`, scale }
+                : { node_id: id, format: "png", scale: 3 };
             const res = await fetch(
               `${dsURL}/v1/projects/${encodeURIComponent(slug)}/assets/export-url`,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...authHeaders },
-                body: JSON.stringify({
-                  node_id: id,
-                  format: `preview-${tier}`,
-                  scale,
-                }),
+                body: JSON.stringify(body),
               },
             );
             if (!res.ok) {
               failures.push(`${id}: HTTP ${res.status}`);
               return;
             }
-            const body = (await res.json()) as { url?: string };
-            if (typeof body.url === "string" && body.url.length > 0) {
-              next.set(id, body.url.startsWith("http") ? body.url : `${dsURL}${body.url}`);
+            const respBody = (await res.json()) as { url?: string };
+            if (typeof respBody.url === "string" && respBody.url.length > 0) {
+              next.set(
+                id,
+                respBody.url.startsWith("http") ? respBody.url : `${dsURL}${respBody.url}`,
+              );
             }
           } catch (err) {
             failures.push(`${id}: ${err instanceof Error ? err.message : String(err)}`);
@@ -267,7 +302,7 @@ export function useIconClusterURLs(
       if (failures.length > 0) {
         // eslint-disable-next-line no-console
         console.warn(
-          `[icon-cluster] residual mint: ${failures.length}/${missing.length} failed:`,
+          `[icon-cluster] residual mint: ${failures.length}/${toMint.length} failed:`,
           failures.slice(0, 5),
         );
       }

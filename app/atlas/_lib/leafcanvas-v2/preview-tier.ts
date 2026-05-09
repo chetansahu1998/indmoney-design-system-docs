@@ -64,3 +64,52 @@ export function getDeviceDPR(): number {
   const v = window.devicePixelRatio;
   return Number.isFinite(v) && v > 0 ? v : 2;
 }
+
+/** RasterRenderChoice — discriminated union returned by pickRasterRender.
+ *
+ *   • {kind:"preview", tier} → use the existing preview-pyramid path
+ *     (POST /assets/export-url with format=preview-N&scale=1). Server
+ *     serves the pre-cached tier in 0–25 ms.
+ *   • {kind:"highres"}      → tier-2048 isn't enough for the requested
+ *     zoom × DPR; mint a fresh URL with format=png&scale=3 and let the
+ *     server render up to ~6144 px on the longest edge. This path goes
+ *     through HandleAssetDownload's synchronous Figma render on miss
+ *     (slower, bounded by per-tenant rate limit) but is the only way
+ *     to keep raster clusters crisp past the pyramid ceiling — the
+ *     vector-pure clusters take the SVG path on the server side and
+ *     never reach this branch.
+ */
+export type RasterRenderChoice =
+  | { kind: "preview"; tier: PreviewTier }
+  | { kind: "highres" };
+
+/** pickRasterRender chooses between the cached preview ladder and an
+ * on-demand scale=3 PNG render based on the displayPx × zoom × DPR
+ * math. Mirrors pickPreviewTier's defensive input clamping so
+ * pathological values (zero, NaN, negative DPR) degrade to the cheap
+ * preview path rather than firing a slow render.
+ *
+ * Threshold sanity: tier-2048 is the largest cached resolution. Once
+ * the requested px overshoots it, we'd otherwise serve the cached 2048
+ * tier and let the browser upscale — the pixelation symptom users
+ * reported on May 9. Switching to scale=3 (Figma's max scale) buys us
+ * up to scale=3 × frame's natural width before scale=4 upscaling kicks
+ * in; for a 375 px frame that's a comfortable 16× zoom ceiling. */
+export function pickRasterRender(
+  displayPx: number,
+  zoom: number,
+  dpr: number,
+): RasterRenderChoice {
+  const safePx = Number.isFinite(displayPx) && displayPx > 0 ? displayPx : 1;
+  const safeZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  const safeDpr = Number.isFinite(dpr) && dpr > 0 ? dpr : 2;
+  const required = safePx * safeZoom * safeDpr;
+  if (required > PREVIEW_TIER_MAX) {
+    return { kind: "highres" };
+  }
+  // Reuse the existing tier ladder for in-range requests.
+  for (const tier of PREVIEW_TIERS) {
+    if (tier >= required) return { kind: "preview", tier };
+  }
+  return { kind: "preview", tier: PREVIEW_TIER_MAX };
+}
