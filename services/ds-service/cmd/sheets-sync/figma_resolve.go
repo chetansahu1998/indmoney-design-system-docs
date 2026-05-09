@@ -7,9 +7,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
 )
 
 // figma_resolve.go — Figma REST resolve + screen-frame extraction.
@@ -37,19 +40,35 @@ type Screen struct {
 }
 
 // FigmaClient wraps the REST API + cache. One instance per cycle is fine.
+//
+// Rate limiting + retries: every fetchAndWalk acquires a tier-1 token via
+// client.WaitTier1, sharing the per-PAT bucket with internal/figma/client.Client
+// instances elsewhere in the process. fetchWithRetry adds backoff for 429s
+// (honoring Retry-After) and for transient transport errors (connection-reset,
+// EOF, decode-EOF). Without these, the sheets-sync resolve path saw 64 errors
+// in a 78-min cycle (28 × HTTP 429 burst, 63 × decode-EOF, 14 × transport).
 type FigmaClient struct {
-	pat      string
-	hc       *http.Client
-	cache    *figmaCache
-	maxRetry int
+	pat   string
+	hc    *http.Client
+	cache *figmaCache
+	// baseURL allows tests to point fetchAndWalk at httptest.Server. Empty
+	// string means production Figma. Tests SHOULD set this; production code
+	// SHOULD NOT (we don't proxy Figma in any environment).
+	baseURL string
+	// sleep is injectable so tests don't actually wait Retry-After seconds.
+	// nil → time.Sleep.
+	sleep func(time.Duration)
 }
 
 func NewFigmaClient(pat string) *FigmaClient {
 	return &FigmaClient{
-		pat:      pat,
-		hc:       &http.Client{Timeout: 30 * time.Second},
-		cache:    newFigmaCache(200, time.Hour),
-		maxRetry: 1, // one retry on render-timeout, then surface
+		pat: pat,
+		// 90s timeout: production /v1/files/<id>/nodes for INDmoney's larger
+		// Figma files (Dashboard v5, INDstocks V4) routinely takes 30-60s.
+		// The previous 30s ceiling was aborting otherwise-successful fetches
+		// and surfacing them as "do request: context deadline exceeded".
+		hc:    &http.Client{Timeout: 90 * time.Second},
+		cache: newFigmaCache(200, time.Hour),
 	}
 }
 
@@ -64,29 +83,142 @@ func (f *FigmaClient) ResolveSection(ctx context.Context, fileID, nodeID string)
 		return cached, nil
 	}
 
-	// First attempt — default scale
-	screens, err := f.fetchAndWalk(ctx, fileID, nodeID, 2)
+	// First attempt — with retry-on-transient. Render-timeout surfaces
+	// to the outer fallback (single retry at lower scale, preserved from
+	// the original plan even though the URL today doesn't take a scale arg).
+	screens, err := f.fetchWithRetry(ctx, fileID, nodeID, 2)
+	if err != nil && isRenderTimeout(err) {
+		screens, err = f.fetchWithRetry(ctx, fileID, nodeID, 1)
+	}
 	if err == nil {
 		f.cache.put(fileID, nodeID, screens)
 		return screens, nil
 	}
-
-	// Retry on render-timeout with smaller scale (per plan)
-	if isRenderTimeout(err) {
-		screens, err = f.fetchAndWalk(ctx, fileID, nodeID, 1)
-		if err == nil {
-			f.cache.put(fileID, nodeID, screens)
-			return screens, nil
-		}
-	}
 	return nil, err
 }
 
-// fetchAndWalk does one REST call + tree walk. `scale` is forwarded to
-// the API but also signals which retry tier this is.
+// fetchWithRetry calls fetchAndWalk up to 3 times, retrying on
+// transient errors only:
+//   - 429 → sleep Retry-After (clamped to [500ms, 30s])
+//   - connection-reset / EOF / decode-EOF → exponential backoff (1s, 2s, 4s)
+//
+// Render-timeouts and 4xx (non-429) and "node not in response" are NOT
+// retried here — they surface to ResolveSection which decides whether
+// to swap scale (render-timeout) or fail (everything else).
+func (f *FigmaClient) fetchWithRetry(ctx context.Context, fileID, nodeID string, scale int) ([]Screen, error) {
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			wait := backoffFor(attempt, lastErr)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
+			f.doSleep(wait)
+		}
+		screens, err := f.fetchAndWalk(ctx, fileID, nodeID, scale)
+		if err == nil {
+			return screens, nil
+		}
+		lastErr = err
+		if !isTransientFigmaErr(err) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+func (f *FigmaClient) doSleep(d time.Duration) {
+	if f.sleep != nil {
+		f.sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+// backoffFor computes how long to wait before retry attempt N (1-indexed,
+// where attempt 2 is the first retry). For *rateLimitError carrying a
+// Retry-After hint, honor it (clamped to [500ms, 30s]). Otherwise back
+// off exponentially: 1s, 2s, 4s, capped at 8s.
+func backoffFor(attempt int, err error) time.Duration {
+	if rle, ok := err.(*rateLimitError); ok && rle.retryAfter > 0 {
+		d := rle.retryAfter
+		if d < 500*time.Millisecond {
+			d = 500 * time.Millisecond
+		}
+		if d > 30*time.Second {
+			d = 30 * time.Second
+		}
+		return d
+	}
+	d := time.Duration(1<<(attempt-2)) * time.Second
+	if d > 8*time.Second {
+		d = 8 * time.Second
+	}
+	return d
+}
+
+// isTransientFigmaErr reports whether err is worth retrying. Covers
+// *rateLimitError plus the transport / decode failure modes Figma exhibits
+// under load: connection reset, unexpected EOF mid-stream, and decode
+// errors that surface as "unexpected end of JSON input" when the body
+// arrived truncated. Render-timeouts are NOT transient here — they have
+// their own scale-fallback path in ResolveSection.
+func isTransientFigmaErr(err error) bool {
+	if _, ok := err.(*rateLimitError); ok {
+		return true
+	}
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "do request:"):
+		return true // transport-level: connection reset, timeout, DNS, etc.
+	case strings.Contains(s, "read body:"):
+		return true // ReadAll mid-stream failure (typically EOF / reset)
+	case strings.Contains(s, "unexpected end of JSON input"):
+		return true // truncated/empty body returned with a 200 status
+	case strings.Contains(s, "unexpected EOF"):
+		return true
+	}
+	return false
+}
+
+// rateLimitError signals Figma returned 429. The retryAfter field carries
+// the parsed Retry-After header (zero when absent), for fetchWithRetry to
+// honor. The Error string preserves the historical "figma: HTTP 429: ..."
+// shape so existing log filters / regex matchers continue to match.
+type rateLimitError struct {
+	retryAfter time.Duration
+	body       string
+}
+
+func (e *rateLimitError) Error() string {
+	return fmt.Sprintf("figma: HTTP 429: %s", e.body)
+}
+
+// RetryAfter exposes the parsed Retry-After value. Mirrors the method-shaped
+// probe in internal/projects/asset_export.go's retryAfterFromErr so the same
+// duck-typed handling works there.
+func (e *rateLimitError) RetryAfter() time.Duration { return e.retryAfter }
+
+// fetchAndWalk does one REST call + tree walk. `scale` is preserved from
+// the original plan as a hint for retry tiering, even though /v1/files/<id>/nodes
+// has no scale parameter today.
 func (f *FigmaClient) fetchAndWalk(ctx context.Context, fileID, nodeID string, scale int) ([]Screen, error) {
-	url := fmt.Sprintf("https://api.figma.com/v1/files/%s/nodes?ids=%s&geometry=paths",
-		fileID, nodeID)
+	// Cooperate with the per-PAT tier-1 bucket shared by every Client.New(pat)
+	// caller in this process. /v1/files/<id>/nodes is documented as tier-1
+	// (15 req/min on Pro, paced at 12 req/min by client.tier1RPM).
+	if err := client.WaitTier1(ctx, f.pat); err != nil {
+		return nil, fmt.Errorf("figma: rate-limit wait: %w", err)
+	}
+
+	base := f.baseURL
+	if base == "" {
+		base = "https://api.figma.com"
+	}
+	url := fmt.Sprintf("%s/v1/files/%s/nodes?ids=%s&geometry=paths",
+		base, fileID, nodeID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("figma: build request: %w", err)
@@ -98,8 +230,22 @@ func (f *FigmaClient) fetchAndWalk(ctx context.Context, fileID, nodeID string, s
 		return nil, fmt.Errorf("figma: do request: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, rerr := io.ReadAll(resp.Body)
+	if rerr != nil {
+		// Read failures (connection reset mid-body, transient EOF) used to
+		// be silently dropped via `body, _ := io.ReadAll(...)` — the decoder
+		// then reported "unexpected end of JSON input" with no upstream
+		// signal that the network had truncated the response. Surface
+		// explicitly so fetchWithRetry can decide to retry.
+		return nil, fmt.Errorf("figma: read body: %w", rerr)
+	}
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return nil, &rateLimitError{
+				retryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+				body:       string(body[:min(len(body), 200)]),
+			}
+		}
 		// Detect Figma's render-timeout shape so the caller can retry.
 		if resp.StatusCode == http.StatusBadRequest && bytesContain(body, "Render timeout") {
 			return nil, &renderTimeoutError{status: resp.StatusCode, body: string(body[:min(len(body), 200)])}
@@ -116,6 +262,21 @@ func (f *FigmaClient) fetchAndWalk(ctx context.Context, fileID, nodeID string, s
 		return nil, fmt.Errorf("figma: node %q not in response", nodeID)
 	}
 	return walkScreens(entry.Document), nil
+}
+
+// parseRetryAfter handles the integer-seconds form of the Retry-After
+// header. The HTTP-date form is allowed by RFC 7231 but Figma sends seconds
+// in practice (and we have no precedent for the date form in the wild).
+// Returns zero on absent / unparsable, which backoffFor maps to a 500ms floor.
+func parseRetryAfter(h string) time.Duration {
+	if h == "" {
+		return 0
+	}
+	secs, err := strconv.Atoi(strings.TrimSpace(h))
+	if err != nil || secs < 0 {
+		return 0
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // walkScreens recurses through SECTION / GROUP nodes and collects every

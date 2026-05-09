@@ -147,3 +147,14 @@ func (l *limiters) wait(ctx context.Context, tier rateTier) error {
 	}
 	return nil
 }
+
+// WaitTier1 acquires a tier-1 (file-fetch / image-render) rate token
+// for pat. Use this when issuing /v1/files/<id>* requests outside of
+// *Client (cmd/sheets-sync keeps its own typed walker on top of the
+// raw response and hits this endpoint directly). Buckets are shared
+// per-PAT with all other Client instances in this process, so a
+// non-Client caller invoking WaitTier1 cooperates with concurrent
+// Client.GetFileNodes / Client.GetImages calls under the same PAT.
+func WaitTier1(ctx context.Context, pat string) error {
+	return limitersForPAT(pat).wait(ctx, tier1)
+}
