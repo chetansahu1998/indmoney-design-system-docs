@@ -1060,6 +1060,61 @@ func (t *TenantRepo) GetCanonicalTree(ctx context.Context, projectSlug, screenID
 	return &res, nil
 }
 
+// ListCanonicalTreesForFlow returns every screen's canonical_tree for the
+// flow's latest version, scoped to the authed tenant. Empty slice + nil error
+// means the flow exists but has no screens with persisted trees yet
+// (mid-import or empty-frame flow); ErrNotFound means the flow itself doesn't
+// belong to this tenant.
+//
+// Used by the leaf asset-stream handler to extract cluster IDs across every
+// frame of a leaf in one query — pre-2026-05-09 the same data was reachable
+// only by per-screen GetCanonicalTree calls, which would fan out 80+ SQLite
+// reads per leaf-open.
+func (t *TenantRepo) ListCanonicalTreesForFlow(ctx context.Context, flowID string) ([]CanonicalTreeResult, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	versionID, err := t.resolveLatestVersionID(ctx, flowID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := t.r.db.QueryContext(ctx,
+		`SELECT s.id, sct.canonical_tree, sct.canonical_tree_gz, sct.hash
+		   FROM screens s
+		   JOIN screen_canonical_trees sct ON sct.screen_id = s.id
+		  WHERE s.tenant_id = ? AND s.flow_id = ? AND s.version_id = ?
+		  ORDER BY s.created_at`,
+		t.tenantID, flowID, versionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list canonical trees: %w", err)
+	}
+	defer rows.Close()
+	var out []CanonicalTreeResult
+	for rows.Next() {
+		var r CanonicalTreeResult
+		var legacy string
+		var gz []byte
+		var hash sql.NullString
+		if err := rows.Scan(&r.ScreenID, &legacy, &gz, &hash); err != nil {
+			return nil, err
+		}
+		tree, derr := ResolveCanonicalTree(legacy, gz)
+		if derr != nil {
+			return nil, fmt.Errorf("decompress canonical tree %s: %w", r.ScreenID, derr)
+		}
+		r.Tree = tree
+		if hash.Valid {
+			r.Hash = hash.String
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GetScreenForServe looks up a screen joined to its project + version for the
 // authed PNG route handler (U11). Returns ErrNotFound when the screen doesn't
 // exist OR the project's tenant_id doesn't match the caller's claim — same

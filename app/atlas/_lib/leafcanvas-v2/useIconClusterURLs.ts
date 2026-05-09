@@ -33,6 +33,10 @@ import type { CanonicalNode } from "./types";
 import { shouldRasterize } from "./node-classifier";
 import { getDeviceDPR, pickPreviewTier, type PreviewTier } from "./preview-tier";
 import { getToken } from "@/lib/auth-client";
+import {
+  subscribeLeafAssets,
+  waitForLeafStreamSettled,
+} from "./leaf-asset-stream";
 
 export const EMPTY_CLUSTER_URLS: ReadonlyMap<string, string> = new Map();
 
@@ -169,24 +173,69 @@ export function useIconClusterURLs(
     const token = getToken();
     const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
     const dpr = getDeviceDPR();
+    const localIDs = new Set(idsWithBBox.map(({ id }) => id));
 
+    // Subscribe to the leaf-level SSE stream. The store opens ONE
+    // EventSource per (slug, leafID) regardless of how many frames in
+    // the leaf call this hook — first subscriber kicks off the stream,
+    // the rest free-ride on the same Map. As `asset-ready` events
+    // arrive, the snapshot updates and we filter to this frame's local
+    // cluster IDs. Whatever the stream doesn't deliver (failed events,
+    // server doesn't support the endpoint, network blip) falls through
+    // to the per-cluster mint pass below.
+    const projectStreamFiltered = (snap: ReturnType<typeof subscribeLeafAssets>["snapshot"]): Map<string, string> => {
+      const filtered = new Map<string, string>();
+      for (const id of localIDs) {
+        const u = snap().urls.get(id);
+        if (typeof u === "string" && u.length > 0) {
+          filtered.set(id, u.startsWith("http") ? u : `${dsURL}${u}`);
+        }
+      }
+      return filtered;
+    };
+
+    let lastEmittedSize = 0;
+    const sub = subscribeLeafAssets(slug, leafID, () => {
+      if (cancelled) return;
+      const filtered = projectStreamFiltered(sub.snapshot);
+      // Only re-render when our frame's slice changed. Avoids hundreds
+      // of LeafFrameRenderers re-rendering for every other frame's
+      // asset-ready event.
+      if (filtered.size !== lastEmittedSize) {
+        lastEmittedSize = filtered.size;
+        setURLs(filtered);
+      }
+    });
+    // Emit current snapshot immediately so cache hits or re-mounts
+    // pick up state without waiting for the next event.
+    {
+      const initial = projectStreamFiltered(sub.snapshot);
+      if (initial.size > 0) {
+        lastEmittedSize = initial.size;
+        setURLs(initial);
+      }
+    }
+
+    // Residual mint pass — runs after the stream settles (`complete` or
+    // `failed`). Picks up any cluster IDs the stream didn't deliver
+    // (older deploys without /asset-stream, transient 5xx, server-side
+    // render failure that surfaced as asset-failed). Mirrors the
+    // pre-2026-05-09 Promise.all path so we never regress when the
+    // stream is unavailable.
     (async () => {
-      // Mint signed URLs per cluster. Each `<img>` fetch synchronously
-      // renders + caches on first load (5s budget); subsequent loads
-      // hit cache and return instantly. If a render times out (HTTP
-      // 425), nodeToHTML.ts's onError handler swaps to the dashed
-      // placeholder. After the first user interaction with a leaf,
-      // the cache is warm and reloads paint the full canvas.
-      //
-      // A pre-warm batch endpoint was prototyped (POST /assets/warm)
-      // but removed pending investigation of an intermittent mux 404
-      // with the AdaptAuthMiddleware wrapper. See git log e62a935..
-      // for the work-in-progress; safe to re-introduce when the
-      // routing issue is resolved.
-      const next = new Map<string, string>();
+      await waitForLeafStreamSettled(slug, leafID);
+      if (cancelled) return;
+      const have = projectStreamFiltered(sub.snapshot);
+      const missing = idsWithBBox.filter(({ id }) => !have.has(id) && !sub.snapshot().failedIDs.has(id));
+      if (missing.length === 0) {
+        // Stream covered everything — final state already pushed via
+        // the subscriber callback. Nothing left to do.
+        return;
+      }
+      const next = new Map(have);
       const failures: string[] = [];
       await Promise.all(
-        idsWithBBox.map(async ({ id, longestEdgePx }) => {
+        missing.map(async ({ id, longestEdgePx }) => {
           try {
             const tier: PreviewTier = pickPreviewTier(longestEdgePx, zoom, dpr);
             const res = await fetch(
@@ -194,9 +243,6 @@ export function useIconClusterURLs(
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...authHeaders },
-                // Preview-tier formats coerce scale to 1 server-side, but we
-                // still send the legacy `scale` so older deploys (pre-7e97cf2)
-                // don't 400 on a missing field.
                 body: JSON.stringify({
                   node_id: id,
                   format: `preview-${tier}`,
@@ -219,8 +265,9 @@ export function useIconClusterURLs(
       );
       if (cancelled) return;
       if (failures.length > 0) {
+        // eslint-disable-next-line no-console
         console.warn(
-          `[icon-cluster] ${failures.length}/${idsWithBBox.length} mints failed:`,
+          `[icon-cluster] residual mint: ${failures.length}/${missing.length} failed:`,
           failures.slice(0, 5),
         );
       }
@@ -229,12 +276,13 @@ export function useIconClusterURLs(
 
     return () => {
       cancelled = true;
+      sub.unsubscribe();
     };
     // `zoom` IS a dep so a zoom change that flips a cluster into a new
-    // tier band triggers a fresh mint with the higher-resolution PNG.
-    // Mint calls hit ds-service cache (no Figma round-trip), so the
-    // re-mint cost is bounded by ~5ms per cluster × N clusters per
-    // zoom-stop event.
+    // tier band triggers a fresh re-evaluate. Stream URLs are tier-
+    // agnostic (server emits preview-128); zoom-up uses the residual
+    // mint path which hits cache (PreviewPyramidGenerator wrote all 4
+    // tiers in one Figma call when the stream rendered each cluster).
   }, [slug, leafID, treeRoot, zoom, scale]);
 
   return urls;

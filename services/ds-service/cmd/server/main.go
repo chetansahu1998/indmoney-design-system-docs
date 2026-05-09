@@ -744,6 +744,17 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleBulkAssetExport())))
 	mux.HandleFunc("GET /v1/projects/{slug}/leaves/{leaf_id}/image-refs",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleListImageRefs)))
+	// Per-leaf SSE asset hydration. Two-step: ticket POST (JWT-authed) issues a
+	// 60s single-use ticket bound to assets:<tenant>:<leafID>; GET stream
+	// redeems the ticket (no JWT — EventSource cannot send Authorization
+	// headers) and emits asset-ready events as each cluster pyramid lands.
+	// Designed to replace the per-cluster /assets/export-url + cache-miss
+	// fanout that produced minutes of dashed placeholders on cold-cache leaf
+	// open. See internal/projects/asset_stream.go header for the why.
+	mux.HandleFunc("POST /v1/projects/{slug}/leaves/{leaf_id}/asset-stream/ticket",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleAssetStreamTicket)))
+	mux.HandleFunc("GET /v1/projects/{slug}/leaves/{leaf_id}/asset-stream",
+		s.projectsServer.HandleAssetStream)
 	mux.HandleFunc("GET /v1/projects/{slug}/assets/raw/{imageRef}",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleServeRawAsset)))
 	mux.HandleFunc("GET /v1/projects/{slug}/assets/bulk/{token}",
