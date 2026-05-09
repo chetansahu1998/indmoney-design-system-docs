@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -578,6 +579,96 @@ func (r *retryAfterFetcher) GetFileNodes(ctx context.Context, fileKey string, id
 		out[id] = map[string]any{"id": id}
 	}
 	return map[string]any{"nodes": out}, nil
+}
+
+// TestPipeline_FailSoftOnMissingRenderURL pins the 2026-05-09 fail-soft fix:
+// when Figma's /v1/images endpoint returns no URL for a subset of frames
+// (Figma-side render bug on a specific node ID), the pipeline used to abort
+// the entire version — stranding every other frame in the same import. The
+// fix partitions frames into good/skipped, persists canonical_trees for ALL
+// (Stage 2's /nodes call already populated them), persists PNGs only for
+// good frames, and lets the version flip to view_ready instead of failed.
+//
+// Production case: goals-revamp-iteration-2 had 1 bad frame and 122 sibling
+// frames. Pre-fix: 0 trees, status=failed. Post-fix: 123 trees, status=view_ready,
+// only the 1 bad frame missing its png_storage_key.
+func TestPipeline_FailSoftOnMissingRenderURL(t *testing.T) {
+	png := makeTestPNG(t, 400, 600)
+	// Renderer returns a URL for fig-1 only; fig-2 simulates Figma's
+	// "rendered no URL" response (entry omitted).
+	renderer := &stubRenderer{
+		urls: map[string]string{"fig-1": "u1"},
+		pngs: map[string][]byte{"u1": png},
+	}
+	fetcher := &stubNodeFetcher{
+		frames: map[string]any{
+			"fig-1": map[string]any{"document": map[string]any{"id": "fig-1", "type": "FRAME"}},
+			"fig-2": map[string]any{"document": map[string]any{"id": "fig-2", "type": "FRAME"}},
+		},
+	}
+	p, in, _ := setupPipelineTest(t, renderer, fetcher)
+
+	if err := p.RunFastPreview(context.Background(), in); err != nil {
+		t.Fatalf("pipeline: expected success despite missing URL for fig-2; got %v", err)
+	}
+
+	v, err := p.Repo.GetVersion(context.Background(), in.VersionID)
+	if err != nil {
+		t.Fatalf("get version: %v", err)
+	}
+	if v.Status != "view_ready" {
+		t.Fatalf("expected view_ready (1 of 2 frames good), got %s (err=%q)", v.Status, v.Error)
+	}
+
+	// The good frame's PNG must be persisted.
+	goodPNG := filepath.Join(p.DataDir, "screens", in.TenantID, in.VersionID, in.Frames[0].ScreenID+"@2x.png")
+	if _, err := os.Stat(goodPNG); err != nil {
+		t.Fatalf("good frame png missing: %v", err)
+	}
+	// The skipped frame must NOT have a PNG file written.
+	skippedPNG := filepath.Join(p.DataDir, "screens", in.TenantID, in.VersionID, in.Frames[1].ScreenID+"@2x.png")
+	if _, err := os.Stat(skippedPNG); err == nil {
+		t.Fatalf("skipped frame should not have png; found %s", skippedPNG)
+	}
+
+	// BOTH frames must have canonical_tree rows (Stage 2 populated them
+	// regardless of Stage 3 outcome). The skipped frame's screen has the
+	// tree but no PNG — the leaf canvas vector renderer can still draw
+	// from the tree alone.
+	for i, f := range in.Frames {
+		tr, gerr := p.Repo.GetCanonicalTree(context.Background(), in.ProjectSlug, f.ScreenID)
+		if gerr != nil {
+			t.Fatalf("frame[%d] (%s) missing canonical_tree: %v", i, f.FigmaFrameID, gerr)
+		}
+		if tr == nil || tr.Tree == "" {
+			t.Fatalf("frame[%d] canonical_tree empty", i)
+		}
+	}
+}
+
+// TestPipeline_HardFailWhenAllFramesMissRenderURL — fail-soft only applies
+// when SOMETHING rendered. If Figma can't render ANY frame, the version
+// should still flip to failed so the FE retry path stays available; we
+// don't want a half-baked view_ready with zero PNGs.
+func TestPipeline_HardFailWhenAllFramesMissRenderURL(t *testing.T) {
+	renderer := &stubRenderer{
+		urls: map[string]string{}, // empty — nothing rendered
+		pngs: map[string][]byte{},
+	}
+	fetcher := &stubNodeFetcher{
+		frames: map[string]any{
+			"fig-1": map[string]any{"document": map[string]any{"id": "fig-1", "type": "FRAME"}},
+			"fig-2": map[string]any{"document": map[string]any{"id": "fig-2", "type": "FRAME"}},
+		},
+	}
+	p, in, _ := setupPipelineTest(t, renderer, fetcher)
+	err := p.RunFastPreview(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected hard failure when no frame rendered, got nil")
+	}
+	if !strings.Contains(err.Error(), "rendered no URL for any frame") {
+		t.Errorf("expected 'rendered no URL for any frame' in error; got %v", err)
+	}
 }
 
 func TestRecoverStuckVersions_LeavesFreshAlone(t *testing.T) {

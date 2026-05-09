@@ -310,10 +310,38 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 		extractedTrees[f.FigmaFrameID] = canonicalTreeEntry{treeJSON: treeJSON, hash: hash}
 	}
 
+	// Partition frames by render-URL availability. Pre-2026-05-09 the
+	// pipeline aborted the entire version when ANY frame was missing a
+	// PNG URL — so a single Figma-side render bug on one node ID stranded
+	// every other frame in the same import (goals-revamp-iteration-2:
+	// 1 bad frame, 122 sibling frames lost). Now we keep going for the
+	// renderable frames and skip the stragglers; they end up with a
+	// canonical_tree but NULL png_storage_key (Stage 2's /nodes call
+	// already populated the tree, which is independent of /images).
+	goodFrames := make([]PipelineFrame, 0, len(in.Frames))
+	skippedFrameIDs := make([]string, 0)
 	for _, frame := range in.Frames {
-		if url, ok := pngURLs[frame.FigmaFrameID]; !ok || url == "" {
-			return fmt.Errorf("figma rendered no URL for frame %s", frame.FigmaFrameID)
+		if url, ok := pngURLs[frame.FigmaFrameID]; ok && url != "" {
+			goodFrames = append(goodFrames, frame)
+		} else {
+			skippedFrameIDs = append(skippedFrameIDs, frame.FigmaFrameID)
 		}
+	}
+	if len(goodFrames) == 0 {
+		// All frames failed Figma's image render — there's nothing to
+		// recover. Keep the historical hard-fail so the version flips
+		// to `failed` and the FE retry button stays available. The
+		// list of frame IDs is in the error so ops can grep it.
+		return fmt.Errorf("figma rendered no URL for any frame in version %s (frames=%v)",
+			in.VersionID, skippedFrameIDs)
+	}
+	if len(skippedFrameIDs) > 0 && p.Log != nil {
+		p.Log.Warn("pipeline: figma render-URL miss; skipping affected frames",
+			"version_id", in.VersionID,
+			"total_frames", len(in.Frames),
+			"skipped_frames", len(skippedFrameIDs),
+			"skipped_ids", skippedFrameIDs,
+		)
 	}
 
 	// Stage 4 — download, downsample, persist (parallel, bounded).
@@ -351,7 +379,7 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 	}
 
 	sem := make(chan struct{}, Stage4DownloadConcurrency)
-	for _, frame := range in.Frames {
+	for _, frame := range goodFrames {
 		frame := frame
 		url := pngURLs[frame.FigmaFrameID]
 		stage4WG.Add(1)
