@@ -71,6 +71,16 @@ type config struct {
 	DevAuthBypass       bool
 	DevAuthBypassTenant string
 	DevAuthBypassEmail  string
+
+	// HTTP/2 via TLS. When both cert + key paths are non-empty the server
+	// also binds a TLS listener on TLSAddr (default :8443). Browsers won't
+	// negotiate HTTP/2 over cleartext, so this is the only way the canvas
+	// asset GETs escape the HTTP/1.1 6-conn-per-origin cap. Production
+	// behind an h2-terminating edge (Vercel, Fly, Cloudflare) doesn't
+	// need this set — the edge speaks h2 to the browser regardless.
+	TLSCertPath string
+	TLSKeyPath  string
+	TLSAddr     string
 }
 
 func main() {
@@ -411,12 +421,41 @@ func main() {
 	srv.routes(mux)
 
 	addr := ":" + cfg.Port
+	handler := srv.cors(srv.requestLog(mux))
+
+	// Optional TLS listener for HTTP/2. When DS_TLS_CERT + DS_TLS_KEY are set,
+	// run a second listener on DS_TLS_ADDR (default :8443) with TLS — Go's
+	// stdlib auto-enables HTTP/2 via ALPN when serving over TLS, so browsers
+	// multiplex hundreds of asset GETs over one connection instead of queueing
+	// on the HTTP/1.1 6-conn-per-origin cap.
+	//
+	// Cleartext HTTP/1.1 stays bound on :Port for non-browser clients
+	// (curl scripts, sheets-sync internal calls, server-to-server) until
+	// every caller is migrated. Both listeners share the same handler so
+	// auth / CORS / routes / SSE behaviour are identical.
+	if cfg.TLSCertPath != "" && cfg.TLSKeyPath != "" {
+		tlsAddr := cfg.TLSAddr
+		if tlsAddr == "" {
+			tlsAddr = ":8443"
+		}
+		log.Info("ds-service listening (TLS, HTTP/2)",
+			"addr", tlsAddr,
+			"cert", cfg.TLSCertPath,
+		)
+		go func() {
+			if err := http.ListenAndServeTLS(tlsAddr, cfg.TLSCertPath, cfg.TLSKeyPath, handler); err != nil {
+				log.Error("tls server", "err", err)
+				os.Exit(1)
+			}
+		}()
+	}
+
 	log.Info("ds-service listening",
 		"addr", addr,
 		"repo_dir", cfg.RepoDir,
 		"sync_git_push", cfg.SyncGitPush,
 	)
-	if err := http.ListenAndServe(addr, srv.cors(srv.requestLog(mux))); err != nil {
+	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Error("server", "err", err)
 		os.Exit(1)
 	}
@@ -440,6 +479,13 @@ func loadConfig(log *slog.Logger) (*config, error) {
 		DevAuthBypass:       os.Getenv("DEV_AUTH_BYPASS") == "1",
 		DevAuthBypassTenant: getenv("DEV_AUTH_BYPASS_TENANT", "e090530f-2698-489d-934a-c821cb925c8a"),
 		DevAuthBypassEmail:  getenv("DEV_AUTH_BYPASS_EMAIL", "dev@local"),
+
+		// HTTP/2 TLS — see config struct comment for the why. Both DS_TLS_CERT
+		// and DS_TLS_KEY must be set for the TLS listener to bind; either
+		// missing leaves the server in cleartext-only mode.
+		TLSCertPath: os.Getenv("DS_TLS_CERT"),
+		TLSKeyPath:  os.Getenv("DS_TLS_KEY"),
+		TLSAddr:     getenv("DS_TLS_ADDR", ":8443"),
 	}
 	if c.DevAuthBypass {
 		log.Warn("DEV_AUTH_BYPASS=1 — JWT verification SKIPPED for every request",

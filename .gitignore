@@ -32,10 +32,18 @@ lib/tokens-generated/
 # Rendered screen assets — tenant data, not code.
 **/services/ds-service/data/screens/
 **/services/ds-service/data/canonical_trees/
+# Pipeline output: per-node PNG/SVG renders, screen image-fill cache,
+# four-tier preview pyramid. Hundreds of MB per tenant, regenerable
+# from the source Figma files via sheets-sync + Stage 9 prerender.
+**/services/ds-service/data/assets/
+**/services/ds-service/data/image-fills/
+**/services/ds-service/data/preview-pyramid/
 
 # Go build artifacts
 services/ds-service/bin/
 services/ds-service/cmd/extractor/extractor
+services/ds-service/server
+services/ds-service/bootstrap-tenant
 
 # Misc
 .DS_Store

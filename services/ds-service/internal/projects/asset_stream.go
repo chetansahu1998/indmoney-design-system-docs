@@ -129,11 +129,25 @@ func (s *Server) HandleAssetStreamTicket(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Verify the leaf belongs to the project (which itself belongs to the
-	// tenant). LookupLeafFigmaContext does the tenant join implicitly via the
-	// repo's tenantID filter; an out-of-tenant leafID surfaces ErrNotFound.
+	// Verify the leaf belongs to the project. After the brain-products
+	// migration the frontend passes the project slug as leaf_id (see
+	// screen_image_fills.go:135 for the same pattern); resolve to a real
+	// flow UUID before LookupLeafFigmaContext, which expects a flow id.
 	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
-	if _, _, err := repo.LookupLeafFigmaContext(r.Context(), leafID); err != nil {
+	resolvedLeafID := leafID
+	if leafID == slug {
+		flowID, ferr := repo.PrimaryFlowIDForSlug(r.Context(), slug)
+		if ferr != nil {
+			if errors.Is(ferr, ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			writeJSONErr(w, http.StatusInternalServerError, "primary_flow", ferr.Error())
+			return
+		}
+		resolvedLeafID = flowID
+	}
+	if _, _, err := repo.LookupLeafFigmaContext(r.Context(), resolvedLeafID); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			http.NotFound(w, r)
 			return
@@ -219,8 +233,24 @@ func (s *Server) HandleAssetStream(w http.ResponseWriter, r *http.Request) {
 	// pyramid persistence. A ticket already passed the LookupLeafFigmaContext
 	// check at issuance time, but tenants can change repo state between
 	// issuance and redemption (mid-import deletion); fail with 404 here too.
+	//
+	// Apply the same slug-as-leafID fallback as the ticket handler (and
+	// screen_image_fills.go:135) so the post-brain-products frontend works.
 	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
-	fileID, versionIndex, err := repo.LookupLeafFigmaContext(r.Context(), leafID)
+	resolvedLeafID := leafID
+	if leafID == slug {
+		flowID, ferr := repo.PrimaryFlowIDForSlug(r.Context(), slug)
+		if ferr != nil {
+			if errors.Is(ferr, ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			writeJSONErr(w, http.StatusInternalServerError, "primary_flow", ferr.Error())
+			return
+		}
+		resolvedLeafID = flowID
+	}
+	fileID, versionIndex, err := repo.LookupLeafFigmaContext(r.Context(), resolvedLeafID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			http.NotFound(w, r)
@@ -234,7 +264,7 @@ func (s *Server) HandleAssetStream(w http.ResponseWriter, r *http.Request) {
 	// One SQL query, decompress per row, dedup IDs across screens. Empty
 	// result is fine — no clusters means we close the stream immediately
 	// after the headers; the frontend's onComplete fires and falls through.
-	trees, err := repo.ListCanonicalTreesForFlow(r.Context(), leafID)
+	trees, err := repo.ListCanonicalTreesForFlow(r.Context(), resolvedLeafID)
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		writeJSONErr(w, http.StatusInternalServerError, "list_trees", err.Error())
 		return
@@ -259,7 +289,7 @@ func (s *Server) HandleAssetStream(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	streamLeafAssets(streamCtx, s, w, flusher,
-		tenantID, slug, leafID, fileID, versionIndex, clusterIDs)
+		tenantID, slug, resolvedLeafID, fileID, versionIndex, clusterIDs)
 }
 
 // dedupeClusterIDs walks every per-screen canonical_tree and returns the

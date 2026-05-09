@@ -325,3 +325,36 @@ export function __resetLeafAssetStreamForTests(): void {
   }
   streams.clear();
 }
+
+/** Debug helper. Returns a snapshot of every active leaf-stream's state for
+ * dev-tools inspection. Available via `window.__leafAssetStreamDebug()`. */
+export function __debugLeafAssetStreams(): Array<{
+  key: string;
+  status: string;
+  urlsCount: number;
+  failedCount: number;
+  subscriberCount: number;
+}> {
+  const out: Array<{
+    key: string;
+    status: string;
+    urlsCount: number;
+    failedCount: number;
+    subscriberCount: number;
+  }> = [];
+  for (const [key, state] of streams.entries()) {
+    out.push({
+      key,
+      status: state.status,
+      urlsCount: state.urls.size,
+      failedCount: state.failedIDs.size,
+      subscriberCount: state.subscribers.size,
+    });
+  }
+  return out;
+}
+
+if (typeof window !== "undefined") {
+  (window as unknown as { __leafAssetStreamDebug?: typeof __debugLeafAssetStreams }).__leafAssetStreamDebug =
+    __debugLeafAssetStreams;
+}
