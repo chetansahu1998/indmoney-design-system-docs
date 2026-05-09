@@ -281,19 +281,53 @@ function renderText(
         : undefined,
     textAlign: textAlign(style.textAlignHorizontal),
     fontStyle: style.italic ? "italic" : undefined,
-    // pre-wrap honors explicit `\n` in `characters` AND wraps long lines
-    // when the bbox can hold multiple. Figma sizes the bbox to fit the
-    // text under "Auto height"; for "Fixed size" text the bbox is the
-    // user's chosen rect and `overflow: hidden` clips overflow. Without
-    // textAutoResize on canonical_tree we can't pick the right mode per
-    // node — pre-wrap is the safer default for both. See
-    // docs/issues/2026-05-05-text-auto-resize.md.
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    overflow: "hidden",
     display: "inline-block",
     boxSizing: "border-box",
   };
+
+  // Honor textAutoResize when present (canonical_tree carries it from
+  // Figma's /v1/files/.../nodes response). Pre-2026-05-09 the renderer
+  // forced pre-wrap + bbox-width on every TEXT node — fine for HEIGHT-
+  // autoresized text but wrong for WIDTH_AND_HEIGHT, which clipped or
+  // wrapped labels the designer expected to flow on a single line
+  // (production case: INDmoney splash "SSL Secured" wrapping to two
+  // lines because the bbox width was forced from the rendered box,
+  // not from the natural single-line glyph run).
+  switch (node.textAutoResize) {
+    case "WIDTH_AND_HEIGHT":
+      // Box hugs the single-line glyph run. Override the bbox width
+      // applied by sizeStyle so the text-measure step decides the
+      // width — Figma already sized the bbox to fit; the renderer
+      // doesn't need to recompute it. Position (left/top) still comes
+      // from positionStyle.
+      textStyle.width = "auto";
+      textStyle.height = "auto";
+      textStyle.whiteSpace = "nowrap";
+      // No overflow clip — designer-controlled WIDTH_AND_HEIGHT text
+      // is sized by Figma to fit; clipping would falsify that contract.
+      break;
+    case "TRUNCATE":
+      // Single line, fixed width, ellipsis on overflow.
+      textStyle.whiteSpace = "nowrap";
+      textStyle.overflow = "hidden";
+      textStyle.textOverflow = "ellipsis";
+      break;
+    case "NONE":
+      // Both axes fixed — wrap and clip overflow.
+      textStyle.whiteSpace = "pre-wrap";
+      textStyle.wordBreak = "break-word";
+      textStyle.overflow = "hidden";
+      break;
+    case "HEIGHT":
+    default:
+      // Width fixed, height auto. pre-wrap honors explicit `\n` AND
+      // wraps long lines. This is also the safe fallback for legacy
+      // canonical_trees that pre-date textAutoResize canonicalization.
+      textStyle.whiteSpace = "pre-wrap";
+      textStyle.wordBreak = "break-word";
+      textStyle.overflow = "hidden";
+      break;
+  }
 
   return createElement(
     "span",

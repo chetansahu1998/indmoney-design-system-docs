@@ -86,6 +86,24 @@ export function isIconCluster(node: CanonicalNode): boolean {
   // BOOLEAN_OPERATION historically passed without size gating; preserve
   // that for parity with the pre-2026-05-08 behaviour.
   if (t === "FRAME" && exceedsClusterSize(node)) return false;
+  // Autolayout-descendant guard. Pre-2026-05-09 the heuristic looked only
+  // at leaf counts, so anything that LOOKED illustration-shaped clustered
+  // — including:
+  //   - chart screens with time-frame pills (1D/1W/1M/...) inside an
+  //     autolayout horizontal FRAME below the chart line. The pills
+  //     became unselectable because the whole screen rasterized as one
+  //     PNG.
+  //   - top-N list cards (ETFs, holdings, watchlist rows) where each
+  //     row is an autolayout HORIZONTAL frame containing icon + text +
+  //     price. The whole list rasterized; designers couldn't click an
+  //     individual row to inspect overrides.
+  // Autolayout is the cleanest signal that "this subtree has interactive
+  // UI containers, not just illustration shapes" — clustering past it
+  // would freeze interactive structure into pixels. Named illustrations
+  // and charts (ILLUSTRATION_NAME_RE / CHART_NAME_RE) still cluster via
+  // node-classifier's name fast paths; this guard only fires for the
+  // structural-heuristic fallback.
+  if (hasAutolayoutDescendant(node)) return false;
   // Pure-icon fast path — no TEXT descendants, just need ≥1 shape leaf.
   if (!hasTextDescendant(node)) return hasShapeDescendant(node);
   // Mixed-content path: illustration frames may embed a few labels
@@ -101,6 +119,32 @@ export function isIconCluster(node: CanonicalNode): boolean {
   if (shapes < 8) return false;
   const textBudget = Math.max(4, Math.floor((shapes * 3) / 2));
   return texts <= textBudget;
+}
+
+/**
+ * hasAutolayoutDescendant reports whether the subtree contains any
+ * FRAME (or INSTANCE/COMPONENT) that has `layoutMode` set to a non-NONE
+ * direction. The screen-root autolayout itself is excluded — we're
+ * looking at DESCENDANTS, not the wrapper being classified, because
+ * a wrapper that only HAS layout (no inner autolayout subtrees) could
+ * still legitimately be an illustration laid out via auto-layout
+ * (rare but possible). The descendant signal is what actually reveals
+ * "interactive UI containers nested inside".
+ */
+export function hasAutolayoutDescendant(node: CanonicalNode): boolean {
+  if (!Array.isArray(node.children)) return false;
+  for (const c of node.children) {
+    if (isAutolayoutFrame(c)) return true;
+    if (hasAutolayoutDescendant(c)) return true;
+  }
+  return false;
+}
+
+function isAutolayoutFrame(n: CanonicalNode): boolean {
+  if (n.type !== "FRAME" && n.type !== "INSTANCE" && n.type !== "COMPONENT") {
+    return false;
+  }
+  return n.layoutMode === "HORIZONTAL" || n.layoutMode === "VERTICAL";
 }
 
 export function hasTextDescendant(node: CanonicalNode): boolean {

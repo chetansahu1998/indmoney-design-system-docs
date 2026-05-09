@@ -685,3 +685,116 @@ func TestIsCluster_ExistingIconPath_StillClusters(t *testing.T) {
 		t.Fatalf("expected icon to cluster via name pattern, got %v", ids)
 	}
 }
+
+// ─── isCluster: autolayout-descendant guard (2026-05-09) ──────────────────
+//
+// Production cases from the May 9 fix:
+//   - Gold/Silver index screens — chart line + autolayout pills row.
+//     Pre-fix the entire 375×556 phone screen rasterized as one PNG;
+//     designers couldn't click time-frame pills.
+//   - Top-N ETF list cards — autolayout VERTICAL list of autolayout
+//     HORIZONTAL rows. Pre-fix the whole list rasterized; designers
+//     couldn't click an individual row.
+//
+// The TS-side mirror in app/atlas/_lib/leafcanvas-v2/icon-cluster-resolver.ts
+// has parallel tests in __tests__/isIconCluster-autolayout-guard.vitest.ts.
+
+func TestIsCluster_AutolayoutDescendant_ChartScreen_DoesNotCluster(t *testing.T) {
+	// 20 chart-line vectors + a 7-pill autolayout-horizontal row. Without
+	// the autolayout guard, the leaf-count heuristic (shapes=20, texts=7,
+	// budget=max(4,30)=30, 7<=30) would cluster the whole screen.
+	var chartShapes []string
+	for i := 0; i < 20; i++ {
+		chartShapes = append(chartShapes, fmt.Sprintf(`{"id":"c%d","type":"VECTOR"}`, i))
+	}
+	var pillTexts []string
+	for i, label := range []string{"1D", "1W", "1M", "3M", "1Y", "3Y", "5Y"} {
+		pillTexts = append(pillTexts, fmt.Sprintf(`{"id":"p%d","type":"TEXT","characters":%q}`, i, label))
+	}
+	// Use a name that does NOT trigger chartNamePattern — production
+	// screens like Gold/Silver index ship as anonymous "Frame 2147228505"
+	// numbered nodes (the user has no naming convention for them).
+	tree := fmt.Sprintf(`{
+		"id":"screen","type":"FRAME","name":"Frame 2147228505",
+		"absoluteBoundingBox":{"width":375,"height":556},
+		"children":[
+			{"id":"chart-line","type":"GROUP","children":[%s]},
+			{"id":"pills","type":"FRAME","layoutMode":"HORIZONTAL","children":[%s]}
+		]
+	}`, strings.Join(chartShapes, ","), strings.Join(pillTexts, ","))
+	ids := ExtractClusterIDs([]byte(tree))
+	for _, id := range ids {
+		if id == "screen" {
+			t.Fatalf("did not expect chart screen with autolayout pills to cluster, got %v", ids)
+		}
+	}
+}
+
+func TestIsCluster_AutolayoutDescendant_ListCard_DoesNotCluster(t *testing.T) {
+	// 4-row list, each row autolayout-horizontal with icon + 2 texts.
+	// Without the guard the budget would cluster (shapes=8 from the icons,
+	// texts=8, budget=12, 8<=12).
+	row := func(i int) string {
+		return fmt.Sprintf(`{
+			"id":"row-%d","type":"FRAME","layoutMode":"HORIZONTAL","children":[
+				{"id":"icon-%d","type":"GROUP","children":[
+					{"id":"vi-%d-1","type":"VECTOR"},
+					{"id":"vi-%d-2","type":"VECTOR"}
+				]},
+				{"id":"name-%d","type":"TEXT","characters":"Fund"},
+				{"id":"price-%d","type":"TEXT","characters":"₹25"}
+			]}`, i, i, i, i, i, i)
+	}
+	rows := []string{row(0), row(1), row(2), row(3)}
+	tree := fmt.Sprintf(`{
+		"id":"list","type":"FRAME","name":"Top Gold ETFs","layoutMode":"VERTICAL",
+		"absoluteBoundingBox":{"width":343,"height":373},
+		"children":[%s]
+	}`, strings.Join(rows, ","))
+	ids := ExtractClusterIDs([]byte(tree))
+	for _, id := range ids {
+		if id == "list" {
+			t.Fatalf("did not expect list card with autolayout rows to cluster as a whole, got %v", ids)
+		}
+	}
+}
+
+func TestIsCluster_AutolayoutDescendant_PureIllustration_StillClusters(t *testing.T) {
+	// Pure vault-with-coins illustration GROUP — many vectors, no
+	// autolayout anywhere. Should still cluster (regression guard for
+	// FD Upswing-style content).
+	var shapes []string
+	for i := 0; i < 20; i++ {
+		shapes = append(shapes, fmt.Sprintf(`{"id":"v%d","type":"VECTOR"}`, i))
+	}
+	tree := fmt.Sprintf(`{
+		"id":"wrap","type":"GROUP","name":"Group 1321319461","children":[
+			{"id":"inner","type":"GROUP","children":[%s]}
+		]
+	}`, strings.Join(shapes, ","))
+	ids := ExtractClusterIDs([]byte(tree))
+	if len(ids) != 1 || ids[0] != "wrap" {
+		t.Fatalf("expected pure-illustration wrapper to still cluster, got %v", ids)
+	}
+}
+
+func TestIsCluster_AutolayoutDescendant_NamedChart_StillClusters(t *testing.T) {
+	// chartNamePattern fast-path runs BEFORE the autolayout guard, so an
+	// explicitly chart-named wrapper at chart size still clusters even
+	// if its subtree contains autolayout (pills inside a chart-named
+	// frame). This preserves the explicit designer intent.
+	tree := `{
+		"id":"chart","type":"FRAME","name":"Stock Chart",
+		"absoluteBoundingBox":{"width":375,"height":403},
+		"children":[
+			{"id":"line","type":"VECTOR"},
+			{"id":"pills","type":"FRAME","layoutMode":"HORIZONTAL","children":[
+				{"id":"p1","type":"TEXT","characters":"1D"}
+			]}
+		]
+	}`
+	ids := ExtractClusterIDs([]byte(tree))
+	if len(ids) != 1 || ids[0] != "chart" {
+		t.Fatalf("expected chart-named wrapper to cluster despite autolayout descendant, got %v", ids)
+	}
+}

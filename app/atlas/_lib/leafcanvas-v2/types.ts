@@ -199,6 +199,26 @@ export interface CanonicalNode {
   rectangleCornerRadii?: [number, number, number, number];
   characters?: string;
   style?: TextStyle;
+  /**
+   * Figma's autoresize mode for TEXT nodes. Controls how the text-node bbox
+   * relates to the rendered glyph run.
+   *
+   *   WIDTH_AND_HEIGHT — bbox grows on both axes to fit the text. Renderer
+   *                      should emit width=auto + white-space=nowrap so the
+   *                      box hugs the natural single-line width. Forcing the
+   *                      bbox width onto the box would clip or wrap text the
+   *                      designer intended to flow.
+   *   HEIGHT           — width is fixed (designer-set), height grows. Wrap
+   *                      with white-space=pre-wrap and let the box expand
+   *                      vertically.
+   *   NONE             — both axes fixed; clip overflow with overflow=hidden.
+   *   TRUNCATE         — width fixed, single line, truncate with ellipsis.
+   *
+   * Production case: INDmoney splash "AES-256 SSL Secured" labels were
+   * exported with WIDTH_AND_HEIGHT but the renderer ignored the field and
+   * applied a fixed-width box, so the text wrapped to two lines (2026-05-09).
+   */
+  textAutoResize?: "WIDTH_AND_HEIGHT" | "HEIGHT" | "NONE" | "TRUNCATE";
   children?: CanonicalNode[];
 }
 

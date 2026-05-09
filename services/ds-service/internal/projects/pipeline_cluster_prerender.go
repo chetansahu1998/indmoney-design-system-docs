@@ -208,6 +208,95 @@ func ExtractClusterIDs(canonicalTreeJSON []byte) []string {
 	return out
 }
 
+// ClusterCandidate is the enriched output of ExtractClustersWithSVGFlag —
+// the cluster's node ID plus an SVG-eligibility verdict for routing into
+// the SVG vs raster render branch in Stage 9. SkipReasons echoes the
+// IsSVGEligible blocklist hits so the operator log + asset_cache row can
+// cite WHY a cluster fell back to raster (image fill, blur, blend mode,
+// etc).
+type ClusterCandidate struct {
+	ID           string
+	SVGEligible  bool
+	SkipReasons []string
+}
+
+// ExtractClustersWithSVGFlag walks the canonical_tree blob exactly like
+// ExtractClusterIDs but, on each cluster discovery, also evaluates the
+// SVG eligibility blocklist against the cluster's subtree. The split-by-
+// flag result lets Stage 9 dispatch SVG-eligible clusters to a single
+// /v1/images?format=svg call — vector-faithful at any zoom — and route
+// the remainder through the existing pyramid path.
+func ExtractClustersWithSVGFlag(canonicalTreeJSON []byte) []ClusterCandidate {
+	if len(canonicalTreeJSON) == 0 {
+		return nil
+	}
+	var root any
+	if err := json.Unmarshal(canonicalTreeJSON, &root); err != nil {
+		return nil
+	}
+	if m, ok := root.(map[string]any); ok {
+		if doc, hasDoc := m["document"]; hasDoc {
+			root = doc
+		}
+	}
+	out := make([]ClusterCandidate, 0, 32)
+	walkClustersWithSVGFlag(root, &out, 0)
+	return out
+}
+
+// walkClustersWithSVGFlag mirrors walkClusters but emits a
+// ClusterCandidate per cluster instead of just an ID. On cluster
+// discovery the function evaluates IsSVGEligible-equivalent rules
+// against the cluster's subtree (the same map[string]any node we
+// already hold), so we don't pay for a second JSON unmarshal per
+// cluster.
+func walkClustersWithSVGFlag(node any, acc *[]ClusterCandidate, depth int) {
+	if depth > walkClusterMaxDepth {
+		return
+	}
+	if len(*acc) >= walkClusterMaxAccLen {
+		return
+	}
+	m, ok := node.(map[string]any)
+	if !ok {
+		return
+	}
+	visible := true
+	if v, has := m["visible"].(bool); has && !v {
+		visible = false
+	}
+	if removed, has := m["removed"].(bool); has && removed {
+		visible = false
+	}
+	if !visible {
+		return
+	}
+	id, _ := m["id"].(string)
+	nodeType, _ := m["type"].(string)
+	name, _ := m["name"].(string)
+
+	if id != "" && isCluster(m, nodeType, name) {
+		// Evaluate SVG eligibility on the cluster's subtree by reusing
+		// the in-memory map. We piggyback on a shared SVGEligibility
+		// state walker (same blocklist as IsSVGEligible) without
+		// re-parsing JSON.
+		res := SVGEligibility{OK: true}
+		walkSVGEligible(node, &res, 0)
+		*acc = append(*acc, ClusterCandidate{
+			ID:          id,
+			SVGEligible: res.OK,
+			SkipReasons: res.Reasons,
+		})
+		// Cluster encompasses its subtree — do not descend further.
+		return
+	}
+	if children, ok := m["children"].([]any); ok {
+		for _, c := range children {
+			walkClustersWithSVGFlag(c, acc, depth+1)
+		}
+	}
+}
+
 // walkClusterMaxDepth caps recursion in walkClusters. Real Figma files
 // nest under ~10 levels typical (the UI doesn't surface deeper); 256
 // is well above any legitimate input but small enough to bound the
@@ -313,6 +402,28 @@ func isCluster(node map[string]any, nodeType, name string) bool {
 	if chartNamePattern.MatchString(name) && hasBBoxWithinClusterSize(node) {
 		return true
 	}
+	// Autolayout-descendant guard. Mirror of TS-side
+	// `hasAutolayoutDescendant` in icon-cluster-resolver.ts. When the
+	// subtree contains FRAME/INSTANCE/COMPONENT children with non-NONE
+	// `layoutMode`, that's a strong signal of "interactive UI containers
+	// nested inside" — clustering past that point freezes structure
+	// designers expect to be selectable into pixels.
+	//
+	// Production cases (2026-05-09):
+	//   - Gold/Silver index screens: time-frame pills (1D/1W/1M/...) are
+	//     an autolayout horizontal FRAME below the chart line. Pre-fix
+	//     the whole 375×556 screen rasterized as one PNG.
+	//   - Top-N ETF list cards: each row is an autolayout HORIZONTAL
+	//     frame; the list container an autolayout VERTICAL. Pre-fix the
+	//     entire list rasterized; designers couldn't click a row to
+	//     inspect overrides.
+	//
+	// Named illustrations / charts still cluster — name regexes ran above
+	// already. This guard only fires for the structural-heuristic
+	// fallback that catches anonymous wrappers.
+	if hasAutolayoutDescendant(node) {
+		return false
+	}
 	// Illustration-subtree heuristic. Cluster the wrapper as a whole
 	// if it's a chart-sized region whose shape/text mix looks like a
 	// data-viz or illustration.
@@ -348,6 +459,50 @@ func isCluster(node map[string]any, nodeType, name string) bool {
 		textBudget = 4
 	}
 	return textLeaves <= textBudget
+}
+
+// hasAutolayoutDescendant reports whether the subtree contains any
+// FRAME/INSTANCE/COMPONENT child with a non-NONE `layoutMode`. Used as
+// a guard against clustering wrappers that mix illustration shapes
+// with interactive UI containers (chart screens with time-frame pills,
+// list cards with autolayout rows). See isCluster's call site for the
+// production cases that motivated the check, and TS-side parity in
+// app/atlas/_lib/leafcanvas-v2/icon-cluster-resolver.ts.
+//
+// Excludes the wrapper being classified — only descendants count, so a
+// wrapper that itself has layoutMode set but contains no inner
+// autolayout subtrees (rare but possible for illustration-style auto-
+// layout) still reaches the leaf-count heuristic.
+func hasAutolayoutDescendant(node map[string]any) bool {
+	if node == nil {
+		return false
+	}
+	children, _ := node["children"].([]any)
+	for _, c := range children {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		if isAutolayoutFrame(cm) {
+			return true
+		}
+		if hasAutolayoutDescendant(cm) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAutolayoutFrame(n map[string]any) bool {
+	if n == nil {
+		return false
+	}
+	t, _ := n["type"].(string)
+	if t != "FRAME" && t != "INSTANCE" && t != "COMPONENT" {
+		return false
+	}
+	lm, _ := n["layoutMode"].(string)
+	return lm == "HORIZONTAL" || lm == "VERTICAL"
 }
 
 // hasBBoxWithinClusterSize requires a present bbox AND that the bbox
