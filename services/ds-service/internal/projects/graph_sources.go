@@ -871,7 +871,7 @@ func FillFlowComponentEdges(ctx context.Context, db *sql.DB, tenantID, platform 
 	            WHERE pv2.project_id = pv.project_id
 	       )
 	)
-	SELECT s.flow_id, COALESCE(t.canonical_tree, ''), t.canonical_tree_gz
+	SELECT s.flow_id, COALESCE(t.canonical_tree, ''), t.canonical_tree_gz, t.canonical_tree_zstd
 	  FROM screens s
 	  JOIN latest_versions lv ON lv.id = s.version_id
 	  LEFT JOIN screen_canonical_trees t ON t.screen_id = s.id
@@ -886,11 +886,11 @@ func FillFlowComponentEdges(ctx context.Context, db *sql.DB, tenantID, platform 
 	perFlow := map[string]map[string]struct{}{}
 	for dbRows.Next() {
 		var flowID, legacy string
-		var gz []byte
-		if err := dbRows.Scan(&flowID, &legacy, &gz); err != nil {
+		var gz, zstdBlob []byte
+		if err := dbRows.Scan(&flowID, &legacy, &gz, &zstdBlob); err != nil {
 			return fmt.Errorf("scan canonical tree row: %w", err)
 		}
-		treeJSON, err := ResolveCanonicalTree(legacy, gz)
+		treeJSON, err := ResolveCanonicalTree(legacy, gz, zstdBlob)
 		if err != nil {
 			// Malformed gzip is logged at the worker level; skip
 			// silently so one bad row doesn't poison the whole flow.

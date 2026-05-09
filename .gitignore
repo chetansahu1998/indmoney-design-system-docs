@@ -44,6 +44,9 @@ services/ds-service/bin/
 services/ds-service/cmd/extractor/extractor
 services/ds-service/server
 services/ds-service/bootstrap-tenant
+services/ds-service/compress-trees
+services/ds-service/svg-eligibility-bench
+services/ds-service/zstd-bench
 
 # Misc
 .DS_Store

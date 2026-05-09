@@ -1,0 +1,26 @@
+-- 0022_canonical_tree_zstd — Phase 1.1 of 2026-05-09 storage-shrink plan.
+--
+-- Adds a third storage column for the canonical_tree blob, this time
+-- zstd-compressed instead of gzip. Measured on this tenant's 5,647-tree
+-- corpus (cmd/zstd-bench): zstd L19 produces 765.8 MB total vs the
+-- 1.17 GB gzip column — 432.9 MB / 36.1% saved with NO dictionary.
+-- Decompression is 3.2× faster than gzip (1.57 ms p50 → 0.49 ms p50)
+-- so the canvas-render hot path also gets cheaper, not just the disk.
+--
+-- Dual-column strategy mirrors 0016 (the gzip migration):
+--   write path: insert into canonical_tree_zstd, leave canonical_tree_gz
+--               NULL on new rows.
+--   read path:  ResolveCanonicalTree picks the first non-empty column in
+--               priority order zstd > gz > legacy, decompresses
+--               accordingly, returns the raw JSON string.
+--
+-- Backfill is a one-shot: cmd/compress-trees is extended with a
+-- --to=zstd mode that decompresses every row's existing _gz column
+-- and re-encodes into _zstd. Idempotent — re-running with rows that
+-- already have _zstd populated is a no-op.
+--
+-- Once `SELECT count(*) FROM screen_canonical_trees WHERE canonical_tree_zstd IS NULL`
+-- reports zero on production, a follow-up migration drops both
+-- canonical_tree (legacy TEXT) and canonical_tree_gz (BLOB) columns.
+
+ALTER TABLE screen_canonical_trees ADD COLUMN canonical_tree_zstd BLOB;

@@ -402,6 +402,21 @@ dispatch:
 			nodeCtx, nodeCancel := context.WithTimeout(ctx, AssetStreamPerNodeBudget)
 			defer nodeCancel()
 
+			// SVG fast-path. Stage 9 stores SVG-eligible cluster
+			// renders with format="svg"; preferring that row gives
+			// the browser a vector image that scales without
+			// pixelation regardless of zoom — fixes the tier-2048
+			// ceiling complaint for clusters whose subtree is
+			// vector-pure (icons, illustrations). When the SVG row
+			// is absent (cluster failed eligibility, render didn't
+			// complete, or Stage 9 hasn't run yet) we fall through
+			// to the preview-pyramid path below.
+			if svgRow, svgHit, svgErr := repo.LookupAsset(nodeCtx, tenantID, fileID, nodeID, "svg", 1, versionIndex); svgErr == nil && svgHit && svgRow.StorageKey != "" {
+				rendered.Add(1)
+				emit("asset-ready", buildAssetReadyEvent(s, tenantID, slug, fileID, nodeID, "svg", 1))
+				return
+			}
+
 			// Cache fast-path. LookupAsset for the default tier; if hit,
 			// emit the signed URL directly — zero Figma traffic.
 			row, hit, lerr := repo.LookupAsset(nodeCtx, tenantID, fileID, nodeID, tierFormat, 1, versionIndex)

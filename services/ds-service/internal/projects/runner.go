@@ -199,12 +199,13 @@ func NewDBVersionScreenLoader(db *sql.DB) VersionScreenLoader {
 
 // LoadScreensWithTrees implements VersionScreenLoader.
 //
-// T8 — reads both canonical_tree (legacy) and canonical_tree_gz; the
-// ResolveCanonicalTree helper picks whichever is populated. New rows
-// stored gzipped, old rows stored plain — transparent to the caller.
+// Reads all three storage columns (legacy / gz / zstd); ResolveCanonicalTree
+// picks the populated one in priority order zstd > gz > legacy. New rows
+// after migration 0022 are zstd; T8-era rows are gz; pre-T8 rows are plain.
+// Transparent to the caller.
 func (l *dbVersionScreenLoader) LoadScreensWithTrees(ctx context.Context, versionID string) ([]ScreenWithTree, error) {
 	rows, err := l.db.QueryContext(ctx,
-		`SELECT s.id, s.flow_id, COALESCE(t.canonical_tree, ''), t.canonical_tree_gz
+		`SELECT s.id, s.flow_id, COALESCE(t.canonical_tree, ''), t.canonical_tree_gz, t.canonical_tree_zstd
 		   FROM screens s
 		   LEFT JOIN screen_canonical_trees t ON t.screen_id = s.id
 		  WHERE s.version_id = ?
@@ -219,11 +220,11 @@ func (l *dbVersionScreenLoader) LoadScreensWithTrees(ctx context.Context, versio
 	for rows.Next() {
 		var sc ScreenWithTree
 		var legacy string
-		var gz []byte
-		if err := rows.Scan(&sc.ScreenID, &sc.FlowID, &legacy, &gz); err != nil {
+		var gz, zstdBlob []byte
+		if err := rows.Scan(&sc.ScreenID, &sc.FlowID, &legacy, &gz, &zstdBlob); err != nil {
 			return nil, err
 		}
-		tree, err := ResolveCanonicalTree(legacy, gz)
+		tree, err := ResolveCanonicalTree(legacy, gz, zstdBlob)
 		if err != nil {
 			return nil, fmt.Errorf("decompress tree for screen %s: %w", sc.ScreenID, err)
 		}

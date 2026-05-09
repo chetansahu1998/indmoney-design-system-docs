@@ -630,6 +630,69 @@ func illustrationSubtreeSummary(node map[string]any) (shapes, texts int, valid b
 	return shapes, texts, true
 }
 
+// renderSVGClustersForVersion calls AssetExporter.RenderAssetsForLeaf
+// with format="svg" for the given cluster IDs, chunked at the same
+// AssetExportChunkSize the raster path uses. Persists asset_cache rows
+// with format="svg" so the asset-stream handler's cache-hit fast path
+// finds them later. Returns (renderedCount, firstError) — partial
+// failures are surfaced as renderedCount < len(ids) without aborting
+// the rest.
+//
+// Phase 2.1 — see svg_eligibility.go for the per-cluster filter and
+// pipeline.go Stage 9 for the call site.
+func renderSVGClustersForVersion(
+	ctx context.Context,
+	exporter *AssetExporter,
+	in PipelineInputs,
+	svgIDs []string,
+) (int, error) {
+	if exporter == nil || len(svgIDs) == 0 {
+		return 0, nil
+	}
+	// Tenant-scope a copy of the exporter — same trick PrerenderClusters
+	// uses for Phase 1. The shared base AssetExporter is constructed at
+	// boot with tenantID="" because Stage 9 is per-tenant per-version.
+	exp := *exporter
+	exp.Repo = NewTenantRepo(exporter.Repo.r.db, in.TenantID)
+
+	// Resolve a leafID for this version. SVG render only needs a leaf
+	// that belongs to the version (LookupLeafFigmaContext is leaf-scoped
+	// for the file_id+version_index lookup).
+	repo := exp.Repo
+	leafID, err := repo.GetAnyLeafIDForVersion(ctx, in.VersionID)
+	if err != nil {
+		return 0, fmt.Errorf("svg render: get leaf for version: %w", err)
+	}
+	if leafID == "" {
+		return 0, errors.New("svg render: no leaf found for version")
+	}
+
+	const chunk = AssetExportChunkSize // 80 IDs per Figma /v1/images call
+	rendered := 0
+	var firstErr error
+	for i := 0; i < len(svgIDs); i += chunk {
+		j := i + chunk
+		if j > len(svgIDs) {
+			j = len(svgIDs)
+		}
+		results, err := exp.RenderAssetsForLeaf(
+			ctx, in.TenantID, leafID, svgIDs[i:j], "svg", 1)
+		// Count actually-persisted node IDs (non-empty NodeID in result).
+		for _, r := range results {
+			if r.NodeID != "" {
+				rendered++
+			}
+		}
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return rendered, firstErr
+}
+
 // PrerenderClusters drives the per-tenant pyramid render for every
 // unique cluster ID across the version's screens. Persists asset_cache
 // rows for each successful tier. Failures are logged and skipped — the

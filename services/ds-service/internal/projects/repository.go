@@ -1033,23 +1033,23 @@ func (t *TenantRepo) GetCanonicalTree(ctx context.Context, projectSlug, screenID
 	var res CanonicalTreeResult
 	var hash sql.NullString
 	var legacy string
-	var gz []byte
+	var gz, zstdBlob []byte
 	err := t.r.db.QueryRowContext(ctx,
-		`SELECT s.id, sct.canonical_tree, sct.canonical_tree_gz, sct.hash
+		`SELECT s.id, sct.canonical_tree, sct.canonical_tree_gz, sct.canonical_tree_zstd, sct.hash
 		 FROM screens s
 		 JOIN project_versions v ON v.id = s.version_id
 		 JOIN projects p ON p.id = v.project_id
 		 JOIN screen_canonical_trees sct ON sct.screen_id = s.id
 		 WHERE p.slug = ? AND p.tenant_id = ? AND p.deleted_at IS NULL AND s.id = ?`,
 		projectSlug, t.tenantID, screenID,
-	).Scan(&res.ScreenID, &legacy, &gz, &hash)
+	).Scan(&res.ScreenID, &legacy, &gz, &zstdBlob, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	tree, err := ResolveCanonicalTree(legacy, gz)
+	tree, err := ResolveCanonicalTree(legacy, gz, zstdBlob)
 	if err != nil {
 		return nil, fmt.Errorf("decompress canonical tree: %w", err)
 	}
@@ -1079,7 +1079,7 @@ func (t *TenantRepo) ListCanonicalTreesForFlow(ctx context.Context, flowID strin
 		return nil, err
 	}
 	rows, err := t.r.db.QueryContext(ctx,
-		`SELECT s.id, sct.canonical_tree, sct.canonical_tree_gz, sct.hash
+		`SELECT s.id, sct.canonical_tree, sct.canonical_tree_gz, sct.canonical_tree_zstd, sct.hash
 		   FROM screens s
 		   JOIN screen_canonical_trees sct ON sct.screen_id = s.id
 		  WHERE s.tenant_id = ? AND s.flow_id = ? AND s.version_id = ?
@@ -1094,12 +1094,12 @@ func (t *TenantRepo) ListCanonicalTreesForFlow(ctx context.Context, flowID strin
 	for rows.Next() {
 		var r CanonicalTreeResult
 		var legacy string
-		var gz []byte
+		var gz, zstdBlob []byte
 		var hash sql.NullString
-		if err := rows.Scan(&r.ScreenID, &legacy, &gz, &hash); err != nil {
+		if err := rows.Scan(&r.ScreenID, &legacy, &gz, &zstdBlob, &hash); err != nil {
 			return nil, err
 		}
-		tree, derr := ResolveCanonicalTree(legacy, gz)
+		tree, derr := ResolveCanonicalTree(legacy, gz, zstdBlob)
 		if derr != nil {
 			return nil, fmt.Errorf("decompress canonical tree %s: %w", r.ScreenID, derr)
 		}
@@ -1207,29 +1207,33 @@ func (t *TenantRepo) InsertScreenModes(ctx context.Context, tx *sql.Tx, modes []
 
 // InsertCanonicalTree is called inside the pipeline transaction; takes a *sql.Tx.
 //
-// T8 — gzips the tree into canonical_tree_gz; the legacy canonical_tree
-// column is written as empty string so readers' COALESCE / NULLIF
-// expressions correctly defer to the gz column. Once the cmd/compress-
-// trees backfill has nulled out every legacy row a follow-up migration
-// will drop the column entirely.
+// Phase 1 (migration 0022) — encodes the tree into canonical_tree_zstd.
+// The legacy TEXT canonical_tree and the T8-era canonical_tree_gz columns
+// are NULLed on every write so a future row inspection unambiguously
+// signals "this row uses the zstd path." ResolveCanonicalTree falls
+// through cleanly when only one of the three is populated.
+//
+// Once cmd/compress-trees --to=zstd reports zero un-converted rows on
+// production, a follow-up migration drops both legacy columns.
 func (t *TenantRepo) InsertCanonicalTree(ctx context.Context, tx *sql.Tx, screenID, tree, hash string) error {
 	if t.tenantID == "" {
 		return errors.New("projects: tenant_id required")
 	}
-	gz, err := CompressTree(tree)
+	zstdBlob, err := CompressTreeZstd(tree)
 	if err != nil {
-		return fmt.Errorf("compress tree: %w", err)
+		return fmt.Errorf("compress tree (zstd): %w", err)
 	}
 	now := t.now().UTC()
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO screen_canonical_trees (screen_id, canonical_tree, canonical_tree_gz, hash, updated_at)
-		 VALUES (?, '', ?, ?, ?)
+		`INSERT INTO screen_canonical_trees (screen_id, canonical_tree, canonical_tree_gz, canonical_tree_zstd, hash, updated_at)
+		 VALUES (?, '', NULL, ?, ?, ?)
 		 ON CONFLICT(screen_id) DO UPDATE SET
-		     canonical_tree    = '',
-		     canonical_tree_gz = excluded.canonical_tree_gz,
-		     hash              = excluded.hash,
-		     updated_at        = excluded.updated_at`,
-		screenID, gz, hash, rfc3339(now),
+		     canonical_tree      = '',
+		     canonical_tree_gz   = NULL,
+		     canonical_tree_zstd = excluded.canonical_tree_zstd,
+		     hash                = excluded.hash,
+		     updated_at          = excluded.updated_at`,
+		screenID, zstdBlob, hash, rfc3339(now),
 	)
 	return err
 }

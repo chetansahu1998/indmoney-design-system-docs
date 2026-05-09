@@ -580,17 +580,27 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 	if p.PreviewPyramid != nil {
 		seen := make(map[string]struct{})
 		clusterIDs := make([]string, 0, 256)
+		svgIDs := make([]string, 0, 64)
 		for _, r := range reattaches {
-			for _, id := range ExtractClusterIDs([]byte(r.treeJSON)) {
-				if _, dup := seen[id]; dup {
+			for _, c := range ExtractClustersWithSVGFlag([]byte(r.treeJSON)) {
+				if _, dup := seen[c.ID]; dup {
 					continue
 				}
-				seen[id] = struct{}{}
-				clusterIDs = append(clusterIDs, id)
+				seen[c.ID] = struct{}{}
+				if c.SVGEligible {
+					// SVG-eligible clusters bypass the pyramid entirely —
+					// one Figma /v1/images call with format=svg per chunk
+					// returns vector text the browser scales without
+					// pixelation. Recorded separately so Phase 2 doesn't
+					// downsample raster bytes that don't exist.
+					svgIDs = append(svgIDs, c.ID)
+				} else {
+					clusterIDs = append(clusterIDs, c.ID)
+				}
 			}
 		}
-		if len(clusterIDs) > 0 {
-			go func(versionID string, ids []string) {
+		if len(svgIDs) > 0 || len(clusterIDs) > 0 {
+			go func(versionID string, ids []string, svgs []string) {
 				// Outer goroutine panic recovery. PrerenderClusters spawns
 				// per-node goroutines with their own recover, but ExtractClusterIDs
 				// already ran upstream and any panic from setup logic
@@ -639,6 +649,43 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 					AssetExporter:  p.AssetExporter,
 				}
 				startedAt := time.Now().UTC()
+
+				// Phase 2.1 — render SVG-eligible clusters as vector
+				// faithful Figma exports BEFORE the raster pyramid
+				// pass. SVGs are tier-agnostic (one cache row instead
+				// of four) and the browser scales them at any zoom
+				// without pixelation, so they fix the canvas zoom
+				// ceiling complaint without ballooning storage.
+				//
+				// RenderAssetsForLeaf already supports format="svg"
+				// and persists the bytes to asset_cache + disk via
+				// the same chunked / rate-limited / retry-aware path
+				// as the PNG export. Failures are logged but never
+				// fail the pipeline — a cluster that fails SVG
+				// render falls through to the on-demand HandleAsset-
+				// Download path, which still serves the historical
+				// raster.
+				if len(svgs) > 0 && p.AssetExporter != nil {
+					svgRendered, svgErr := renderSVGClustersForVersion(
+						bgCtx, p.AssetExporter, in, svgs)
+					if p.Log != nil {
+						if svgErr != nil {
+							p.Log.Warn("stage 9: svg cluster render failed",
+								"version_id", versionID,
+								"requested", len(svgs),
+								"rendered", svgRendered,
+								"err", svgErr.Error(),
+							)
+						} else {
+							p.Log.Info("stage 9: svg cluster render done",
+								"version_id", versionID,
+								"requested", len(svgs),
+								"rendered", svgRendered,
+							)
+						}
+					}
+				}
+
 				rendered, perr := PrerenderClusters(bgCtx, p.Log, deps, in, ids, DefaultClusterPrerenderConfig)
 				if perr != nil {
 					if p.Log != nil {
@@ -681,7 +728,7 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 						SetupError:    setupErrStr,
 					})
 				}
-			}(in.VersionID, clusterIDs)
+			}(in.VersionID, clusterIDs, svgIDs)
 		}
 	}
 

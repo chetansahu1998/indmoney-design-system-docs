@@ -935,7 +935,8 @@ func (t *TenantRepo) listLeafScreensForCSV(ctx context.Context, projectSlug, flo
 	rows, err := t.handle().QueryContext(ctx,
 		`SELECT s.id, COALESCE(s.screen_logical_id, s.id),
 		        COALESCE(sct.canonical_tree, ''),
-		        sct.canonical_tree_gz
+		        sct.canonical_tree_gz,
+		        sct.canonical_tree_zstd
 		   FROM screens s
 		   LEFT JOIN screen_canonical_trees sct ON sct.screen_id = s.id
 		   JOIN flows f ON f.id = s.flow_id
@@ -953,11 +954,11 @@ func (t *TenantRepo) listLeafScreensForCSV(ctx context.Context, projectSlug, flo
 	for rows.Next() {
 		var sc csvLeafScreen
 		var legacy string
-		var gz []byte
-		if err := rows.Scan(&sc.ID, &sc.Label, &legacy, &gz); err != nil {
+		var gz, zstdBlob []byte
+		if err := rows.Scan(&sc.ID, &sc.Label, &legacy, &gz, &zstdBlob); err != nil {
 			return nil, fmt.Errorf("scan leaf screen: %w", err)
 		}
-		tree, derr := ResolveCanonicalTree(legacy, gz)
+		tree, derr := ResolveCanonicalTree(legacy, gz, zstdBlob)
 		if derr != nil {
 			// Surface as empty tree; export will still emit a row noting
 			// the parse error rather than failing the whole download.
