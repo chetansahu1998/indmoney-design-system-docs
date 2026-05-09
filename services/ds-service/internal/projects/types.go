@@ -195,19 +195,32 @@ type CompositionRef struct {
 
 // ─── Wire-shape helpers (request/response) ──────────────────────────────────
 
-// ModeGroupPayload is the plugin's per-group declaration of which frames belong
-// to which mode pair. Server re-runs DetectModePairs to canonicalize.
+// ModeGroupPayload is one detected mode pair as observed by the plugin.
+// `primary_frame_id` is the screen frame the designer placed first in a
+// section column; `paired_frame_ids` are sibling screen frames sharing
+// the same variable_collection_id with a different mode_id (typically
+// the light/dark counterpart). `modes` is the human-readable mode-label
+// pair (e.g. ["light", "dark"]). `theme_parity_warning_at_export` is the
+// plugin's structural-parity probe — flips true when the pair has
+// mismatched path/type structure two levels deep, a designer-actionable
+// signal that the two modes have drifted apart.
+//
+// Server canonicalizes by re-running DetectModePairs from per-frame
+// (variable_collection_id, mode_id) metadata — we don't trust the
+// client's pairing for the screen_modes inserts. The plugin's view is
+// preserved here for future audits that want to compare designer
+// intent vs server-derived truth (a known signal of out-of-sync files).
+//
+// 2026-05-09 alignment: pre-fix this struct was group-shape
+// {variable_collection_id, frames[]} which neither the Phase 1 plan
+// nor the plugin emit, so it deserialized to zero-value forever and
+// the plugin's pair-shape JSON was silently discarded. Schema is now
+// the plan-canonical pair-shape that the plugin already emits.
 type ModeGroupPayload struct {
-	VariableCollectionID string             `json:"variable_collection_id"`
-	Frames               []FramePayloadMode `json:"frames"`
-}
-
-// FramePayloadMode is a single frame's mode declaration within a group.
-type FramePayloadMode struct {
-	FrameID                   string            `json:"frame_id"`
-	ModeID                    string            `json:"mode_id"`
-	ModeLabel                 string            `json:"mode_label"`
-	ExplicitVariableModesJSON string            `json:"explicit_variable_modes_json,omitempty"`
+	PrimaryFrameID             string   `json:"primary_frame_id"`
+	PairedFrameIDs             []string `json:"paired_frame_ids"`
+	Modes                      []string `json:"modes"`
+	ThemeParityWarningAtExport bool     `json:"theme_parity_warning_at_export"`
 }
 
 // FramePayload is the plugin's per-frame info: ID, position, dimensions, and
@@ -225,17 +238,26 @@ type FramePayload struct {
 	ExplicitVariableModesJSON string  `json:"explicit_variable_modes_json,omitempty"`
 }
 
-// FlowPayload is one flow's worth of plugin export data.
+// FlowPayload is one flow's worth of plugin export data. A flow corresponds
+// to a Figma SECTION (or freeform bucket); `frames[]` enumerates the screen
+// FRAMEs detected inside it.
 type FlowPayload struct {
-	SectionID   *string            `json:"section_id"`
-	FrameIDs    []string           `json:"frame_ids"`
-	Frames      []FramePayload     `json:"frames"`
-	Platform    string             `json:"platform"`
-	Product     string             `json:"product"`
-	Path        string             `json:"path"`
-	PersonaName string             `json:"persona_name"`
-	Name        string             `json:"name"`
-	ModeGroups  []ModeGroupPayload `json:"mode_groups"`
+	SectionID        *string            `json:"section_id"`
+	FrameIDs         []string           `json:"frame_ids"`
+	Frames           []FramePayload     `json:"frames"`
+	Platform         string             `json:"platform"`
+	Product          string             `json:"product"`
+	Path             string             `json:"path"`
+	PersonaName      string             `json:"persona_name"`
+	Name             string             `json:"name"`
+	ModeGroups       []ModeGroupPayload `json:"mode_groups"`
+	// UnpairedFrameIDs is the plugin's list of frames that did not
+	// participate in any mode pair (no light/dark sibling found).
+	// Server doesn't act on it today — same defensive-canonicalization
+	// stance as ModeGroups — but capturing it on the wire keeps the
+	// payload faithful to the plan's flow shape and lets future audits
+	// surface pairs the designer might have missed.
+	UnpairedFrameIDs []string           `json:"unpaired_frame_ids,omitempty"`
 }
 
 // ExportRequest is the body of POST /v1/projects/export.
