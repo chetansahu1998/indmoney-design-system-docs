@@ -50,7 +50,20 @@ func TestClusterClassifierParity_Fixture(t *testing.T) {
 	for _, c := range fix.Cases {
 		c := c
 		t.Run(c.Name, func(t *testing.T) {
-			treeJSON, err := json.Marshal(c.Tree)
+			// 2026-05-10 alignment: ExtractClusterIDs now skips the
+			// screen-root to mirror TS-side `collectClusterIDs`.
+			// Fixture cases represent individual canonical nodes (the
+			// "test subject"), not full canonical_trees. Wrap each in a
+			// synthetic screen-root so the test subject lives at depth 1
+			// — the same place production canonical_trees put top-level
+			// content nodes inside the FRAME the designer selected.
+			wrapped := map[string]any{
+				"id":       "synthetic-screen-root",
+				"type":     "FRAME",
+				"name":     "synthetic-screen-root",
+				"children": []any{c.Tree},
+			}
+			treeJSON, err := json.Marshal(wrapped)
 			if err != nil {
 				t.Fatalf("marshal tree: %v", err)
 			}

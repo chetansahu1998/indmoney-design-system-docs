@@ -203,8 +203,31 @@ func ExtractClusterIDs(canonicalTreeJSON []byte) []string {
 			root = doc
 		}
 	}
+	// Skip the screen-root and start walking from its children. Mirrors
+	// TS-side `collectClusterIDs` in
+	// app/atlas/_lib/leafcanvas-v2/useIconClusterURLs.ts, which
+	// intentionally never returns the root as a cluster — the renderer
+	// treats it as a container (LeafFrameRenderer passes keyHint="root"
+	// which the cluster check in nodeToHTML.ts skips).
+	//
+	// Pre-2026-05-10 walkClusters was called on root directly with depth=0.
+	// For chart-named screens at chart-bounded size (e.g. "Quick Buy:
+	// indstock chart" at 375×429), the chart-name fast path matched on
+	// the root → entire screen clustered as ONE PNG. Stage 9 wrote that
+	// PNG. The renderer then descended past the root looking for INNER
+	// clusters (Battery, Wifi, icons, etc.) — none of which existed in
+	// asset_cache because Stage 9 stopped at the root. Result: a wall
+	// of broken `<img>` placeholders with alt-text labels across every
+	// Gold/Silver index, Quick Buy chart, and similar chart-named screen.
+	//
+	// Walking from children matches what the canvas actually asks for.
 	out := make([]string, 0, 32)
-	walkClusters(root, &out, 0)
+	if m, ok := root.(map[string]any); ok {
+		children, _ := m["children"].([]any)
+		for _, c := range children {
+			walkClusters(c, &out, 1)
+		}
+	}
 	return out
 }
 
@@ -239,8 +262,17 @@ func ExtractClustersWithSVGFlag(canonicalTreeJSON []byte) []ClusterCandidate {
 			root = doc
 		}
 	}
+	// Skip the screen-root — see comment on ExtractClusterIDs for why.
+	// TS-side `collectClusterIDs` never returns the root; mirroring that
+	// here keeps Stage 9's cluster set aligned with what the canvas
+	// actually requests.
 	out := make([]ClusterCandidate, 0, 32)
-	walkClustersWithSVGFlag(root, &out, 0)
+	if m, ok := root.(map[string]any); ok {
+		children, _ := m["children"].([]any)
+		for _, c := range children {
+			walkClustersWithSVGFlag(c, &out, 1)
+		}
+	}
 	return out
 }
 

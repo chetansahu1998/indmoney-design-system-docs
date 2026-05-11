@@ -579,6 +579,15 @@ func TestPrerenderClusters_AssetExporterWithFakeRepo_FailsLoud(t *testing.T) {
 // Test fixture builders. Each "shape leaf" is a VECTOR child with no
 // children; each "text leaf" is a TEXT child with no children. The
 // outer FRAME carries the bbox and name we want to test.
+//
+// 2026-05-10: ExtractClusterIDs now skips the screen-root to mirror
+// TS-side `collectClusterIDs`. Bare-tree fixtures must be wrapped in a
+// synthetic screen-root so the subject node sits at depth 1 — same as
+// production canonical_trees where top-level content lives one level
+// inside the screen FRAME the designer selected.
+func wrapInScreenRoot(treeJSON string) string {
+	return fmt.Sprintf(`{"id":"synthetic-screen-root","type":"FRAME","name":"synthetic-screen-root","children":[%s]}`, treeJSON)
+}
 
 func chartFixture(name string, w, h, shapes, texts int) string {
 	var children []string
@@ -588,10 +597,11 @@ func chartFixture(name string, w, h, shapes, texts int) string {
 	for i := 0; i < texts; i++ {
 		children = append(children, fmt.Sprintf(`{"id":"t%d","type":"TEXT"}`, i))
 	}
-	return fmt.Sprintf(
+	wrapper := fmt.Sprintf(
 		`{"id":"wrapper","type":"FRAME","name":%q,"absoluteBoundingBox":{"width":%d,"height":%d},"children":[%s]}`,
 		name, w, h, strings.Join(children, ","),
 	)
+	return wrapInScreenRoot(wrapper)
 }
 
 func TestIsCluster_ChartNameFastPath_AtChartSize_Clusters(t *testing.T) {
@@ -683,8 +693,8 @@ func TestIsCluster_NoBBox_BudgetPath_StillClustersOnRatio(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		children = append(children, fmt.Sprintf(`{"id":"v%d","type":"VECTOR"}`, i))
 	}
-	tree := fmt.Sprintf(`{"id":"wrapper","type":"INSTANCE","name":"Generic","children":[%s]}`,
-		strings.Join(children, ","))
+	tree := wrapInScreenRoot(fmt.Sprintf(`{"id":"wrapper","type":"INSTANCE","name":"Generic","children":[%s]}`,
+		strings.Join(children, ",")))
 	ids := ExtractClusterIDs([]byte(tree))
 	if len(ids) != 1 || ids[0] != "wrapper" {
 		t.Fatalf("expected bbox-less 8-vector wrapper to cluster on ratio, got %v", ids)
@@ -694,9 +704,9 @@ func TestIsCluster_NoBBox_BudgetPath_StillClustersOnRatio(t *testing.T) {
 func TestIsCluster_ExistingIconPath_StillClusters(t *testing.T) {
 	// Regression: the icon-name fast path (Icons/.../Help) must still
 	// fire regardless of size and budget logic.
-	tree := `{"id":"icn","type":"INSTANCE","name":"Icons/ 2D/ Help",
+	tree := wrapInScreenRoot(`{"id":"icn","type":"INSTANCE","name":"Icons/ 2D/ Help",
 		"absoluteBoundingBox":{"width":24,"height":24},
-		"children":[{"id":"v","type":"VECTOR"}]}`
+		"children":[{"id":"v","type":"VECTOR"}]}`)
 	ids := ExtractClusterIDs([]byte(tree))
 	if len(ids) != 1 || ids[0] != "icn" {
 		t.Fatalf("expected icon to cluster via name pattern, got %v", ids)
@@ -784,11 +794,11 @@ func TestIsCluster_AutolayoutDescendant_PureIllustration_StillClusters(t *testin
 	for i := 0; i < 20; i++ {
 		shapes = append(shapes, fmt.Sprintf(`{"id":"v%d","type":"VECTOR"}`, i))
 	}
-	tree := fmt.Sprintf(`{
+	tree := wrapInScreenRoot(fmt.Sprintf(`{
 		"id":"wrap","type":"GROUP","name":"Group 1321319461","children":[
 			{"id":"inner","type":"GROUP","children":[%s]}
 		]
-	}`, strings.Join(shapes, ","))
+	}`, strings.Join(shapes, ",")))
 	ids := ExtractClusterIDs([]byte(tree))
 	if len(ids) != 1 || ids[0] != "wrap" {
 		t.Fatalf("expected pure-illustration wrapper to still cluster, got %v", ids)
@@ -800,7 +810,7 @@ func TestIsCluster_AutolayoutDescendant_NamedChart_StillClusters(t *testing.T) {
 	// explicitly chart-named wrapper at chart size still clusters even
 	// if its subtree contains autolayout (pills inside a chart-named
 	// frame). This preserves the explicit designer intent.
-	tree := `{
+	tree := wrapInScreenRoot(`{
 		"id":"chart","type":"FRAME","name":"Stock Chart",
 		"absoluteBoundingBox":{"width":375,"height":403},
 		"children":[
@@ -809,7 +819,7 @@ func TestIsCluster_AutolayoutDescendant_NamedChart_StillClusters(t *testing.T) {
 				{"id":"p1","type":"TEXT","characters":"1D"}
 			]}
 		]
-	}`
+	}`)
 	ids := ExtractClusterIDs([]byte(tree))
 	if len(ids) != 1 || ids[0] != "chart" {
 		t.Fatalf("expected chart-named wrapper to cluster despite autolayout descendant, got %v", ids)
