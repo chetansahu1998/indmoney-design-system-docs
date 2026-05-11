@@ -81,7 +81,12 @@ func TestDedupeClusterIDs_DeduplicatesAcrossScreens(t *testing.T) {
 	// patterns from node-classifier. shouldRasterize → ExtractClusterIDs's
 	// real walker decides; here we feed canonical_tree shapes that the
 	// existing extractor accepts (vector-only subtrees + icon-named paths).
+	// TEXT siblings on the root FRAMEs prevent the no-text fast path
+	// (2026-05-09) from clustering the wrappers themselves. Without them
+	// the wrappers' all-vector subtrees would cluster, masking the
+	// per-icon dedup behavior we're verifying here.
 	tree1 := `{"document":{"id":"root","type":"FRAME","children":[
+		{"id":"label-1","type":"TEXT","characters":"Toolbar"},
 		{"id":"icon-A","type":"INSTANCE","name":"Icons/Home","absoluteBoundingBox":{"x":0,"y":0,"width":24,"height":24},"children":[
 			{"id":"v1","type":"VECTOR","absoluteBoundingBox":{"x":0,"y":0,"width":24,"height":24}}
 		]},
@@ -90,6 +95,7 @@ func TestDedupeClusterIDs_DeduplicatesAcrossScreens(t *testing.T) {
 		]}
 	]}}`
 	tree2 := `{"document":{"id":"root2","type":"FRAME","children":[
+		{"id":"label-2","type":"TEXT","characters":"Sidebar"},
 		{"id":"icon-A","type":"INSTANCE","name":"Icons/Home","absoluteBoundingBox":{"x":0,"y":0,"width":24,"height":24},"children":[
 			{"id":"v1","type":"VECTOR","absoluteBoundingBox":{"x":0,"y":0,"width":24,"height":24}}
 		]},
@@ -452,7 +458,11 @@ func TestHandleAssetStream_CacheHit_EmitsAssetReady(t *testing.T) {
 		t.Fatalf("insert screens: %v", err)
 	}
 	clusterNodeID := "icon-1"
+	// TEXT sibling prevents the no-text fast path (2026-05-09) from
+	// clustering the root FRAME and masking the icon-level cluster the
+	// test is exercising.
 	tree := fmt.Sprintf(`{"document":{"id":"root","type":"FRAME","children":[
+		{"id":"label","type":"TEXT","characters":"Header"},
 		{"id":%q,"type":"INSTANCE","name":"Icons/Home","absoluteBoundingBox":{"x":0,"y":0,"width":24,"height":24},"children":[
 			{"id":"v1","type":"VECTOR","absoluteBoundingBox":{"x":0,"y":0,"width":24,"height":24}}
 		]}

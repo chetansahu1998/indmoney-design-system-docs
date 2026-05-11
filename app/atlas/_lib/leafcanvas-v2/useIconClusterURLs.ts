@@ -233,7 +233,19 @@ export function useIconClusterURLs(
     // upscales the small tier and the canvas pixelates. SVG-eligible
     // clusters served by the stream (URL contains `format=svg`) skip
     // escalation: vector content is already infinite-zoom.
-    (async () => {
+    // Top-level catch on the residual-mint IIFE. Pre-2026-05-09 this was
+    // bare fire-and-forget — any rejection bubbled up to
+    // window.unhandledrejection. Production triggered:
+    //   - Chrome extensions (frame_ant.js et al.) wrap window.fetch and
+    //     can synchronously throw "Failed to fetch" for blocklisted hosts
+    //     before our await runs, bypassing inner try/catch on the await
+    //     boundary in some Chromium builds.
+    //   - waitForLeafStreamSettled rejects (currently it can't, but
+    //     defending here keeps a future change from creating a leak).
+    // Whatever the cause: log and move on. The cluster URLs map stays at
+    // whatever the stream delivered; placeholders fall through to the
+    // dashed-border fallback.
+    void (async () => {
       await waitForLeafStreamSettled(slug, leafID);
       if (cancelled) return;
       const have = projectStreamFiltered(sub.snapshot);
@@ -307,7 +319,16 @@ export function useIconClusterURLs(
         );
       }
       setURLs(next);
-    })();
+    })().catch((err) => {
+      // Defensive: chrome-extension fetch wrappers occasionally surface
+      // synchronous TypeErrors that escape the inner try/catch (see
+      // window.unhandledrejection traces from frame_ant.js — 2026-05-09).
+      // Swallow at the IIFE boundary so the canvas degrades gracefully
+      // to the existing stream/placeholder state instead of polluting
+      // telemetry with global error.
+      // eslint-disable-next-line no-console
+      console.warn("[icon-cluster] residual mint pass crashed:", err);
+    });
 
     return () => {
       cancelled = true;

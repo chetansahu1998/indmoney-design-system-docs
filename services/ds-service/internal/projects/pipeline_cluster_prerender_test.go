@@ -168,7 +168,13 @@ func TestExtractClusterIDs_MalformedJSON_ReturnsNil(t *testing.T) {
 }
 
 func TestExtractClusterIDs_DocumentEnvelope_Unwraps(t *testing.T) {
+	// Add a TEXT sibling so the no-text fast path (2026-05-09) doesn't
+	// cluster the wrapper FRAME — the test's intent is to verify the
+	// `document` envelope unwraps and the inner VECTOR clusters as a
+	// shape primitive. With the new fast path a no-text wrapper would
+	// cluster as a whole, masking the unwrap path being tested.
 	tree := `{"document":{"id":"root","type":"FRAME","children":[
+		{"id":"label","type":"TEXT","characters":"Hello"},
 		{"id":"icon-1","type":"VECTOR","name":"shape"}
 	]}}`
 	got := ExtractClusterIDs([]byte(tree))
@@ -178,7 +184,11 @@ func TestExtractClusterIDs_DocumentEnvelope_Unwraps(t *testing.T) {
 }
 
 func TestExtractClusterIDs_HiddenNode_Skipped(t *testing.T) {
+	// TEXT sibling forces the wrapper out of the no-text fast path
+	// (2026-05-09); without it the wrapper would cluster and hide the
+	// per-child visibility filter we're verifying here.
 	tree := `{"id":"root","type":"FRAME","children":[
+		{"id":"label","type":"TEXT","characters":"Hello"},
 		{"id":"hidden","type":"VECTOR","visible":false},
 		{"id":"shown","type":"VECTOR"}
 	]}`
@@ -189,7 +199,10 @@ func TestExtractClusterIDs_HiddenNode_Skipped(t *testing.T) {
 }
 
 func TestExtractClusterIDs_RemovedNode_Skipped(t *testing.T) {
+	// TEXT sibling forces the wrapper out of the no-text fast path
+	// (2026-05-09); see comment on TestExtractClusterIDs_HiddenNode_Skipped.
 	tree := `{"id":"root","type":"FRAME","children":[
+		{"id":"label","type":"TEXT","characters":"Hello"},
 		{"id":"gone","type":"VECTOR","removed":true},
 		{"id":"alive","type":"VECTOR"}
 	]}`
@@ -641,13 +654,17 @@ func TestIsCluster_SizeCeiling_RejectsOversizedWrapper(t *testing.T) {
 }
 
 func TestIsCluster_NoBBox_ChartNameFastPath_FallsThrough(t *testing.T) {
-	// The chart-name fast path requires a bbox to verify chart-sizedness.
-	// Without one we cannot blind-cluster (could be a phone-screen
-	// labelled with "chart"). Single-VECTOR child without bbox doesn't
-	// reach the >=8 shape budget either, so this wrapper does not
-	// cluster and the walker recurses to the inner shape.
+	// The chart-name fast path specifically requires a bbox to verify
+	// chart-sizedness. Without one it falls through to subsequent paths.
+	// Add a TEXT child so the no-text fast path (2026-05-09) doesn't
+	// catch this either — that way we're verifying the chart-name
+	// fast path's bbox guard in isolation, not the broader question of
+	// "does this wrapper cluster". With shapes=1 + texts=1 the leaf-
+	// count budget rejects (shapeLeaves < 8), so the wrapper falls
+	// through cleanly and the walker recurses to the inner shape.
 	tree := `{"id":"wrapper","type":"FRAME","name":"Stock Chart","children":[
-		{"id":"v","type":"VECTOR"}
+		{"id":"v","type":"VECTOR"},
+		{"id":"label","type":"TEXT","characters":"Chart"}
 	]}`
 	ids := ExtractClusterIDs([]byte(tree))
 	for _, id := range ids {

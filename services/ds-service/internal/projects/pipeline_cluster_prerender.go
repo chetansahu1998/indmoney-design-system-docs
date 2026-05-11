@@ -424,6 +424,34 @@ func isCluster(node map[string]any, nodeType, name string) bool {
 	if hasAutolayoutDescendant(node) {
 		return false
 	}
+	// No-text fast path — parity with TS-side `isIconCluster` in
+	// app/atlas/_lib/leafcanvas-v2/icon-cluster-resolver.ts. A wrapper
+	// whose subtree has zero TEXT nodes and at least one shape leaf
+	// clusters as one PNG/SVG even when shapeLeaves < 8.
+	//
+	// Pre-2026-05-09 audit (plutus-equity-tracking screen a89b7fb8): 64
+	// new-heuristic clusters per screen, 0 in cache after Stage 9
+	// because most were single-shape INSTANCE wrappers like "Federal
+	// Bank" (1 RECTANGLE child). TS-side classified them as clusters and
+	// requested /assets/I11784:81383;... URLs Go never wrote — the
+	// canvas painted broken `<img>` placeholders with alt-text labels.
+	//
+	// Adding this fast path brings Go in lockstep with TS so every URL
+	// the renderer asks for has a matching pre-rendered asset.
+	//
+	// FRAME-size guard: refuse the fast path for FRAMEs that exceed the
+	// cluster-size ceiling. This mirrors TS-side's early
+	// `if (t === "FRAME" && exceedsClusterSize(node)) return false`
+	// guard at the top of isIconCluster, which keeps phone-sized
+	// vector-illustration screens (e.g. NRI VKYC's 375×812 illustration
+	// step) from rasterizing as one giant PNG when they should be
+	// recursed into and rendered atomically.
+	if !hasTextSubtree(node) && hasShapeSubtree(node) {
+		if nodeType == "FRAME" && exceedsClusterSize(node) {
+			return false
+		}
+		return true
+	}
 	// Illustration-subtree heuristic. Cluster the wrapper as a whole
 	// if it's a chart-sized region whose shape/text mix looks like a
 	// data-viz or illustration.
@@ -487,6 +515,54 @@ func hasAutolayoutDescendant(node map[string]any) bool {
 			return true
 		}
 		if hasAutolayoutDescendant(cm) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasTextSubtree reports whether the subtree rooted at `node` (inclusive)
+// contains a TEXT node. Used by the no-text fast path in isCluster to
+// match TS-side `hasTextDescendant` in icon-cluster-resolver.ts.
+func hasTextSubtree(node map[string]any) bool {
+	if node == nil {
+		return false
+	}
+	if t, _ := node["type"].(string); t == "TEXT" {
+		return true
+	}
+	children, _ := node["children"].([]any)
+	for _, c := range children {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		if hasTextSubtree(cm) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasShapeSubtree reports whether the subtree rooted at `node` (inclusive)
+// contains any shape leaf using the same vectorLeafShapeTypes set the
+// illustration-subtree summary uses. Mirrors TS-side hasShapeDescendant.
+func hasShapeSubtree(node map[string]any) bool {
+	if node == nil {
+		return false
+	}
+	if t, _ := node["type"].(string); t != "" {
+		if _, isShape := vectorLeafShapeTypes[t]; isShape {
+			return true
+		}
+	}
+	children, _ := node["children"].([]any)
+	for _, c := range children {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		if hasShapeSubtree(cm) {
 			return true
 		}
 	}
