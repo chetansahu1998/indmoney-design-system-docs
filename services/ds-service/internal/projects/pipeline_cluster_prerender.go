@@ -1097,12 +1097,34 @@ func PrerenderClusters(
 				}
 			}
 
+			// Blocklist consult (2026-05-12). If the cluster has hit the
+			// failure threshold and is still inside its cooldown window,
+			// skip Stage 9 for it — burning the per-PAT rate budget on a
+			// known-deterministically-broken Figma node is pure waste.
+			// Suppression is silent (doesn't increment failed counter) so
+			// it doesn't pollute the prerender summary metrics.
+			if _, blocked, berr := deps.Repo.IsFigmaRenderBlocked(rctx, in.FileID, nodeID); berr == nil && blocked {
+				return
+			}
+
 			pyramidResults, perr := deps.PreviewPyramid.RenderPreviewPyramid(
 				rctx, in.TenantID, leafID, in.FileID, nodeID, versionIndex,
 			)
 			if perr != nil && len(pyramidResults) == 0 {
 				failed.Add(1)
 				recordRenderErr(nodeID, perr.Error())
+				// Blocklist mark — this is a fresh upstream failure for
+				// (file, node). The clear_hash is empty here because Stage
+				// 9 walks cluster IDs but doesn't have direct visibility
+				// into which screen tree they belong to; the pipeline-
+				// level integration captures the hash. If a designer
+				// touches the file and the pipeline re-runs, the
+				// pipeline's hash-clear pass will invalidate this row.
+				if _, merr := deps.Repo.MarkFigmaRenderFailure(rctx, in.FileID, nodeID,
+					"stage9: "+perr.Error(), ""); merr != nil && log != nil {
+					log.Warn("stage9 blocklist mark failed; non-fatal",
+						"file_id", in.FileID, "node_id", nodeID, "err", merr)
+				}
 				return
 			}
 			// Persist each successfully-rendered tier as an asset_cache row.
@@ -1129,6 +1151,13 @@ func PrerenderClusters(
 			}
 			if persistedAny {
 				rendered.Add(1)
+				// Blocklist clear — successful render means whatever
+				// upstream issue we recorded is resolved. Safe to call
+				// even when no row exists (no-op).
+				if cerr := deps.Repo.ClearFigmaRenderFailure(rctx, in.FileID, nodeID); cerr != nil && log != nil {
+					log.Warn("stage9 blocklist clear failed; non-fatal",
+						"file_id", in.FileID, "node_id", nodeID, "err", cerr)
+				}
 			} else {
 				failed.Add(1)
 			}
@@ -1180,6 +1209,16 @@ type PrerenderRepo interface {
 	// the source PNG — if not, skip Phase 2 for that node and let the
 	// on-demand path fill it later (avoids per-node Figma 429 cascade).
 	LookupAsset(ctx context.Context, tenantID, fileID, nodeID, format string, scale, versionIndex int) (AssetCacheRow, bool, error)
+	// figma_render_blocklist (2026-05-12) — consult+mark+clear so Stage 9
+	// doesn't keep slamming Figma with cluster IDs that deterministically
+	// return "no URL for frame X". The pipeline-level integration handles
+	// SCREEN frames; Stage 9 walks INNER cluster IDs which often have the
+	// same upstream brokenness (chart sparklines, illustration vector
+	// groups). Without this, Stage 9 burns the per-PAT rate budget on
+	// known-bad clusters every cycle.
+	IsFigmaRenderBlocked(ctx context.Context, fileID, nodeID string) (*FigmaRenderBlockEntry, bool, error)
+	MarkFigmaRenderFailure(ctx context.Context, fileID, nodeID, errMsg, clearHash string) (*FigmaRenderBlockEntry, error)
+	ClearFigmaRenderFailure(ctx context.Context, fileID, nodeID string) error
 }
 
 // Compile-time guarantee that *TenantRepo satisfies PrerenderRepo.

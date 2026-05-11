@@ -309,6 +309,10 @@ func main() {
 	recoveryCtx, recoveryCancel := context.WithCancel(context.Background())
 	defer recoveryCancel()
 	go projects.RunRecoveryLoop(recoveryCtx, dbConn.DB, log)
+	// figma_render_blocklist stale-row sweep (2026-05-12). Hourly GC of
+	// rows past BlocklistStaleThreshold (7 days). Bounded growth even
+	// under heavy file-churn workloads.
+	go projects.RunBlocklistSweepLoop(recoveryCtx, dbConn.DB, log)
 
 	// ─── Audit-job worker pool (Phase 1 U5; Phase 2 U7 scaling) ──────────
 	// Phase 1 shipped size=1. Phase 2 scales to 6 (env-tunable via

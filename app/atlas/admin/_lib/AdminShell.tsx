@@ -31,6 +31,10 @@ const NAV_LINKS: { href: string; label: string; key: string }[] = [
   { href: "/atlas/admin/rules", label: "Rules", key: "rules" },
   { href: "/atlas/admin/personas", label: "Personas", key: "personas" },
   { href: "/atlas/admin/taxonomy", label: "Taxonomy", key: "taxonomy" },
+  // 2026-05-12 — designer + ops surface for the figma_render_blocklist.
+  // Lists frames Figma can't render; deeplinks back to Figma so the
+  // designer can touch the frame and let the next sync auto-clear.
+  { href: "/atlas/admin/figma-blocklist", label: "Figma blocklist", key: "figma-blocklist" },
 ];
 
 function dsBaseURL(): string {

@@ -1003,6 +1003,24 @@ func (s *Server) HandleAssetDownload() http.HandlerFunc {
 				writeJSONErr(w, http.StatusTooEarly, "render_unavailable", "asset exporter not wired")
 				return
 			}
+
+			// figma_render_blocklist consult (2026-05-12). If this
+			// (file_id, node_id) hit the failure threshold and is still
+			// inside its cooldown window, short-circuit instead of
+			// spending the per-PAT rate budget on a frame Figma
+			// deterministically can't render. Surface a 422 with a
+			// designer-actionable hint so the canvas's onError path
+			// doesn't keep retrying the same broken URL.
+			if blockEntry, blocked, berr := repo.IsFigmaRenderBlocked(ctx, fileID, nodeID); berr == nil && blocked {
+				detail := "frame is on the figma render blocklist; designer needs to re-touch the frame in figma to retry"
+				if blockEntry != nil && blockEntry.LastError != "" {
+					detail = blockEntry.LastError + " (suppressed by blocklist until " +
+						blockEntry.CooldownUntil.UTC().Format(time.RFC3339) + ")"
+				}
+				writeJSONErr(w, http.StatusUnprocessableEntity, "node_blocklisted", detail)
+				return
+			}
+
 			leafID, lerr := s.lookupAnyLeafForFile(ctx, repo, fileID)
 			if lerr != nil || leafID == "" {
 				http.NotFound(w, r)
@@ -1017,6 +1035,14 @@ func (s *Server) HandleAssetDownload() http.HandlerFunc {
 				return
 			}
 			if IsAssetExportNodeMissing(rerr) {
+				// Mark as blocklist failure — node-not-renderable is the
+				// exact upstream signal we want to skip future cycles for.
+				if _, merr := repo.MarkFigmaRenderFailure(ctx, fileID, nodeID,
+					"on-demand: "+rerr.Error(), ""); merr != nil {
+					// Non-fatal; log but continue to surface the original
+					// error to the client.
+					_ = merr
+				}
 				writeJSONErr(w, http.StatusUnprocessableEntity, "node_not_renderable", rerr.Error())
 				return
 			}
@@ -1028,6 +1054,9 @@ func (s *Server) HandleAssetDownload() http.HandlerFunc {
 				http.NotFound(w, r)
 				return
 			}
+			// Success — clear any prior blocklist entry for this node.
+			// Safe to call when no row exists.
+			_ = repo.ClearFigmaRenderFailure(ctx, fileID, nodeID)
 			row = AssetCacheRow{
 				StorageKey: results[0].StorageKey,
 				Mime:       results[0].Mime,

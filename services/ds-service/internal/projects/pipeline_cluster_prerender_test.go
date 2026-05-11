@@ -82,6 +82,19 @@ func (f *fakePrerenderRepo) LookupAsset(ctx context.Context, tenantID, fileID, n
 	return AssetCacheRow{}, true, nil
 }
 
+// figma_render_blocklist methods (2026-05-12). Default behavior: no
+// blocklist active anywhere, mark/clear are no-ops that capture the
+// call for assertion in dedicated blocklist tests.
+func (f *fakePrerenderRepo) IsFigmaRenderBlocked(ctx context.Context, fileID, nodeID string) (*FigmaRenderBlockEntry, bool, error) {
+	return nil, false, nil
+}
+func (f *fakePrerenderRepo) MarkFigmaRenderFailure(ctx context.Context, fileID, nodeID, errMsg, clearHash string) (*FigmaRenderBlockEntry, error) {
+	return nil, nil
+}
+func (f *fakePrerenderRepo) ClearFigmaRenderFailure(ctx context.Context, fileID, nodeID string) error {
+	return nil
+}
+
 // stubPreviewSource implements PreviewSourceFetcher with configurable
 // behavior. Mirrors the stubSource pattern from asset_preview_pyramid_test.go
 // but lives here so adding new behaviors (panicOnNode, errorOnNode) doesn't
