@@ -706,6 +706,14 @@ func (s *server) routes(mux *http.ServeMux) {
 	// export's audit-log frame snapshot; no Figma re-walk required.
 	mux.HandleFunc("POST /v1/projects/{slug}/versions/{version_id}/retry",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleVersionRetry)))
+	// figma_render_blocklist (2026-05-12) — list + manual-clear admin endpoints.
+	// Used by ops to see which (file_id, node_id) frames are currently
+	// suppressed by the persistent-failure skip list and to manually
+	// clear an entry when the upstream issue is known-fixed.
+	mux.HandleFunc("GET /v1/admin/figma-render-blocklist",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaBlocklistList)))
+	mux.HandleFunc("DELETE /v1/admin/figma-render-blocklist/{file_id}/{node_id}",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaBlocklistClear)))
 	mux.HandleFunc("GET /v1/projects",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectList)))
 	mux.HandleFunc("GET /v1/projects/{slug}",

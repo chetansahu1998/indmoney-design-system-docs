@@ -295,10 +295,50 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 		return fmt.Errorf("figma nodes: %w", err)
 	}
 
-	// Stage 3 — render PNGs.
-	pngURLs, err := p.renderPNGsWithRetry(ctx, in.FileID, frameIDs)
-	if err != nil {
-		return fmt.Errorf("figma images: %w", err)
+	// Blocklist consult (2026-05-12 — figma_render_blocklist). Filter
+	// out any frames that hit the consecutive-failure threshold and are
+	// still inside their cooldown window. Without this, every sync
+	// cycle would re-burn the per-PAT rate-limit budget on frames Figma
+	// deterministically can't render (e.g., goals-revamp 782:89312).
+	//
+	// Stage 4+ runs only on `renderFrameIDs`. Stage 6 still walks
+	// `in.Frames` so blocklisted frames keep their canonical_tree (the
+	// vector renderer can paint from the tree alone even without a PNG).
+	renderFrameIDs := make([]string, 0, len(frameIDs))
+	blocklistedFrameIDs := make([]string, 0)
+	for _, fid := range frameIDs {
+		_, blocked, berr := p.Repo.IsFigmaRenderBlocked(ctx, in.FileID, fid)
+		if berr != nil {
+			if p.Log != nil {
+				p.Log.Warn("blocklist consult failed; treating frame as not blocked",
+					"version_id", in.VersionID, "frame_id", fid, "err", berr)
+			}
+			renderFrameIDs = append(renderFrameIDs, fid)
+			continue
+		}
+		if blocked {
+			blocklistedFrameIDs = append(blocklistedFrameIDs, fid)
+			continue
+		}
+		renderFrameIDs = append(renderFrameIDs, fid)
+	}
+	if len(blocklistedFrameIDs) > 0 && p.Log != nil {
+		p.Log.Info("pipeline: frames suppressed by figma_render_blocklist (cooldown active)",
+			"version_id", in.VersionID,
+			"suppressed_count", len(blocklistedFrameIDs),
+			"suppressed_ids", blocklistedFrameIDs,
+		)
+	}
+
+	// Stage 3 — render PNGs (skips blocklisted frames).
+	var pngURLs map[string]string
+	if len(renderFrameIDs) > 0 {
+		pngURLs, err = p.renderPNGsWithRetry(ctx, in.FileID, renderFrameIDs)
+		if err != nil {
+			return fmt.Errorf("figma images: %w", err)
+		}
+	} else {
+		pngURLs = map[string]string{}
 	}
 
 	// Pre-extract canonical trees once. Stage 6 (override reattach) and the
@@ -318,15 +358,57 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 	// renderable frames and skip the stragglers; they end up with a
 	// canonical_tree but NULL png_storage_key (Stage 2's /nodes call
 	// already populated the tree, which is independent of /images).
+	// Fast-membership check for blocklisted frames so we don't
+	// re-attribute a "we never asked Figma for it" as a fresh failure.
+	blocklisted := make(map[string]struct{}, len(blocklistedFrameIDs))
+	for _, fid := range blocklistedFrameIDs {
+		blocklisted[fid] = struct{}{}
+	}
+
 	goodFrames := make([]PipelineFrame, 0, len(in.Frames))
 	skippedFrameIDs := make([]string, 0)
 	for _, frame := range in.Frames {
+		if _, isBlocked := blocklisted[frame.FigmaFrameID]; isBlocked {
+			// Suppressed earlier; don't count this as a new failure.
+			continue
+		}
 		if url, ok := pngURLs[frame.FigmaFrameID]; ok && url != "" {
 			goodFrames = append(goodFrames, frame)
 		} else {
 			skippedFrameIDs = append(skippedFrameIDs, frame.FigmaFrameID)
 		}
 	}
+
+	// Blocklist accounting (2026-05-12 — figma_render_blocklist).
+	// CLEAR on success so a recovered frame stops being suppressed.
+	// MARK on miss so persistent upstream-broken frames stop burning
+	// rate-limit budget every cycle (after BlocklistFailureThreshold).
+	// Order matters: clear before mark in case a frame's prior failure
+	// just cleared its cooldown AND this cycle's render finally
+	// succeeded — we don't want to spuriously re-mark it.
+	for _, frame := range goodFrames {
+		if cerr := p.Repo.ClearFigmaRenderFailure(ctx, in.FileID, frame.FigmaFrameID); cerr != nil && p.Log != nil {
+			p.Log.Warn("blocklist clear (on success) failed; non-fatal",
+				"version_id", in.VersionID, "frame_id", frame.FigmaFrameID, "err", cerr)
+		}
+	}
+	for _, fid := range skippedFrameIDs {
+		var clearHash string
+		if entry, ok := extractedTrees[fid]; ok {
+			clearHash = entry.hash
+		}
+		if blockEntry, merr := p.Repo.MarkFigmaRenderFailure(ctx, in.FileID, fid,
+			"figma rendered no URL for frame", clearHash); merr != nil && p.Log != nil {
+			p.Log.Warn("blocklist mark failed; non-fatal",
+				"version_id", in.VersionID, "frame_id", fid, "err", merr)
+		} else if blockEntry != nil && p.Log != nil {
+			p.Log.Warn("frame blocklisted after consecutive Figma render failures",
+				"version_id", in.VersionID, "file_id", in.FileID, "frame_id", fid,
+				"consecutive_failures", blockEntry.ConsecutiveFailures,
+				"cooldown_until", blockEntry.CooldownUntil.UTC().Format(time.RFC3339))
+		}
+	}
+
 	if len(goodFrames) == 0 {
 		// All frames failed Figma's image render — there's nothing to
 		// recover. Keep the historical hard-fail so the version flips

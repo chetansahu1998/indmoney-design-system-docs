@@ -3569,3 +3569,103 @@ func clientIP(r *http.Request) string {
 
 // _ time keeps the `time` import live in case future helpers add timestamps.
 var _ = time.Now
+
+// HandleFigmaBlocklistList serves GET /v1/admin/figma-render-blocklist.
+//
+// Returns every active row in figma_render_blocklist for the caller's
+// tenant. Ops uses this to see which Figma frames are currently
+// suppressed and surface the file_id+node_id pairs to designers so
+// they can re-touch the frame in Figma (next sync's canonical_tree
+// hash change auto-invalidates the blocklist row).
+//
+// Auth: JWT-authed; tenant scoping via resolveTenantID.
+func (s *Server) HandleFigmaBlocklistList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	rows, err := repo.ListFigmaRenderBlocklist(r.Context())
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "blocklist_list", err.Error())
+		return
+	}
+	type entryDTO struct {
+		FileID              string `json:"file_id"`
+		NodeID              string `json:"node_id"`
+		FirstFailureAt      string `json:"first_failure_at"`
+		LastFailureAt       string `json:"last_failure_at"`
+		ConsecutiveFailures int    `json:"consecutive_failures"`
+		LastError           string `json:"last_error"`
+		CooldownUntil       string `json:"cooldown_until"`
+		Active              bool   `json:"active"`
+		ClearHash           string `json:"clear_hash,omitempty"`
+	}
+	now := time.Now().UTC()
+	out := make([]entryDTO, 0, len(rows))
+	for _, e := range rows {
+		out = append(out, entryDTO{
+			FileID:              e.FileID,
+			NodeID:              e.NodeID,
+			FirstFailureAt:      e.FirstFailureAt.UTC().Format(time.RFC3339),
+			LastFailureAt:       e.LastFailureAt.UTC().Format(time.RFC3339),
+			ConsecutiveFailures: e.ConsecutiveFailures,
+			LastError:           e.LastError,
+			CooldownUntil:       e.CooldownUntil.UTC().Format(time.RFC3339),
+			Active:              now.Before(e.CooldownUntil),
+			ClearHash:           e.ClearHash,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"entries": out,
+		"total":   len(out),
+	})
+}
+
+// HandleFigmaBlocklistClear serves DELETE
+// /v1/admin/figma-render-blocklist/{file_id}/{node_id}.
+//
+// Manual override: removes one row so the frame is re-attempted on the
+// next render call. Used when an operator confirms the upstream issue
+// is resolved and doesn't want to wait for the cooldown or hash-change
+// auto-invalidation.
+//
+// Auth: JWT-authed; tenant scoping via resolveTenantID.
+func (s *Server) HandleFigmaBlocklistClear(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "DELETE only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	fileID := r.PathValue("file_id")
+	nodeID := r.PathValue("node_id")
+	if fileID == "" || nodeID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_params", "file_id and node_id required")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	if err := repo.ClearFigmaRenderFailure(r.Context(), fileID, nodeID); err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "blocklist_clear", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
