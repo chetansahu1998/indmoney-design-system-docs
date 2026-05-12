@@ -1199,7 +1199,16 @@ func (s *Server) HandleAssetDownload() http.HandlerFunc {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", st.Size()))
 		w.Header().Set("Cache-Control", "private, max-age=300")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+		// 2026-05-13: was `attachment`; switched to `inline` because this URL is
+		// the same signed endpoint the leaf-canvas <img> tags fetch through the
+		// asset stream. Browsers refuse to inline-render responses with
+		// Content-Disposition: attachment in <img>, causing every cluster icon
+		// to fail-load → onError → alt-text fallback → the "Vector,Vector,
+		// Vector" pill pollution observed on Tax Centre Screens 19/20. Filename
+		// is retained so right-click → "Save Image As" gives designers the
+		// pretty `<slug>__<node>.<ext>` filename; the disposition only governs
+		// browser default behaviour, not whether the user can still save.
+		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filename))
 
 		// Best-effort audit-log row. Failure to log shouldn't block the
 		// download — we log at debug and continue (mirrors the

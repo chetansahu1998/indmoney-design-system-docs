@@ -797,8 +797,10 @@ func TestHandleAssetDownload_HappyPath_SVG(t *testing.T) {
 	if !strings.Contains(cd, wantSubstr) {
 		t.Errorf("Content-Disposition %q missing %q", cd, wantSubstr)
 	}
-	if !strings.HasPrefix(cd, "attachment;") {
-		t.Errorf("Content-Disposition not attachment: %s", cd)
+	// Single-asset GET is inline (not attachment) so <img> tags on the leaf
+	// canvas can render the response — see asset_export.go fix log 2026-05-13.
+	if !strings.HasPrefix(cd, "inline;") {
+		t.Errorf("Content-Disposition not inline: %s", cd)
 	}
 	if w.Body.String() != string(payload) {
 		t.Errorf("body mismatch: got %q want %q", w.Body.String(), string(payload))
