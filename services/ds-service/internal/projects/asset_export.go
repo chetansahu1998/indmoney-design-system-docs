@@ -487,6 +487,54 @@ func (t *TenantRepo) LookupAsset(ctx context.Context, tenantID, fileID, nodeID, 
 	return r, true, nil
 }
 
+// LookupAssetAnyVersion is like LookupAsset but ignores version_index — it
+// returns the MAX(version_index) row for (tenant, file, node, format, scale).
+//
+// Why this exists: multi-flow projects (Tax Centre with Flow A at v6 +
+// Flow B at v7) interleave per-flow version_index values inside one
+// project. LookupLeafFigmaContext returns the project-wide MAX, so the
+// asset stream queries every cluster's cache row with versionIndex = 7,
+// missing Flow A's clusters that live at v6. Storage keys are content-
+// addressed (sha256 of bytes), and AssetSigner composites do NOT include
+// version_index, so the cached file + signed URL are interchangeable
+// across versions — picking the most recent cached row is always at
+// least as good as the project-max version (and avoids a synchronous
+// Figma re-render when the older version's render is still on disk).
+//
+// Writers still pass the project-max version to StoreAsset; read paths
+// (asset stream) use this method so they see every cached row.
+func (t *TenantRepo) LookupAssetAnyVersion(ctx context.Context, tenantID, fileID, nodeID, format string, scale int) (AssetCacheRow, bool, error) {
+	if t == nil {
+		return AssetCacheRow{}, false, errors.New("nil repo")
+	}
+	if t.tenantID != "" && tenantID != t.tenantID {
+		return AssetCacheRow{}, false, fmt.Errorf("tenant mismatch: repo=%s arg=%s", t.tenantID, tenantID)
+	}
+	row := t.handle().QueryRowContext(ctx, `
+		SELECT storage_key, bytes, mime, created_at, version_index
+		  FROM asset_cache
+		 WHERE tenant_id = ? AND file_id = ? AND node_id = ?
+		   AND format = ? AND scale = ?
+		 ORDER BY version_index DESC
+		 LIMIT 1
+	`, tenantID, fileID, nodeID, format, scale)
+	var r AssetCacheRow
+	var createdAt string
+	if err := row.Scan(&r.StorageKey, &r.Bytes, &r.Mime, &createdAt, &r.VersionIndex); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return AssetCacheRow{}, false, nil
+		}
+		return AssetCacheRow{}, false, err
+	}
+	r.TenantID = tenantID
+	r.FileID = fileID
+	r.NodeID = nodeID
+	r.Format = format
+	r.Scale = scale
+	r.CreatedAt = parseTime(createdAt)
+	return r, true, nil
+}
+
 // StoreAsset inserts (or replaces) an asset_cache row. INSERT OR REPLACE so
 // re-export under the same PK overwrites the prior storage_key cleanly —
 // the prior file may already be replaced on disk by the caller, but we

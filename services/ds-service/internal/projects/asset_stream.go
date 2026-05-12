@@ -461,15 +461,20 @@ dispatch:
 			// is absent (cluster failed eligibility, render didn't
 			// complete, or Stage 9 hasn't run yet) we fall through
 			// to the preview-pyramid path below.
-			if svgRow, svgHit, svgErr := repo.LookupAsset(nodeCtx, tenantID, fileID, nodeID, "svg", 1, versionIndex); svgErr == nil && svgHit && svgRow.StorageKey != "" {
+			// 2026-05-13 multi-flow version-mismatch fix: use any-version
+			// lookup so Flow A's clusters cached at v6 are visible when the
+			// stream runs at the project-max v7 (Tax Centre). Storage keys
+			// are content-addressed and signatures are version-agnostic so
+			// older rows are interchangeable. See LookupAssetAnyVersion doc.
+			if svgRow, svgHit, svgErr := repo.LookupAssetAnyVersion(nodeCtx, tenantID, fileID, nodeID, "svg", 1); svgErr == nil && svgHit && svgRow.StorageKey != "" {
 				rendered.Add(1)
 				emit("asset-ready", buildAssetReadyEvent(s, tenantID, slug, fileID, nodeID, "svg", 1))
 				return
 			}
 
-			// Cache fast-path. LookupAsset for the default tier; if hit,
-			// emit the signed URL directly — zero Figma traffic.
-			row, hit, lerr := repo.LookupAsset(nodeCtx, tenantID, fileID, nodeID, tierFormat, 1, versionIndex)
+			// Cache fast-path. LookupAssetAnyVersion for the default tier;
+			// if hit, emit the signed URL directly — zero Figma traffic.
+			row, hit, lerr := repo.LookupAssetAnyVersion(nodeCtx, tenantID, fileID, nodeID, tierFormat, 1)
 			if lerr == nil && hit && row.StorageKey != "" {
 				rendered.Add(1)
 				emit("asset-ready", buildAssetReadyEvent(s, tenantID, slug, fileID, nodeID, tierFormat, 1))
