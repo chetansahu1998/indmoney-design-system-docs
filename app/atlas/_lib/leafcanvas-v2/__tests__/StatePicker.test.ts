@@ -194,8 +194,8 @@ function _test_e2e_groupkey_collision_scoped_per_frame(): void {
         type: "FRAME",
         absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 200 },
         children: [
-          { id: "a-default", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
-          { id: "a-hover", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+          { id: "a-default", name: "Default", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+          { id: "a-hover", name: "Hover", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
         ],
       },
       {
@@ -203,8 +203,8 @@ function _test_e2e_groupkey_collision_scoped_per_frame(): void {
         type: "FRAME",
         absoluteBoundingBox: { x: 200, y: 0, width: 200, height: 200 },
         children: [
-          { id: "b-default", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
-          { id: "b-hover", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+          { id: "b-default", name: "Default", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+          { id: "b-hover", name: "Hover", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
         ],
       },
     ],

@@ -120,6 +120,10 @@ function _test_filterVisible_does_not_mutate_input(): void {
 }
 
 function _test_copositioned_siblings_get_state_group(): void {
+  // Authored design-state variants always carry distinct, meaningful names
+  // (Default / Hover / Pressed / Type=Primary …). The 2026-05-13 filter in
+  // `tagCoPositionedSiblings` requires at least one member name that isn't
+  // a Figma auto-default so accidental overlapping shapes don't tag.
   const tree: CanonicalNode = {
     id: "root",
     type: "FRAME",
@@ -127,16 +131,19 @@ function _test_copositioned_siblings_get_state_group(): void {
     children: [
       {
         id: "default",
+        name: "Default",
         type: "FRAME",
         absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 },
       },
       {
         id: "hover",
+        name: "Hover",
         type: "FRAME",
         absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 },
       },
       {
         id: "other",
+        name: "Pressed",
         type: "FRAME",
         absoluteBoundingBox: { x: 60, y: 10, width: 50, height: 20 },
       },
@@ -149,6 +156,73 @@ function _test_copositioned_siblings_get_state_group(): void {
   assert(typeof dflt.__stateGroup === "string", "default has stateGroup");
   assert(dflt.__stateGroup === hover.__stateGroup, "default and hover share group");
   assert(other.__stateGroup === undefined, "uniquely-positioned sibling has no group");
+}
+
+function _test_copositioned_skipped_when_all_auto_named(): void {
+  // Overlapping path layers inside an icon (every leaf named "Vector") are
+  // not authored states — must NOT tag as a state group, otherwise the
+  // picker spams the canvas with chips and inactiveVariantIDs prunes the
+  // composition. Regression guard for the Tax Centre "Vector" pollution.
+  const tree: CanonicalNode = {
+    id: "root",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
+    children: [
+      {
+        id: "v1",
+        name: "Vector",
+        type: "VECTOR",
+        absoluteBoundingBox: { x: 10, y: 10, width: 20, height: 20 },
+      },
+      {
+        id: "v2",
+        name: "Vector",
+        type: "VECTOR",
+        absoluteBoundingBox: { x: 10, y: 10, width: 20, height: 20 },
+      },
+      {
+        id: "v3",
+        name: "Vector",
+        type: "VECTOR",
+        absoluteBoundingBox: { x: 10, y: 10, width: 20, height: 20 },
+      },
+    ],
+  };
+  const out = filterVisible(tree)!;
+  for (const c of out.children!) {
+    assert(c.__stateGroup === undefined, `vector leaf ${c.id} must not be state-tagged`);
+  }
+}
+
+function _test_copositioned_skipped_when_all_clippath_named(): void {
+  // Figma exports clipPath wrappers (auto-named `clippath-2`, `clipPath group`,
+  // `clip0_175_8267`) alongside a `Group` sibling at the same bbox. Both names
+  // are auto-generated; the pair is not a design state.
+  const tree: CanonicalNode = {
+    id: "root",
+    type: "FRAME",
+    absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
+    children: [
+      {
+        id: "c1",
+        name: "clippath-2",
+        type: "GROUP",
+        absoluteBoundingBox: { x: 10, y: 10, width: 16, height: 16 },
+        children: [{ id: "c1-v", type: "VECTOR" }],
+      },
+      {
+        id: "g1",
+        name: "Group",
+        type: "GROUP",
+        absoluteBoundingBox: { x: 10, y: 10, width: 16, height: 16 },
+        children: [{ id: "g1-v", type: "VECTOR" }],
+      },
+    ],
+  };
+  const out = filterVisible(tree)!;
+  for (const c of out.children!) {
+    assert(c.__stateGroup === undefined, `auto-named sibling ${c.id} must not be tagged`);
+  }
 }
 
 function _test_copositioned_only_when_2plus_share(): void {
@@ -200,13 +274,16 @@ function _test_collectStateGroups_happy_path(): void {
 }
 
 function _test_collectStateGroups_three_stacked(): void {
+  // Mixed-name fixture: one designer-named variant ensures the group passes
+  // the auto-name filter; the un-named siblings exercise the `State N`
+  // fallback in `variantDisplayName`.
   const tree: CanonicalNode = {
     id: "screen-1",
     type: "FRAME",
     absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 200 },
     children: [
       { id: "a", absoluteBoundingBox: { x: 5, y: 5, width: 40, height: 40 } },
-      { id: "b", absoluteBoundingBox: { x: 5, y: 5, width: 40, height: 40 } },
+      { id: "b", name: "Hover", absoluteBoundingBox: { x: 5, y: 5, width: 40, height: 40 } },
       { id: "c", absoluteBoundingBox: { x: 5, y: 5, width: 40, height: 40 } },
     ],
   };
@@ -215,8 +292,10 @@ function _test_collectStateGroups_three_stacked(): void {
   const list = groups.get("screen-1");
   assert(list?.length === 1, "single group from three stacked siblings");
   assert(list![0].variants.length === 3, "three variants emitted");
-  // No-name siblings should fall back to "State 1/2/3".
+  // Un-named siblings still hit the "State N" fallback inside a group that
+  // survived the auto-name filter thanks to the named sibling.
   assert(list![0].variants[0].name === "State 1", "fallback name State 1");
+  assert(list![0].variants[1].name === "Hover", "named variant preserved");
   assert(list![0].variants[2].name === "State 3", "fallback name State 3");
 }
 
@@ -250,8 +329,8 @@ function _test_collectStateGroups_scoped_per_frame(): void {
         type: "FRAME",
         absoluteBoundingBox: { x: 0, y: 0, width: 200, height: 200 },
         children: [
-          { id: "a-default", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
-          { id: "a-hover", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+          { id: "a-default", name: "Default", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+          { id: "a-hover", name: "Hover", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
         ],
       },
       {
@@ -259,8 +338,8 @@ function _test_collectStateGroups_scoped_per_frame(): void {
         type: "FRAME",
         absoluteBoundingBox: { x: 200, y: 0, width: 200, height: 200 },
         children: [
-          { id: "b-default", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
-          { id: "b-hover", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+          { id: "b-default", name: "Default", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
+          { id: "b-hover", name: "Hover", absoluteBoundingBox: { x: 10, y: 10, width: 50, height: 20 } },
         ],
       },
     ],
@@ -328,8 +407,8 @@ function _test_collectStateGroups_does_not_mutate_input(): void {
     type: "FRAME",
     absoluteBoundingBox: { x: 0, y: 0, width: 100, height: 100 },
     children: [
-      { id: "a", absoluteBoundingBox: { x: 1, y: 1, width: 10, height: 10 } },
-      { id: "b", absoluteBoundingBox: { x: 1, y: 1, width: 10, height: 10 } },
+      { id: "a", name: "Default", absoluteBoundingBox: { x: 1, y: 1, width: 10, height: 10 } },
+      { id: "b", name: "Hover", absoluteBoundingBox: { x: 1, y: 1, width: 10, height: 10 } },
     ],
   };
   const annotated = filterVisible(tree)! as AnnotatedNode;
@@ -358,6 +437,8 @@ export function runAll(): void {
   _test_filterVisible_does_not_mutate_input();
   _test_copositioned_siblings_get_state_group();
   _test_copositioned_only_when_2plus_share();
+  _test_copositioned_skipped_when_all_auto_named();
+  _test_copositioned_skipped_when_all_clippath_named();
   _test_collectStateGroups_happy_path();
   _test_collectStateGroups_three_stacked();
   _test_collectStateGroups_empty_when_no_copositioned();

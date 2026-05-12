@@ -88,3 +88,11 @@ playwright/.cache/
 # Sheet-sync binary + zipped plugin distribution
 services/ds-service/sheets-sync
 figma-plugin.zip
+
+# Diagnostic scratch — screenshots dropped in repo root or tests/ during
+# debugging, ad-hoc render harness output, and the local-only
+# import-figma-url Go binary. None of these are source.
+/Screenshot *.png
+/tests/Screenshot *.png
+/tmp/
+services/ds-service/import-figma-url
