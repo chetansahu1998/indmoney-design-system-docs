@@ -66,6 +66,13 @@ interface LeafStreamState {
   /** Pending close timer so transient unmount/remount doesn't tear down
    * an in-flight stream and re-open it 50ms later. */
   closeTimer: ReturnType<typeof setTimeout> | null;
+  /** Set when a notify is already scheduled for the next frame; cleared
+   * after subscribers fire. Coalesces N asset-ready events into one
+   * subscriber callback per animation frame. Without this, a leaf with
+   * 1430 clusters (INDstocks V5) emits 1430 synchronous setStates ×
+   * 62 LeafFrameRenderers = ~8s of JS-thread work for ~172ms of server
+   * stream output. */
+  notifyScheduled: boolean;
   /** Resolves on `complete` or `failed` for await-style consumers. */
   donePromise: Promise<void>;
   resolveDone: () => void;
@@ -157,6 +164,7 @@ function createState(slug: string, leafID: string): LeafStreamState {
     status: "idle",
     source: null,
     closeTimer: null,
+    notifyScheduled: false,
     donePromise,
     resolveDone,
   };
@@ -190,6 +198,29 @@ function notify(state: LeafStreamState): void {
     } catch {
       // Subscriber threw — don't let one bad listener tank the rest.
     }
+  }
+}
+
+/**
+ * Schedule a subscriber notify for the next animation frame, coalescing
+ * any further calls in the same frame into one. Falls back to setTimeout
+ * in non-browser environments (tests, SSR pre-hydration).
+ *
+ * Status-change notifies bypass coalescing via {@link notify} directly —
+ * they're rare (≤4 per stream) and `waitForLeafStreamSettled` must see
+ * `complete`/`failed` synchronously when it lands.
+ */
+function scheduleNotify(state: LeafStreamState): void {
+  if (state.notifyScheduled) return;
+  state.notifyScheduled = true;
+  const run = () => {
+    state.notifyScheduled = false;
+    notify(state);
+  };
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(run);
+  } else {
+    setTimeout(run, 0);
   }
 }
 
@@ -269,7 +300,7 @@ async function acquireStream(state: LeafStreamState): Promise<void> {
       const data = JSON.parse((ev as MessageEvent).data) as AssetReadyEvent;
       if (data.node_id && data.url) {
         state.urls.set(data.node_id, data.url);
-        notify(state);
+        scheduleNotify(state);
       }
     } catch {
       // Malformed event — skip.
@@ -281,7 +312,7 @@ async function acquireStream(state: LeafStreamState): Promise<void> {
       const data = JSON.parse((ev as MessageEvent).data) as AssetFailedEvent;
       if (data.node_id) {
         state.failedIDs.add(data.node_id);
-        notify(state);
+        scheduleNotify(state);
       }
     } catch {
       // Skip.
@@ -322,6 +353,8 @@ export function __resetLeafAssetStreamForTests(): void {
   for (const state of streams.values()) {
     if (state.source) state.source.close();
     if (state.closeTimer) clearTimeout(state.closeTimer);
+    state.notifyScheduled = false;
+    state.subscribers.clear();
   }
   streams.clear();
 }
