@@ -43,6 +43,28 @@ import {
 } from "./leaf-asset-stream";
 
 export const EMPTY_CLUSTER_URLS: ReadonlyMap<string, string> = new Map();
+const EMPTY_FAILED_IDS: ReadonlySet<string> = new Set();
+
+/**
+ * Result of {@link useIconClusterURLs}.
+ *
+ * Pre-2026-05-12 this hook returned only the URL map. The renderer
+ * couldn't distinguish "URL not arrived yet" (pending; show a pulsing
+ * teal placeholder) from "server emitted asset-failed and gave up"
+ * (failed; show a muted slate placeholder). With a 60s per-node budget
+ * and a tier-1 Figma PAT, 5-10% of clusters on a 160-cluster leaf will
+ * land in `failedIDs` per stream; the renderer needs both halves to
+ * paint them correctly.
+ */
+export interface IconClusterResult {
+  urls: ReadonlyMap<string, string>;
+  failedIDs: ReadonlySet<string>;
+}
+
+export const EMPTY_ICON_CLUSTER_RESULT: IconClusterResult = {
+  urls: EMPTY_CLUSTER_URLS,
+  failedIDs: EMPTY_FAILED_IDS,
+};
 
 /** Walk a canonical_tree and yield every icon-cluster's id. */
 export function collectClusterIDs(root: CanonicalNode | null): string[] {
@@ -156,12 +178,14 @@ export function useIconClusterURLs(
   zoom: number = 1,
   /** Legacy parameter; kept for callers that still pass scale=2 explicitly. */
   scale: 1 | 2 | 3 = 2,
-): ReadonlyMap<string, string> {
-  const [urls, setURLs] = useState<ReadonlyMap<string, string>>(EMPTY_CLUSTER_URLS);
+): IconClusterResult {
+  const [result, setResult] = useState<IconClusterResult>(
+    EMPTY_ICON_CLUSTER_RESULT,
+  );
 
   useEffect(() => {
     if (!treeRoot || !slug || !leafID) {
-      setURLs(EMPTY_CLUSTER_URLS);
+      setResult(EMPTY_ICON_CLUSTER_RESULT);
       return;
     }
     // Collect cluster ids + their bounding box widths so we can pick a
@@ -169,7 +193,7 @@ export function useIconClusterURLs(
     // 16×16 icons stay at preview-128 even at zoom=2.
     const idsWithBBox = collectClusterIDsWithBBox(treeRoot);
     if (idsWithBBox.length === 0) {
-      setURLs(EMPTY_CLUSTER_URLS);
+      setResult(EMPTY_ICON_CLUSTER_RESULT);
       return;
     }
     let cancelled = false;
@@ -197,26 +221,41 @@ export function useIconClusterURLs(
       }
       return filtered;
     };
+    // Locally-relevant slice of the stream's failedIDs (frame-scoped).
+    const projectStreamFailed = (snap: ReturnType<typeof subscribeLeafAssets>["snapshot"]): Set<string> => {
+      const filtered = new Set<string>();
+      for (const id of snap().failedIDs) {
+        if (localIDs.has(id)) filtered.add(id);
+      }
+      return filtered;
+    };
 
     let lastEmittedSize = 0;
+    let lastFailedSize = 0;
     const sub = subscribeLeafAssets(slug, leafID, () => {
       if (cancelled) return;
       const filtered = projectStreamFiltered(sub.snapshot);
-      // Only re-render when our frame's slice changed. Avoids hundreds
-      // of LeafFrameRenderers re-rendering for every other frame's
-      // asset-ready event.
-      if (filtered.size !== lastEmittedSize) {
+      const failed = projectStreamFailed(sub.snapshot);
+      // Re-render when either the URL slice or the failed set changed.
+      // 2026-05-12: pre-fix this only checked `filtered.size`, so a
+      // server-side asset-failed event would update the shared snapshot
+      // but never propagate to the renderer — failed clusters stayed
+      // pending-pulsing forever even after the stream completed.
+      if (filtered.size !== lastEmittedSize || failed.size !== lastFailedSize) {
         lastEmittedSize = filtered.size;
-        setURLs(filtered);
+        lastFailedSize = failed.size;
+        setResult({ urls: filtered, failedIDs: failed });
       }
     });
     // Emit current snapshot immediately so cache hits or re-mounts
     // pick up state without waiting for the next event.
     {
       const initial = projectStreamFiltered(sub.snapshot);
-      if (initial.size > 0) {
+      const initialFailed = projectStreamFailed(sub.snapshot);
+      if (initial.size > 0 || initialFailed.size > 0) {
         lastEmittedSize = initial.size;
-        setURLs(initial);
+        lastFailedSize = initialFailed.size;
+        setResult({ urls: initial, failedIDs: initialFailed });
       }
     }
 
@@ -318,7 +357,7 @@ export function useIconClusterURLs(
           failures.slice(0, 5),
         );
       }
-      setURLs(next);
+      setResult({ urls: next, failedIDs: projectStreamFailed(sub.snapshot) });
     })().catch((err) => {
       // Defensive: chrome-extension fetch wrappers occasionally surface
       // synchronous TypeErrors that escape the inner try/catch (see
@@ -341,5 +380,5 @@ export function useIconClusterURLs(
     // tiers in one Figma call when the stream rendered each cluster).
   }, [slug, leafID, treeRoot, zoom, scale]);
 
-  return urls;
+  return result;
 }

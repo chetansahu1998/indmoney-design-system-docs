@@ -250,13 +250,19 @@ export function classifyNode(node: CanonicalNode): ClassifiedNode {
   }
 
   // Standalone shape primitives.
+  // 2026-05-12 (fidelity audit P2): added REGULAR_POLYGON. Figma exports
+  // chevron triangles as REGULAR_POLYGON; pre-fix they fell through to
+  // the container branch and rendered as solid-fill bbox-sized
+  // rectangles (e.g. two stacked green chevrons next to "Default" on
+  // 8695:78077 painted as one green square).
   if (
     t === "VECTOR" ||
     t === "ELLIPSE" ||
     t === "LINE" ||
     t === "BOOLEAN_OPERATION" ||
     t === "STAR" ||
-    t === "POLYGON"
+    t === "POLYGON" ||
+    t === "REGULAR_POLYGON"
   ) {
     return { kind: "shape", taxonomy };
   }

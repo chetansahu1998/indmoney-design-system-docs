@@ -596,17 +596,18 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
   // a tier transition fires once when they let go, not 60×/sec
   // mid-gesture as they cross the 0.4→0.6 (512→1024 px) boundary.
   const settledZoom = useLeafZoomSettled();
-  const clusterURLs = useIconClusterURLs(slug, openLeafID, prunedTree, settledZoom, 2);
+  const clusterResult = useIconClusterURLs(slug, openLeafID, prunedTree, settledZoom, 2);
+  const { urls: clusterURLs, failedIDs: clusterFailedIDs } = clusterResult;
   const rendered = useMemo(() => {
     if (!prunedTree || !prunedTree.absoluteBoundingBox) return null;
     return nodeToHTML(
       prunedTree,
       prunedTree.absoluteBoundingBox,
       null,
-      { imageRefs, clusterURLs },
+      { imageRefs, clusterURLs, clusterFailedIDs },
       "root",
     );
-  }, [prunedTree, imageRefs, clusterURLs]);
+  }, [prunedTree, imageRefs, clusterURLs, clusterFailedIDs]);
 
   // ─── Lasso selection (U9) ────────────────────────────────────────────────
   // Pointer-down on canvas whitespace (an element that is NOT inside an

@@ -140,6 +140,19 @@ export interface TextStyle {
   textAlignHorizontal?: "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
   textAlignVertical?: "TOP" | "CENTER" | "BOTTOM";
   italic?: boolean;
+  /**
+   * Figma's text-case enum. Wired into the renderer 2026-05-12 (fidelity
+   * audit P1); pre-fix the field was unread and any UPPER/LOWER/TITLE
+   * casing authored in Figma silently flattened to mixed-case at the
+   * source-character casing. Maps to CSS `text-transform` in renderText.
+   */
+  textCase?: "ORIGINAL" | "UPPER" | "LOWER" | "TITLE" | "SMALL_CAPS" | "SMALL_CAPS_FORCED";
+  /**
+   * Figma's text-decoration enum. Wired into the renderer 2026-05-12
+   * (fidelity audit P1); pre-fix Figma underlines and strikethroughs
+   * never reached the DOM. Maps to CSS `text-decoration` in renderText.
+   */
+  textDecoration?: "NONE" | "UNDERLINE" | "STRIKETHROUGH";
 }
 
 export interface CanonicalNode {
@@ -190,6 +203,37 @@ export interface CanonicalNode {
   counterAxisAlignItems?: CounterAxisAlign;
   layoutAlign?: LayoutAlign;
   layoutGrow?: LayoutGrow;
+  /**
+   * Figma's auto-layout wrap mode. When `WRAP`, the autolayout
+   * container wraps items to a new row (HORIZONTAL) or column
+   * (VERTICAL) when the primary axis runs out of space. Maps to CSS
+   * `flex-wrap: wrap` on the parent.
+   *
+   * Wired into the renderer 2026-05-13 (round-4 audit P19): pre-fix
+   * the field was unread, so a pill rail authored to wrap to two rows
+   * (e.g. Nifty 50 / Nifty 100 / Nifty 250 / Nifty 500 / Top 1000 by
+   * Mkt Cap on INDstocks V5 Filters BS) overflowed off the right edge
+   * of its container instead. Production case: `Frame 2147228897`
+   * (243×64, layoutWrap=WRAP) in 249:55005.
+   */
+  layoutWrap?: "WRAP" | "NO_WRAP";
+  /**
+   * Figma's "absolute positioning inside autolayout" escape hatch
+   * (introduced 2023). When set to `ABSOLUTE`, the node is taken OUT
+   * of the autolayout flex flow and positioned at `absoluteBoundingBox`
+   * relative to the autolayout parent's bbox — same as a non-autolayout
+   * child. Used for overlays like ribbons, accent strips, badges, and
+   * "floating" elements layered over flex content.
+   *
+   * Wired into the renderer 2026-05-13 (round-4 audit P20): without
+   * this branch, every Figma `ABSOLUTE` child got swept into the flex
+   * flow and rendered at the wrong position (bottom of column / side
+   * of row). Production case: Tax Centre Transaction cards have a 4×18
+   * green accent rectangle (`Rectangle 427321283`) anchored to the
+   * card's top-left corner — visible in every transaction-card design
+   * across the file but absent from our render.
+   */
+  layoutPositioning?: "AUTO" | "ABSOLUTE";
   /** Default true on FRAME, undefined elsewhere. */
   clipsContent?: boolean;
   fills?: Paint[];
@@ -199,6 +243,27 @@ export interface CanonicalNode {
   rectangleCornerRadii?: [number, number, number, number];
   characters?: string;
   style?: TextStyle;
+  /**
+   * Per-character style override indices into `styleOverrideTable`.
+   * Index 0 means "no override — use top-level style". Any non-zero
+   * index points to a `styleOverrideTable[<index>]` partial TextStyle
+   * that overrides the top-level style for that character.
+   *
+   * 2026-05-12 fidelity audit P3: the renderer pre-fix ignored both
+   * this field and `styleOverrideTable`, so authoring patterns like
+   * "label Medium 14px / digits Regular 14px no-letter-spacing" lost
+   * the run-level overrides entirely. Symptom: ticker text overflowed
+   * its 75px HUG container because top-level letterSpacing:1 applied
+   * to every char even when every char overrode to letterSpacing:0.
+   */
+  characterStyleOverrides?: number[];
+  /**
+   * Lookup table for per-character style overrides keyed by the index
+   * values in `characterStyleOverrides`. Each entry is a partial
+   * TextStyle that merges OVER the top-level `style` for any character
+   * whose override index points here.
+   */
+  styleOverrideTable?: Record<string, TextStyle>;
   /**
    * Legacy autoresize mode for non-autolayout TEXT nodes. See the comment on
    * `layoutSizingHorizontal` for the modern equivalent. When present, this

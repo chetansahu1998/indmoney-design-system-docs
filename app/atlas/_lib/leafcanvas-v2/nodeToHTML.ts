@@ -36,6 +36,7 @@ import type {
   Paint,
   RGBA,
   SolidPaint,
+  TextStyle,
 } from "./types";
 
 export interface NodeToHTMLContext {
@@ -51,6 +52,20 @@ export interface NodeToHTMLContext {
    * hook result directly (it's frozen) without a defensive copy.
    */
   clusterURLs: ReadonlyMap<string, string>;
+  /**
+   * Cluster node ids the server explicitly marked as failed in the asset
+   * stream (asset_stream.go emits `asset-failed` events with a reason).
+   * Threaded so `renderClusterPlaceholder` can distinguish "still
+   * loading" (no URL yet, no failed entry) from "server already gave up"
+   * (failed entry present). Pre-2026-05-12 both rendered as
+   * data-cluster-pending="true" with the same pulsing dashed border,
+   * which gave users the impression that 15+ icons on every leaf were
+   * "loading forever" when in fact the stream had completed and the
+   * server had emitted asset-failed events that the renderer silently
+   * ignored. Defaults to empty when the asset stream is unwired (tests,
+   * SSR).
+   */
+  clusterFailedIDs?: ReadonlySet<string>;
   /** Stable key prefix so nested sibling arrays keep unique React keys. */
   keyPrefix?: string;
 }
@@ -98,6 +113,25 @@ export function nodeToHTML(
   // TEXT renders before classification — text nodes never rasterize.
   if (annotated.type === "TEXT") {
     return renderText(annotated, parentBBox, parentLayoutMode, keyHint);
+  }
+
+  // LINE / zero-axis VECTOR CSS fast-path (2026-05-12 + round-2 audit
+  // P9). Three node shapes hit this:
+  //   • type: "LINE" — Figma's native line primitive (P2).
+  //   • type: "VECTOR" with bbox.height < 1 — a horizontal hairline
+  //     authored as a stroked vector path (very common for header /
+  //     between-card dividers; both round-2 audits independently
+  //     surfaced these as missing — 5 dividers on the Filters BS, the
+  //     "Realised Gains" header divider on Tax Transactions).
+  //   • type: "VECTOR" with bbox.width < 1 — vertical hairline,
+  //     symmetric to the horizontal case.
+  // All three render identically: emit a thin <div> with the stroke
+  // colour as border. Without this fast-path the VECTORs fall through
+  // to the cluster placeholder which either shows a dashed teal box
+  // (no URL) or drops them entirely when the cluster never resolves
+  // for a 0-height bbox.
+  if (!isScreenRoot && isZeroAxisLineLike(annotated)) {
+    return renderLine(annotated, parentBBox, parentLayoutMode, keyHint);
   }
 
   // node-classifier combines name patterns (Icons/.../, Illustrations/,
@@ -148,10 +182,59 @@ function renderFlattenedChildren(
   const children = Array.isArray(node.children) ? node.children : [];
   if (children.length === 0) return null;
 
-  // `display: contents` keeps the wrapper out of layout so children render
-  // as direct geometric children of the real parent. Better than emitting
-  // a Fragment because each child still gets a stable key path and we
-  // preserve a `data-flattened-from` hint for debugging.
+  // Autolayout-parent guard (2026-05-12, fidelity audit Bug P5).
+  //
+  // Pre-fix: `display: contents` was emitted unconditionally and the
+  // parent's layoutMode/bbox were forwarded to children. When the
+  // parent was HORIZONTAL/VERTICAL autolayout, children with absolute
+  // coordinates inside the GROUP got positioned RELATIVE to the
+  // autolayout flow (positionStyle short-circuits to
+  // `{position:"relative"}` for autolayout, discarding left/top), so
+  // every authored "card body as GROUP{rect bg + icon + label + CTA}
+  // inside a vertical column" collapsed into stacked flex items.
+  // Production case: Help Center / Refer & Earn cards in the
+  // INDstocks referral V2 file rendered as plain stacked labels with
+  // no card backgrounds — the GROUP's children's absolute coords were
+  // silently zeroed by the flex flow.
+  //
+  // Fix: when the wrapper sits inside autolayout AND has its own
+  // absoluteBoundingBox, emit a single positioned-and-sized wrapper
+  // (one flex item from the autolayout's perspective) and recurse
+  // INTO it with parentLayoutMode=null + parentBBox=group.bbox so the
+  // children's absolute coordinates resolve correctly inside the
+  // wrapper. The flex parent sees one box; everything inside that box
+  // positions exactly as Figma authored.
+  if (
+    parentLayoutMode !== null &&
+    node.absoluteBoundingBox &&
+    Number.isFinite(node.absoluteBoundingBox.width) &&
+    Number.isFinite(node.absoluteBoundingBox.height)
+  ) {
+    const wrapperPos = positionStyle(node, parentBBox, parentLayoutMode);
+    const wrapperSize = sizeStyle(node, parentLayoutMode);
+    const elements = children
+      .map((c, i) =>
+        nodeToHTML(c, node.absoluteBoundingBox ?? null, null, ctx, `${keyHint}.f${i}`),
+      )
+      .filter((e): e is ReactElement => e !== null);
+    return createElement(
+      "div",
+      {
+        key: keyHint,
+        "data-flattened-from": node.type,
+        "data-figma-id": node.id,
+        "data-flatten-mode": "wrapped-for-autolayout",
+        style: { ...wrapperPos, ...wrapperSize },
+      },
+      ...elements,
+    );
+  }
+
+  // Non-autolayout parent: `display: contents` keeps the wrapper out
+  // of layout so children render as direct geometric children of the
+  // real parent. Better than emitting a Fragment because each child
+  // still gets a stable key path and we preserve a `data-flattened-
+  // from` hint for debugging.
   const elements = children
     .map((c, i) => nodeToHTML(c, parentBBox, parentLayoutMode, ctx, `${keyHint}.f${i}`))
     .filter((e): e is ReactElement => e !== null);
@@ -179,7 +262,7 @@ function renderClusterPlaceholder(
 ): ReactElement {
   const url = node.id ? ctx.clusterURLs.get(node.id) ?? null : null;
   const positioning = positionStyle(node, parentBBox, parentLayoutMode);
-  const sizing = sizeStyle(node);
+  const sizing = sizeStyle(node, parentLayoutMode);
 
   if (url) {
     // Cluster export resolved — render the rasterized icon. onError
@@ -231,19 +314,139 @@ function renderClusterPlaceholder(
     });
   }
 
+  // Failed-vs-pending fork. Pre-2026-05-12 both paths rendered the same
+  // pulsing teal dashed border, which made server-side render failures
+  // visually indistinguishable from in-flight renders. The asset stream
+  // emits `asset-failed` events with reasons like `render_timeout` /
+  // `default_tier_not_persisted`; we surface those as a muted,
+  // non-pulsing placeholder so the user understands the asset is not
+  // coming back without a fresh sync. Hover title carries the cluster id
+  // so designers can copy-paste it into the blocklist admin UI.
+  const failed = node.id ? ctx.clusterFailedIDs?.has(node.id) ?? false : false;
   return createElement("div", {
     key: keyHint,
-    "data-cluster-pending": "true",
+    "data-cluster-pending": failed ? undefined : "true",
+    "data-cluster-failed": failed ? "true" : undefined,
     "data-figma-id": node.id,
-    "aria-label": node.name ?? "icon (rendering)",
+    "aria-label": failed
+      ? `${node.name ?? "icon"} (render failed)`
+      : `${node.name ?? "icon"} (rendering)`,
+    title: failed
+      ? `Cluster render failed: ${node.id ?? ""}. Re-sync the file to retry.`
+      : undefined,
     style: {
       ...positioning,
       ...sizing,
-      border: "1px dashed rgba(94, 234, 212, 0.6)",
+      // Failed: flat muted slate; Pending: teal pulse (unchanged).
+      border: failed
+        ? "1px dashed rgba(148, 163, 184, 0.35)"
+        : "1px dashed rgba(94, 234, 212, 0.6)",
       borderRadius: 4,
-      background: "rgba(94, 234, 212, 0.05)",
+      background: failed
+        ? "rgba(148, 163, 184, 0.04)"
+        : "rgba(94, 234, 212, 0.05)",
       boxSizing: "border-box",
+      opacity: failed ? 0.5 : 1,
     },
+  });
+}
+
+// ─── LINE (CSS fast-path) ────────────────────────────────────────────────────
+
+/**
+ * Renders a Figma LINE as a CSS-bordered div. LINEs have a single
+ * SOLID stroke whose width is the visible thickness; bbox carries one
+ * zero or near-zero dimension that picks the orientation.
+ *
+ * Pre-2026-05-12 LINEs routed through `renderClusterPlaceholder` and
+ * fell back to the dashed teal placeholder when no Figma export was
+ * cached. With this fast-path we never need a network round-trip for
+ * what is fundamentally a 1px border.
+ *
+ * 2026-05-12 round-2 audit P9: extended to cover VECTOR nodes whose
+ * bbox collapses to a single axis (height < 1 or width < 1) and carry
+ * a single SOLID stroke. Figma exports horizontal hairlines as zero-
+ * height VECTORs ("Vector 2779" — 343 × 0.000021 with strokeWeight:1)
+ * that visually function identically to LINE. Both round-2 audit
+ * agents independently surfaced this as missing dividers.
+ */
+function isZeroAxisLineLike(node: AnnotatedNode): boolean {
+  if (node.type === "LINE") return true;
+  if (node.type !== "VECTOR") return false;
+  const bb = node.absoluteBoundingBox;
+  if (!bb) return false;
+  // "Near-zero" — Figma's degenerate stroked-vector exports report
+  // ~2e-5 px on the collapsed axis (floating-point noise).
+  if (bb.height >= 1 && bb.width >= 1) return false;
+  // Must have a stroke (otherwise it's an invisible vector that
+  // shouldn't render at all).
+  const strokes = (node as unknown as { strokes?: Paint[] }).strokes;
+  if (!Array.isArray(strokes) || strokes.length === 0) return false;
+  // P17 — snap near-zero rotation to 0 so the transform path doesn't
+  // drop sub-pixel boxes. The function only inspects, but downstream
+  // renderLine reads node.absoluteBoundingBox which already encodes
+  // the axis correctly; rotation only matters if we ever route
+  // through the transform path.
+  return true;
+}
+
+function renderLine(
+  node: AnnotatedNode,
+  parentBBox: BoundingBox | null,
+  parentLayoutMode: LayoutMode,
+  keyHint: string,
+): ReactElement {
+  const positioning = positionStyle(node, parentBBox, parentLayoutMode);
+  const sizing = sizeStyle(node, parentLayoutMode);
+
+  // Stroke colour: first SOLID stroke wins. Fall back to a faint grey
+  // so the line is still visible if the canonical_tree omits strokes
+  // (very rare; defensive).
+  const strokes = Array.isArray((node as unknown as { strokes?: Paint[] }).strokes)
+    ? ((node as unknown as { strokes?: Paint[] }).strokes as Paint[])
+    : [];
+  let color = "rgba(0, 0, 0, 0.12)";
+  for (const s of strokes) {
+    if (s && s.type === "SOLID" && (s as SolidPaint).color) {
+      const sp = s as SolidPaint;
+      const op = (sp as unknown as { opacity?: number }).opacity;
+      const c = rgbaToCSS(sp.color, op);
+      if (c) {
+        color = c;
+        break;
+      }
+    }
+  }
+  // strokeWeight is on the node directly per Figma's REST schema.
+  const sw = (node as unknown as { strokeWeight?: number }).strokeWeight;
+  const weight = typeof sw === "number" && sw > 0 ? sw : 1;
+
+  const bb = node.absoluteBoundingBox;
+  const isVertical = bb ? bb.height > bb.width : false;
+
+  // LINE bbox can be degenerate (0 in one axis). Set the long axis
+  // from the bbox, force the short axis to the strokeWeight so the
+  // div has visible footprint, and use border-* for the actual pixel.
+  const linedStyle: Record<string, string | number> = {
+    ...positioning,
+    ...sizing,
+    boxSizing: "border-box",
+  };
+  if (isVertical) {
+    // Vertical line: take width from strokeWeight, paint with border-left.
+    linedStyle.width = `${weight}px`;
+    linedStyle.borderLeft = `${weight}px solid ${color}`;
+  } else {
+    linedStyle.height = `${weight}px`;
+    linedStyle.borderTop = `${weight}px solid ${color}`;
+  }
+
+  return createElement("div", {
+    key: keyHint,
+    "data-figma-id": node.id,
+    "data-figma-type": "LINE",
+    "aria-hidden": true,
+    style: linedStyle,
   });
 }
 
@@ -256,12 +459,85 @@ function renderText(
   keyHint: string,
 ): ReactElement {
   const positioning = positionStyle(node, parentBBox, parentLayoutMode);
-  const sizing = sizeStyle(node);
-  const style = node.style ?? {};
+  const sizing = sizeStyle(node, parentLayoutMode);
+
+  // 2026-05-12 fidelity audit P3 — uniform-override consult.
+  // Figma's authoring tool routinely emits a "set every character to
+  // the same override" pattern when designers tweak a property after
+  // typing (e.g., make every char letterSpacing:0 even though
+  // top-level style still says letterSpacing:1, or apply
+  // textDecoration:UNDERLINE via the inspector for the whole label).
+  // Pre-fix the renderer only read top-level `node.style.*`, so these
+  // uniform-override patterns silently dropped — production case:
+  // ticker text "Sensex 61,245" overflowed its 75px HUG container
+  // because top-level letterSpacing:1 stayed applied. Mixed-run
+  // overrides (multiple distinct indices) still fall through to
+  // top-level here; segmenting into per-run <span>s is a separate
+  // follow-up — flagged via console.warn so the bug stays visible.
+  const overrides = node.characterStyleOverrides;
+  const overrideTable = node.styleOverrideTable;
+  let effectiveStyle: TextStyle = node.style ?? {};
+  if (Array.isArray(overrides) && overrides.length > 0 && overrideTable) {
+    const first = overrides[0] ?? 0;
+    const uniform = overrides.every((idx) => (idx ?? 0) === first);
+    if (uniform && first !== 0) {
+      const override = overrideTable[String(first)];
+      if (override) {
+        effectiveStyle = { ...effectiveStyle, ...override };
+      }
+    } else if (!uniform) {
+      // Mixed runs — fall through to top-level for now. Surfaces as
+      // a console signal so the gap stays visible until the per-run
+      // splitter ships.
+      // eslint-disable-next-line no-console
+      console.debug(
+        "[nodeToHTML] mixed characterStyleOverrides not yet split:",
+        node.id,
+        node.name,
+      );
+    }
+  }
+  const style = effectiveStyle;
   // Per U13: TEXT atomics with empty/missing/non-SOLID `fills` default to
   // `#000` rather than inheriting from the parent — the spike found that
   // inheriting often produced white-on-white in dark surfaces.
   const color = firstSolidColor(node.fills) ?? "#000";
+
+  // Text typography properties that Figma exposes on `style` but our
+  // pre-2026-05-12 renderer silently dropped (fidelity audit P1 + P4):
+  //   - textCase → CSS text-transform
+  //   - textDecoration → CSS text-decoration
+  //   - opacity (node-level) → CSS opacity (renderContainer already
+  //     does this — renderText was missing the branch).
+  // Mapping mirrors Figma's documented enum values; anything unknown
+  // (SMALL_CAPS_FORCED, etc.) falls through to `undefined` rather than
+  // emitting an invalid CSS value.
+  const textTransform: CSSProperties["textTransform"] = (() => {
+    switch (style.textCase) {
+      case "UPPER":
+        return "uppercase";
+      case "LOWER":
+        return "lowercase";
+      case "TITLE":
+        return "capitalize";
+      default:
+        return undefined;
+    }
+  })();
+  const textDecoration: CSSProperties["textDecoration"] = (() => {
+    switch (style.textDecoration) {
+      case "UNDERLINE":
+        return "underline";
+      case "STRIKETHROUGH":
+        return "line-through";
+      default:
+        return undefined;
+    }
+  })();
+  const nodeOpacity =
+    typeof node.opacity === "number" && node.opacity >= 0 && node.opacity < 1
+      ? node.opacity
+      : undefined;
 
   const textStyle: CSSProperties = {
     ...positioning,
@@ -281,6 +557,9 @@ function renderText(
         : undefined,
     textAlign: textAlign(style.textAlignHorizontal),
     fontStyle: style.italic ? "italic" : undefined,
+    textTransform,
+    textDecoration,
+    opacity: nodeOpacity,
     display: "inline-block",
     boxSizing: "border-box",
   };
@@ -389,10 +668,11 @@ function renderContainer(
 ): ReactElement {
   const ownLayoutMode: LayoutMode = node.layoutMode ?? null;
   const isAutolayout = ownLayoutMode === "HORIZONTAL" || ownLayoutMode === "VERTICAL";
+  const isScreenRoot = keyHint === "root";
 
   const baseStyle: CSSProperties = {
     ...positionStyle(node, parentBBox, parentLayoutMode),
-    ...sizeStyle(node),
+    ...sizeStyle(node, parentLayoutMode),
     boxSizing: "border-box",
   };
 
@@ -407,12 +687,31 @@ function renderContainer(
   const bg = backgroundStyle(node.fills, ctx.imageRefs);
   Object.assign(baseStyle, bg);
 
-  // Border / radius
-  if (typeof node.cornerRadius === "number") {
-    baseStyle.borderRadius = `${node.cornerRadius}px`;
-  } else if (node.rectangleCornerRadii) {
-    const [tl, tr, br, bl] = node.rectangleCornerRadii;
-    baseStyle.borderRadius = `${tl}px ${tr}px ${br}px ${bl}px`;
+  // Border / radius. 2026-05-12 fidelity audit P7: suppress
+  // cornerRadius on the screen-root when the root looks like a
+  // full-screen phone frame (Figma authors set cornerRadius:24 on
+  // those for in-Figma device-preview but the official render
+  // ignores it). Bottomsheets and modals authored at smaller heights
+  // (e.g. Networth us_v2 at 375×573 with cornerRadius:20) keep their
+  // intentional rounding — round-2 audit caught the over-suppression.
+  //
+  // Heuristic: a "full-screen phone frame" has height >= 700px (the
+  // shortest standard phone is 667, but anything < 700 is almost
+  // certainly a bottomsheet or modal sized to its own content). The
+  // width check (>= 360) keeps mobile/tablet-aware screens in the
+  // suppression set while rejecting cards/snippets.
+  const suppressRootRadius =
+    isScreenRoot &&
+    node.absoluteBoundingBox != null &&
+    node.absoluteBoundingBox.height >= 700 &&
+    node.absoluteBoundingBox.width >= 360;
+  if (!suppressRootRadius) {
+    if (typeof node.cornerRadius === "number") {
+      baseStyle.borderRadius = `${node.cornerRadius}px`;
+    } else if (node.rectangleCornerRadii) {
+      const [tl, tr, br, bl] = node.rectangleCornerRadii;
+      baseStyle.borderRadius = `${tl}px ${tr}px ${br}px ${bl}px`;
+    }
   }
   const strokeColor = firstSolidColor(node.strokes);
   if (strokeColor && typeof node.strokeWeight === "number" && node.strokeWeight > 0) {
@@ -423,7 +722,27 @@ function renderContainer(
   if (isAutolayout) {
     baseStyle.display = "flex";
     baseStyle.flexDirection = ownLayoutMode === "HORIZONTAL" ? "row" : "column";
-    if (typeof node.itemSpacing === "number") {
+    // 2026-05-13 round-4 audit P19: honor Figma's layoutWrap. WRAP
+    // means flex children spill to the next row/column when the
+    // primary axis is full; pre-fix this was silently ignored and
+    // chip rails overflowed off the right edge of their container
+    // (INDstocks V5 Filters BS pill rows). NO_WRAP is the CSS default
+    // so we only emit the property when WRAP is set.
+    if (node.layoutWrap === "WRAP") {
+      baseStyle.flexWrap = "wrap";
+    }
+    // 2026-05-12 round-2 audit P16: when primaryAxisAlignItems is
+    // SPACE_BETWEEN, Figma still carries `itemSpacing` in the canonical
+    // tree as a minimum-gap fallback, but the visual gap is computed by
+    // SPACE_BETWEEN distribution alone. Emitting `gap: itemSpacing` on
+    // top of `justify-content: space-between` double-counts spacing and
+    // pushes trailing children past the right edge (My Ownership / Trading
+    // Segment checkboxes drifted off-canvas on 249:54609). Drop the gap in
+    // SPACE_BETWEEN — CSS distributes the slack correctly.
+    if (
+      typeof node.itemSpacing === "number" &&
+      node.primaryAxisAlignItems !== "SPACE_BETWEEN"
+    ) {
       baseStyle.gap = `${node.itemSpacing}px`;
     }
     if (typeof node.paddingLeft === "number") baseStyle.paddingLeft = `${node.paddingLeft}px`;
@@ -484,6 +803,25 @@ function positionStyle(
   parentBBox: BoundingBox | null,
   parentLayoutMode: LayoutMode,
 ): CSSProperties {
+  // 2026-05-13 round-4 audit P20 — Figma's "absolute positioning inside
+  // autolayout" escape hatch. When `layoutPositioning: "ABSOLUTE"` is
+  // set, the node is OUT of the flex flow and positioned at its
+  // absolute bbox relative to the autolayout parent (same math as a
+  // non-autolayout child). Used by overlay ribbons, accent strips,
+  // badges. Pre-fix every ABSOLUTE child got swept into flex flow and
+  // mispositioned (Tax Centre transaction cards lost their green
+  // top-left accent stripe to the bottom of the card column).
+  if (node.layoutPositioning === "ABSOLUTE") {
+    const bb = node.absoluteBoundingBox;
+    if (!bb || !parentBBox) {
+      return { position: "absolute", left: 0, top: 0 };
+    }
+    return {
+      position: "absolute",
+      left: `${bb.x - parentBBox.x}px`,
+      top: `${bb.y - parentBBox.y}px`,
+    };
+  }
   // In autolayout: don't position — let flex handle it. Only emit
   // flex-grow / align-self where the node opts in.
   if (parentLayoutMode === "HORIZONTAL" || parentLayoutMode === "VERTICAL") {
@@ -504,9 +842,32 @@ function positionStyle(
   };
 }
 
-function sizeStyle(node: CanonicalNode): CSSProperties {
+function sizeStyle(
+  node: CanonicalNode,
+  parentLayoutMode: LayoutMode = null,
+): CSSProperties {
   const bb = node.absoluteBoundingBox;
   if (!bb) return {};
+  // 2026-05-12 fidelity audit P6: when a child opts into cross-axis
+  // STRETCH inside autolayout, a fixed `width`/`height` would win over
+  // `align-self: stretch` (CSS sizing is intrinsic), silently dropping
+  // the stretch. Same logic for `layoutGrow:1` on the primary axis —
+  // a fixed dimension defeats `flex-grow:1`. Drop the relevant axis
+  // when the node explicitly delegated sizing to the autolayout.
+  const stretch = node.layoutAlign === "STRETCH";
+  const grow = node.layoutGrow === 1;
+  if (parentLayoutMode === "HORIZONTAL") {
+    return {
+      width: grow ? "auto" : `${bb.width}px`,
+      height: stretch ? "auto" : `${bb.height}px`,
+    };
+  }
+  if (parentLayoutMode === "VERTICAL") {
+    return {
+      width: stretch ? "auto" : `${bb.width}px`,
+      height: grow ? "auto" : `${bb.height}px`,
+    };
+  }
   return { width: `${bb.width}px`, height: `${bb.height}px` };
 }
 
