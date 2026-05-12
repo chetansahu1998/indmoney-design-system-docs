@@ -899,7 +899,24 @@ func (p *Pipeline) fail(ctx context.Context, in PipelineInputs, err error) {
 // /v1/projects/<slug>/export or the sheets-sync re-import flow) to pick
 // up the deeper trees. See docs/issues/2026-05-05-canonical-tree-depth.md
 // for the operator runbook.
-const CanonicalTreeFetchDepth = 10
+//
+// 2026-05-12 round-2 fidelity audit (P8 + P12) raised the cap from
+// 10 → 14. Production cases that needed depth ≥ 11:
+//   - Tax Centre `Net P&L` row composes 4 colored chip frames (16×16
+//     each) inside an inner autolayout row. The chip TEXT leaves
+//     ("A"/"B"/"C"/"D") sat at depth 11 from the screen root; at
+//     depth=10 the inner Frame 1686556590 came back with empty children
+//     and the chips rendered as empty boxes (visible regression in
+//     `3267:107865`).
+//   - Networth bottomsheet `us_v2` (375×573) nests one wrapper deeper
+//     than full screens because the sheet adds an extra "Category"
+//     frame at the top level. Depth-cap=10 sheared every leaf TEXT at
+//     depth ≥ 11 — "Invested", "Absolute returns", "1D Change" labels
+//     all disappeared from the rendered output.
+// 14 is a generous ceiling that covers both patterns + future bottom-
+// sheet nesting without bloating the Figma response payload meaningfully
+// (each step adds ~10-20 nodes typical).
+const CanonicalTreeFetchDepth = 14
 
 // MinRateLimitWait floors Retry-After-derived sleeps so a buggy or zero
 // header doesn't degenerate into a tight retry loop. Mirrors the prior

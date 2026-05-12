@@ -1744,7 +1744,42 @@ func (t *TenantRepo) UpdateViolationStatus(ctx context.Context, violationID stri
 // version is current at decision time.
 func (t *TenantRepo) resolveLatestVersionID(ctx context.Context, flowID string) (string, error) {
 	var versionID string
+	// 2026-05-12 multi-flow bug fix: filter to project_versions that
+	// actually have screens for THIS flow. Each `cmd/import-figma-url`
+	// run creates a new project_versions row containing screens only
+	// from the imported section; other flows under the same project
+	// stay tied to their prior version_id. Pre-fix this returned the
+	// project's latest version regardless of which flow it belonged
+	// to, so a multi-flow project where Flow A was re-imported AFTER
+	// Flow B would have `resolveLatestVersionID(Flow_B)` return Flow
+	// A's version → empty `ListCanonicalTreesForFlow` → asset stream
+	// emits 0 cluster URLs for Flow B → its screens hydrate as dashed
+	// placeholders forever. Production case: Tax Centre with 2 flows.
 	err := t.r.db.QueryRowContext(ctx,
+		`SELECT pv.id
+		   FROM project_versions pv
+		   JOIN flows f ON f.project_id = pv.project_id
+		  WHERE f.id = ? AND f.tenant_id = ?
+		    AND EXISTS (
+		          SELECT 1 FROM screens s
+		           WHERE s.flow_id = f.id AND s.version_id = pv.id
+		    )
+		  ORDER BY pv.version_index DESC
+		  LIMIT 1`,
+		flowID, t.tenantID,
+	).Scan(&versionID)
+	if err == nil {
+		return versionID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("latest version: %w", err)
+	}
+	// Fallback for first-time import paths (CreateDecision before any
+	// screen has been inserted; pipeline mid-flight): return the project's
+	// most recent version_id regardless of screen presence. Once screens
+	// land, the primary query above starts matching and the fallback no
+	// longer fires.
+	err = t.r.db.QueryRowContext(ctx,
 		`SELECT pv.id
 		   FROM project_versions pv
 		   JOIN flows f ON f.project_id = pv.project_id
@@ -1757,7 +1792,7 @@ func (t *TenantRepo) resolveLatestVersionID(ctx context.Context, flowID string) 
 		return "", ErrNotFound
 	}
 	if err != nil {
-		return "", fmt.Errorf("latest version: %w", err)
+		return "", fmt.Errorf("latest version (fallback): %w", err)
 	}
 	return versionID, nil
 }

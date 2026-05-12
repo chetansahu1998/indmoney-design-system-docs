@@ -512,6 +512,52 @@ func (t *TenantRepo) StoreAsset(ctx context.Context, r AssetCacheRow) error {
 	return err
 }
 
+// AllFlowIDsForSlug returns every flow id under the given project slug
+// in stable (created_at ASC) order, or ErrNotFound when the project has
+// no flows. Required for handlers that must walk EVERY flow of a multi-
+// flow project (e.g. the asset stream — pre-fix it only walked the
+// primary flow and dropped clusters from sibling flows; production
+// case: Tax Centre with two flows where Flow B's icons stayed dashed
+// placeholders forever because they never appeared in the stream).
+func (t *TenantRepo) AllFlowIDsForSlug(ctx context.Context, slug string) ([]string, error) {
+	if t == nil {
+		return nil, errors.New("nil repo")
+	}
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	rows, err := t.handle().QueryContext(ctx, `
+		SELECT f.id
+		  FROM flows f
+		  JOIN projects p ON p.id = f.project_id
+		 WHERE p.slug = ?
+		   AND p.tenant_id = ?
+		   AND p.deleted_at IS NULL
+		   AND f.tenant_id = ?
+		   AND f.deleted_at IS NULL
+		 ORDER BY f.created_at ASC
+	`, slug, t.tenantID, t.tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("all flows for slug: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var flowID string
+		if err := rows.Scan(&flowID); err != nil {
+			return nil, err
+		}
+		out = append(out, flowID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, ErrNotFound
+	}
+	return out, nil
+}
+
 // PrimaryFlowIDForSlug returns ANY flow id for the given project slug, or
 // ErrNotFound if the project has no flows. Used post brain-products
 // migration: callers that hold the project slug (not a flow UUID) can

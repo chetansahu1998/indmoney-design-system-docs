@@ -75,7 +75,15 @@ const AssetStreamConcurrency = 4
 // AssetStreamPerNodeBudget bounds the wall-clock spent on a single
 // cluster's render. Mirrors SingleAssetSyncRenderBudget — a per-node
 // timeout protects the rest of the stream from one stuck Figma render.
-const AssetStreamPerNodeBudget = 30 * time.Second
+//
+// 2026-05-12: bumped 30s → 60s after observing render_timeout on
+// 15/161 clusters in a single Masthead leaf open. Root cause: the
+// hot path renders all 4 preview tiers serially per cluster (see
+// PreviewPyramid.RenderPreviewPyramid) which amplifies Figma calls
+// 4× against a tier-1 rate budget (12 req/min). The longer budget
+// is the band-aid; the real fix lives in single-tier hot-path
+// (asset_stream.go ~440).
+const AssetStreamPerNodeBudget = 60 * time.Second
 
 // AssetStreamTotalBudget bounds the entire stream's lifetime. Bigger than
 // per-node budget × concurrency because cache hits emit instantly and
@@ -234,21 +242,35 @@ func (s *Server) HandleAssetStream(w http.ResponseWriter, r *http.Request) {
 	// check at issuance time, but tenants can change repo state between
 	// issuance and redemption (mid-import deletion); fail with 404 here too.
 	//
-	// Apply the same slug-as-leafID fallback as the ticket handler (and
-	// screen_image_fills.go:135) so the post-brain-products frontend works.
+	// 2026-05-12 multi-flow bug fix: pre-fix this used PrimaryFlowIDForSlug
+	// which returns ONE flow even when the project has many. The cluster
+	// collection walk then missed every sibling flow's screens, so
+	// multi-flow projects (Tax Centre with Mobile App + Transactions)
+	// streamed cluster URLs for only one flow's icons. Use AllFlowIDsForSlug
+	// when the frontend passes the project slug as the leafID (post brain-
+	// products convention) so the stream covers every flow in the project.
 	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
-	resolvedLeafID := leafID
+	var flowIDs []string
+	var resolvedLeafID string
 	if leafID == slug {
-		flowID, ferr := repo.PrimaryFlowIDForSlug(r.Context(), slug)
+		all, ferr := repo.AllFlowIDsForSlug(r.Context(), slug)
 		if ferr != nil {
 			if errors.Is(ferr, ErrNotFound) {
 				http.NotFound(w, r)
 				return
 			}
-			writeJSONErr(w, http.StatusInternalServerError, "primary_flow", ferr.Error())
+			writeJSONErr(w, http.StatusInternalServerError, "all_flows", ferr.Error())
 			return
 		}
-		resolvedLeafID = flowID
+		flowIDs = all
+		// Use the first flow for file_id/version_index lookup — all flows
+		// under one project share file_id, and LookupLeafFigmaContext
+		// returns the project-wide MAX(version_index), so any flow gives
+		// the same answer.
+		resolvedLeafID = all[0]
+	} else {
+		flowIDs = []string{leafID}
+		resolvedLeafID = leafID
 	}
 	fileID, versionIndex, err := repo.LookupLeafFigmaContext(r.Context(), resolvedLeafID)
 	if err != nil {
@@ -260,16 +282,20 @@ func (s *Server) HandleAssetStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Collect cluster IDs across every screen of the leaf's latest version.
-	// One SQL query, decompress per row, dedup IDs across screens. Empty
-	// result is fine — no clusters means we close the stream immediately
-	// after the headers; the frontend's onComplete fires and falls through.
-	trees, err := repo.ListCanonicalTreesForFlow(r.Context(), resolvedLeafID)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		writeJSONErr(w, http.StatusInternalServerError, "list_trees", err.Error())
-		return
+	// Collect cluster IDs across EVERY flow under the slug's project.
+	// dedupeClusterIDs handles cross-flow dedup naturally (same node id
+	// renders to the same asset regardless of which flow surfaced it),
+	// so multi-flow projects emit each unique cluster exactly once.
+	var allTrees []CanonicalTreeResult
+	for _, fid := range flowIDs {
+		trees, terr := repo.ListCanonicalTreesForFlow(r.Context(), fid)
+		if terr != nil && !errors.Is(terr, ErrNotFound) {
+			writeJSONErr(w, http.StatusInternalServerError, "list_trees", terr.Error())
+			return
+		}
+		allTrees = append(allTrees, trees...)
 	}
-	clusterIDs := dedupeClusterIDs(trees)
+	clusterIDs := dedupeClusterIDs(allTrees)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
@@ -372,6 +398,34 @@ func streamLeafAssets(
 		writeStreamEvent(w, flusher, eventName, payload)
 	}
 
+	// markFailed wraps emit + blocklist persistence (2026-05-12).
+	// Pre-fix: failures fired an asset-failed SSE event and disappeared
+	// — there was no record of which IDs failed across sessions, so a
+	// chronically-broken node looked identical to a one-time blip from
+	// the user's perspective. Persisting via MarkFigmaRenderFailure means
+	// /atlas/admin/figma-blocklist surfaces the failing node + reason,
+	// AND the existing 3-failures-in-a-row consult short-circuits the
+	// retry on Stage 9 / on-demand for chronic offenders.
+	//
+	// Best-effort: any DB hiccup is logged via the deps logger and the
+	// SSE event still fires — the user-visible stream is the
+	// load-bearing path, the blocklist is observability.
+	markFailed := func(nodeID, reason string) {
+		failed.Add(1)
+		emit("asset-failed", assetStreamFailed{NodeID: nodeID, Reason: reason})
+		// Use the stream context for cancellation but never block the
+		// emit on a slow DB write — a 100ms budget keeps the dispatcher
+		// throughput intact when the table is contended.
+		dbCtx, dbCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		defer dbCancel()
+		if _, mErr := repo.MarkFigmaRenderFailure(dbCtx, fileID, nodeID, "asset-stream: "+reason, ""); mErr != nil {
+			if s.deps.Log != nil {
+				s.deps.Log.Warn("asset-stream: blocklist persist failed",
+					"node_id", nodeID, "reason", reason, "err", mErr.Error())
+			}
+		}
+	}
+
 dispatch:
 	for _, nodeID := range clusterIDs {
 		if ctx.Err() != nil {
@@ -387,11 +441,7 @@ dispatch:
 		go func() {
 			defer func() {
 				if rec := recover(); rec != nil {
-					failed.Add(1)
-					emit("asset-failed", assetStreamFailed{
-						NodeID: nodeID,
-						Reason: fmt.Sprintf("panic: %v", rec),
-					})
+					markFailed(nodeID, fmt.Sprintf("panic: %v", rec))
 				}
 			}()
 			defer func() {
@@ -429,11 +479,7 @@ dispatch:
 			// Cache miss → render the pyramid. PreviewPyramid is wired in
 			// production; tests that don't wire it surface as failed.
 			if s.deps.PreviewPyramid == nil {
-				failed.Add(1)
-				emit("asset-failed", assetStreamFailed{
-					NodeID: nodeID,
-					Reason: "preview_pyramid_unavailable",
-				})
+				markFailed(nodeID, "preview_pyramid_unavailable")
 				return
 			}
 
@@ -441,13 +487,11 @@ dispatch:
 				nodeCtx, tenantID, leafID, fileID, nodeID, versionIndex,
 			)
 			if errors.Is(perr, context.DeadlineExceeded) || errors.Is(perr, context.Canceled) {
-				failed.Add(1)
-				emit("asset-failed", assetStreamFailed{NodeID: nodeID, Reason: "render_timeout"})
+				markFailed(nodeID, "render_timeout")
 				return
 			}
 			if perr != nil && len(results) == 0 {
-				failed.Add(1)
-				emit("asset-failed", assetStreamFailed{NodeID: nodeID, Reason: perr.Error()})
+				markFailed(nodeID, perr.Error())
 				return
 			}
 
@@ -477,15 +521,18 @@ dispatch:
 				}
 			}
 			if !persistedDefault {
-				failed.Add(1)
-				emit("asset-failed", assetStreamFailed{
-					NodeID: nodeID,
-					Reason: "default_tier_not_persisted",
-				})
+				markFailed(nodeID, "default_tier_not_persisted")
 				return
 			}
 			rendered.Add(1)
 			emit("asset-ready", buildAssetReadyEvent(s, tenantID, slug, fileID, nodeID, tierFormat, 1))
+			// Best-effort clear: a previously-blocklisted node that rendered
+			// successfully this time should fall off the active list so the
+			// next stream/Stage 9 doesn't short-circuit it. No-op when no
+			// row exists. Error is intentionally swallowed — render
+			// success is the load-bearing signal; observability cleanup
+			// shouldn't poison it.
+			_ = repo.ClearFigmaRenderFailure(nodeCtx, fileID, nodeID)
 		}()
 	}
 	wg.Wait()
