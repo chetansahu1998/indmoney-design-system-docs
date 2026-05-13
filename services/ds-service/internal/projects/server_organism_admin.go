@@ -1,8 +1,11 @@
 package projects
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/auth"
 )
@@ -114,6 +117,59 @@ func (s *Server) HandleOrganismMatchesBySlug(w http.ResponseWriter, r *http.Requ
 		"matches": out,
 		"slug":    r.PathValue("slug"), // echo the URL-form slug
 		"count":   len(out),
+	})
+}
+
+// HandleOrganismVerdictLookup serves
+//
+//	POST /v1/audit/organism-match
+//	Body: { "node_id": "<figma_node_id>", "file_id": "<figma_file_id>" }
+//
+// U7 of the organism-pattern-detection plan — the plugin's "Check
+// selection against DS" command calls this with the selected FRAME's
+// node id. Returns the latest verdict row for that node within the
+// caller's tenant, or 200 + null when no import covers the node yet.
+//
+// Read-only, tenant-scoped, no recomputation at request time. If the
+// plugin asks about a node never seen by the pipeline, the response is
+// 200 + null + an explanatory `reason` field so the plugin UI can
+// render a "no verdict — please import this file first" hint.
+func (s *Server) HandleOrganismVerdictLookup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	tenantID, ok := s.requireOrganismAdminTenant(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		NodeID string `json:"node_id"`
+		FileID string `json:"file_id,omitempty"` // optional — used only for telemetry today
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if strings.TrimSpace(req.NodeID) == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_node_id", "node_id required")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	match, err := repo.LookupOrganismMatchByFrame(r.Context(), req.NodeID)
+	if errors.Is(err, ErrNotFound) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"verdict": nil,
+			"reason":  "no_import_covers_this_frame",
+		})
+		return
+	}
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "verdict_lookup", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"verdict": organismMatchToDTO(match),
 	})
 }
 

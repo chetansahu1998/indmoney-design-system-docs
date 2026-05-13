@@ -727,6 +727,10 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleOrganismPromotionCandidates)))
 	mux.HandleFunc("GET /v1/admin/organisms/{slug}/matches",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleOrganismMatchesBySlug)))
+	// Part B U7 — plugin "Check selection against DS" verdict lookup.
+	// Read-through cache only; no recomputation at request time.
+	mux.HandleFunc("POST /v1/audit/organism-match",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleOrganismVerdictLookup)))
 	mux.HandleFunc("GET /v1/projects",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectList)))
 	mux.HandleFunc("GET /v1/projects/{slug}",

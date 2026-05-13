@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/auth"
@@ -258,6 +259,125 @@ func TestOrganismPromotionCandidates_EmptyOK(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp.Count != 0 {
 		t.Errorf("count = %d; want 0", resp.Count)
+	}
+}
+
+// ─── HandleOrganismVerdictLookup (U7) ───────────────────────────────────────
+
+func callVerdictLookup(t *testing.T, srv *Server, claims *auth.Claims, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/audit/organism-match",
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if claims != nil {
+		req = req.WithContext(context.WithValue(req.Context(), ctxKeyClaims, claims))
+	}
+	w := httptest.NewRecorder()
+	srv.HandleOrganismVerdictLookup(w, req)
+	return w
+}
+
+func TestOrganismVerdictLookup_Hit(t *testing.T) {
+	srv, claims, _ := seedAdminFixture(t)
+	w := callVerdictLookup(t, srv, claims, `{"node_id":"f1"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Verdict *organismMatchDTO `json:"verdict"`
+		Reason  string            `json:"reason,omitempty"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.Verdict == nil {
+		t.Fatalf("expected verdict object; got nil (reason=%q)", resp.Reason)
+	}
+	if resp.Verdict.FrameID != "f1" {
+		t.Errorf("frame_id = %q; want f1", resp.Verdict.FrameID)
+	}
+	if resp.Verdict.SuspectedSlug != "list-on-surface" {
+		t.Errorf("suspected_slug = %q; want list-on-surface", resp.Verdict.SuspectedSlug)
+	}
+	if resp.Verdict.MatchKind != "exact" {
+		t.Errorf("match_kind = %q; want exact", resp.Verdict.MatchKind)
+	}
+}
+
+func TestOrganismVerdictLookup_Miss(t *testing.T) {
+	srv, claims, _ := seedAdminFixture(t)
+	w := callVerdictLookup(t, srv, claims, `{"node_id":"never-imported"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Verdict *organismMatchDTO `json:"verdict"`
+		Reason  string            `json:"reason"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Verdict != nil {
+		t.Errorf("expected verdict=null on miss; got %+v", resp.Verdict)
+	}
+	if resp.Reason != "no_import_covers_this_frame" {
+		t.Errorf("reason = %q; want no_import_covers_this_frame", resp.Reason)
+	}
+}
+
+func TestOrganismVerdictLookup_MissingNodeID(t *testing.T) {
+	srv, claims, _ := seedAdminFixture(t)
+	// Empty body
+	w := callVerdictLookup(t, srv, claims, `{}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("empty: status = %d; want 400", w.Code)
+	}
+	// Whitespace-only
+	w = callVerdictLookup(t, srv, claims, `{"node_id":"   "}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("whitespace: status = %d; want 400", w.Code)
+	}
+}
+
+func TestOrganismVerdictLookup_BadJSON(t *testing.T) {
+	srv, claims, _ := seedAdminFixture(t)
+	w := callVerdictLookup(t, srv, claims, `{not json}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d; want 400", w.Code)
+	}
+}
+
+func TestOrganismVerdictLookup_Unauthorized(t *testing.T) {
+	srv, _, _ := seedAdminFixture(t)
+	w := callVerdictLookup(t, srv, nil, `{"node_id":"f1"}`)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d; want 401", w.Code)
+	}
+}
+
+func TestOrganismVerdictLookup_MethodNotAllowed(t *testing.T) {
+	srv, claims, _ := seedAdminFixture(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/audit/organism-match", nil)
+	req = req.WithContext(context.WithValue(req.Context(), ctxKeyClaims, claims))
+	w := httptest.NewRecorder()
+	srv.HandleOrganismVerdictLookup(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d; want 405", w.Code)
+	}
+}
+
+func TestOrganismVerdictLookup_TenantIsolation(t *testing.T) {
+	srv, _, fx := seedAdminFixture(t)
+	// Tenant B asks about a frame_id seeded for tenant A → miss.
+	bClaims := &auth.Claims{Sub: "userB", Email: "b@x", Tenants: []string{fx.tenantB}}
+	w := callVerdictLookup(t, srv, bClaims, `{"node_id":"f1"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var resp struct {
+		Verdict *organismMatchDTO `json:"verdict"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Verdict != nil {
+		t.Errorf("tenant B saw tenant A's verdict: %+v", resp.Verdict)
 	}
 }
 
