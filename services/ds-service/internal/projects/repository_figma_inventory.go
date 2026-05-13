@@ -1039,6 +1039,139 @@ func (t *TenantRepo) ListFigmaNodesForFile(ctx context.Context, fileKey string, 
 	return out, rows.Err()
 }
 
+// ─── cross-file component usage (Phase 2C analytic) ─────────────────────────
+
+// ComponentUsageRow summarises one master component's reach across the
+// tenant: how many files use it, how many total instances exist, and
+// where the master itself lives if it's in our inventory. The (master_
+// file_key, master_node_id) pair is empty when the master is in a
+// library file we haven't crawled yet — the durable component_key on
+// every INSTANCE is still enough to count usage.
+type ComponentUsageRow struct {
+	ComponentKey    string `json:"component_key"`
+	MasterName      string `json:"master_name,omitempty"`
+	MasterFileKey   string `json:"master_file_key,omitempty"`
+	MasterNodeID    string `json:"master_node_id,omitempty"`
+	FilesUsing      int    `json:"files_using"`
+	TotalInstances  int    `json:"total_instances"`
+}
+
+// ListComponentUsage returns top-N master components ranked by total
+// instance count. The query joins INSTANCE rows by component_key (the
+// durable library identifier the walker stamped onto every INSTANCE
+// at deep-fetch time) — works the same whether the master is local or
+// remote.
+//
+// LEFT JOIN against figma_node masters surfaces the master's own
+// location when it's in the inventory; library masters we haven't
+// crawled still appear in the list with empty master_* fields.
+func (t *TenantRepo) ListComponentUsage(ctx context.Context, limit int) ([]ComponentUsageRow, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := t.r.db.QueryContext(ctx, `
+		SELECT
+		    i.component_key,
+		    COALESCE(MAX(m.name), ''),
+		    COALESCE(MAX(m.file_key), ''),
+		    COALESCE(MAX(m.node_id), ''),
+		    COUNT(DISTINCT i.file_key) AS files_using,
+		    COUNT(*) AS total_instances
+		  FROM figma_node i
+		  LEFT JOIN figma_node m
+		         ON m.tenant_id = i.tenant_id
+		        AND m.component_key = i.component_key
+		        AND m.node_type IN ('COMPONENT','COMPONENT_SET')
+		        AND m.deleted_at IS NULL
+		 WHERE i.tenant_id = ?
+		   AND i.node_type = 'INSTANCE'
+		   AND i.component_key IS NOT NULL
+		   AND i.deleted_at IS NULL
+		 GROUP BY i.component_key
+		 ORDER BY total_instances DESC
+		 LIMIT ?
+	`, t.tenantID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list component usage: %w", err)
+	}
+	defer rows.Close()
+	out := make([]ComponentUsageRow, 0, limit)
+	for rows.Next() {
+		var r ComponentUsageRow
+		if err := rows.Scan(
+			&r.ComponentKey, &r.MasterName, &r.MasterFileKey, &r.MasterNodeID,
+			&r.FilesUsing, &r.TotalInstances,
+		); err != nil {
+			return nil, fmt.Errorf("scan component usage: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ComponentUsageDetail is one row of "where is this component used".
+type ComponentUsageDetail struct {
+	FileKey      string `json:"file_key"`
+	FileName     string `json:"file_name"`
+	ProjectName  string `json:"project_name"`
+	InstanceNodeID string `json:"instance_node_id"`
+	InstanceName string `json:"instance_name"`
+	ParentID     string `json:"parent_id,omitempty"`
+	Depth        int    `json:"depth"`
+}
+
+// ListComponentUsageDetail returns every INSTANCE referencing the
+// given component_key, grouped by (file, project). Powers the drill-in
+// view: "show me the 1,347 places where button-primary lives."
+func (t *TenantRepo) ListComponentUsageDetail(ctx context.Context, componentKey string, limit int) ([]ComponentUsageDetail, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	if componentKey == "" {
+		return nil, errors.New("projects: component_key required")
+	}
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := t.r.db.QueryContext(ctx, `
+		SELECT
+		    i.file_key,
+		    COALESCE(f.name, ''),
+		    COALESCE(p.name, ''),
+		    i.node_id, i.name, COALESCE(i.parent_id, ''), i.depth
+		  FROM figma_node i
+		  LEFT JOIN figma_file f
+		         ON f.tenant_id = i.tenant_id AND f.file_key = i.file_key
+		  LEFT JOIN figma_project p
+		         ON p.tenant_id = f.tenant_id AND p.project_id = f.project_id
+		 WHERE i.tenant_id = ?
+		   AND i.node_type = 'INSTANCE'
+		   AND i.component_key = ?
+		   AND i.deleted_at IS NULL
+		 ORDER BY p.name ASC, f.name ASC, i.depth ASC
+		 LIMIT ?
+	`, t.tenantID, componentKey, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list component usage detail: %w", err)
+	}
+	defer rows.Close()
+	out := make([]ComponentUsageDetail, 0, 64)
+	for rows.Next() {
+		var r ComponentUsageDetail
+		if err := rows.Scan(
+			&r.FileKey, &r.FileName, &r.ProjectName,
+			&r.InstanceNodeID, &r.InstanceName, &r.ParentID, &r.Depth,
+		); err != nil {
+			return nil, fmt.Errorf("scan component usage detail: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // CountFigmaNodesByFile returns a map[file_key]int of how many live
 // (non-deleted) nodes each file currently has. Powers the inventory
 // admin UI's per-file node-count badge without forcing the tree

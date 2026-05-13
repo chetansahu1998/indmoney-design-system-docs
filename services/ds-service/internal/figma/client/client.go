@@ -526,18 +526,34 @@ func (c *Client) GetFilePagesAndSections(ctx context.Context, fileKey string) (*
 // (fills, strokes, effects, characters, styles) is dropped at decode time
 // to keep the in-memory tree compact.
 type DeepNode struct {
-	ID                  string       `json:"id"`
-	Name                string       `json:"name"`
-	Type                string       `json:"type"`
-	AbsoluteBoundingBox *figmaBBox   `json:"absoluteBoundingBox,omitempty"`
-	BackgroundColor     *figmaColor  `json:"backgroundColor,omitempty"`
-	// componentId — populated only on INSTANCE nodes; the same-file node_id
-	// of the master COMPONENT this instance was spawned from.
-	ComponentID string `json:"componentId,omitempty"`
-	// key — populated only on COMPONENT + COMPONENT_SET nodes; the durable
-	// library-side identifier that stays stable across publish cycles.
-	Key      string     `json:"key,omitempty"`
-	Children []DeepNode `json:"children,omitempty"`
+	ID                  string      `json:"id"`
+	Name                string      `json:"name"`
+	Type                string      `json:"type"`
+	AbsoluteBoundingBox *figmaBBox  `json:"absoluteBoundingBox,omitempty"`
+	BackgroundColor     *figmaColor `json:"backgroundColor,omitempty"`
+	// componentId — populated only on INSTANCE nodes; the node_id of the
+	// master COMPONENT this instance was spawned from. The master may
+	// live in this file OR in a remote library file. Either way, the
+	// file-level `components` map (FileDeepTree.Components) carries the
+	// durable key for whichever node_id this is, so the walker can
+	// enrich the INSTANCE row with component_key at flatten time.
+	ComponentID string     `json:"componentId,omitempty"`
+	Children    []DeepNode `json:"children,omitempty"`
+}
+
+// componentMetadata is the per-master entry in the file-level
+// `components` / `componentSets` maps. The map is keyed on the master's
+// node_id (whether that master is local to this file or remote from a
+// library). The `key` field is the durable library identifier that's
+// stable across publish cycles — the join key for cross-file usage.
+type componentMetadata struct {
+	Key           string `json:"key"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	Remote        bool   `json:"remote"`
+	DocumentationLinks []struct {
+		URI string `json:"uri"`
+	} `json:"documentationLinks,omitempty"`
 }
 
 // FileDeepTree is the file-level response. Reuses the same top-level shape
@@ -553,6 +569,12 @@ type FileDeepTree struct {
 	LinkAccess   string   `json:"linkAccess"`
 	MainFileKey  string   `json:"mainFileKey"`
 	Document     DeepNode `json:"document"`
+	// File-level metadata for component masters referenced anywhere in
+	// this file's tree (either as local COMPONENT/COMPONENT_SET nodes
+	// or as remote library masters reached via INSTANCE.componentId).
+	// Keyed on the master's node_id (same id space as ComponentID).
+	Components    map[string]componentMetadata `json:"components,omitempty"`
+	ComponentSets map[string]componentMetadata `json:"componentSets,omitempty"`
 }
 
 // FlatNode is the shape the repository layer consumes — one row per node,
@@ -577,6 +599,18 @@ type FlatNode struct {
 // visited node. Walk order is parent-before-children so a caller can
 // stream rows into an INSERT without needing to defer parent_id resolution.
 //
+// While walking, each node gets enriched with `component_key` looked up
+// from the file-level Components / ComponentSets maps:
+//   - COMPONENT     → key from Components[node.id]
+//   - COMPONENT_SET → key from ComponentSets[node.id]
+//   - INSTANCE      → key from Components[node.componentId] (the master,
+//                     local or remote — the file-level map carries the
+//                     durable key either way)
+//
+// This is the join hinge for cross-file usage queries: every INSTANCE
+// of "button-primary" across every file carries the same component_key
+// regardless of which library file owns the master.
+//
 // The caller's responsibility:
 //   - Pass the FlatNode list to a single batched UPSERT (the figma_node
 //     PK enforces uniqueness on (tenant, file_key, node_id)).
@@ -589,17 +623,41 @@ func (f *FileDeepTree) Flatten() []FlatNode {
 	// Pre-allocate a reasonable starting size — most files land in the
 	// 100-5000-node range; this avoids the first few growth allocations.
 	out := make([]FlatNode, 0, 1024)
+
+	// Helper: resolve durable key for a node, falling back across both
+	// component maps. Returns "" when the node isn't a known master.
+	lookupKey := func(nodeID string) string {
+		if nodeID == "" {
+			return ""
+		}
+		if md, ok := f.Components[nodeID]; ok && md.Key != "" {
+			return md.Key
+		}
+		if md, ok := f.ComponentSets[nodeID]; ok && md.Key != "" {
+			return md.Key
+		}
+		return ""
+	}
+
 	var walk func(node *DeepNode, parentID string, depth, orderIndex int)
 	walk = func(node *DeepNode, parentID string, depth, orderIndex int) {
 		fn := FlatNode{
-			NodeID:       node.ID,
-			ParentID:     parentID,
-			NodeType:     node.Type,
-			Name:         node.Name,
-			Depth:        depth,
-			OrderIndex:   orderIndex,
-			ComponentID:  node.ComponentID,
-			ComponentKey: node.Key,
+			NodeID:      node.ID,
+			ParentID:    parentID,
+			NodeType:    node.Type,
+			Name:        node.Name,
+			Depth:       depth,
+			OrderIndex:  orderIndex,
+			ComponentID: node.ComponentID,
+		}
+		// Resolve component_key from the file-level maps. For
+		// COMPONENT/COMPONENT_SET the lookup is on this node's own id;
+		// for INSTANCE it's on the master's id (componentId).
+		switch node.Type {
+		case "COMPONENT", "COMPONENT_SET":
+			fn.ComponentKey = lookupKey(node.ID)
+		case "INSTANCE":
+			fn.ComponentKey = lookupKey(node.ComponentID)
 		}
 		if node.AbsoluteBoundingBox != nil {
 			fn.HasBBox = true

@@ -193,6 +193,69 @@ func (s *Server) HandleFigmaInventorySync(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// HandleFigmaInventoryComponentUsage serves GET
+// /v1/admin/figma-inventory/components?limit=
+//
+// Phase 2C cross-file analytic: top-N master components ranked by total
+// INSTANCE count across the tenant's inventory. Joins on component_key
+// (durable library identifier) so library masters and same-file masters
+// are counted together. master_file_key + master_node_id are empty for
+// library masters we haven't crawled.
+func (s *Server) HandleFigmaInventoryComponentUsage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	tenantID, ok := s.requireFigmaInventoryAdminTenant(w, r)
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	rows, err := repo.ListComponentUsage(r.Context(), limit)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "component_usage", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"components": rows,
+		"count":      len(rows),
+	})
+}
+
+// HandleFigmaInventoryComponentUsageDetail serves GET
+// /v1/admin/figma-inventory/components/{component_key}/usage?limit=
+//
+// Drill-in: every INSTANCE row referencing the given durable component_key,
+// joined to file + project for context.
+func (s *Server) HandleFigmaInventoryComponentUsageDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	tenantID, ok := s.requireFigmaInventoryAdminTenant(w, r)
+	if !ok {
+		return
+	}
+	componentKey := r.PathValue("component_key")
+	if componentKey == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_component_key", "component_key required")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	rows, err := repo.ListComponentUsageDetail(r.Context(), componentKey, limit)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "component_usage_detail", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"component_key": componentKey,
+		"instances":     rows,
+		"count":         len(rows),
+	})
+}
+
 // HandleFigmaInventoryFileNodes serves GET
 // /v1/admin/figma-inventory/files/{file_key}/nodes?limit=
 //

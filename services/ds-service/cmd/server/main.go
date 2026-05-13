@@ -780,6 +780,12 @@ func (s *server) routes(mux *http.ServeMux) {
 	// tree via parent_id.
 	mux.HandleFunc("GET /v1/admin/figma-inventory/files/{file_key}/nodes",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryFileNodes)))
+	// Phase 2C — cross-file component usage analytic. Ranks library
+	// component masters by INSTANCE count across every crawled file.
+	mux.HandleFunc("GET /v1/admin/figma-inventory/components",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryComponentUsage)))
+	mux.HandleFunc("GET /v1/admin/figma-inventory/components/{component_key}/usage",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryComponentUsageDetail)))
 	// organism-pattern-detection (2026-05-13) — Part C dashboard endpoints
 	// powering /atlas/admin/organisms.
 	mux.HandleFunc("GET /v1/admin/organisms/adoption",
