@@ -348,6 +348,69 @@ func (t *TenantRepo) OrganismAdoptionRollup(ctx context.Context) ([]OrganismAdop
 	return out, rows.Err()
 }
 
+// ─── organism_fork_mark writes + reads (U9) ──────────────────────────────────
+
+// UpsertOrganismForkMark records that a designer asserted the given
+// frame_id is an intentional fork from the published organism. Re-marking
+// the same frame replaces the prior reason. Tenant-scoped; the caller
+// (HandleOrganismForkMark) resolves user_id from claims.
+//
+// Validates that frame_id and markedByUserID are non-empty. reason is
+// optional (free-form designer note).
+func (t *TenantRepo) UpsertOrganismForkMark(ctx context.Context, mark OrganismForkMark) error {
+	if t.tenantID == "" {
+		return errors.New("projects: tenant_id required")
+	}
+	if mark.FrameID == "" {
+		return errors.New("projects: frame_id required")
+	}
+	if mark.MarkedByUserID == "" {
+		return errors.New("projects: marked_by_user_id required")
+	}
+	markedAt := rfc3339(mark.MarkedAt.UTC())
+	if mark.MarkedAt.IsZero() {
+		markedAt = rfc3339(t.now().UTC())
+	}
+	_, err := t.r.db.ExecContext(ctx, `
+		INSERT INTO organism_fork_mark (tenant_id, frame_id, marked_by_user_id, reason, marked_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(tenant_id, frame_id) DO UPDATE SET
+		  marked_by_user_id = excluded.marked_by_user_id,
+		  reason            = excluded.reason,
+		  marked_at         = excluded.marked_at
+	`, t.tenantID, mark.FrameID, mark.MarkedByUserID, mark.Reason, markedAt)
+	if err != nil {
+		return fmt.Errorf("upsert organism_fork_mark: %w", err)
+	}
+	return nil
+}
+
+// LookupOrganismForkMark returns the fork-mark for a given frame_id, or
+// ErrNotFound when none exists. Tenant-scoped.
+func (t *TenantRepo) LookupOrganismForkMark(ctx context.Context, frameID string) (OrganismForkMark, error) {
+	if t.tenantID == "" {
+		return OrganismForkMark{}, errors.New("projects: tenant_id required")
+	}
+	row := t.r.db.QueryRowContext(ctx, `
+		SELECT tenant_id, frame_id, marked_by_user_id, reason, marked_at
+		FROM organism_fork_mark
+		WHERE tenant_id = ? AND frame_id = ?
+	`, t.tenantID, frameID)
+	var rec OrganismForkMark
+	var markedAt string
+	err := row.Scan(&rec.TenantID, &rec.FrameID, &rec.MarkedByUserID, &rec.Reason, &markedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return OrganismForkMark{}, ErrNotFound
+	}
+	if err != nil {
+		return OrganismForkMark{}, fmt.Errorf("lookup organism_fork_mark: %w", err)
+	}
+	if rec.MarkedAt, err = time.Parse(time.RFC3339, markedAt); err != nil {
+		rec.MarkedAt = time.Time{}
+	}
+	return rec, nil
+}
+
 // ─── promotion_candidate writes + reads ──────────────────────────────────────
 
 // UpsertPromotionCandidates writes the full set of promotion candidates for a

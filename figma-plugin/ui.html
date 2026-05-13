@@ -3143,6 +3143,12 @@ window.onmessage = (event) => {
       renderOrganismVerdict(msg.payload);
       break;
     }
+    case "organism.fork-result": {
+      // U9 — designer's "Mark as intentional fork" assertion landed.
+      // Update the verdict card affordance state.
+      applyOrganismForkResult(msg.payload);
+      break;
+    }
     case "projects.detected-groups": {
       projectsState.detected = msg.payload;
       // Drop edits for groups that no longer exist; keep edits for surviving keys.
@@ -3578,17 +3584,47 @@ function renderOrganismVerdict(payload) {
     actions.appendChild(replaceBtn);
 
     const forkBtn = document.createElement("button");
-    forkBtn.textContent = "Mark as intentional fork";
-    forkBtn.disabled = true;
-    forkBtn.title = "Coming soon — fork-mark endpoint ships in U9.";
+    forkBtn.id = "organism-fork-btn";
+    forkBtn.dataset.frameId = v.frame_id || "";
+    const alreadyMarked = !!payload.is_intentional_fork;
+    const setForkLabel = (marked) => {
+      if (marked) {
+        forkBtn.textContent = "✓ Marked as intentional fork";
+        forkBtn.disabled = true;
+        forkBtn.title = payload.fork_reason
+          ? `Reason: ${payload.fork_reason}`
+          : "Marked as intentional fork";
+        Object.assign(forkBtn.style, {
+          background: "#e7f7ec",
+          color: "#16a34a",
+          borderColor: "#bce4c6",
+          cursor: "default",
+        });
+      } else {
+        forkBtn.textContent = "Mark as intentional fork";
+        forkBtn.disabled = false;
+        forkBtn.title = "Records that this hand-built composition is an authored choice, not drift.";
+        Object.assign(forkBtn.style, {
+          background: "transparent",
+          color: "#374151",
+          borderColor: "#d1d5db",
+          cursor: "pointer",
+        });
+      }
+    };
     Object.assign(forkBtn.style, {
       padding: "6px 12px",
       fontSize: "12px",
-      background: "transparent",
-      color: "#999",
-      border: "1px solid #ddd",
+      borderStyle: "solid",
+      borderWidth: "1px",
       borderRadius: "4px",
-      cursor: "not-allowed",
+    });
+    setForkLabel(alreadyMarked);
+    forkBtn.addEventListener("click", () => {
+      if (forkBtn.disabled) return;
+      forkBtn.textContent = "Marking…";
+      forkBtn.disabled = true;
+      post("organism.mark-fork", { node_id: v.frame_id, reason: "" });
     });
     actions.appendChild(forkBtn);
 
@@ -3617,6 +3653,29 @@ function escapeHTML(s) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function applyOrganismForkResult(payload) {
+  const btn = document.getElementById("organism-fork-btn");
+  if (!btn) return;
+  if (payload?.ok) {
+    btn.textContent = "✓ Marked as intentional fork";
+    btn.disabled = true;
+    Object.assign(btn.style, {
+      background: "#e7f7ec",
+      color: "#16a34a",
+      borderColor: "#bce4c6",
+      cursor: "default",
+    });
+    pushToast({ message: "Marked as intentional fork", level: "success" });
+  } else {
+    btn.textContent = "Mark as intentional fork";
+    btn.disabled = false;
+    const msg = payload?.error === "no_token"
+      ? "Set your docs auth token first (Settings → paste your JWT)."
+      : `Fork mark failed: ${payload?.detail || payload?.error || "unknown"}`;
+    pushToast({ message: msg, level: "error" });
+  }
 }
 
 /* Initial sync */

@@ -731,6 +731,9 @@ func (s *server) routes(mux *http.ServeMux) {
 	// Read-through cache only; no recomputation at request time.
 	mux.HandleFunc("POST /v1/audit/organism-match",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleOrganismVerdictLookup)))
+	// Part B U9 — designer "Mark as intentional fork" assertion.
+	mux.HandleFunc("POST /v1/audit/organism-match/fork",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleOrganismForkMark)))
 	mux.HandleFunc("GET /v1/projects",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectList)))
 	mux.HandleFunc("GET /v1/projects/{slug}",

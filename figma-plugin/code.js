@@ -366,6 +366,8 @@ figma.ui.onmessage = async (msg) => {
                 return;
             case "projects.autofix":
                 return runAutoFix(msg.payload);
+            case "organism.mark-fork":
+                return runOrganismForkMark(msg.payload);
         }
     }
     catch (e) {
@@ -603,6 +605,64 @@ async function runOrganismCheck() {
                 detail: err.message,
                 node_id: node.id,
                 node_name: node.name,
+            },
+        });
+    }
+}
+// U9 — designer asserts the given frame_id is an intentional fork from
+// the published organism. UI's "Mark as intentional fork" button posts
+// here; we POST to /v1/audit/organism-match/fork and echo a result the
+// UI uses to update the verdict card affordance.
+async function runOrganismForkMark(payload) {
+    var _a;
+    const nodeID = (_a = payload === null || payload === void 0 ? void 0 : payload.node_id) === null || _a === void 0 ? void 0 : _a.trim();
+    if (!nodeID) {
+        send({
+            type: "organism.fork-result",
+            payload: { ok: false, error: "missing_node_id" },
+        });
+        return;
+    }
+    const dsURL = (await figma.clientStorage.getAsync("ds_service_url")) ||
+        "https://indmoney-ds-service.fly.dev";
+    const tok = (await figma.clientStorage.getAsync("docs_auth_token"));
+    if (!tok) {
+        send({
+            type: "organism.fork-result",
+            payload: { ok: false, error: "no_token" },
+        });
+        return;
+    }
+    try {
+        const res = await fetch(`${dsURL}/v1/audit/organism-match/fork`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${tok}`,
+            },
+            body: JSON.stringify({ node_id: nodeID, reason: payload.reason || "" }),
+        });
+        if (!res.ok) {
+            const text = await res.text();
+            send({
+                type: "organism.fork-result",
+                payload: { ok: false, error: `http_${res.status}`, detail: text.slice(0, 200), node_id: nodeID },
+            });
+            return;
+        }
+        send({
+            type: "organism.fork-result",
+            payload: { ok: true, node_id: nodeID, reason: payload.reason || "" },
+        });
+    }
+    catch (err) {
+        send({
+            type: "organism.fork-result",
+            payload: {
+                ok: false,
+                error: "network",
+                detail: err.message,
+                node_id: nodeID,
             },
         });
     }

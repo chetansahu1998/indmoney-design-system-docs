@@ -59,7 +59,10 @@ interface MessageFromUI {
      *  text_style_id?: string; observed_number?: number } }. Plugin
      *  fetches the violation, builds the fix preview, applies on the
      *  Figma node, then POSTs /fix-applied. */
-    | "projects.autofix";
+    | "projects.autofix"
+    /** 2026-05-13 — Part B U9. UI requests that the given frame_id be
+     *  marked as an intentional fork. Payload: { node_id, reason? }. */
+    | "organism.mark-fork";
   payload?: unknown;
 }
 
@@ -110,9 +113,13 @@ interface MessageToUI {
     /** 2026-05-13 — organism-pattern-detection Part B U8. Result of
      *  POST /v1/audit/organism-match for the user's selected FRAME.
      *  Payload: { ok, verdict?, reason?, error?, detail?, node_id,
-     *  node_name }. UI renders a verdict card with kind / suspected
-     *  slug / variant / diff / confidence + action buttons. */
-    | "organism.check-result";
+     *  node_name, is_intentional_fork?, fork_reason? }. UI renders a
+     *  verdict card with kind / suspected slug / variant / diff /
+     *  confidence + action buttons. */
+    | "organism.check-result"
+    /** 2026-05-13 — Part B U9. Result of POST /v1/audit/organism-match/fork.
+     *  UI updates the verdict card to show 'Marked as intentional fork'. */
+    | "organism.fork-result";
   payload?: unknown;
 }
 
@@ -469,6 +476,8 @@ figma.ui.onmessage = async (msg: MessageFromUI) => {
         return;
       case "projects.autofix":
         return runAutoFix(msg.payload as AutoFixPayload);
+      case "organism.mark-fork":
+        return runOrganismForkMark(msg.payload as { node_id?: string; reason?: string });
     }
   } catch (e: unknown) {
     toast(`Error: ${(e as Error).message ?? "unknown"}`, "error");
@@ -712,6 +721,66 @@ async function runOrganismCheck(): Promise<void> {
         detail: (err as Error).message,
         node_id: node.id,
         node_name: node.name,
+      },
+    });
+  }
+}
+
+// U9 — designer asserts the given frame_id is an intentional fork from
+// the published organism. UI's "Mark as intentional fork" button posts
+// here; we POST to /v1/audit/organism-match/fork and echo a result the
+// UI uses to update the verdict card affordance.
+async function runOrganismForkMark(payload: { node_id?: string; reason?: string }): Promise<void> {
+  const nodeID = payload?.node_id?.trim();
+  if (!nodeID) {
+    send({
+      type: "organism.fork-result",
+      payload: { ok: false, error: "missing_node_id" },
+    });
+    return;
+  }
+  const dsURL =
+    ((await figma.clientStorage.getAsync("ds_service_url")) as string | undefined) ||
+    "https://indmoney-ds-service.fly.dev";
+  const tok = (await figma.clientStorage.getAsync("docs_auth_token")) as
+    | string
+    | undefined;
+  if (!tok) {
+    send({
+      type: "organism.fork-result",
+      payload: { ok: false, error: "no_token" },
+    });
+    return;
+  }
+  try {
+    const res = await fetch(`${dsURL}/v1/audit/organism-match/fork`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${tok}`,
+      },
+      body: JSON.stringify({ node_id: nodeID, reason: payload.reason || "" }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      send({
+        type: "organism.fork-result",
+        payload: { ok: false, error: `http_${res.status}`, detail: text.slice(0, 200), node_id: nodeID },
+      });
+      return;
+    }
+    send({
+      type: "organism.fork-result",
+      payload: { ok: true, node_id: nodeID, reason: payload.reason || "" },
+    });
+  } catch (err) {
+    send({
+      type: "organism.fork-result",
+      payload: {
+        ok: false,
+        error: "network",
+        detail: (err as Error).message,
+        node_id: nodeID,
       },
     });
   }

@@ -168,8 +168,74 @@ func (s *Server) HandleOrganismVerdictLookup(w http.ResponseWriter, r *http.Requ
 		writeJSONErr(w, http.StatusInternalServerError, "verdict_lookup", err.Error())
 		return
 	}
+	dto := organismMatchToDTO(match)
+	// U9 — surface designer's intentional-fork assertion when present.
+	// Not an error path when the fork-mark table doesn't have an entry;
+	// just leave the field unset.
+	resp := map[string]any{"verdict": dto}
+	if mark, ferr := repo.LookupOrganismForkMark(r.Context(), req.NodeID); ferr == nil {
+		resp["is_intentional_fork"] = true
+		resp["fork_reason"] = mark.Reason
+		resp["fork_marked_at"] = mark.MarkedAt.Format(rfc3339NoTZ)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// HandleOrganismForkMark serves
+//
+//	POST /v1/audit/organism-match/fork
+//	Body: { "node_id": "<figma_node_id>", "reason": "<free-form note>" }
+//
+// U9 of the plan — designer's "Mark as intentional fork" action records
+// that this frame is an authored choice, not drift. Subsequent verdict
+// lookups surface `is_intentional_fork: true` so the plugin can render
+// a "Marked as intentional fork" affordance instead of nudging again,
+// and the admin dashboard buckets these separately from real drift.
+//
+// Idempotent — re-marking the same frame replaces the prior reason.
+func (s *Server) HandleOrganismForkMark(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	if strings.TrimSpace(claims.Sub) == "" {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing user id in claims")
+		return
+	}
+	var req struct {
+		NodeID string `json:"node_id"`
+		Reason string `json:"reason,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if strings.TrimSpace(req.NodeID) == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_node_id", "node_id required")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	if err := repo.UpsertOrganismForkMark(r.Context(), OrganismForkMark{
+		FrameID:        req.NodeID,
+		MarkedByUserID: claims.Sub,
+		Reason:         req.Reason,
+	}); err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "fork_mark_upsert", err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"verdict": organismMatchToDTO(match),
+		"ok":     true,
+		"frame_id": req.NodeID,
 	})
 }
 

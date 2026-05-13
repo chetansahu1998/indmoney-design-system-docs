@@ -3,6 +3,7 @@ package projects
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -378,6 +379,124 @@ func TestOrganismVerdictLookup_TenantIsolation(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp.Verdict != nil {
 		t.Errorf("tenant B saw tenant A's verdict: %+v", resp.Verdict)
+	}
+}
+
+// ─── HandleOrganismForkMark + verdict surfacing (U9) ────────────────────────
+
+func callForkMark(t *testing.T, srv *Server, claims *auth.Claims, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/audit/organism-match/fork",
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	if claims != nil {
+		req = req.WithContext(context.WithValue(req.Context(), ctxKeyClaims, claims))
+	}
+	w := httptest.NewRecorder()
+	srv.HandleOrganismForkMark(w, req)
+	return w
+}
+
+func TestOrganismForkMark_HappyPath(t *testing.T) {
+	srv, claims, fx := seedAdminFixture(t)
+	w := callForkMark(t, srv, claims, `{"node_id":"f1","reason":"Custom color override for brand campaign"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", w.Code, w.Body.String())
+	}
+	// Verify it landed via direct DB read.
+	mark, err := fx.repo.LookupOrganismForkMark(context.Background(), "f1")
+	if err != nil {
+		t.Fatalf("lookup after upsert: %v", err)
+	}
+	if mark.Reason != "Custom color override for brand campaign" {
+		t.Errorf("reason = %q; want the seeded reason", mark.Reason)
+	}
+	if mark.MarkedByUserID != fx.userID {
+		t.Errorf("marked_by_user_id = %q; want %q", mark.MarkedByUserID, fx.userID)
+	}
+}
+
+func TestOrganismForkMark_VerdictSurfacesIntentionalFork(t *testing.T) {
+	srv, claims, _ := seedAdminFixture(t)
+	// First fork-mark.
+	w := callForkMark(t, srv, claims, `{"node_id":"f1","reason":"approved by DS lead"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("fork-mark failed: %d %s", w.Code, w.Body.String())
+	}
+	// Now the verdict lookup should include is_intentional_fork.
+	w = callVerdictLookup(t, srv, claims, `{"node_id":"f1"}`)
+	var resp struct {
+		Verdict           *organismMatchDTO `json:"verdict"`
+		IsIntentionalFork bool              `json:"is_intentional_fork"`
+		ForkReason        string            `json:"fork_reason"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.Verdict == nil {
+		t.Fatal("expected verdict object")
+	}
+	if !resp.IsIntentionalFork {
+		t.Error("expected is_intentional_fork=true")
+	}
+	if resp.ForkReason != "approved by DS lead" {
+		t.Errorf("fork_reason = %q; want 'approved by DS lead'", resp.ForkReason)
+	}
+}
+
+func TestOrganismForkMark_Idempotent(t *testing.T) {
+	srv, claims, fx := seedAdminFixture(t)
+	// First mark.
+	callForkMark(t, srv, claims, `{"node_id":"f1","reason":"first reason"}`)
+	// Second mark — same frame, new reason — overwrites.
+	w := callForkMark(t, srv, claims, `{"node_id":"f1","reason":"updated reason"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("second mark: %d", w.Code)
+	}
+	mark, err := fx.repo.LookupOrganismForkMark(context.Background(), "f1")
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if mark.Reason != "updated reason" {
+		t.Errorf("reason = %q; want 'updated reason' (overwrite)", mark.Reason)
+	}
+}
+
+func TestOrganismForkMark_MissingNodeID(t *testing.T) {
+	srv, claims, _ := seedAdminFixture(t)
+	w := callForkMark(t, srv, claims, `{}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d; want 400", w.Code)
+	}
+}
+
+func TestOrganismForkMark_Unauthorized(t *testing.T) {
+	srv, _, _ := seedAdminFixture(t)
+	w := callForkMark(t, srv, nil, `{"node_id":"f1"}`)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d; want 401", w.Code)
+	}
+}
+
+func TestOrganismForkMark_TenantIsolation(t *testing.T) {
+	srv, claims, fx := seedAdminFixture(t)
+	// Tenant A marks frame f1.
+	callForkMark(t, srv, claims, `{"node_id":"f1","reason":"tenant A note"}`)
+
+	// Tenant B's verdict lookup for the same frame must NOT see fork-mark
+	// (and won't see a verdict either since rows are tenant-scoped — but
+	// we want the fork lookup specifically to also stay isolated).
+	bClaims := &auth.Claims{Sub: "userB", Email: "b@x", Tenants: []string{fx.tenantB}}
+	_, err := fx.otherRepo.LookupOrganismForkMark(context.Background(), "f1")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("tenant B leaked tenant A fork-mark; err=%v", err)
+	}
+	// Sanity — tenant B's verdict response also doesn't carry the flag.
+	w := callVerdictLookup(t, srv, bClaims, `{"node_id":"f1"}`)
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if v, ok := resp["is_intentional_fork"]; ok && v == true {
+		t.Errorf("tenant B saw is_intentional_fork=true; should be absent")
 	}
 }
 

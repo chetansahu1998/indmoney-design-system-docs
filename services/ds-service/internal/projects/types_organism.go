@@ -28,6 +28,20 @@ type DetectedOrganismMatch struct {
 	DetectedAt           time.Time
 }
 
+// OrganismForkMark mirrors the organism_fork_mark table row 1:1.
+// Written when a designer clicks "Mark as intentional fork" in the
+// plugin's verdict card (U9). Read by HandleOrganismVerdictLookup
+// to surface is_intentional_fork on subsequent checks of the same
+// frame, and by the admin dashboard to bucket fork-marked rows
+// separately from drift rows.
+type OrganismForkMark struct {
+	TenantID       string
+	FrameID        string
+	MarkedByUserID string
+	Reason         string
+	MarkedAt       time.Time
+}
+
 // PromotionCandidate mirrors the promotion_candidate table row 1:1. Built by
 // Part D's RebuildPromotionCandidates aggregation; consumed by Part C's
 // admin dashboard panel (U14).
