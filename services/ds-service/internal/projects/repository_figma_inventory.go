@@ -486,6 +486,17 @@ type FigmaPageRow struct {
 	Name               string
 	OrderIndex         int
 	BackgroundColorHex string
+	// U4 — content + position hashes computed during the deep-sync walk.
+	// Populated by the poller before this row is upserted; empty values
+	// land as SQL NULL so the planner can detect "not yet hashed" cases.
+	ContentHash  string
+	PositionHash string
+	// U2 — classifier output. Populated by the poller after ClassifyPages
+	// runs over the file's page set.
+	Classification PageClassification
+	VersionBase    string
+	VersionN       int
+	PersonaHint    string
 }
 
 // UpsertFigmaPagesAndSections is the page+section batch write for one file.
@@ -519,18 +530,33 @@ func (t *TenantRepo) UpsertFigmaPagesAndSections(
 	}
 	defer tx.Rollback()
 
-	// pages
+	// pages — U4 + U2: content/position hashes + classifier output land
+	// in the same write. derived_last_modified only advances when
+	// content_hash actually changed.
 	pageStmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO figma_page (
 			tenant_id, file_key, page_id, name, order_index, background_color,
+			content_hash, position_hash, derived_last_modified,
+			page_classification, version_base, version_n, persona_hint,
 			first_seen_at, last_seen_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tenant_id, file_key, page_id) DO UPDATE SET
-			name             = excluded.name,
-			order_index      = excluded.order_index,
-			background_color = excluded.background_color,
-			last_seen_at     = excluded.last_seen_at,
-			deleted_at       = NULL
+			name                  = excluded.name,
+			order_index           = excluded.order_index,
+			background_color      = excluded.background_color,
+			content_hash          = excluded.content_hash,
+			position_hash         = excluded.position_hash,
+			derived_last_modified = CASE
+			    WHEN figma_page.content_hash IS NULL                  THEN excluded.derived_last_modified
+			    WHEN figma_page.content_hash <> excluded.content_hash THEN excluded.derived_last_modified
+			    ELSE figma_page.derived_last_modified
+			END,
+			page_classification = excluded.page_classification,
+			version_base        = excluded.version_base,
+			version_n           = excluded.version_n,
+			persona_hint        = excluded.persona_hint,
+			last_seen_at        = excluded.last_seen_at,
+			deleted_at          = NULL
 	`)
 	if err != nil {
 		return 0, 0, fmt.Errorf("prepare upsert figma_page: %w", err)
@@ -541,30 +567,45 @@ func (t *TenantRepo) UpsertFigmaPagesAndSections(
 		if p.PageID == "" {
 			continue
 		}
+		var versionN any
+		if p.VersionN > 0 {
+			versionN = p.VersionN
+		}
+		var classification any
+		if p.Classification != "" {
+			classification = string(p.Classification)
+		}
 		if _, err := pageStmt.ExecContext(ctx,
 			t.tenantID, fileKey, p.PageID, p.Name, p.OrderIndex,
-			nullableStr(p.BackgroundColorHex), now, now,
+			nullableStr(p.BackgroundColorHex),
+			nullableStr(p.ContentHash), nullableStr(p.PositionHash),
+			now, // derived_last_modified seed; CASE-clause preserves on hash-match
+			classification, nullableStr(p.VersionBase), versionN, nullableStr(p.PersonaHint),
+			now, now,
 		); err != nil {
 			return 0, 0, fmt.Errorf("upsert figma_page %s: %w", p.PageID, err)
 		}
 	}
 
-	// sections
+	// sections — U4: content + position hashes land here too.
 	sectionStmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO figma_section (
 			tenant_id, file_key, page_id, section_id, name,
 			x, y, width, height, order_index,
+			content_hash, position_hash,
 			first_seen_at, last_seen_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tenant_id, file_key, page_id, section_id) DO UPDATE SET
-			name         = excluded.name,
-			x            = excluded.x,
-			y            = excluded.y,
-			width        = excluded.width,
-			height       = excluded.height,
-			order_index  = excluded.order_index,
-			last_seen_at = excluded.last_seen_at,
-			deleted_at   = NULL
+			name          = excluded.name,
+			x             = excluded.x,
+			y             = excluded.y,
+			width         = excluded.width,
+			height        = excluded.height,
+			order_index   = excluded.order_index,
+			content_hash  = excluded.content_hash,
+			position_hash = excluded.position_hash,
+			last_seen_at  = excluded.last_seen_at,
+			deleted_at    = NULL
 	`)
 	if err != nil {
 		return 0, 0, fmt.Errorf("prepare upsert figma_section: %w", err)
@@ -578,6 +619,7 @@ func (t *TenantRepo) UpsertFigmaPagesAndSections(
 		if _, err := sectionStmt.ExecContext(ctx,
 			t.tenantID, fileKey, s.PageID, s.SectionID, s.Name,
 			s.X, s.Y, s.Width, s.Height, s.OrderIndex,
+			nullableStr(s.ContentHash), nullableStr(s.PositionHash),
 			now, now,
 		); err != nil {
 			return 0, 0, fmt.Errorf("upsert figma_section %s/%s: %w", s.PageID, s.SectionID, err)
@@ -622,6 +664,9 @@ type FigmaSectionRow struct {
 	Width      float64
 	Height     float64
 	OrderIndex int
+	// U4 — content + position hashes computed during the deep-sync walk.
+	ContentHash  string
+	PositionHash string
 }
 
 // ─── single-file lookups (powers the Promote endpoint, U5) ──────────────────

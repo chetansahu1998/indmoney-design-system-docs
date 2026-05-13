@@ -462,37 +462,11 @@ func (p *Poller) syncFileDeep(
 		return 0, 0, 0, ferr
 	}
 
-	// Build the three row sets from the same response. Pages + sections
-	// reuse the existing pages-view helper; the node tree gets flattened
-	// depth-first.
-	pages := resp.Pages()
-	pageRows := make([]projects.FigmaPageRow, 0, len(pages))
-	sectionRows := make([]projects.FigmaSectionRow, 0)
-	for i, pg := range pages {
-		pageRows = append(pageRows, projects.FigmaPageRow{
-			FileKey:            f.FileKey,
-			PageID:             pg.ID,
-			Name:               pg.Name,
-			OrderIndex:         i,
-			BackgroundColorHex: pg.BackgroundColorHex,
-		})
-		for j, sec := range pg.Sections {
-			sectionRows = append(sectionRows, projects.FigmaSectionRow{
-				FileKey:    f.FileKey,
-				PageID:     pg.ID,
-				SectionID:  sec.ID,
-				Name:       sec.Name,
-				X:          sec.X,
-				Y:          sec.Y,
-				Width:      sec.Width,
-				Height:     sec.Height,
-				OrderIndex: j,
-			})
-		}
-	}
-
+	// Flatten the deep tree once; reuse the result for both nodeRows and
+	// the per-page / per-section hash computations (U4).
 	flat := resp.Flatten()
 	nodeRows := make([]projects.FigmaNodeRow, 0, len(flat))
+	hashable := make([]projects.HashableNode, 0, len(flat))
 	for _, n := range flat {
 		nodeRows = append(nodeRows, projects.FigmaNodeRow{
 			FileKey:      f.FileKey,
@@ -510,6 +484,66 @@ func (p *Poller) syncFileDeep(
 			ComponentID:  n.ComponentID,
 			ComponentKey: n.ComponentKey,
 		})
+		hashable = append(hashable, projects.HashableNode{
+			NodeID:     n.NodeID,
+			ParentID:   n.ParentID,
+			NodeType:   n.NodeType,
+			Name:       n.Name,
+			HasBBox:    n.HasBBox,
+			X:          n.X,
+			Y:          n.Y,
+			Width:      n.Width,
+			Height:     n.Height,
+			Depth:      n.Depth,
+			OrderIndex: n.OrderIndex,
+		})
+	}
+
+	// Build the page + section row sets, with hashes + classifier output (U2 + U4).
+	pages := resp.Pages()
+	pageRows := make([]projects.FigmaPageRow, 0, len(pages))
+	sectionRows := make([]projects.FigmaSectionRow, 0)
+	classifierInputs := make([]projects.FigmaPageInput, 0, len(pages))
+	for _, pg := range pages {
+		classifierInputs = append(classifierInputs, projects.FigmaPageInput{
+			PageID: pg.ID, Name: pg.Name,
+		})
+	}
+	classified := projects.ClassifyPages(classifierInputs, nil)
+	classifiedByID := make(map[string]projects.ClassifiedPage, len(classified))
+	for _, cp := range classified {
+		classifiedByID[cp.PageID] = cp
+	}
+	for i, pg := range pages {
+		cls := classifiedByID[pg.ID]
+		pageRows = append(pageRows, projects.FigmaPageRow{
+			FileKey:            f.FileKey,
+			PageID:             pg.ID,
+			Name:               pg.Name,
+			OrderIndex:         i,
+			BackgroundColorHex: pg.BackgroundColorHex,
+			ContentHash:        projects.ComputeContentHash(pg.ID, hashable),
+			PositionHash:       projects.ComputePositionHash(pg.ID, hashable),
+			Classification:     cls.Classification,
+			VersionBase:        cls.VersionBase,
+			VersionN:           cls.VersionN,
+			PersonaHint:        cls.PersonaHint,
+		})
+		for j, sec := range pg.Sections {
+			sectionRows = append(sectionRows, projects.FigmaSectionRow{
+				FileKey:      f.FileKey,
+				PageID:       pg.ID,
+				SectionID:    sec.ID,
+				Name:         sec.Name,
+				X:            sec.X,
+				Y:            sec.Y,
+				Width:        sec.Width,
+				Height:       sec.Height,
+				OrderIndex:   j,
+				ContentHash:  projects.ComputeContentHash(sec.ID, hashable),
+				PositionHash: projects.ComputePositionHash(sec.ID, hashable),
+			})
+		}
 	}
 
 	// Pages + sections first (small tx, small failure blast radius).
