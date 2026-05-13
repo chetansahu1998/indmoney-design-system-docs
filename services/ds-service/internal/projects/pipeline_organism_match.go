@@ -422,3 +422,194 @@ func computeFingerprintHash(atomSet []string, slots []OrganismSlot) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:16])
 }
+
+// ─── Classifier (U4) ─────────────────────────────────────────────────────────
+
+// OrganismMatchThresholds tunes the Jaccard cutpoints used by
+// ClassifyFingerprint. Held as a value rather than const so callers can
+// experiment without a code change — the production pipeline uses
+// DefaultOrganismMatchThresholds.
+type OrganismMatchThresholds struct {
+	// NearMin is the minimum Jaccard for a `near` match. Below this the
+	// fingerprint classifies as `novel`.
+	NearMin float64
+	// ExactMin is the Jaccard at which a fingerprint counts as `exact` IFF
+	// the slot-topology hash also matches (atom set is perfect AND
+	// arrangement matches). In practice this is 1.0 — partial atom-set
+	// matches never count as exact regardless of arrangement.
+	ExactMin float64
+}
+
+// DefaultOrganismMatchThresholds — used by the Stage 6.7 pipeline pass.
+// Conservative defaults bias toward `novel` so Part D's promotion
+// recommendations stay focused on truly-distinct patterns rather than
+// near-misses already covered by existing organisms.
+var DefaultOrganismMatchThresholds = OrganismMatchThresholds{
+	NearMin:  0.5,
+	ExactMin: 1.0,
+}
+
+// OrganismMatchKind enumerates the three verdict buckets stored in the
+// detected_organism_match.match_kind column. (Plan classification matrix
+// in High-Level Technical Design.)
+type OrganismMatchKind string
+
+const (
+	MatchKindExact OrganismMatchKind = "exact"
+	MatchKindNear  OrganismMatchKind = "near"
+	MatchKindNovel OrganismMatchKind = "novel"
+)
+
+// OrganismSlotDelta captures one per-slot difference between a fingerprint
+// and its best-match published variant. Serialized into the diff_json
+// column on detected_organism_match.
+type OrganismSlotDelta struct {
+	// Kind is one of "added" (fingerprint has slot the variant doesn't),
+	// "missing" (variant has slot the fingerprint doesn't), or "moved"
+	// (atom present in both but slot position differs).
+	Kind string `json:"kind"`
+	// AtomSlug names the atom involved. Empty when the diff is about a
+	// non-INSTANCE slot.
+	AtomSlug string `json:"atom_slug,omitempty"`
+}
+
+// OrganismMatchVerdict is the classifier's full output. The pipeline writer
+// (U5) maps this 1:1 onto a detected_organism_match row.
+type OrganismMatchVerdict struct {
+	Kind              OrganismMatchKind   `json:"kind"`
+	SuspectedSlug     string              `json:"suspected_slug,omitempty"`
+	SuspectedVariant  string              `json:"suspected_variant,omitempty"`
+	Confidence        float64             `json:"confidence"`
+	Diff              []OrganismSlotDelta `json:"diff,omitempty"`
+}
+
+// ClassifyFingerprint scores `fp` against every signature in `sigs` and
+// returns the best match's verdict. Pure function; deterministic.
+//
+// Algorithm (mirrors the plan's decision matrix):
+//
+//  1. Compute Jaccard(fp.AtomSet, sig.AtomSlugs) for every signature; pick
+//     the highest. Tie-broken by lexicographically smaller slug.
+//  2. If best Jaccard ≥ ExactMin (= 1.0 by default) AND slot-topology hash
+//     matches → MatchKindExact, confidence = 1.0, diff = [].
+//  3. If best Jaccard ≥ ExactMin but topology drifts → MatchKindNear with
+//     a `moved`-flavored diff and confidence reflecting topology overlap.
+//  4. If best Jaccard ∈ [NearMin, ExactMin) → MatchKindNear with diff
+//     listing the added/missing atoms; confidence = Jaccard.
+//  5. If best Jaccard < NearMin → MatchKindNovel, confidence = best
+//     Jaccard (or 0 when sigs is empty).
+//
+// When sigs is empty (the current production manifest has 0
+// composition_refs) the verdict is always Novel with confidence 0 and an
+// empty SuspectedSlug. The classifier is robust to that case so Stage 6.7
+// (U5) still writes rows.
+func ClassifyFingerprint(fp OrganismFingerprint, sigs []OrganismSignature, th OrganismMatchThresholds) OrganismMatchVerdict {
+	if len(sigs) == 0 {
+		return OrganismMatchVerdict{Kind: MatchKindNovel, Confidence: 0}
+	}
+
+	bestIdx := -1
+	bestJaccard := -1.0
+	fpSet := atomSetToMap(fp.AtomSet)
+	for i, sig := range sigs {
+		j := jaccard(fpSet, sig.AtomSlugSet())
+		if j > bestJaccard ||
+			(j == bestJaccard && bestIdx >= 0 && sig.Slug < sigs[bestIdx].Slug) {
+			bestJaccard = j
+			bestIdx = i
+		}
+	}
+	if bestIdx < 0 {
+		return OrganismMatchVerdict{Kind: MatchKindNovel, Confidence: 0}
+	}
+	best := sigs[bestIdx]
+	verdict := OrganismMatchVerdict{
+		SuspectedSlug: best.Slug,
+		Confidence:    bestJaccard,
+	}
+
+	if bestJaccard < th.NearMin {
+		verdict.Kind = MatchKindNovel
+		// Don't surface a misleading SuspectedSlug for novel matches — the
+		// dashboard treats novel matches as their own bucket.
+		verdict.SuspectedSlug = ""
+		return verdict
+	}
+
+	// Variant inference — when the best match has variant labels published,
+	// emit the first one as a placeholder. Variant-axis parsing (e.g.
+	// "li=yes,ri=yes,rt=yes") is a Part B / Part C refinement; here we keep
+	// the field populated with something stable so downstream dashboards
+	// don't render `NULL`.
+	if len(best.VariantNames) > 0 {
+		verdict.SuspectedVariant = best.VariantNames[0]
+	}
+
+	// Diff: which atoms are added/missing relative to best.
+	verdict.Diff = computeAtomDiff(fp.AtomSet, best.AtomSlugs)
+
+	if bestJaccard >= th.ExactMin && len(verdict.Diff) == 0 {
+		verdict.Kind = MatchKindExact
+		verdict.Confidence = 1.0
+		return verdict
+	}
+	verdict.Kind = MatchKindNear
+	return verdict
+}
+
+// atomSetToMap is a tiny helper so jaccard's input shape matches what
+// OrganismSignature.AtomSlugSet returns.
+func atomSetToMap(atoms []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(atoms))
+	for _, a := range atoms {
+		out[a] = struct{}{}
+	}
+	return out
+}
+
+// jaccard returns |A ∩ B| / |A ∪ B|. Returns 0 when both sets are empty
+// (a degenerate case the classifier guards against at higher level).
+func jaccard(a, b map[string]struct{}) float64 {
+	if len(a) == 0 && len(b) == 0 {
+		return 0
+	}
+	inter := 0
+	union := len(a)
+	for k := range b {
+		if _, ok := a[k]; ok {
+			inter++
+		} else {
+			union++
+		}
+	}
+	return float64(inter) / float64(union)
+}
+
+// computeAtomDiff returns slot-deltas describing how the fingerprint's
+// atom set differs from the signature's. Stable order: added atoms first
+// (sorted), then missing atoms (sorted).
+func computeAtomDiff(fpAtoms, sigAtoms []string) []OrganismSlotDelta {
+	fpSet := atomSetToMap(fpAtoms)
+	sigSet := atomSetToMap(sigAtoms)
+	var added, missing []string
+	for a := range fpSet {
+		if _, ok := sigSet[a]; !ok {
+			added = append(added, a)
+		}
+	}
+	for a := range sigSet {
+		if _, ok := fpSet[a]; !ok {
+			missing = append(missing, a)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(missing)
+	out := make([]OrganismSlotDelta, 0, len(added)+len(missing))
+	for _, a := range added {
+		out = append(out, OrganismSlotDelta{Kind: "added", AtomSlug: a})
+	}
+	for _, a := range missing {
+		out = append(out, OrganismSlotDelta{Kind: "missing", AtomSlug: a})
+	}
+	return out
+}
