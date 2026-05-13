@@ -497,12 +497,179 @@ func colorToHex(c figmaColor) string {
 // (pages + top-level SECTION nodes, nothing deeper). The response is
 // typically <1 MB even for large product files because frame interiors
 // are pruned.
+//
+// Deprecated by `GetFileDeepTree` in Phase 2C (2026-05-13). Kept here so
+// any external caller still hitting depth=2 keeps working, but the
+// inventory poller now uses GetFileDeepTree which returns this same
+// pages/sections view *plus* the full descendant tree in one call.
 func (c *Client) GetFilePagesAndSections(ctx context.Context, fileKey string) (*FilePagesAndSections, error) {
 	if fileKey == "" {
 		return nil, errors.New("fileKey is empty")
 	}
 	var out FilePagesAndSections
 	if err := c.get(ctx, "/v1/files/"+fileKey+"?depth=2", &out, tier1); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ─── Deep tree fetch (Phase 2C — figma_node table) ───────────────────────────
+//
+// The inventory poller upgraded from depth=2 (pages + sections only) to a
+// configurable depth (default 14) so we can mirror the full structural
+// tree of every file as metadata-only rows in figma_node. Same single
+// /v1/files/<key> call, same tier-1 rate budget — just a deeper response.
+
+// DeepNode is the typed shape of one Figma node in the deep walk. Mirrors
+// the API response, scoped to ONLY the fields the inventory needs:
+// identity, type, name, bbox, component master reference. Everything else
+// (fills, strokes, effects, characters, styles) is dropped at decode time
+// to keep the in-memory tree compact.
+type DeepNode struct {
+	ID                  string       `json:"id"`
+	Name                string       `json:"name"`
+	Type                string       `json:"type"`
+	AbsoluteBoundingBox *figmaBBox   `json:"absoluteBoundingBox,omitempty"`
+	BackgroundColor     *figmaColor  `json:"backgroundColor,omitempty"`
+	// componentId — populated only on INSTANCE nodes; the same-file node_id
+	// of the master COMPONENT this instance was spawned from.
+	ComponentID string `json:"componentId,omitempty"`
+	// key — populated only on COMPONENT + COMPONENT_SET nodes; the durable
+	// library-side identifier that stays stable across publish cycles.
+	Key      string     `json:"key,omitempty"`
+	Children []DeepNode `json:"children,omitempty"`
+}
+
+// FileDeepTree is the file-level response. Reuses the same top-level shape
+// as FilePagesAndSections so callers can lift pages/sections out of it
+// without a second decode.
+type FileDeepTree struct {
+	Name         string   `json:"name"`
+	Role         string   `json:"role"`
+	LastModified string   `json:"lastModified"`
+	EditorType   string   `json:"editorType"`
+	ThumbnailURL string   `json:"thumbnailUrl"`
+	Version      string   `json:"version"`
+	LinkAccess   string   `json:"linkAccess"`
+	MainFileKey  string   `json:"mainFileKey"`
+	Document     DeepNode `json:"document"`
+}
+
+// FlatNode is the shape the repository layer consumes — one row per node,
+// with parent/depth/order_index resolved during the walk.
+type FlatNode struct {
+	NodeID       string
+	ParentID     string  // empty on the document root
+	NodeType     string
+	Name         string
+	HasBBox      bool    // true when AbsoluteBoundingBox was present
+	X            float64
+	Y            float64
+	Width        float64
+	Height       float64
+	Depth        int     // 0 = document, 1 = page, 2 = top-level frame, ...
+	OrderIndex   int     // sibling order within parent
+	ComponentID  string  // for INSTANCE → master's same-file node_id
+	ComponentKey string  // for COMPONENT / COMPONENT_SET → durable library key
+}
+
+// Flatten walks the deep tree depth-first and emits one FlatNode per
+// visited node. Walk order is parent-before-children so a caller can
+// stream rows into an INSERT without needing to defer parent_id resolution.
+//
+// The caller's responsibility:
+//   - Pass the FlatNode list to a single batched UPSERT (the figma_node
+//     PK enforces uniqueness on (tenant, file_key, node_id)).
+//   - Walk stops naturally at the leaves Figma returned for the requested
+//     depth — no extra capping needed here.
+func (f *FileDeepTree) Flatten() []FlatNode {
+	if f == nil {
+		return nil
+	}
+	// Pre-allocate a reasonable starting size — most files land in the
+	// 100-5000-node range; this avoids the first few growth allocations.
+	out := make([]FlatNode, 0, 1024)
+	var walk func(node *DeepNode, parentID string, depth, orderIndex int)
+	walk = func(node *DeepNode, parentID string, depth, orderIndex int) {
+		fn := FlatNode{
+			NodeID:       node.ID,
+			ParentID:     parentID,
+			NodeType:     node.Type,
+			Name:         node.Name,
+			Depth:        depth,
+			OrderIndex:   orderIndex,
+			ComponentID:  node.ComponentID,
+			ComponentKey: node.Key,
+		}
+		if node.AbsoluteBoundingBox != nil {
+			fn.HasBBox = true
+			fn.X = node.AbsoluteBoundingBox.X
+			fn.Y = node.AbsoluteBoundingBox.Y
+			fn.Width = node.AbsoluteBoundingBox.Width
+			fn.Height = node.AbsoluteBoundingBox.Height
+		}
+		out = append(out, fn)
+		for i := range node.Children {
+			walk(&node.Children[i], node.ID, depth+1, i)
+		}
+	}
+	walk(&f.Document, "", 0, 0)
+	return out
+}
+
+// Pages returns the file's pages + their top-level SECTION children, in
+// the same shape FilePagesAndSections.Pages produced. Lets the poller
+// keep the existing figma_page / figma_section writes unchanged while
+// adding the deep node-tree write on the side.
+func (f *FileDeepTree) Pages() []FilePage {
+	out := make([]FilePage, 0, len(f.Document.Children))
+	for _, p := range f.Document.Children {
+		page := FilePage{ID: p.ID, Name: p.Name}
+		if p.BackgroundColor != nil {
+			page.BackgroundColorHex = colorToHex(*p.BackgroundColor)
+		}
+		for _, c := range p.Children {
+			if c.Type != "SECTION" {
+				continue
+			}
+			s := FileSection{ID: c.ID, Name: c.Name}
+			if c.AbsoluteBoundingBox != nil {
+				s.X = c.AbsoluteBoundingBox.X
+				s.Y = c.AbsoluteBoundingBox.Y
+				s.Width = c.AbsoluteBoundingBox.Width
+				s.Height = c.AbsoluteBoundingBox.Height
+			}
+			page.Sections = append(page.Sections, s)
+		}
+		out = append(out, page)
+	}
+	return out
+}
+
+// GetFileDeepTree fetches `/v1/files/<key>?depth=<n>`. Tier-1.
+//
+// depth=14 (Phase 2C default) returns the full document tree clamped at
+// 14 levels deep. Figma doesn't document a max depth, but 14 covers
+// every production INDmoney file we've inspected with margin to spare
+// (real trees bottom out around depth 8-10 for the heaviest screens).
+//
+// Response size scales with tree breadth, not depth — a flat page with
+// 2000 frames produces a bigger payload than a deeply-nested artboard
+// with 200 nodes. The 1 GB body cap in Client.get covers both shapes.
+//
+// To minimize payload, the typed DeepNode struct drops every field the
+// inventory doesn't need (fills, effects, characters, styles, …) at
+// json.Unmarshal time — only the 9 fields listed on DeepNode survive.
+func (c *Client) GetFileDeepTree(ctx context.Context, fileKey string, depth int) (*FileDeepTree, error) {
+	if fileKey == "" {
+		return nil, errors.New("fileKey is empty")
+	}
+	if depth <= 0 {
+		depth = 14
+	}
+	path := fmt.Sprintf("/v1/files/%s?depth=%d", fileKey, depth)
+	var out FileDeepTree
+	if err := c.get(ctx, path, &out, tier1); err != nil {
 		return nil, err
 	}
 	return &out, nil

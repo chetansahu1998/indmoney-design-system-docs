@@ -782,6 +782,225 @@ func (t *TenantRepo) ProjectFileKeysForTenant(ctx context.Context) (map[string]P
 	return out, rows.Err()
 }
 
+// ─── deep node tree (Phase 2C — figma_node) ──────────────────────────────────
+
+// FigmaNodeRow mirrors one figma_node row. Built by the poller from a
+// FlatNode (internal/figma/client) and passed to UpsertFigmaNodes in
+// big batches.
+type FigmaNodeRow struct {
+	TenantID     string
+	FileKey      string
+	NodeID       string
+	ParentID     string  // empty for the document root
+	NodeType     string
+	Name         string
+	HasBBox      bool
+	X            float64
+	Y            float64
+	Width        float64
+	Height       float64
+	Depth        int
+	OrderIndex   int
+	ComponentID  string
+	ComponentKey string
+}
+
+// UpsertFigmaNodes batches the whole flat node list for one file into a
+// single transaction: prepared INSERT with ON CONFLICT, then a sweep
+// stamping deleted_at on rows the current crawl didn't touch.
+//
+// Returns the number of node rows upserted. Empty list is allowed —
+// it'll just run the sweep (which marks every node as deleted if the
+// file emptied out, e.g. after a FILE_DELETE webhook).
+func (t *TenantRepo) UpsertFigmaNodes(ctx context.Context, fileKey string, nodes []FigmaNodeRow, seenAt time.Time) (int, error) {
+	if t.tenantID == "" {
+		return 0, errors.New("projects: tenant_id required")
+	}
+	if fileKey == "" {
+		return 0, errors.New("projects: file_key required")
+	}
+	now := rfc3339(seenAt.UTC())
+	tx, err := t.r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO figma_node (
+			tenant_id, file_key, node_id, parent_id, node_type, name,
+			x, y, width, height, depth, order_index,
+			component_id, component_key,
+			first_seen_at, last_seen_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(tenant_id, file_key, node_id) DO UPDATE SET
+			parent_id     = excluded.parent_id,
+			node_type     = excluded.node_type,
+			name          = excluded.name,
+			x             = excluded.x,
+			y             = excluded.y,
+			width         = excluded.width,
+			height        = excluded.height,
+			depth         = excluded.depth,
+			order_index   = excluded.order_index,
+			component_id  = excluded.component_id,
+			component_key = excluded.component_key,
+			last_seen_at  = excluded.last_seen_at,
+			deleted_at    = NULL
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("prepare upsert figma_node: %w", err)
+	}
+	defer stmt.Close()
+
+	upserted := 0
+	for _, n := range nodes {
+		if n.NodeID == "" {
+			continue
+		}
+		// Nullable column args — empty string maps to SQL NULL so the
+		// component_key partial index stays correct.
+		var xArg, yArg, wArg, hArg any
+		if n.HasBBox {
+			xArg, yArg, wArg, hArg = n.X, n.Y, n.Width, n.Height
+		}
+		if _, err := stmt.ExecContext(ctx,
+			t.tenantID, fileKey, n.NodeID,
+			nullableStr(n.ParentID), n.NodeType, n.Name,
+			xArg, yArg, wArg, hArg,
+			n.Depth, n.OrderIndex,
+			nullableStr(n.ComponentID), nullableStr(n.ComponentKey),
+			now, now,
+		); err != nil {
+			return 0, fmt.Errorf("upsert figma_node %s: %w", n.NodeID, err)
+		}
+		upserted++
+	}
+
+	// sweep — anything in this file not touched this cycle gets
+	// deleted_at stamped. Same single-tx pattern as
+	// UpsertFigmaPagesAndSections so partial failures don't leave
+	// half-synced state.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE figma_node
+		   SET deleted_at = ?
+		 WHERE tenant_id = ? AND file_key = ?
+		   AND deleted_at IS NULL
+		   AND last_seen_at < ?
+	`, now, t.tenantID, fileKey, now); err != nil {
+		return 0, fmt.Errorf("sweep figma_node: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return upserted, nil
+}
+
+// UpdateFigmaFileDeepSynced writes the deep-sync state onto figma_file
+// (deep_synced_at, deep_sync_version, node_count). Called by the poller
+// after a successful UpsertFigmaNodes.
+func (t *TenantRepo) UpdateFigmaFileDeepSynced(ctx context.Context, fileKey, version string, nodeCount int, syncedAt time.Time) error {
+	if t.tenantID == "" {
+		return errors.New("projects: tenant_id required")
+	}
+	if fileKey == "" {
+		return errors.New("projects: file_key required")
+	}
+	_, err := t.handle().ExecContext(ctx, `
+		UPDATE figma_file
+		   SET deep_synced_at    = ?,
+		       deep_sync_version = NULLIF(?, ''),
+		       node_count        = ?
+		 WHERE tenant_id = ? AND file_key = ?
+	`, rfc3339(syncedAt.UTC()), version, nodeCount, t.tenantID, fileKey)
+	if err != nil {
+		return fmt.Errorf("update figma_file deep-synced: %w", err)
+	}
+	return nil
+}
+
+// FilesNeedingDeepSync mirrors FilesNeedingPagesSync but uses the
+// deep_synced_at / deep_sync_version columns. Returns file rows whose
+// deep tree hasn't been fetched yet or whose Figma `version` moved
+// since the last successful deep sync.
+//
+// limit caps per-cycle work so the tier-1 budget stays bounded.
+func (t *TenantRepo) FilesNeedingDeepSync(ctx context.Context, limit int) ([]FigmaFileRow, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := t.r.db.QueryContext(ctx, `
+		SELECT file_key, project_id, team_id, name,
+		       COALESCE(last_modified, ''),
+		       COALESCE(version, ''),
+		       COALESCE(deep_sync_version, '')
+		  FROM figma_file
+		 WHERE tenant_id = ?
+		   AND deleted_at IS NULL
+		   AND (
+		         deep_synced_at IS NULL
+		      OR deep_sync_version IS NULL
+		      OR deep_sync_version <> COALESCE(version, last_modified)
+		   )
+		 ORDER BY deep_synced_at IS NULL DESC, deep_synced_at ASC
+		 LIMIT ?
+	`, t.tenantID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("files needing deep sync: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]FigmaFileRow, 0)
+	for rows.Next() {
+		var r FigmaFileRow
+		var lastMod, version, deepVersion string
+		if err := rows.Scan(
+			&r.FileKey, &r.ProjectID, &r.TeamID, &r.Name,
+			&lastMod, &version, &deepVersion,
+		); err != nil {
+			return nil, fmt.Errorf("scan files needing deep sync: %w", err)
+		}
+		r.LastModified = parseTime(lastMod)
+		r.Version = version
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// CountFigmaNodesByFile returns a map[file_key]int of how many live
+// (non-deleted) nodes each file currently has. Powers the inventory
+// admin UI's per-file node-count badge without forcing the tree
+// endpoint to load every node row.
+func (t *TenantRepo) CountFigmaNodesByFile(ctx context.Context) (map[string]int, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	rows, err := t.r.db.QueryContext(ctx, `
+		SELECT file_key, COUNT(*)
+		  FROM figma_node
+		 WHERE tenant_id = ? AND deleted_at IS NULL
+		 GROUP BY file_key
+	`, t.tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("count figma_node by file: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]int, 64)
+	for rows.Next() {
+		var fk string
+		var n int
+		if err := rows.Scan(&fk, &n); err != nil {
+			return nil, err
+		}
+		out[fk] = n
+	}
+	return out, rows.Err()
+}
+
 // ─── tree read for admin UI ──────────────────────────────────────────────────
 
 // FigmaInventoryTreeNode is a generic tree node returned to the admin UI.
@@ -996,6 +1215,7 @@ type FigmaInventoryRunRow struct {
 	FilesRefetched  int
 	PagesUpserted   int
 	SectionsUpserted int
+	NodesUpserted   int // Phase 2C — figma_node rows written this cycle
 	ErrorCount      int
 	ErrorSampleJSON string
 }
@@ -1038,13 +1258,14 @@ func (t *TenantRepo) FinishFigmaInventoryRun(ctx context.Context, id int64, run 
 		       files_refetched   = ?,
 		       pages_upserted    = ?,
 		       sections_upserted = ?,
+		       nodes_upserted    = ?,
 		       error_count       = ?,
 		       error_sample_json = ?
 		 WHERE id = ? AND tenant_id = ?
 	`,
 		rfc3339(t.now().UTC()),
 		run.TeamsCrawled, run.ProjectsSeen, run.FilesSeen, run.FilesRefetched,
-		run.PagesUpserted, run.SectionsUpserted,
+		run.PagesUpserted, run.SectionsUpserted, run.NodesUpserted,
 		run.ErrorCount, errJSON,
 		id, t.tenantID,
 	)
@@ -1065,7 +1286,9 @@ func (t *TenantRepo) ListFigmaInventoryRuns(ctx context.Context, limit int) ([]F
 	rows, err := t.r.db.QueryContext(ctx, `
 		SELECT id, tenant_id, started_at, COALESCE(finished_at, ''),
 		       teams_crawled, projects_seen, files_seen, files_refetched,
-		       pages_upserted, sections_upserted, error_count,
+		       pages_upserted, sections_upserted,
+		       COALESCE(nodes_upserted, 0),
+		       error_count,
 		       COALESCE(error_sample_json, '')
 		  FROM figma_inventory_run
 		 WHERE tenant_id = ?
@@ -1083,7 +1306,9 @@ func (t *TenantRepo) ListFigmaInventoryRuns(ctx context.Context, limit int) ([]F
 		if err := rows.Scan(
 			&r.ID, &r.TenantID, &startedAt, &finishedAt,
 			&r.TeamsCrawled, &r.ProjectsSeen, &r.FilesSeen, &r.FilesRefetched,
-			&r.PagesUpserted, &r.SectionsUpserted, &r.ErrorCount,
+			&r.PagesUpserted, &r.SectionsUpserted,
+			&r.NodesUpserted,
+			&r.ErrorCount,
 			&r.ErrorSampleJSON,
 		); err != nil {
 			return nil, fmt.Errorf("scan figma_inventory_run: %w", err)

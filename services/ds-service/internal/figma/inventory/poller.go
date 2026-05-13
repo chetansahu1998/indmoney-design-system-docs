@@ -67,6 +67,11 @@ type Config struct {
 	ListTenants    TenantLister
 	Interval       time.Duration
 	PagesSyncBatch int
+	// Phase 2C — max depth the deep-tree fetch traverses. 0 → use the
+	// client's default (14). Configurable so an operator can dial it
+	// down on huge files where 14 levels of payload approaches the
+	// 1 GB body cap.
+	DeepFetchDepth int
 	NewClient      func(pat string) FigmaInventoryClient // optional override for tests
 	Logger         *slog.Logger
 	Now            func() time.Time // injectable clock
@@ -78,7 +83,10 @@ type Config struct {
 type FigmaInventoryClient interface {
 	GetTeamProjects(ctx context.Context, teamID string) (*client.TeamProjectsResponse, error)
 	GetProjectFiles(ctx context.Context, projectID string) (*client.ProjectFilesResponse, error)
-	GetFilePagesAndSections(ctx context.Context, fileKey string) (*client.FilePagesAndSections, error)
+	// Phase 2C — deep fetch replaces the legacy depth=2 call. Pages,
+	// sections, AND the full node tree all come back in one tier-1
+	// response. depth=0 → client picks default (14).
+	GetFileDeepTree(ctx context.Context, fileKey string, depth int) (*client.FileDeepTree, error)
 }
 
 // Poller is the long-lived crawler. Construct via New(), then call Start(ctx).
@@ -107,6 +115,7 @@ type RunStats struct {
 	FilesRefetched   int
 	PagesUpserted    int
 	SectionsUpserted int
+	NodesUpserted    int
 	Errors           []string
 }
 
@@ -209,6 +218,7 @@ func (p *Poller) runCycle(ctx context.Context) {
 		totalStats.FilesRefetched += stats.FilesRefetched
 		totalStats.PagesUpserted += stats.PagesUpserted
 		totalStats.SectionsUpserted += stats.SectionsUpserted
+		totalStats.NodesUpserted += stats.NodesUpserted
 		totalStats.Errors = append(totalStats.Errors, stats.Errors...)
 	}
 
@@ -221,6 +231,7 @@ func (p *Poller) runCycle(ctx context.Context) {
 		"files_refetched", totalStats.FilesRefetched,
 		"pages", totalStats.PagesUpserted,
 		"sections", totalStats.SectionsUpserted,
+		"nodes", totalStats.NodesUpserted,
 		"errors", len(totalStats.Errors),
 	)
 
@@ -296,15 +307,16 @@ func (p *Poller) crawlTenant(ctx context.Context, tenantID string) RunStats {
 			break
 		default:
 		}
-		pageCount, sectionCount, err := p.syncFilePages(ctx, fc, repo, f, seenAt, logger)
+		pageCount, sectionCount, nodeCount, err := p.syncFileDeep(ctx, fc, repo, f, seenAt, logger)
 		if err != nil {
 			stats.Errors = append(stats.Errors,
-				fmt.Sprintf("sync_pages %s: %s", f.FileKey, errSummary(err)))
+				fmt.Sprintf("sync_deep %s: %s", f.FileKey, errSummary(err)))
 			continue
 		}
 		stats.FilesRefetched++
 		stats.PagesUpserted += pageCount
 		stats.SectionsUpserted += sectionCount
+		stats.NodesUpserted += nodeCount
 	}
 
 	if runID > 0 {
@@ -315,6 +327,7 @@ func (p *Poller) crawlTenant(ctx context.Context, tenantID string) RunStats {
 			FilesRefetched:  stats.FilesRefetched,
 			PagesUpserted:   stats.PagesUpserted,
 			SectionsUpserted: stats.SectionsUpserted,
+			NodesUpserted:    stats.NodesUpserted,
 			ErrorCount:      len(stats.Errors),
 		}
 		if err := repo.FinishFigmaInventoryRun(ctx, runID, finishStats, stats.Errors); err != nil {
@@ -427,23 +440,31 @@ func (p *Poller) crawlTeam(
 	return stats
 }
 
-// syncFilePages does the Tier-B depth=2 fetch + upsert for one file.
-// Returns (pageCount, sectionCount, err).
-func (p *Poller) syncFilePages(
+// syncFileDeep does the Tier-B deep fetch + upsert for one file. One
+// call to /v1/files/<key>?depth=N populates THREE tables:
+//   - figma_page         (depth-1 children)
+//   - figma_section      (depth-2 SECTION children of pages)
+//   - figma_node         (the full flat tree, Phase 2C)
+//
+// Returns the per-table counts so the cycle stats can roll them up.
+func (p *Poller) syncFileDeep(
 	ctx context.Context,
 	fc FigmaInventoryClient,
 	repo *projects.TenantRepo,
 	f projects.FigmaFileRow,
 	seenAt time.Time,
 	logger *slog.Logger,
-) (int, int, error) {
-	resp, err := fc.GetFilePagesAndSections(ctx, f.FileKey)
-	if err != nil {
-		logger.Warn("figma_inventory: GetFilePagesAndSections failed",
-			"file", f.FileKey, "err", err.Error())
-		return 0, 0, err
+) (pageCount, sectionCount, nodeCount int, err error) {
+	resp, ferr := fc.GetFileDeepTree(ctx, f.FileKey, p.cfg.DeepFetchDepth)
+	if ferr != nil {
+		logger.Warn("figma_inventory: GetFileDeepTree failed",
+			"file", f.FileKey, "err", ferr.Error())
+		return 0, 0, 0, ferr
 	}
 
+	// Build the three row sets from the same response. Pages + sections
+	// reuse the existing pages-view helper; the node tree gets flattened
+	// depth-first.
 	pages := resp.Pages()
 	pageRows := make([]projects.FigmaPageRow, 0, len(pages))
 	sectionRows := make([]projects.FigmaSectionRow, 0)
@@ -470,11 +491,43 @@ func (p *Poller) syncFilePages(
 		}
 	}
 
-	pageCount, sectionCount, err := repo.UpsertFigmaPagesAndSections(ctx, f.FileKey, pageRows, sectionRows, seenAt)
-	if err != nil {
-		return 0, 0, fmt.Errorf("upsert pages+sections: %w", err)
+	flat := resp.Flatten()
+	nodeRows := make([]projects.FigmaNodeRow, 0, len(flat))
+	for _, n := range flat {
+		nodeRows = append(nodeRows, projects.FigmaNodeRow{
+			FileKey:      f.FileKey,
+			NodeID:       n.NodeID,
+			ParentID:     n.ParentID,
+			NodeType:     n.NodeType,
+			Name:         n.Name,
+			HasBBox:      n.HasBBox,
+			X:            n.X,
+			Y:            n.Y,
+			Width:        n.Width,
+			Height:       n.Height,
+			Depth:        n.Depth,
+			OrderIndex:   n.OrderIndex,
+			ComponentID:  n.ComponentID,
+			ComponentKey: n.ComponentKey,
+		})
 	}
 
+	// Pages + sections first (small tx, small failure blast radius).
+	pageCount, sectionCount, err = repo.UpsertFigmaPagesAndSections(ctx, f.FileKey, pageRows, sectionRows, seenAt)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("upsert pages+sections: %w", err)
+	}
+
+	// Nodes second (separate tx — the flat node list can be 10k+ rows
+	// for big files; isolating it keeps pages/sections writes from being
+	// rolled back if the node-upsert hits a row-level error).
+	nodeCount, err = repo.UpsertFigmaNodes(ctx, f.FileKey, nodeRows, seenAt)
+	if err != nil {
+		return pageCount, sectionCount, 0, fmt.Errorf("upsert figma_node: %w", err)
+	}
+
+	// Mark the file synced for BOTH pages and deep trees in one update —
+	// they came from the same response so they share the same version.
 	if err := repo.UpdateFigmaFilePagesSynced(ctx, projects.FigmaFileRow{
 		FileKey:           f.FileKey,
 		Name:              resp.Name,
@@ -488,9 +541,12 @@ func (p *Poller) syncFilePages(
 		PagesLastSyncedAt: seenAt,
 		PagesSyncVersion:  resp.Version,
 	}); err != nil {
-		return pageCount, sectionCount, fmt.Errorf("mark synced: %w", err)
+		return pageCount, sectionCount, nodeCount, fmt.Errorf("mark pages-synced: %w", err)
 	}
-	return pageCount, sectionCount, nil
+	if err := repo.UpdateFigmaFileDeepSynced(ctx, f.FileKey, resp.Version, nodeCount, seenAt); err != nil {
+		return pageCount, sectionCount, nodeCount, fmt.Errorf("mark deep-synced: %w", err)
+	}
+	return pageCount, sectionCount, nodeCount, nil
 }
 
 // parseAPITime accepts the Figma API's lastModified format. The API uses
