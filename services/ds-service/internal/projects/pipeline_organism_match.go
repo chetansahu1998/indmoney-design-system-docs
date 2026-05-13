@@ -77,18 +77,18 @@ func slotKindFromName(name string) string {
 }
 
 // nameToAtomSlug maps a Figma INSTANCE name to a manifest atom slug heuristic.
-// The manifest currently lacks a componentId → slug index, so we infer the
-// slug by normalizing the INSTANCE name. This is a deliberate heuristic with
-// known limits:
+// Used as the FALLBACK when the manifest's componentId→slug index doesn't
+// resolve a given INSTANCE — e.g. for external library refs the manifest
+// doesn't index, or for instances whose componentId points at a deleted
+// master. The heuristic normalizes the display name:
 //
 //   - "Left Icon/Default"        → "left-icon-default"
 //   - "Right Text"               → "right-text"
 //   - "Icons/2D/Chevron right"   → "icons-2d-chevron-right"
-//   - "Icons/Logo/reliance"      → "icons-logo-reliance"
 //
-// When cmd/variants writes a per-componentId index into a future manifest
-// version we can swap this heuristic for a direct lookup without changing
-// callers.
+// The heuristic is per-file (different files name the same component
+// differently), so it does NOT support cross-file cluster normalization.
+// resolveInstanceSlug below prefers the index lookup for that reason.
 var nameSlugCleanup = regexp.MustCompile(`[^a-z0-9]+`)
 
 func nameToAtomSlug(name string) string {
@@ -96,6 +96,30 @@ func nameToAtomSlug(name string) string {
 	s = nameSlugCleanup.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
 	return s
+}
+
+// resolveInstanceSlug returns the canonical atom_slug for an INSTANCE node.
+// Preference order:
+//  1. Look up componentId in the manifest's componentId→slug index. Stable
+//     across files: every wild copy of the published "Left Icon/Default"
+//     master resolves to the same "left-icon-default" slug regardless of
+//     what layer name the designer typed.
+//  2. Fall back to nameToAtomSlug(displayName) when the componentId is
+//     absent from the index — covers external library components and
+//     anything cmd/variants hasn't recorded.
+//
+// This is the Bias #5 fix from the 2026-05-14 generalization audit. Without
+// it, the Bias #3 loose-key clustering can't cluster cross-product patterns
+// because atom_signatures don't normalize across files.
+func resolveInstanceSlug(node map[string]any, slugIndex map[string]string) string {
+	cid, _ := node["componentId"].(string)
+	if cid != "" && slugIndex != nil {
+		if slug := slugIndex[cid]; slug != "" {
+			return slug
+		}
+	}
+	name, _ := node["name"].(string)
+	return nameToAtomSlug(name)
 }
 
 // ─── Slot + Fingerprint types ────────────────────────────────────────────────
@@ -163,24 +187,31 @@ type OrganismFingerprint struct {
 // unwrapped to `document`). Pass map[string]any directly — mirrors
 // ExtractClusterIDs's input convention.
 func WalkOrganismCandidates(treeRoot map[string]any) []OrganismFingerprint {
+	return WalkOrganismCandidatesWithIndex(treeRoot, nil)
+}
+
+// WalkOrganismCandidatesWithIndex is the same walker with an optional
+// componentId→slug index threaded through. The index normalizes atom_slugs
+// across files (Bias #5 fix), which in turn lets the Bias #3 loose-key
+// promotion clustering cluster cross-product patterns.
+//
+// Pass nil to recover the pre-fix per-file heuristic behavior — used by
+// tests and any caller without manifest access.
+func WalkOrganismCandidatesWithIndex(treeRoot map[string]any, slugIndex map[string]string) []OrganismFingerprint {
 	if treeRoot == nil {
 		return nil
 	}
-	// Production canonical_trees come wrapped as `{document: <node>}`.
-	// Unwrap if present so callers don't have to.
 	if doc, ok := treeRoot["document"].(map[string]any); ok {
 		treeRoot = doc
 	}
 	out := make([]OrganismFingerprint, 0)
-	// Skip the root — descend from children. Same pattern as
-	// ExtractClusterIDs in pipeline_cluster_prerender.go.
 	if children, ok := treeRoot["children"].([]any); ok {
 		for _, c := range children {
 			cm, _ := c.(map[string]any)
 			if cm == nil {
 				continue
 			}
-			walkOrganismFromNode(cm, nil, &out)
+			walkOrganismFromNode(cm, nil, slugIndex, &out)
 		}
 	}
 	return out
@@ -233,7 +264,7 @@ var candidateWrapperTypes = map[string]struct{}{
 // inside a BOOLEAN_OPERATION still surfaces. We do NOT stop at a candidate
 // (unlike walkClusters which stops to avoid double-rasterizing); organism
 // candidates can be legitimately nested.
-func walkOrganismFromNode(node map[string]any, parentChain []*OrganismFingerprint, out *[]OrganismFingerprint) {
+func walkOrganismFromNode(node map[string]any, parentChain []*OrganismFingerprint, slugIndex map[string]string, out *[]OrganismFingerprint) {
 	if node == nil {
 		return
 	}
@@ -247,7 +278,7 @@ func walkOrganismFromNode(node map[string]any, parentChain []*OrganismFingerprin
 	t, _ := node["type"].(string)
 	candidateAdded := false
 	if _, isCandidate := candidateWrapperTypes[t]; isCandidate {
-		if fp, ok := buildFingerprint(node); ok {
+		if fp, ok := buildFingerprint(node, slugIndex); ok {
 			if len(parentChain) > 0 {
 				fp.ParentFrameID = parentChain[len(parentChain)-1].FrameID
 			}
@@ -263,7 +294,7 @@ func walkOrganismFromNode(node map[string]any, parentChain []*OrganismFingerprin
 		if cm == nil {
 			continue
 		}
-		walkOrganismFromNode(cm, parentChain, out)
+		walkOrganismFromNode(cm, parentChain, slugIndex, out)
 	}
 	_ = candidateAdded
 }
@@ -271,7 +302,7 @@ func walkOrganismFromNode(node map[string]any, parentChain []*OrganismFingerprin
 // buildFingerprint walks `frame`'s subtree counting atom INSTANCEs +
 // collecting slot topology. Returns ok=false when the FRAME doesn't meet
 // the organismMinAtomInstances threshold or when its bbox is missing.
-func buildFingerprint(frame map[string]any) (OrganismFingerprint, bool) {
+func buildFingerprint(frame map[string]any, slugIndex map[string]string) (OrganismFingerprint, bool) {
 	frameID, _ := frame["id"].(string)
 	frameName, _ := frame["name"].(string)
 	if frameID == "" {
@@ -283,7 +314,7 @@ func buildFingerprint(frame map[string]any) (OrganismFingerprint, bool) {
 		return OrganismFingerprint{}, false
 	}
 
-	atomSet := collectAtomSlugs(frame)
+	atomSet := collectAtomSlugs(frame, slugIndex)
 	if len(atomSet) < organismMinAtomInstances {
 		// The instance count was ≥ threshold but most resolve to the same
 		// slug heuristic — collapsed-set candidates are weak signal. Skip.
@@ -292,7 +323,7 @@ func buildFingerprint(frame map[string]any) (OrganismFingerprint, bool) {
 		return OrganismFingerprint{}, false
 	}
 
-	slots := collectSlotTopology(frame)
+	slots := collectSlotTopology(frame, slugIndex)
 	hash := computeFingerprintHash(atomSet, slots)
 
 	return OrganismFingerprint{
@@ -346,10 +377,12 @@ func countInstancesRec(node map[string]any) (atomInsts, total int) {
 	return
 }
 
-// collectAtomSlugs returns the sorted unique set of nameToAtomSlug(instance.name)
-// for every INSTANCE descendant with a non-empty componentId. Stable across
-// runs so the fingerprint hash is deterministic (R3 idempotency).
-func collectAtomSlugs(frame map[string]any) []string {
+// collectAtomSlugs returns the sorted unique set of resolveInstanceSlug
+// for every INSTANCE descendant with a non-empty componentId. Stable
+// across runs so the fingerprint hash is deterministic (R3 idempotency).
+// When slugIndex is non-nil, slugs normalize cross-file (Bias #5 fix); when
+// nil, falls back to per-file name heuristic.
+func collectAtomSlugs(frame map[string]any, slugIndex map[string]string) []string {
 	seen := map[string]struct{}{}
 	var walk func(n map[string]any)
 	walk = func(n map[string]any) {
@@ -358,11 +391,9 @@ func collectAtomSlugs(frame map[string]any) []string {
 		}
 		if t, _ := n["type"].(string); t == "INSTANCE" {
 			if cid, _ := n["componentId"].(string); cid != "" {
-				if name, _ := n["name"].(string); name != "" {
-					slug := nameToAtomSlug(name)
-					if slug != "" {
-						seen[slug] = struct{}{}
-					}
+				slug := resolveInstanceSlug(n, slugIndex)
+				if slug != "" {
+					seen[slug] = struct{}{}
 				}
 			}
 		}
@@ -390,7 +421,7 @@ func collectAtomSlugs(frame map[string]any) []string {
 // outer composition, not deep descendants. Each child's slot kind is
 // inferred from its name; its atom_slug is set when the child itself is an
 // INSTANCE.
-func collectSlotTopology(frame map[string]any) []OrganismSlot {
+func collectSlotTopology(frame map[string]any, slugIndex map[string]string) []OrganismSlot {
 	type bboxChild struct {
 		x, y    float64
 		node    map[string]any
@@ -412,8 +443,7 @@ func collectSlotTopology(frame map[string]any) []OrganismSlot {
 		var atomSlug string
 		if t, _ := cm["type"].(string); t == "INSTANCE" {
 			if cid, _ := cm["componentId"].(string); cid != "" {
-				name, _ := cm["name"].(string)
-				atomSlug = nameToAtomSlug(name)
+				atomSlug = resolveInstanceSlug(cm, slugIndex)
 			}
 		}
 		bs = append(bs, bboxChild{x: x, y: y, node: cm, atomSlug: atomSlug})
@@ -699,6 +729,20 @@ func (p *Pipeline) runOrganismDetection(parentCtx context.Context, versionID str
 		// produces novel verdicts which Part D will cluster.
 	}
 
+	// Load the componentId → atom_slug index from the same manifest. This
+	// normalizes atom_slugs across files so the Bias #3 loose-key promotion
+	// clustering can cluster cross-product patterns (position card across
+	// Networth / V4 / V5 / US Stocks). Empty index → walker falls back to
+	// per-file name heuristic (pre-fix behavior); detection still runs.
+	slugIndex, slugIndexErr := BuildVariantIDToSlugMap(p.ManifestPath)
+	if slugIndexErr != nil {
+		if p.Log != nil {
+			p.Log.Warn("stage 6.7: failed to load componentId→slug index; falling back to name heuristic",
+				"version_id", versionID, "manifest_path", p.ManifestPath, "err", slugIndexErr.Error())
+		}
+		slugIndex = nil
+	}
+
 	now := time.Now().UTC()
 	verdicts := make([]DetectedOrganismMatch, 0, len(screenIDs)*2)
 	thresholds := DefaultOrganismMatchThresholds
@@ -726,7 +770,7 @@ func (p *Pipeline) runOrganismDetection(parentCtx context.Context, versionID str
 			}
 			continue
 		}
-		fps := WalkOrganismCandidates(tree)
+		fps := WalkOrganismCandidatesWithIndex(tree, slugIndex)
 		for _, fp := range fps {
 			v := ClassifyFingerprint(fp, signatures, thresholds)
 			row, err := buildDetectedMatchRow(versionID, screenID, fp, v, string(manifestHash), now)

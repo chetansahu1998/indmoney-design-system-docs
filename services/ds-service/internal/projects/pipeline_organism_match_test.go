@@ -533,6 +533,115 @@ func TestWalker_ComponentSetExcluded(t *testing.T) {
 	}
 }
 
+// ─── Bias #5: slug-index cross-file normalization ────────────────────────────
+
+// TestWalker_SlugIndex_NormalizesCrossFileNames — two FRAMEs across files
+// use the SAME componentIds but DIFFERENT layer names for those instances
+// (different file naming conventions). With a slug index, both produce the
+// same atom_set, so the Bias #3 promotion clustering can cluster them.
+// Without the index, layer-name divergence forks the atom_set per file.
+func TestWalker_SlugIndex_NormalizesCrossFileNames(t *testing.T) {
+	// Tax Centre style — verbose component path names
+	frameTax := map[string]any{
+		"id": "frame-tax", "type": "FRAME", "name": "Position Row",
+		"absoluteBoundingBox": map[string]any{"x": 0.0, "y": 0.0, "width": 343.0, "height": 64.0},
+		"children": []any{
+			map[string]any{"id": "a", "type": "INSTANCE", "name": "Icons/2D/Reliance", "componentId": "111:1",
+				"absoluteBoundingBox": map[string]any{"x": 0.0, "y": 0.0, "width": 24.0, "height": 24.0}},
+			map[string]any{"id": "b", "type": "INSTANCE", "name": "Texts/Position/Name", "componentId": "111:2",
+				"absoluteBoundingBox": map[string]any{"x": 32.0, "y": 0.0, "width": 100.0, "height": 24.0}},
+		},
+	}
+	// INDstocks V5 style — flat, lowercase names
+	frameV5 := map[string]any{
+		"id": "frame-v5", "type": "FRAME", "name": "Position",
+		"absoluteBoundingBox": map[string]any{"x": 0.0, "y": 0.0, "width": 343.0, "height": 64.0},
+		"children": []any{
+			map[string]any{"id": "x", "type": "INSTANCE", "name": "stock icon", "componentId": "111:1",
+				"absoluteBoundingBox": map[string]any{"x": 0.0, "y": 0.0, "width": 24.0, "height": 24.0}},
+			map[string]any{"id": "y", "type": "INSTANCE", "name": "position name", "componentId": "111:2",
+				"absoluteBoundingBox": map[string]any{"x": 32.0, "y": 0.0, "width": 100.0, "height": 24.0}},
+		},
+	}
+
+	// Without the index — atom_sets diverge per file.
+	outNoIdxA := WalkOrganismCandidatesWithIndex(WrapForOrganismWalk(frameTax), nil)
+	outNoIdxB := WalkOrganismCandidatesWithIndex(WrapForOrganismWalk(frameV5), nil)
+	if len(outNoIdxA) != 1 || len(outNoIdxB) != 1 {
+		t.Fatalf("expected 1 candidate per fixture; got %d / %d", len(outNoIdxA), len(outNoIdxB))
+	}
+	if equalSorted(outNoIdxA[0].AtomSet, outNoIdxB[0].AtomSet) {
+		t.Errorf("without slug index, atom_sets should diverge across files; got identical %v", outNoIdxA[0].AtomSet)
+	}
+
+	// With the index — both componentIds resolve to the same canonical slug,
+	// so atom_sets converge.
+	slugIndex := map[string]string{
+		"111:1": "stock-icon",
+		"111:2": "position-name",
+	}
+	outIdxA := WalkOrganismCandidatesWithIndex(WrapForOrganismWalk(frameTax), slugIndex)
+	outIdxB := WalkOrganismCandidatesWithIndex(WrapForOrganismWalk(frameV5), slugIndex)
+	if len(outIdxA) != 1 || len(outIdxB) != 1 {
+		t.Fatalf("with index: expected 1 candidate per fixture; got %d / %d", len(outIdxA), len(outIdxB))
+	}
+	if !equalSorted(outIdxA[0].AtomSet, outIdxB[0].AtomSet) {
+		t.Errorf("with slug index, atom_sets should converge across files; got A=%v B=%v",
+			outIdxA[0].AtomSet, outIdxB[0].AtomSet)
+	}
+	wantSet := []string{"position-name", "stock-icon"}
+	if !equalSorted(outIdxA[0].AtomSet, wantSet) {
+		t.Errorf("normalized atom_set = %v; want %v", outIdxA[0].AtomSet, wantSet)
+	}
+	// Note: the full fingerprint hash includes slot_topology, which is
+	// inferred from per-name slot_kind (slotKindFromName). Without Bias #2
+	// (slot-kind taxonomy normalization), slot_kinds still diverge across
+	// files even when atom_sets converge. That's fine for Bias #3 — the
+	// loose-key promotion clustering groups by atom_signature_json (atom_set
+	// only), so the converged atom_set above is enough to land the same row
+	// in the same promotion cluster. The full-fingerprint convergence is a
+	// separate downstream win that Bias #2 will unlock.
+}
+
+// TestResolveInstanceSlug_PrefersIndex_FallsBackToName — direct unit test
+// of the resolver. Index hit wins; index miss → name heuristic.
+func TestResolveInstanceSlug_PrefersIndex_FallsBackToName(t *testing.T) {
+	idx := map[string]string{"229:4715": "left-icon-default"}
+	cases := []struct {
+		name string
+		node map[string]any
+		idx  map[string]string
+		want string
+	}{
+		{"index hit overrides display name",
+			map[string]any{"componentId": "229:4715", "name": "weird-layer-name"}, idx, "left-icon-default"},
+		{"index miss falls back to name heuristic",
+			map[string]any{"componentId": "999:9", "name": "Right Text"}, idx, "right-text"},
+		{"nil index falls back to name heuristic",
+			map[string]any{"componentId": "229:4715", "name": "Right Text"}, nil, "right-text"},
+		{"empty componentId falls back to name heuristic",
+			map[string]any{"componentId": "", "name": "Left Icon/Default"}, idx, "left-icon-default"},
+	}
+	for _, c := range cases {
+		got := resolveInstanceSlug(c.node, c.idx)
+		if got != c.want {
+			t.Errorf("%s: got %q; want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func equalSorted(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // ─── U4 classifier tests ─────────────────────────────────────────────────────
 
 // listOnSurfaceSig is a synthetic OrganismSignature used as the test catalog.
