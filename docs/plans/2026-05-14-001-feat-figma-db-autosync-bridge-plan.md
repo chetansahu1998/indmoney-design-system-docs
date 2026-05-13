@@ -215,7 +215,7 @@ flowchart TD
     HASH --> DIFF{diff vs<br/>figma_auto_sync_state}
     DIFF -- no change --> DONE1[no-op]
     DIFF -- name/pos change only --> CHEAP[UPDATE flows.name<br/>section x/y stays on figma_section]
-    DIFF -- content change --> BUILD[build ExportRequest from figma_node]
+    DIFF -- content change --> BUILD[build ExportRequest from figma_section subtree blob]
     BUILD --> CALL[call HandleExport in-process]
     CALL --> EXISTING[existing pipeline:<br/>Stage 2 → 9]
     CALL --> STATE[upsert figma_auto_sync_state:<br/>content_hash, version_id, flow_id, ts]
@@ -549,7 +549,7 @@ Wait — let me re-read that. 3 unchanged → 3 skip. 1 content-changed → 1 fu
 **Approach:**
 - For each `PlannedSync` with action=`full_export`:
   1. **Persistent idempotency check.** Look up `figma_auto_sync_state` for `(file_key, page_id, section_id)`. If `last_attempt_status='ok' AND content_hash == section.content_hash`, the runExport already succeeded for this content — skip with status='skipped', skip_reason='already_synced'. Cross-restart safe; doesn't rely on HandleExport's 60s in-memory cache.
-  2. Build `ExportRequest` from `figma_node` rows (DB-only, no Figma API): walk the section subtree, filter to FRAME / COMPONENT / INSTANCE leaves ≥ 280×80. **RECTANGLE-with-image-fill leaves are NOT included** — `figma_node` doesn't carry fills metadata. See Key Technical Decisions for the trade-off.
+  2. Build `ExportRequest` from the section subtree (DB-only, no Figma API). **Amended 2026-05-14 by docs/plans/2026-05-14-002-feat-figma-section-subtree-blob-plan.md**: call `repo.LoadSectionSubtree(ctx, file_key, section_id)` which decodes `figma_section.subtree_json_zstd` into `[]FigmaNodeRow`. Then walk in Go, filter to FRAME / COMPONENT / INSTANCE leaves ≥ 280×80. (Pre-amendment this read directly from a `figma_node` table that no longer exists.) **RECTANGLE-with-image-fill leaves are NOT included** — the subtree blob doesn't carry fills metadata. See Key Technical Decisions for the trade-off.
   3. Set FlowPayload fields: `section_id` (from figma_section), `frame_ids` (from walk), `frames[]` (with id+name from figma_node), `platform` (from project mapping default), `product` (from project mapping), `path` (`<sub_product>/<sub_flow>`), `persona_name` (from page classifier persona_hint), `name` (the section's raw name — don't rebuild from parsed parts; raw name preserves designer intent).
   4. Set ExportRequest `file_id` + `file_name`, idempotency_key = `sha256(file_key|section_id|content_hash)`.
   5. Call `runExport(ctx, tenantID, "autosync-system", "autosync", "", "autosync", req)` — passing the explicit arg surface the U9 refactor exposes (ctx, tenantID, userID, source, clientIP, userAgent, req).

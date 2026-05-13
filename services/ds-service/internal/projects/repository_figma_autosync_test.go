@@ -249,3 +249,96 @@ func TestListFigmaProjectMappings_OrderedByProductDomain(t *testing.T) {
 
 // Suppress unused-package lints when only running a subset of tests.
 var _ = time.Time{}
+
+// ─── LoadSectionSubtree (plan 002 U5) ────────────────────────────────────────
+
+// seedSection writes one figma_section row (no page row, no FKs from page).
+// Returns nothing — caller uses LoadSectionSubtree to read back.
+func seedSection(t *testing.T, repo *TenantRepo, fileKey, pageID, sectionID string, subtree []FigmaNodeRow) {
+	t.Helper()
+	ctx := context.Background()
+	pages := []FigmaPageRow{{FileKey: fileKey, PageID: pageID, Name: "Page", OrderIndex: 0}}
+	sections := []FigmaSectionRow{{FileKey: fileKey, PageID: pageID, SectionID: sectionID, Name: "Sec", OrderIndex: 0}}
+	subtrees := map[string][]FigmaNodeRow{sectionID: subtree}
+	if subtree == nil {
+		subtrees = nil
+	}
+	if _, _, err := repo.UpsertFigmaPagesAndSections(ctx, fileKey, pages, sections, subtrees, time.Now().UTC()); err != nil {
+		t.Fatalf("seed section: %v", err)
+	}
+}
+
+func TestLoadSectionSubtree_HappyRoundTrip(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+	subtree := []FigmaNodeRow{
+		{NodeID: "10:1", NodeType: "SECTION", Name: "Wallet/Main", HasBBox: true, X: 0, Y: 0, Width: 1200, Height: 800, Depth: 2},
+		{NodeID: "10:2", ParentID: "10:1", NodeType: "FRAME", Name: "Hero", HasBBox: true, X: 16, Y: 16, Width: 343, Height: 56, Depth: 3, OrderIndex: 0},
+		{NodeID: "10:3", ParentID: "10:2", NodeType: "INSTANCE", Name: "Left Icon/Default", HasBBox: true, X: 16, Y: 16, Width: 24, Height: 24, Depth: 4, OrderIndex: 0, ComponentID: "229:4715"},
+	}
+	seedSection(t, repo, "fk-A", "0:1", "10:1", subtree)
+	got, err := repo.LoadSectionSubtree(ctx, "fk-A", "10:1")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(got) != len(subtree) {
+		t.Fatalf("len: got %d, want %d", len(got), len(subtree))
+	}
+	// Each row should match input + carry tenant + file_key stamped by reader.
+	for i := range subtree {
+		want := subtree[i]
+		want.TenantID = tA
+		want.FileKey = "fk-A"
+		if got[i] != want {
+			t.Errorf("row %d:\n  got:  %+v\n  want: %+v", i, got[i], want)
+		}
+	}
+}
+
+func TestLoadSectionSubtree_NullBlobReturnsErrNotFound(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+	// Seed section row WITHOUT a subtree (nil map) — blob is NULL.
+	seedSection(t, repo, "fk-B", "0:1", "10:9", nil)
+	_, err := repo.LoadSectionSubtree(ctx, "fk-B", "10:9")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for NULL blob; got %v", err)
+	}
+}
+
+func TestLoadSectionSubtree_MissingRowReturnsErrNotFound(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+	_, err := repo.LoadSectionSubtree(ctx, "fk-unknown", "10:nope")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for missing row; got %v", err)
+	}
+}
+
+func TestLoadSectionSubtree_TenantIsolation(t *testing.T) {
+	d, tA, tB, _ := newTestDB(t)
+	repoA := NewTenantRepo(d.DB, tA)
+	repoB := NewTenantRepo(d.DB, tB)
+	ctx := context.Background()
+	subtree := []FigmaNodeRow{
+		{NodeID: "10:1", NodeType: "SECTION", Name: "Sec", Depth: 2},
+		{NodeID: "10:2", ParentID: "10:1", NodeType: "FRAME", Name: "F", Depth: 3},
+	}
+	seedSection(t, repoA, "fk-X", "0:1", "10:1", subtree)
+	_, err := repoB.LoadSectionSubtree(ctx, "fk-X", "10:1")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("tenant B should not see tenant A's subtree; got err=%v", err)
+	}
+}
+
+func TestLoadSectionSubtree_EmptyTenantID(t *testing.T) {
+	d, _, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, "") // explicit empty tenant
+	_, err := repo.LoadSectionSubtree(context.Background(), "fk-A", "10:1")
+	if err == nil {
+		t.Errorf("expected error on empty tenant_id")
+	}
+}

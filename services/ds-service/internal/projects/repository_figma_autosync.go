@@ -615,3 +615,58 @@ func (t *TenantRepo) UpsertSectionClassification(ctx context.Context, c SectionC
 	}
 	return nil
 }
+
+// ─── per-section subtree (plan 002 U5) ───────────────────────────────────────
+
+// LoadSectionSubtree returns the decoded descendant list for one figma
+// section, materialized from the zstd-compressed JSON blob written by the
+// poller via UpsertFigmaPagesAndSections's subtreesBySectionID parameter.
+// This is the read path used by the AutoSyncPlanner.Execute full_export
+// branch (amends docs/plans/2026-05-14-001 U10 — replaces the SQL
+// recursive walk over figma_node that plan originally described).
+//
+// Returns ErrNotFound in two cases:
+//  1. No figma_section row exists for (tenant, file_key, section_id) at all.
+//  2. The row exists but subtree_json_zstd IS NULL (the section hasn't been
+//     deep-polled yet — the planner treats this as skip_reason='subtree_not_synced').
+//
+// Returned FigmaNodeRow entries have TenantID + FileKey left empty;
+// callers fill them from the query context. Returns a fresh-allocated
+// slice — safe for concurrent reads of the same section by different
+// callers.
+func (t *TenantRepo) LoadSectionSubtree(ctx context.Context, fileKey, sectionID string) ([]FigmaNodeRow, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	if fileKey == "" || sectionID == "" {
+		return nil, errors.New("projects: file_key and section_id required")
+	}
+	var blob []byte
+	row := t.r.db.QueryRowContext(ctx, `
+		SELECT subtree_json_zstd
+		  FROM figma_section
+		 WHERE tenant_id = ? AND file_key = ? AND section_id = ?
+		   AND deleted_at IS NULL
+	`, t.tenantID, fileKey, sectionID)
+	if err := row.Scan(&blob); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("scan figma_section subtree blob: %w", err)
+	}
+	if len(blob) == 0 {
+		// Row exists but blob is NULL — section hasn't been deep-polled.
+		return nil, ErrNotFound
+	}
+	nodes, err := DecodeSubtreeBlob(blob)
+	if err != nil {
+		return nil, fmt.Errorf("decode figma_section subtree blob: %w", err)
+	}
+	// Stamp the tenant/file context onto each row — the blob doesn't
+	// carry these (uniform across the section, would be pure overhead).
+	for i := range nodes {
+		nodes[i].TenantID = t.tenantID
+		nodes[i].FileKey = fileKey
+	}
+	return nodes, nil
+}
