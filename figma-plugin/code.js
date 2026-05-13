@@ -529,6 +529,84 @@ if (figma.command === "openDocsSite") {
     figma.openExternal(docsURL);
     figma.closePlugin();
 }
+// 2026-05-13 — organism-pattern-detection plan, Part B U8.
+// Reads the current selection, POSTs the FRAME's node id to ds-service's
+// /v1/audit/organism-match, and emits an `organism.check-result` message
+// to the UI for rendering the verdict card.
+if (figma.command === "checkOrganism") {
+    void runOrganismCheck();
+}
+async function runOrganismCheck() {
+    var _a;
+    const sel = figma.currentPage.selection;
+    if (sel.length === 0) {
+        toast("Select a FRAME first, then run Check selection against DS.", "error");
+        return;
+    }
+    if (sel.length > 1) {
+        toast("Pick exactly one FRAME — multi-select isn't supported yet.", "error");
+        return;
+    }
+    const node = sel[0];
+    if (node.type !== "FRAME" && node.type !== "INSTANCE" && node.type !== "COMPONENT") {
+        toast(`Selected node is a ${node.type}; pick a FRAME / INSTANCE / COMPONENT instead.`, "error");
+        return;
+    }
+    const dsURL = (await figma.clientStorage.getAsync("ds_service_url")) ||
+        "https://indmoney-ds-service.fly.dev";
+    const tok = (await figma.clientStorage.getAsync("docs_auth_token"));
+    if (!tok) {
+        toast("Set your docs auth token first (Settings → paste your JWT).", "error");
+        return;
+    }
+    try {
+        const res = await fetch(`${dsURL}/v1/audit/organism-match`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${tok}`,
+            },
+            body: JSON.stringify({ node_id: node.id, file_id: (_a = figma.fileKey) !== null && _a !== void 0 ? _a : "" }),
+        });
+        if (!res.ok) {
+            const text = await res.text();
+            send({
+                type: "organism.check-result",
+                payload: {
+                    ok: false,
+                    error: `http_${res.status}`,
+                    detail: text.slice(0, 200),
+                    node_id: node.id,
+                    node_name: node.name,
+                },
+            });
+            return;
+        }
+        const body = (await res.json());
+        send({
+            type: "organism.check-result",
+            payload: {
+                ok: true,
+                verdict: body.verdict,
+                reason: body.reason,
+                node_id: node.id,
+                node_name: node.name,
+            },
+        });
+    }
+    catch (err) {
+        send({
+            type: "organism.check-result",
+            payload: {
+                ok: false,
+                error: "network",
+                detail: err.message,
+                node_id: node.id,
+                node_name: node.name,
+            },
+        });
+    }
+}
 /* ── Health polling ─────────────────────────────────────────────────── */
 function startHealthPolling() {
     if (healthTimer)

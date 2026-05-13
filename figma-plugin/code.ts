@@ -106,7 +106,13 @@ interface MessageToUI {
      *  clientStorage. UI uses this to show/hide an attention dot on
      *  the Settings entry-point so first-time users can find where
      *  to paste the token without hunting for the cog icon. */
-    | "docs-token-state";
+    | "docs-token-state"
+    /** 2026-05-13 — organism-pattern-detection Part B U8. Result of
+     *  POST /v1/audit/organism-match for the user's selected FRAME.
+     *  Payload: { ok, verdict?, reason?, error?, detail?, node_id,
+     *  node_name }. UI renders a verdict card with kind / suspected
+     *  slug / variant / diff / confidence + action buttons. */
+    | "organism.check-result";
   payload?: unknown;
 }
 
@@ -619,6 +625,96 @@ if (figma.command === "autofix") {
 if (figma.command === "openDocsSite") {
   figma.openExternal(docsURL);
   figma.closePlugin();
+}
+
+// 2026-05-13 — organism-pattern-detection plan, Part B U8.
+// Reads the current selection, POSTs the FRAME's node id to ds-service's
+// /v1/audit/organism-match, and emits an `organism.check-result` message
+// to the UI for rendering the verdict card.
+if (figma.command === "checkOrganism") {
+  void runOrganismCheck();
+}
+
+async function runOrganismCheck(): Promise<void> {
+  const sel = figma.currentPage.selection;
+  if (sel.length === 0) {
+    toast("Select a FRAME first, then run Check selection against DS.", "error");
+    return;
+  }
+  if (sel.length > 1) {
+    toast("Pick exactly one FRAME — multi-select isn't supported yet.", "error");
+    return;
+  }
+  const node = sel[0];
+  if (node.type !== "FRAME" && node.type !== "INSTANCE" && node.type !== "COMPONENT") {
+    toast(
+      `Selected node is a ${node.type}; pick a FRAME / INSTANCE / COMPONENT instead.`,
+      "error",
+    );
+    return;
+  }
+  const dsURL =
+    ((await figma.clientStorage.getAsync("ds_service_url")) as string | undefined) ||
+    "https://indmoney-ds-service.fly.dev";
+  const tok = (await figma.clientStorage.getAsync("docs_auth_token")) as
+    | string
+    | undefined;
+  if (!tok) {
+    toast(
+      "Set your docs auth token first (Settings → paste your JWT).",
+      "error",
+    );
+    return;
+  }
+  try {
+    const res = await fetch(`${dsURL}/v1/audit/organism-match`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${tok}`,
+      },
+      body: JSON.stringify({ node_id: node.id, file_id: figma.fileKey ?? "" }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      send({
+        type: "organism.check-result",
+        payload: {
+          ok: false,
+          error: `http_${res.status}`,
+          detail: text.slice(0, 200),
+          node_id: node.id,
+          node_name: node.name,
+        },
+      });
+      return;
+    }
+    const body = (await res.json()) as {
+      verdict: unknown | null;
+      reason?: string;
+    };
+    send({
+      type: "organism.check-result",
+      payload: {
+        ok: true,
+        verdict: body.verdict,
+        reason: body.reason,
+        node_id: node.id,
+        node_name: node.name,
+      },
+    });
+  } catch (err) {
+    send({
+      type: "organism.check-result",
+      payload: {
+        ok: false,
+        error: "network",
+        detail: (err as Error).message,
+        node_id: node.id,
+        node_name: node.name,
+      },
+    });
+  }
 }
 
 /* ── Health polling ─────────────────────────────────────────────────── */
