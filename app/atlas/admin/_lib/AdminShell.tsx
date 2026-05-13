@@ -35,6 +35,10 @@ const NAV_LINKS: { href: string; label: string; key: string }[] = [
   // Lists frames Figma can't render; deeplinks back to Figma so the
   // designer can touch the frame and let the next sync auto-clear.
   { href: "/atlas/admin/figma-blocklist", label: "Figma blocklist", key: "figma-blocklist" },
+  // 2026-05-13 — organism-pattern-detection dashboard (Part C, U11+U14).
+  // Adoption + drift + promotion-candidate ranking driven by Stage 6.7's
+  // detected_organism_match corpus.
+  { href: "/atlas/admin/organisms", label: "Organisms", key: "organisms" },
 ];
 
 function dsBaseURL(): string {
