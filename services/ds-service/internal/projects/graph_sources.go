@@ -729,21 +729,31 @@ func BuildOrganismSignatures(manifestPath string) ([]OrganismSignature, Manifest
 	sum := sha256.Sum256(data)
 	hash := ManifestHash(hex.EncodeToString(sum[:16])) // sha256_16 — matches U3 fingerprint hash size
 
-	// Extend the existing componentManifest parser to also read variant names.
-	// We re-parse into a wider local type so we don't change the existing
-	// BuildComponentRows shape.
+	// Extend the existing componentManifest parser to read both:
+	//   - per-component composition_refs[] (legacy / future field at the
+	//     entry level), and
+	//   - per-variant composes[] (the field cmd/variants writes today —
+	//     see cmd/variants/main.go:83 `Composes []CompositionRef \`json:"composes,omitempty"\``)
+	// The atom signature for an organism is the UNION of atom_slug values
+	// across ALL variants' composes[] plus any top-level composition_refs.
+	// Designers often add atoms to one variant but not another (e.g.,
+	// "Type=Primary" has an icon slot; "Type=Secondary" doesn't); for
+	// detection purposes we want the maximal atom set the organism can
+	// host.
+	type composeRef struct {
+		AtomSlug string `json:"atom_slug,omitempty"`
+	}
 	type variantEntry struct {
-		Name string `json:"name,omitempty"`
+		Name     string       `json:"name,omitempty"`
+		Composes []composeRef `json:"composes,omitempty"`
 	}
 	type iconEntry struct {
-		Slug            string `json:"slug"`
-		Name            string `json:"name"`
-		Kind            string `json:"kind"`
-		Category        string `json:"category"`
-		CompositionRefs []struct {
-			AtomSlug string `json:"atom_slug,omitempty"`
-		} `json:"composition_refs,omitempty"`
-		Variants []variantEntry `json:"variants,omitempty"`
+		Slug            string         `json:"slug"`
+		Name            string         `json:"name"`
+		Kind            string         `json:"kind"`
+		Category        string         `json:"category"`
+		CompositionRefs []composeRef   `json:"composition_refs,omitempty"`
+		Variants        []variantEntry `json:"variants,omitempty"`
 	}
 	type manifest struct {
 		Icons []iconEntry `json:"icons"`
@@ -759,23 +769,32 @@ func BuildOrganismSignatures(manifestPath string) ([]OrganismSignature, Manifest
 			continue
 		}
 		// Self-references and empty refs are non-signaling — same filter as
-		// BuildComponentRows U6 line 622.
+		// BuildComponentRows U6 line 622. Union across composition_refs[]
+		// at the entry level AND every variant's composes[].
 		seen := map[string]struct{}{}
 		var atoms []string
+		addRef := func(atomSlug string) {
+			if atomSlug == "" || atomSlug == it.Slug {
+				return
+			}
+			if _, dup := seen[atomSlug]; dup {
+				return
+			}
+			seen[atomSlug] = struct{}{}
+			atoms = append(atoms, atomSlug)
+		}
 		for _, ref := range it.CompositionRefs {
-			if ref.AtomSlug == "" || ref.AtomSlug == it.Slug {
-				continue
+			addRef(ref.AtomSlug)
+		}
+		for _, v := range it.Variants {
+			for _, ref := range v.Composes {
+				addRef(ref.AtomSlug)
 			}
-			if _, dup := seen[ref.AtomSlug]; dup {
-				continue
-			}
-			seen[ref.AtomSlug] = struct{}{}
-			atoms = append(atoms, ref.AtomSlug)
 		}
 		if len(atoms) == 0 {
-			// No usable refs — can't fingerprint. Skip silently; the
-			// component still appears in BuildComponentRows for the mind
-			// graph, just not in the organism catalog.
+			// No usable refs across composition_refs or variants[].composes.
+			// Skip silently; the component still appears in BuildComponentRows
+			// for the mind graph, just not in the organism catalog.
 			continue
 		}
 		sort.Strings(atoms)

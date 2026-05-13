@@ -200,6 +200,86 @@ func TestBuildOrganismSignatures_Deterministic(t *testing.T) {
 	}
 }
 
+// TestBuildOrganismSignatures_VariantsComposes — when cmd/variants writes
+// composition data into variants[].composes[] (the field shape the live
+// pipeline actually uses), BuildOrganismSignatures should union the
+// atom_slugs across all variants and emit one OrganismSignature with the
+// merged set. Mirrors the real manifest layout post 2026-05-13 cmd/variants
+// re-run.
+func TestBuildOrganismSignatures_VariantsComposes(t *testing.T) {
+	manifest := `{
+		"icons": [
+			{
+				"slug": "list-on-surface",
+				"name": "List on Surface",
+				"kind": "component",
+				"category": "Lists",
+				"variants": [
+					{
+						"name": "Left Icon=Yes",
+						"composes": [
+							{"atom_slug": "left-icon-default"},
+							{"atom_slug": "left-text"}
+						]
+					},
+					{
+						"name": "Left Icon=No, Right Text=Yes",
+						"composes": [
+							{"atom_slug": "left-text"},
+							{"atom_slug": "right-text"}
+						]
+					}
+				]
+			}
+		]
+	}`
+	path := writeTempManifest(t, manifest)
+	sigs, _, err := BuildOrganismSignatures(path)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(sigs) != 1 {
+		t.Fatalf("expected 1 signature; got %d", len(sigs))
+	}
+	got := sigs[0]
+	// Union across the two variants: left-icon-default + left-text + right-text
+	want := []string{"left-icon-default", "left-text", "right-text"}
+	if len(got.AtomSlugs) != len(want) {
+		t.Fatalf("AtomSlugs len = %d; want %d (got %v)", len(got.AtomSlugs), len(want), got.AtomSlugs)
+	}
+	for i, w := range want {
+		if got.AtomSlugs[i] != w {
+			t.Errorf("AtomSlugs[%d] = %q; want %q", i, got.AtomSlugs[i], w)
+		}
+	}
+}
+
+// TestBuildOrganismSignatures_MixedSources — entries with refs in BOTH
+// composition_refs (legacy) AND variants[].composes (current) merge into
+// the same signature without duplication.
+func TestBuildOrganismSignatures_MixedSources(t *testing.T) {
+	manifest := `{
+		"icons": [
+			{
+				"slug": "list",
+				"kind": "component",
+				"composition_refs": [{"atom_slug": "left-icon"}, {"atom_slug": "right-icon"}],
+				"variants": [
+					{"name": "v1", "composes": [{"atom_slug": "right-text"}, {"atom_slug": "left-icon"}]}
+				]
+			}
+		]
+	}`
+	path := writeTempManifest(t, manifest)
+	sigs, _, err := BuildOrganismSignatures(path)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(sigs) != 1 || len(sigs[0].AtomSlugs) != 3 {
+		t.Fatalf("expected 1 sig with 3 atoms (dedup); got %d sigs, atoms=%v", len(sigs), sigs[0].AtomSlugs)
+	}
+}
+
 // TestOrganismSignature_AtomSlugSet rounds-trips AtomSlugs through the set
 // helper and confirms membership semantics.
 func TestOrganismSignature_AtomSlugSet(t *testing.T) {
