@@ -368,6 +368,8 @@ figma.ui.onmessage = async (msg) => {
                 return runAutoFix(msg.payload);
             case "organism.mark-fork":
                 return runOrganismForkMark(msg.payload);
+            case "organism.open-published":
+                return runOrganismOpenPublished(msg.payload);
         }
     }
     catch (e) {
@@ -607,6 +609,46 @@ async function runOrganismCheck() {
                 node_name: node.name,
             },
         });
+    }
+}
+// Replace-with-INSTANCE scaffold — resolves the published organism's
+// Figma deeplink via /v1/admin/organisms/{slug}/deeplink and opens the
+// source file at the matching node. Library-key plumbing for an
+// automated swap is a separate plan; for now this gives the designer a
+// one-click jump to where the real INSTANCE lives so they can drag it
+// into their canvas.
+async function runOrganismOpenPublished(payload) {
+    var _a;
+    const slug = (_a = payload === null || payload === void 0 ? void 0 : payload.slug) === null || _a === void 0 ? void 0 : _a.trim();
+    if (!slug) {
+        toast("No suspected organism on this frame — open Check selection against DS first.", "error");
+        return;
+    }
+    const dsURL = (await figma.clientStorage.getAsync("ds_service_url")) ||
+        "https://indmoney-ds-service.fly.dev";
+    const tok = (await figma.clientStorage.getAsync("docs_auth_token"));
+    if (!tok) {
+        toast("Set your docs auth token first (Settings → paste your JWT).", "error");
+        return;
+    }
+    try {
+        const res = await fetch(`${dsURL}/v1/admin/organisms/${encodeURIComponent(slug)}/deeplink`, { headers: { Authorization: `Bearer ${tok}` } });
+        if (!res.ok) {
+            toast(res.status === 404
+                ? `No published organism for slug ${slug}.`
+                : `Couldn't resolve deeplink: HTTP ${res.status}`, "error");
+            return;
+        }
+        const body = (await res.json());
+        if (!body.figma_url) {
+            toast("Deeplink response missing figma_url.", "error");
+            return;
+        }
+        figma.openExternal(body.figma_url);
+        toast(`Opened ${slug} in the DS file. Drag the variant into your canvas.`, "info");
+    }
+    catch (err) {
+        toast(`Couldn't reach ds-service: ${err.message}`, "error");
     }
 }
 // U9 — designer asserts the given frame_id is an intentional fork from

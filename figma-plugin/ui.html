@@ -3569,18 +3569,36 @@ function renderOrganismVerdict(payload) {
     });
 
     const replaceBtn = document.createElement("button");
-    replaceBtn.textContent = "Replace with INSTANCE";
-    replaceBtn.disabled = true;
-    replaceBtn.title = "Coming soon — designer-confirmed mutation flow ships in a follow-up.";
+    const replaceEnabled = !!v.suspected_slug;
+    replaceBtn.textContent = replaceEnabled
+      ? "Open published in Figma"
+      : "Replace with INSTANCE";
+    replaceBtn.disabled = !replaceEnabled;
+    replaceBtn.title = replaceEnabled
+      ? `Opens the DS file at the ${v.suspected_slug} component-set node so you can drag the real INSTANCE into your canvas.`
+      : "No published organism matched — nothing to replace with yet.";
     Object.assign(replaceBtn.style, {
       padding: "6px 12px",
       fontSize: "12px",
-      background: "#f4f4f4",
-      color: "#999",
-      border: "1px solid #ddd",
+      background: replaceEnabled ? "#0a66c2" : "#f4f4f4",
+      color: replaceEnabled ? "#fff" : "#999",
+      border: replaceEnabled ? "1px solid #0a66c2" : "1px solid #ddd",
       borderRadius: "4px",
-      cursor: "not-allowed",
+      cursor: replaceEnabled ? "pointer" : "not-allowed",
     });
+    if (replaceEnabled) {
+      replaceBtn.addEventListener("click", () => {
+        replaceBtn.textContent = "Opening…";
+        replaceBtn.disabled = true;
+        post("organism.open-published", { slug: v.suspected_slug });
+        // Restore after a short delay; the open-external fires
+        // synchronously but the toast confirms.
+        setTimeout(() => {
+          replaceBtn.textContent = "Open published in Figma";
+          replaceBtn.disabled = false;
+        }, 1500);
+      });
+    }
     actions.appendChild(replaceBtn);
 
     const forkBtn = document.createElement("button");
