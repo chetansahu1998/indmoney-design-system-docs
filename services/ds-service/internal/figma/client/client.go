@@ -303,6 +303,211 @@ func (c *Client) Identity(ctx context.Context) (map[string]any, error) {
 // HTTP requests against /v1/images, etc.).
 func (c *Client) Token() string { return c.token }
 
+// ─── Inventory endpoints (FIGMA DB — internal/figma/inventory) ──────────────
+//
+// The inventory poller mirrors team > project > file > page > section as
+// metadata only. These three endpoints are the cheap fan-out path:
+//
+//   /v1/teams/<id>/projects        — list projects in a team    (tier 2)
+//   /v1/projects/<id>/files        — list files in a project    (tier 2)
+//   /v1/files/<key>?depth=2        — pages + their top-level    (tier 1)
+//                                    SECTION children
+//
+// All three live behind the existing per-PAT rate limiter; tier 2 = 40 RPM
+// (80% of 50), tier 1 = 12 RPM (80% of 15). The poller runs every 5 minutes
+// and pages/sections are only refetched when /v1/projects/<id>/files
+// reports a newer `last_modified` than the cached row.
+
+// TeamProject is one row of GET /v1/teams/<id>/projects.
+type TeamProject struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// TeamProjectsResponse is the full response shape.
+type TeamProjectsResponse struct {
+	Name     string        `json:"name"`     // team name (the only place the API surfaces it)
+	Projects []TeamProject `json:"projects"`
+}
+
+// GetTeamProjects fetches `/v1/teams/<team_id>/projects`. Tier-2.
+//
+// Requires `projects:read` on the PAT. Returns 403 if the PAT's account
+// can't see the team (handled by *APIError.IsAuth at the call site).
+func (c *Client) GetTeamProjects(ctx context.Context, teamID string) (*TeamProjectsResponse, error) {
+	if teamID == "" {
+		return nil, errors.New("teamID is empty")
+	}
+	var out TeamProjectsResponse
+	if err := c.get(ctx, "/v1/teams/"+teamID+"/projects", &out, tier2); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ProjectFile is one row of GET /v1/projects/<id>/files. The `last_modified`
+// field is the cheap change-detection signal the inventory poller uses to
+// decide whether to do the expensive depth=2 page/section refresh.
+type ProjectFile struct {
+	Key          string `json:"key"`
+	Name         string `json:"name"`
+	ThumbnailURL string `json:"thumbnail_url"`
+	LastModified string `json:"last_modified"`
+}
+
+// ProjectFilesResponse wraps the file list.
+type ProjectFilesResponse struct {
+	Name  string        `json:"name"` // project name
+	Files []ProjectFile `json:"files"`
+}
+
+// GetProjectFiles fetches `/v1/projects/<project_id>/files`. Tier-2.
+func (c *Client) GetProjectFiles(ctx context.Context, projectID string) (*ProjectFilesResponse, error) {
+	if projectID == "" {
+		return nil, errors.New("projectID is empty")
+	}
+	var out ProjectFilesResponse
+	if err := c.get(ctx, "/v1/projects/"+projectID+"/files", &out, tier2); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// FilePagesAndSections is the trimmed shape of GET /v1/files/<key>?depth=2
+// that the inventory walker needs: file-level metadata plus pages, plus
+// each page's immediate SECTION children.
+type FilePagesAndSections struct {
+	Name         string         `json:"name"`
+	Role         string         `json:"role"`
+	LastModified string         `json:"lastModified"`
+	EditorType   string         `json:"editorType"`
+	ThumbnailURL string         `json:"thumbnailUrl"`
+	Version      string         `json:"version"`
+	LinkAccess   string         `json:"linkAccess"`
+	MainFileKey  string         `json:"mainFileKey"`
+	Document     filePagesDoc   `json:"document"`
+}
+
+// filePagesDoc is the document subtree. We only consume `children` (pages).
+type filePagesDoc struct {
+	Children []filePageNode `json:"children"`
+}
+
+// filePageNode is one CANVAS child (a page). We retain `backgroundColor`
+// when present and walk `children` for SECTION nodes.
+type filePageNode struct {
+	ID              string             `json:"id"`
+	Name            string             `json:"name"`
+	Type            string             `json:"type"` // "CANVAS"
+	BackgroundColor *figmaColor        `json:"backgroundColor,omitempty"`
+	Children        []filePageChildRaw `json:"children"`
+}
+
+// filePageChildRaw is a top-level child of a page. We accept anything but
+// surface only nodes whose Type == "SECTION" to the caller. `absoluteBoundingBox`
+// is the bbox in canvas coordinates.
+type filePageChildRaw struct {
+	ID                  string       `json:"id"`
+	Name                string       `json:"name"`
+	Type                string       `json:"type"`
+	AbsoluteBoundingBox *figmaBBox   `json:"absoluteBoundingBox,omitempty"`
+}
+
+type figmaBBox struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+type figmaColor struct {
+	R float64 `json:"r"`
+	G float64 `json:"g"`
+	B float64 `json:"b"`
+	A float64 `json:"a"`
+}
+
+// Pages returns the canvas children as a typed page slice (callers don't
+// need to know about CANVAS vs other top-level types — the API guarantees
+// document.children are pages).
+func (f *FilePagesAndSections) Pages() []FilePage {
+	out := make([]FilePage, 0, len(f.Document.Children))
+	for _, p := range f.Document.Children {
+		page := FilePage{
+			ID:   p.ID,
+			Name: p.Name,
+		}
+		if p.BackgroundColor != nil {
+			page.BackgroundColorHex = colorToHex(*p.BackgroundColor)
+		}
+		for _, c := range p.Children {
+			if c.Type != "SECTION" {
+				continue
+			}
+			s := FileSection{ID: c.ID, Name: c.Name}
+			if c.AbsoluteBoundingBox != nil {
+				s.X = c.AbsoluteBoundingBox.X
+				s.Y = c.AbsoluteBoundingBox.Y
+				s.Width = c.AbsoluteBoundingBox.Width
+				s.Height = c.AbsoluteBoundingBox.Height
+			}
+			page.Sections = append(page.Sections, s)
+		}
+		out = append(out, page)
+	}
+	return out
+}
+
+// FilePage is the inventory-poller-friendly representation of one CANVAS.
+type FilePage struct {
+	ID                 string
+	Name               string
+	BackgroundColorHex string
+	Sections           []FileSection
+}
+
+// FileSection is one SECTION node directly under a page.
+type FileSection struct {
+	ID     string
+	Name   string
+	X      float64
+	Y      float64
+	Width  float64
+	Height float64
+}
+
+func colorToHex(c figmaColor) string {
+	clamp := func(v float64) int {
+		i := int(v*255 + 0.5)
+		if i < 0 {
+			return 0
+		}
+		if i > 255 {
+			return 255
+		}
+		return i
+	}
+	return fmt.Sprintf("#%02x%02x%02x", clamp(c.R), clamp(c.G), clamp(c.B))
+}
+
+// GetFilePagesAndSections fetches `/v1/files/<key>?depth=2`. Tier-1.
+//
+// depth=2 returns the file's document with each page's direct children
+// included but NOT recursed — exactly what the inventory poller wants
+// (pages + top-level SECTION nodes, nothing deeper). The response is
+// typically <1 MB even for large product files because frame interiors
+// are pruned.
+func (c *Client) GetFilePagesAndSections(ctx context.Context, fileKey string) (*FilePagesAndSections, error) {
+	if fileKey == "" {
+		return nil, errors.New("fileKey is empty")
+	}
+	var out FilePagesAndSections
+	if err := c.get(ctx, "/v1/files/"+fileKey+"?depth=2", &out, tier1); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
