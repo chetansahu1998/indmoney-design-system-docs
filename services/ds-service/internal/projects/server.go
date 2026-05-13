@@ -132,6 +132,13 @@ type ServerDeps struct {
 	// handler logic.
 	GraphRebuildPool *GraphRebuildPool
 
+	// InventoryPoller — FIGMA DB (migration 0025). The admin "Sync now"
+	// button + add-team handler call TriggerSync() on this so admins don't
+	// have to wait the full 5-min tick to see their team show up. nil-tolerant:
+	// when not wired (tests, dev), the sync endpoint returns 503 and add-team
+	// silently skips the trigger.
+	InventoryPoller InventoryPoller
+
 	Log *slog.Logger
 }
 
