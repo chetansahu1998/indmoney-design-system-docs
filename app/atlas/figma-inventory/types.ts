@@ -1,5 +1,5 @@
 /**
- * TypeScript shapes for /atlas/admin/figma-inventory.
+ * TypeScript shapes for /atlas/figma-inventory.
  *
  * Mirror the Go DTOs in:
  *   services/ds-service/internal/projects/server_figma_inventory_admin.go

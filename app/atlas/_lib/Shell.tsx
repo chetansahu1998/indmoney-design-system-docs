@@ -1,15 +1,25 @@
 "use client";
 
 /**
- * Phase 7.5 — shared chrome for /atlas/admin/{rules,personas,taxonomy}.
+ * Shell — unified chrome for every /atlas/* tab (2026-05-13).
  *
- * Provides: auth gate (mirrors /atlas/admin's), simple top nav, page
- * heading. Each page renders its own body inside.
+ * Replaces the previous AdminShell + DashboardShell split. There is ONE
+ * frontend; tabs render based on the viewer's access. Today every tab
+ * is super_admin-gated; the `requiredRole` field is here so future
+ * designer-facing tabs can show up for non-admin tokens without code
+ * changes to the gate.
  *
- * Phase 7.6: subscribes to inbox:<tenant_id> SSE channel and tracks
- * `persona.pending` events; renders a small badge on the "Personas" nav
- * link that pulses + counts unseen pending personas. Badge resets when
- * the user navigates to /atlas/admin/personas (the queue surface).
+ * Mechanics carried forward from AdminShell:
+ *   - Token gate (redirect to /login when no token)
+ *   - Inbox SSE subscription for the personas badge
+ *   - localStorage-backed mark-all-seen for the badge
+ *   - Token-aware initial fetch for the initial badge count
+ *
+ * New:
+ *   - "Brain" tab links back to the /atlas brain-graph canvas root.
+ *   - All other tabs live directly under /atlas/* (no /atlas/admin/* prefix).
+ *   - Tab visibility filtered through `requiredRole` against current claims.
+ *     Today every non-Brain tab is `admin`; non-admin users see only Brain.
  */
 
 import Link from "next/link";
@@ -26,76 +36,106 @@ interface Props {
   children: ReactNode;
 }
 
-const NAV_LINKS: { href: string; label: string; key: string }[] = [
-  { href: "/atlas/admin", label: "Dashboard", key: "dashboard" },
-  { href: "/atlas/admin/rules", label: "Rules", key: "rules" },
-  { href: "/atlas/admin/personas", label: "Personas", key: "personas" },
-  { href: "/atlas/admin/taxonomy", label: "Taxonomy", key: "taxonomy" },
+type TabRole = "any" | "admin";
+
+interface TabLink {
+  href: string;
+  label: string;
+  key: string;
+  requiredRole: TabRole;
+}
+
+const TABS: TabLink[] = [
+  { href: "/atlas", label: "Brain", key: "brain", requiredRole: "any" },
+  { href: "/atlas/dashboard", label: "Dashboard", key: "dashboard", requiredRole: "admin" },
+  { href: "/atlas/rules", label: "Rules", key: "rules", requiredRole: "admin" },
+  { href: "/atlas/personas", label: "Personas", key: "personas", requiredRole: "admin" },
+  { href: "/atlas/taxonomy", label: "Taxonomy", key: "taxonomy", requiredRole: "admin" },
   // 2026-05-12 — designer + ops surface for the figma_render_blocklist.
-  // Lists frames Figma can't render; deeplinks back to Figma so the
-  // designer can touch the frame and let the next sync auto-clear.
-  { href: "/atlas/admin/figma-blocklist", label: "Figma blocklist", key: "figma-blocklist" },
+  { href: "/atlas/figma-blocklist", label: "Figma blocklist", key: "figma-blocklist", requiredRole: "admin" },
   // 2026-05-13 — organism-pattern-detection dashboard (Part C, U11+U14).
-  // Adoption + drift + promotion-candidate ranking driven by Stage 6.7's
-  // detected_organism_match corpus.
-  { href: "/atlas/admin/organisms", label: "Organisms", key: "organisms" },
-  // 2026-05-13 — FIGMA DB Phase 2 (U1). Inventory tree (team → project →
-  // file → page → section), seed management, runs log, sync trigger.
-  // Backed by /v1/admin/figma-inventory/* + the 5-min poller from Phase 1.
-  { href: "/atlas/admin/figma-inventory", label: "Figma inventory", key: "figma-inventory" },
+  { href: "/atlas/organisms", label: "Organisms", key: "organisms", requiredRole: "admin" },
+  // 2026-05-13 — FIGMA DB Phase 2A. Sortable inventory table.
+  { href: "/atlas/figma-inventory", label: "Figma inventory", key: "figma-inventory", requiredRole: "admin" },
 ];
 
 function dsBaseURL(): string {
   return process.env.NEXT_PUBLIC_DS_SERVICE_URL || "http://localhost:8080";
 }
 
-export function AdminShell({ title, description, children }: Props) {
+export function Shell({ title, description, children }: Props) {
   const token = useAuth((s) => s.token);
   const router = useRouter();
   const pathname = usePathname();
   const [hydrated, setHydrated] = useState(false);
+  // Probed once at mount via a request to an admin-only endpoint. 200 →
+  // current viewer has admin access; 403 → does not. The Brain tab is
+  // always visible; everything else hides on a 403.
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   // Internal raw count — incremented on every persona.pending event.
-  // The DISPLAYED count subtracts the user's "seen marker" stored in
-  // localStorage so dismissals survive reload.
+  // DISPLAY count subtracts the localStorage "seen marker" so dismissals
+  // survive reload.
   const [rawCount, setRawCount] = useState(0);
   const [seenMarker, setSeenMarker] = useState(0);
 
   useEffect(() => {
     setHydrated(true);
   }, []);
+
   useEffect(() => {
     if (!hydrated || token) return;
-    const next = encodeURIComponent(pathname || "/atlas/admin");
+    const next = encodeURIComponent(pathname || "/atlas");
     router.replace(`/login?next=${next}`);
   }, [hydrated, token, pathname, router]);
 
-  // Phase 7.6 — initial pending-persona count + SSE subscription. The
-  // initial GET keeps the badge accurate on hard refresh; the SSE events
-  // bump the count for new pending personas in real time. Visiting
-  // /atlas/admin/personas resets the badge.
+  // Probe admin access once we have a token. Uses /v1/atlas/admin/summary
+  // (the same endpoint AdminShell pinged historically) — 200 = admin,
+  // 403 = non-admin, network failure = assume non-admin to fail safe.
+  useEffect(() => {
+    if (!hydrated || !token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await adminFetchJSON("/v1/atlas/admin/summary");
+        if (!cancelled) setIsAdmin(true);
+      } catch {
+        if (!cancelled) setIsAdmin(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, token]);
+
+  // Hydrate the personas badge dismissal marker FIRST (synchronous), so
+  // the badge doesn't briefly show pre-existing pending count before the
+  // localStorage value lands.
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      const v = window.localStorage.getItem("admin-personas-seen-marker");
+      if (v) setSeenMarker(parseInt(v, 10) || 0);
+    } catch {
+      /* localStorage may be blocked; degrade gracefully */
+    }
+  }, [hydrated]);
+
+  // Initial pending-persona count + SSE subscription. Identical behaviour
+  // to the previous AdminShell — 1s → 2s → 4s … backoff on socket loss,
+  // capped at 30s. Non-admins get 403 on the initial fetch which we
+  // silently ignore (the badge stays at 0).
   useEffect(() => {
     if (!hydrated || !token) return;
     let cancelled = false;
     let es: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-    let reconnectDelay = 1000; // exponential backoff: 1s → 2s → 4s → 8s → 16s → 30s cap
+    let reconnectDelay = 1000;
     const MAX_BACKOFF = 30_000;
-
-    // A22 — hydrate the dismissal marker FIRST (synchronous), so the
-    // initial-count fetch (async) lands against the correct baseline.
-    // Without this ordering the badge briefly shows the unfiltered count
-    // before localStorage hydrates the marker.
-    try {
-      const raw = window.localStorage.getItem("admin-personas-seen-marker");
-      if (raw !== null) setSeenMarker(parseInt(raw, 10) || 0);
-    } catch {
-      /* localStorage may be blocked; badge degrades to no-persistence */
-    }
 
     async function loadInitialCount() {
       try {
-        const body = await adminFetchJSON<{ personas: { id: string }[] }>(
-          "/v1/atlas/admin/personas/pending",
+        const body = await adminFetchJSON<{ personas?: { length: number }[] }>(
+          "/v1/atlas/admin/personas?status=pending",
         );
         if (!cancelled) setRawCount(body.personas?.length ?? 0);
       } catch {
@@ -117,8 +157,6 @@ export function AdminShell({ title, description, children }: Props) {
           body: "{}",
         });
         if (!tres.ok) {
-          // Schedule a backoff retry — auth errors don't auto-retry, but
-          // ds-service hiccups (502, 504, conn refused) should.
           if (tres.status >= 500 && !cancelled) scheduleReconnect();
           return;
         }
@@ -128,13 +166,11 @@ export function AdminShell({ title, description, children }: Props) {
           `${dsBaseURL()}/v1/inbox/events?ticket=${encodeURIComponent(t.ticket)}`,
         );
         es.addEventListener("open", () => {
-          // Reset backoff after a clean connect — next outage starts at 1s again.
           reconnectDelay = 1000;
         });
         es.addEventListener("persona.pending", () => {
           setRawCount((c) => c + 1);
         });
-        // A23 — reconnect with exponential backoff on socket error.
         es.addEventListener("error", () => {
           if (cancelled) return;
           es?.close();
@@ -164,27 +200,21 @@ export function AdminShell({ title, description, children }: Props) {
     };
   }, [hydrated, token]);
 
-  // Mark-all-seen persists across reloads via localStorage. Triggered
-  // either by landing on /atlas/admin/personas (the user is now reading
-  // the queue) or via an explicit "mark seen" button click.
+  // Mark all personas seen when landing on the Personas tab (or via
+  // explicit click). Persisted to localStorage so dismissals survive reload.
   function markAllSeen() {
     setSeenMarker(rawCount);
     try {
       window.localStorage.setItem("admin-personas-seen-marker", String(rawCount));
     } catch {
-      /* localStorage may be blocked; badge degrades to no-persistence */
+      /* fine */
     }
   }
+
   useEffect(() => {
-    if (pathname !== "/atlas/admin/personas") return;
-    // A21 — guard against SSE-driven render storms. Only write to
-    // localStorage when seenMarker is actually behind. Without this,
-    // every persona.pending event triggers a marker bump which writes
-    // a fresh localStorage entry — observable as latency on busy
-    // admin sessions.
+    if (pathname !== "/atlas/personas") return;
     if (rawCount === seenMarker) return;
     markAllSeen();
-    // markAllSeen reads rawCount each call; deps intentionally narrow.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname, rawCount, seenMarker]);
 
@@ -194,11 +224,16 @@ export function AdminShell({ title, description, children }: Props) {
     return <div aria-hidden style={{ minHeight: "100vh", background: "var(--bg)" }} />;
   }
 
+  // Visible tabs: Brain always, admin tabs only if isAdmin === true.
+  // While isAdmin === null (probe in flight), show Brain only — avoids a
+  // flash of admin tabs that vanish a moment later.
+  const visibleTabs = TABS.filter((t) => t.requiredRole === "any" || isAdmin === true);
+
   return (
-    <main className="admin-shell">
-      <nav className="admin-nav" aria-label="Admin sections">
-        {NAV_LINKS.map((l) => {
-          const isActive = pathname === l.href;
+    <main className="atlas-shell">
+      <nav className="atlas-nav" aria-label="Workspace sections">
+        {visibleTabs.map((l) => {
+          const isActive = pathname === l.href || (l.href !== "/atlas" && pathname?.startsWith(l.href));
           const showBadge = l.key === "personas" && pendingPersonaCount > 0 && !isActive;
           return (
             <Link
@@ -215,7 +250,7 @@ export function AdminShell({ title, description, children }: Props) {
                   aria-label={`${pendingPersonaCount} pending — click to dismiss`}
                   title="Mark all as seen"
                   onClick={(e) => {
-                    e.preventDefault(); // don't navigate; just dismiss
+                    e.preventDefault();
                     e.stopPropagation();
                     markAllSeen();
                   }}
@@ -227,9 +262,6 @@ export function AdminShell({ title, description, children }: Props) {
                     }
                   }}
                 >
-                  {/* Cap display at "9+" so the pill stays compact under
-                      bursts. The aria-label carries the real count + an
-                      affordance hint for screen-reader users. */}
                   {pendingPersonaCount > 9 ? "9+" : pendingPersonaCount}
                 </span>
               )}
@@ -237,13 +269,13 @@ export function AdminShell({ title, description, children }: Props) {
           );
         })}
       </nav>
-      <header className="admin-header">
+      <header className="atlas-header">
         <h1>{title}</h1>
         {description && <p>{description}</p>}
       </header>
       {children}
       <style jsx>{`
-        .admin-shell {
+        .atlas-shell {
           min-height: 100vh;
           background: var(--bg);
           color: var(--text-1);
@@ -253,7 +285,7 @@ export function AdminShell({ title, description, children }: Props) {
           flex-direction: column;
           gap: 24px;
         }
-        .admin-nav {
+        .atlas-nav {
           display: flex;
           gap: 4px;
           padding: 4px;
@@ -262,7 +294,7 @@ export function AdminShell({ title, description, children }: Props) {
           border-radius: 999px;
           width: fit-content;
         }
-        .admin-nav :global(a) {
+        .atlas-nav :global(a) {
           padding: 6px 14px;
           color: var(--text-3);
           font-size: 12px;
@@ -270,14 +302,14 @@ export function AdminShell({ title, description, children }: Props) {
           border-radius: 999px;
           text-decoration: none;
         }
-        .admin-nav :global(a.active) {
+        .atlas-nav :global(a.active) {
           background: var(--accent);
           color: var(--bg-canvas);
         }
-        .admin-nav :global(a:hover:not(.active)) {
+        .atlas-nav :global(a:hover:not(.active)) {
           color: var(--text-1);
         }
-        .admin-nav :global(.badge) {
+        .atlas-nav :global(.badge) {
           display: inline-flex;
           align-items: center;
           justify-content: center;
@@ -295,11 +327,11 @@ export function AdminShell({ title, description, children }: Props) {
           user-select: none;
           animation: bellPulse 2s ease-in-out infinite;
         }
-        .admin-nav :global(.badge:hover) {
+        .atlas-nav :global(.badge:hover) {
           background: var(--warning-soft);
           animation-play-state: paused;
         }
-        .admin-nav :global(.badge:focus-visible) {
+        .atlas-nav :global(.badge:focus-visible) {
           outline: 2px solid var(--accent);
           outline-offset: 2px;
         }
@@ -313,12 +345,12 @@ export function AdminShell({ title, description, children }: Props) {
             box-shadow: 0 0 0 4px rgba(255, 179, 71, 0);
           }
         }
-        .admin-header h1 {
+        .atlas-header h1 {
           margin: 0 0 6px;
           font-size: 24px;
           font-weight: 600;
         }
-        .admin-header p {
+        .atlas-header p {
           margin: 0;
           font-size: 13px;
           color: var(--text-3);
@@ -328,3 +360,11 @@ export function AdminShell({ title, description, children }: Props) {
     </main>
   );
 }
+
+/**
+ * Convenience re-export so call sites that haven't migrated yet keep
+ * compiling. New code should import `Shell` directly.
+ *
+ * @deprecated Use `Shell` instead.
+ */
+export const AdminShell = Shell;

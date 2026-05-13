@@ -3,9 +3,9 @@
 /**
  * Phase 7.5 / U2 — rule catalog editor.
  *
- * Calls GET /v1/atlas/admin/rules to list every audit rule, then PATCH
- * /v1/atlas/admin/rules/{rule_id} to toggle `enabled` or change
- * `default_severity`. Super-admin gated server-side; the AdminShell
+ * Calls GET /v1/atlas/rules to list every audit rule, then PATCH
+ * /v1/atlas/rules/{rule_id} to toggle `enabled` or change
+ * `default_severity`. Super-admin gated server-side; the Shell
  * surfaces the 403 as a generic error.
  */
 
@@ -13,7 +13,7 @@ import { useEffect, useState } from "react";
 
 import { SEVERITY_COLORS } from "@/lib/severity-colors";
 
-import { AdminShell } from "../_lib/AdminShell";
+import { Shell } from "../_lib/Shell";
 import { adminFetchJSON } from "../_lib/adminFetch";
 
 interface Rule {
@@ -46,7 +46,7 @@ export default function AdminRulesPage() {
   async function load() {
     setStatus("loading");
     try {
-      const body = await adminFetchJSON<{ rules: Rule[] }>("/v1/atlas/admin/rules");
+      const body = await adminFetchJSON<{ rules: Rule[] }>("/v1/atlas/rules");
       setRules(body.rules ?? []);
       setStatus("ready");
     } catch (err) {
@@ -65,7 +65,7 @@ export default function AdminRulesPage() {
     setRules((rs) => rs.map((r) => (r.rule_id === ruleID ? { ...r, ...patch } : r)));
     setSavingID(ruleID);
     try {
-      await adminFetchJSON(`/v1/atlas/admin/rules/${encodeURIComponent(ruleID)}`, {
+      await adminFetchJSON(`/v1/atlas/rules/${encodeURIComponent(ruleID)}`, {
         method: "PATCH",
         body: patch,
       });
@@ -84,7 +84,7 @@ export default function AdminRulesPage() {
   }
 
   return (
-    <AdminShell
+    <Shell
       title="Rule catalog"
       description="Toggle audit rules and adjust their default severity. Disabling a rule stops new violations being created — existing violations stay in place. Severity changes apply to the next audit run."
     >
@@ -241,6 +241,6 @@ export default function AdminRulesPage() {
           accent-color: var(--accent, #7b9fff);
         }
       `}</style>
-    </AdminShell>
+    </Shell>
   );
 }

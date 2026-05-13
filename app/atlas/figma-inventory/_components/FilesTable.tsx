@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * FilesTable — primary view for /atlas/admin/figma-inventory.
+ * FilesTable — primary view for /atlas/figma-inventory.
  *
  * Flattens the inventory tree (team → project → file → page → section)
  * into a sortable file-level table with filter chips for project, recency
@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { adminFetchJSON } from "@/app/atlas/admin/_lib/adminFetch";
+import { adminFetchJSON } from "@/app/atlas/_lib/adminFetch";
 import { useAuth } from "@/lib/auth-client";
 
 import {

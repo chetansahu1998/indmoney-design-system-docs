@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * /atlas/admin/figma-inventory — FIGMA DB Phase 2A.
+ * /atlas/figma-inventory — FIGMA DB Phase 2A.
  *
- * Stacked single-column layout matching the rest of /atlas/admin/* (rules,
+ * Stacked single-column layout matching the rest of /atlas/* (rules,
  * organisms, personas, figma-blocklist). Three sections:
  *
  *   1. TeamBar     — horizontal chips of seeded teams + "Add team"
@@ -19,7 +19,7 @@
 
 import { useState } from "react";
 
-import { AdminShell } from "@/app/atlas/admin/_lib/AdminShell";
+import { Shell } from "@/app/atlas/_lib/Shell";
 
 import { FilesTable } from "./_components/FilesTable";
 import { RunsStrip } from "./_components/RunsStrip";
@@ -29,13 +29,13 @@ export default function FigmaInventoryAdminPage() {
   const [selectedTeamID, setSelectedTeamID] = useState<string>("");
 
   return (
-    <AdminShell
+    <Shell
       title="Figma inventory"
       description="Team → project → file → page → section mirrored from Figma. Sortable, filterable, drills into each file inline."
     >
       <TeamBar selectedTeamID={selectedTeamID} onSelectTeam={setSelectedTeamID} />
       <FilesTable teamID={selectedTeamID} />
       <RunsStrip />
-    </AdminShell>
+    </Shell>
   );
 }

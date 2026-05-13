@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * Shared table primitives for /atlas/admin/figma-inventory.
+ * Shared table primitives for /atlas/figma-inventory.
  *
  * Mirrors the Th/Td shapes used in organisms/page.tsx and the inline-style
- * conventions across /atlas/admin/* — kept here so the figma-inventory
+ * conventions across /atlas/* — kept here so the figma-inventory
  * page can reuse them without duplicating the body, and so the sortable
  * variant (SortableTh) lives next to the static Th it's based on.
  *

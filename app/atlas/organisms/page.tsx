@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * /atlas/admin/organisms — Part C of the organism-pattern-detection plan
+ * /atlas/organisms — Part C of the organism-pattern-detection plan
  * (docs/plans/2026-05-13-001-feat-organism-pattern-detection-plan.md, U11
  * + U14). Two surfaces on one page:
  *
@@ -23,8 +23,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { AdminShell } from "@/app/atlas/admin/_lib/AdminShell";
-import { adminFetchJSON } from "@/app/atlas/admin/_lib/adminFetch";
+import { Shell } from "@/app/atlas/_lib/Shell";
+import { adminFetchJSON } from "@/app/atlas/_lib/adminFetch";
 import { useAuth } from "@/lib/auth-client";
 
 // ─── Response shapes (mirror server_organism_admin.go DTOs) ──────────────────
@@ -165,7 +165,7 @@ export default function OrganismsAdminPage() {
   }, [refresh]);
 
   return (
-    <AdminShell
+    <Shell
       title="Organism patterns"
       description="Detected component-shaped FRAMEs across the imported corpus, grouped by their suspected DS organism. Surfaces which published organisms are getting reused vs hand-rebuilt, and ranks promotion candidates for the DS team."
     >
@@ -205,7 +205,7 @@ export default function OrganismsAdminPage() {
       >
         {loading ? "Refreshing…" : "Refresh"}
       </button>
-    </AdminShell>
+    </Shell>
   );
 }
 

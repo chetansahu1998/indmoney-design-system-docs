@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * /atlas/admin/figma-blocklist — designer + ops surface for the
+ * /atlas/figma-blocklist — designer + ops surface for the
  * figma_render_blocklist (2026-05-12).
  *
  * Lists every (file_id, node_id) currently suppressed by the
@@ -22,7 +22,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { AdminShell } from "@/app/atlas/admin/_lib/AdminShell";
+import { Shell } from "@/app/atlas/_lib/Shell";
 import { useAuth } from "@/lib/auth-client";
 
 interface BlocklistEntry {
@@ -142,7 +142,7 @@ export default function FigmaBlocklistPage() {
     filter === "active" ? entries.filter((e) => e.active) : entries;
 
   return (
-    <AdminShell
+    <Shell
       title="Figma render blocklist"
       description="Frames Figma can't render. Touch the frame in Figma to auto-clear on next sync, or clear manually below."
     >
@@ -291,7 +291,7 @@ export default function FigmaBlocklistPage() {
           ))}
         </ul>
       )}
-    </AdminShell>
+    </Shell>
   );
 }
 

@@ -8,14 +8,14 @@
  * (soft-deletes via deleted_at).
  *
  * Calls:
- *   GET  /v1/atlas/admin/personas/pending
- *   POST /v1/atlas/admin/personas/{id}/approve
- *   POST /v1/atlas/admin/personas/{id}/reject
+ *   GET  /v1/atlas/personas/pending
+ *   POST /v1/atlas/personas/{id}/approve
+ *   POST /v1/atlas/personas/{id}/reject
  */
 
 import { useEffect, useState } from "react";
 
-import { AdminShell } from "../_lib/AdminShell";
+import { Shell } from "../_lib/Shell";
 import { adminFetchJSON } from "../_lib/adminFetch";
 
 interface PendingPersona {
@@ -36,7 +36,7 @@ export default function AdminPersonasPage() {
     setStatus("loading");
     try {
       const body = await adminFetchJSON<{ personas: PendingPersona[] }>(
-        "/v1/atlas/admin/personas/pending",
+        "/v1/atlas/personas/pending",
       );
       setRows(body.personas ?? []);
       setStatus("ready");
@@ -53,7 +53,7 @@ export default function AdminPersonasPage() {
   async function act(id: string, action: "approve" | "reject") {
     setActingID(id);
     try {
-      await adminFetchJSON(`/v1/atlas/admin/personas/${encodeURIComponent(id)}/${action}`, {
+      await adminFetchJSON(`/v1/atlas/personas/${encodeURIComponent(id)}/${action}`, {
         method: "POST",
       });
       // Optimistically drop the row out of the queue.
@@ -66,7 +66,7 @@ export default function AdminPersonasPage() {
   }
 
   return (
-    <AdminShell
+    <Shell
       title="Persona approval queue"
       description="Designer-suggested personas awaiting your review. Approval makes the persona available across every project; rejection soft-deletes it (keeps an audit trail). Both actions are tenant-wide — personas are an org-wide library."
     >
@@ -214,7 +214,7 @@ export default function AdminPersonasPage() {
           cursor: not-allowed;
         }
       `}</style>
-    </AdminShell>
+    </Shell>
   );
 }
 

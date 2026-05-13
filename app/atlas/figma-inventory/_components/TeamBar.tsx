@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { adminFetchJSON } from "@/app/atlas/admin/_lib/adminFetch";
+import { adminFetchJSON } from "@/app/atlas/_lib/adminFetch";
 import { useAuth } from "@/lib/auth-client";
 
 import { GhostBtn, StatusBadge } from "../_lib/Table";

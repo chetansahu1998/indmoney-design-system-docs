@@ -13,10 +13,10 @@
  * Per-row actions: Promote, Archive, Unarchive, Add child.
  *
  * Backend calls:
- *   GET  /v1/atlas/admin/taxonomy
- *   POST /v1/atlas/admin/taxonomy/promote        body {product, path}
- *   POST /v1/atlas/admin/taxonomy/archive        body {product, path}
- *   POST /v1/atlas/admin/taxonomy/reorder        body {product, paths[]}
+ *   GET  /v1/atlas/taxonomy
+ *   POST /v1/atlas/taxonomy/promote        body {product, path}
+ *   POST /v1/atlas/taxonomy/archive        body {product, path}
+ *   POST /v1/atlas/taxonomy/reorder        body {product, paths[]}
  *
  * Drag-to-reorder ships via framer's Reorder.Group (see saveReorder below);
  * the `order_index` column landed in migration 0010 and the canonical
@@ -27,7 +27,7 @@
 import { AnimatePresence, motion, Reorder } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 
-import { AdminShell } from "../_lib/AdminShell";
+import { Shell } from "../_lib/Shell";
 import { adminFetchJSON } from "../_lib/adminFetch";
 
 interface Entry {
@@ -142,7 +142,7 @@ export default function AdminTaxonomyPage() {
   async function load() {
     setStatus("loading");
     try {
-      const body = await adminFetchJSON<{ taxonomy: Entry[] }>("/v1/atlas/admin/taxonomy");
+      const body = await adminFetchJSON<{ taxonomy: Entry[] }>("/v1/atlas/taxonomy");
       setEntries(body.taxonomy ?? []);
       setStatus("ready");
       // Default-expand every product node.
@@ -166,7 +166,7 @@ export default function AdminTaxonomyPage() {
   async function act(key: string, product: string, path: string, action: "promote" | "archive") {
     setActingKey(key);
     try {
-      await adminFetchJSON(`/v1/atlas/admin/taxonomy/${action}`, {
+      await adminFetchJSON(`/v1/atlas/taxonomy/${action}`, {
         method: "POST",
         body: { product, path },
       });
@@ -186,7 +186,7 @@ export default function AdminTaxonomyPage() {
     const canonicalOnly = siblings.filter((s) => s.canonical && !s.archived);
     if (canonicalOnly.length === 0) return;
     try {
-      await adminFetchJSON("/v1/atlas/admin/taxonomy/reorder", {
+      await adminFetchJSON("/v1/atlas/taxonomy/reorder", {
         method: "POST",
         body: {
           entries: canonicalOnly.map((s) => ({ product: s.product, path: s.path })),
@@ -209,7 +209,7 @@ export default function AdminTaxonomyPage() {
   }
 
   return (
-    <AdminShell
+    <Shell
       title="Taxonomy curator"
       description="The authoritative Product → folder tree. Promote a designer-extended path to make it canonical (it appears in the plugin's autocomplete + the mind-graph hierarchy edges). Archive a canonical path to retire it — flows under it stay readable, but it's marked stale."
     >
@@ -281,7 +281,7 @@ export default function AdminTaxonomyPage() {
           padding: 8px 0;
         }
       `}</style>
-    </AdminShell>
+    </Shell>
   );
 }
 
