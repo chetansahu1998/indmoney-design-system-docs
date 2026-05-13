@@ -2,7 +2,9 @@ package projects
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,12 +20,22 @@ import (
 //
 // Triggered from Stage 6.7 (U5) immediately after a fresh
 // detected_organism_match batch lands, so the dashboard surface refreshes
-// in lockstep with each import. Cheap to run — the heavy lift is a single
-// SQL group-by + a single Go-side topology parse per cluster.
+// in lockstep with each import.
 //
-// Clustering key: `fingerprint_hash` (strict identity over
-// (atom_set, slot_topology)). Two frames cluster together iff their
-// canonical structure is bit-identical.
+// Clustering key: **atom_signature_json** (loose identity over atom_set
+// only — slot_topology is ignored). Two frames cluster together iff their
+// sorted atom-INSTANCE set is identical, regardless of how those atoms are
+// arranged in the wrapper. This is the Bias #3 fix from the 2026-05-14
+// generalization audit: strict-identity (atom_set + slot_topology)
+// clustering blocked cross-product patterns like the position-card
+// recurring across Networth / INDstocks V4 / V5 / US Stocks, where the
+// same atom mix gets nudged into slightly different layouts per surface.
+//
+// Cluster identifier persisted in `promotion_candidate.fingerprint_hash`
+// is sha256(atom_signature_json)[:16]. The column name is a misnomer
+// post-shift but kept stable to avoid a schema migration; the stored value
+// is the cluster key hash, which is the contract callers actually care
+// about.
 
 // PromotionThresholds tunes RebuildPromotionCandidates's inclusion gates.
 // Held as a value rather than const so tests can drop K/N for synthetic
@@ -96,16 +108,26 @@ func (t *TenantRepo) RebuildPromotionCandidates(ctx context.Context, th Promotio
 // promotionCluster is the intermediate per-cluster aggregate harvested by
 // the SQL pass. Go-side scoring + topology parsing happen on this.
 type promotionCluster struct {
-	FingerprintHash string
-	Frequency       int
-	FileCount       int
-	// RepTopologyJSON is the slot_topology_json of one representative row
-	// from the cluster. By construction (fingerprint_hash strict identity)
-	// every member shares this value, so picking the MAX or MIN is
-	// arbitrary — both produce the same result.
+	// ClusterKey is the canonical clustering input — atom_signature_json,
+	// already a sorted JSON array string written by the walker so byte-
+	// equality is the right grouping predicate. Hashed to ClusterHash for
+	// persistence as `promotion_candidate.fingerprint_hash`.
+	ClusterKey  string
+	ClusterHash string
+	Frequency   int
+	FileCount   int
+	// RepTopologyJSON is one representative slot_topology_json from the
+	// cluster. Under loose clustering members may have differing topologies;
+	// MAX gives a stable-but-arbitrary representative for atom-reuse
+	// computation. Topology variance is captured separately via
+	// DistinctTopologies.
 	RepTopologyJSON string
-	FirstSeen       time.Time
-	LastSeen        time.Time
+	// DistinctTopologies counts unique slot_topology_json values within
+	// this cluster. 1 = every member arranged the atoms identically;
+	// higher = looser variance. Feeds the stability score.
+	DistinctTopologies int
+	FirstSeen          time.Time
+	LastSeen           time.Time
 }
 
 func (t *TenantRepo) collectPromotionClusters(ctx context.Context, th PromotionThresholds) ([]promotionCluster, error) {
@@ -120,14 +142,17 @@ func (t *TenantRepo) collectPromotionClusters(ctx context.Context, th PromotionT
 	}
 	whereKind += ")"
 
-	// HAVING applies the K/N thresholds. The composite ranking happens at
-	// read time (ListPromotionCandidates ORDER BY frequency * stability *
-	// atom_reuse), so we don't need it here.
+	// GROUP BY atom_signature_json — the loose clustering key. The walker
+	// emits atom_signature_json as a sorted JSON array string, so byte
+	// equality is correct for grouping the same atom-set across topologies.
+	// COUNT(DISTINCT slot_topology_json) captures intra-cluster layout
+	// variance, which downstream maps to a stability score.
 	query := `
 		SELECT
-		  m.fingerprint_hash,
+		  m.atom_signature_json,
 		  COUNT(*) AS frequency,
 		  COUNT(DISTINCT f.file_id) AS file_count,
+		  COUNT(DISTINCT m.slot_topology_json) AS distinct_topologies,
 		  MAX(m.slot_topology_json) AS rep_topology,
 		  MIN(m.detected_at) AS first_seen,
 		  MAX(m.detected_at) AS last_seen
@@ -135,7 +160,7 @@ func (t *TenantRepo) collectPromotionClusters(ctx context.Context, th PromotionT
 		JOIN screens s ON s.id = m.screen_id
 		JOIN flows  f ON f.id = s.flow_id
 		WHERE m.tenant_id = ? AND ` + whereKind + `
-		GROUP BY m.fingerprint_hash
+		GROUP BY m.atom_signature_json
 		HAVING COUNT(*) >= ? AND COUNT(DISTINCT f.file_id) >= ?
 	`
 	args = append(args, th.MinFrequency, th.MinFileCount)
@@ -150,10 +175,11 @@ func (t *TenantRepo) collectPromotionClusters(ctx context.Context, th PromotionT
 	for rows.Next() {
 		var c promotionCluster
 		var firstSeen, lastSeen string
-		if err := rows.Scan(&c.FingerprintHash, &c.Frequency, &c.FileCount,
-			&c.RepTopologyJSON, &firstSeen, &lastSeen); err != nil {
+		if err := rows.Scan(&c.ClusterKey, &c.Frequency, &c.FileCount,
+			&c.DistinctTopologies, &c.RepTopologyJSON, &firstSeen, &lastSeen); err != nil {
 			return nil, fmt.Errorf("scan promotion cluster: %w", err)
 		}
+		c.ClusterHash = hashClusterKey(c.ClusterKey)
 		if t, err := time.Parse(time.RFC3339, firstSeen); err == nil {
 			c.FirstSeen = t
 		}
@@ -163,6 +189,14 @@ func (t *TenantRepo) collectPromotionClusters(ctx context.Context, th PromotionT
 		out = append(out, c)
 	}
 	return out, rows.Err()
+}
+
+// hashClusterKey produces the persisted cluster identifier from the loose
+// clustering key (atom_signature_json). 16-byte hex prefix matches the
+// width of fingerprint_hash values elsewhere in the corpus.
+func hashClusterKey(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:16])
 }
 
 // buildPromotionRow turns one cluster's aggregate into the persistable
@@ -179,19 +213,47 @@ func buildPromotionRow(c promotionCluster, now time.Time) (PromotionCandidate, e
 		lastSeen = now
 	}
 	return PromotionCandidate{
-		FingerprintHash: c.FingerprintHash,
+		FingerprintHash: c.ClusterHash,
 		Frequency:       c.Frequency,
 		FileCount:       c.FileCount,
-		// Stability score is structurally 1.0 under strict-identity
-		// clustering — every member has the same slot_topology by
-		// construction, so variance is always 0. Future evolution
-		// (loosen clustering to atom-set-only hash with topology drift
-		// scoring) would let this go below 1.0.
-		StabilityScore: 1.0,
+		// Stability under loose clustering: 1.0 when every member arranged
+		// the atoms into the same slot_topology (strict-identity case),
+		// declining toward a 0.1 floor as designers diverge on layout. The
+		// floor preserves the surface — a high-frequency cross-product
+		// pattern with loose layouts is still a real candidate; it just
+		// ranks below tight ones via the composite score.
+		StabilityScore: stabilityFromTopologyVariance(c.Frequency, c.DistinctTopologies),
 		AtomReuseRate:  atomReuse,
 		FirstSeen:      firstSeen,
 		LastSeen:       lastSeen,
 	}, nil
+}
+
+// stabilityFromTopologyVariance maps (frequency, distinct_topologies) to
+// a stability score in [0.1, 1.0].
+//
+//   - 1 distinct topology across N frames → 1.0 (strict-identity case)
+//   - N distinct topologies across N frames → 0.1 (maximally loose)
+//   - Linear interpolation between the two
+func stabilityFromTopologyVariance(frequency, distinctTopologies int) float64 {
+	if frequency <= 0 {
+		return 0
+	}
+	if distinctTopologies <= 1 {
+		return 1.0
+	}
+	denom := frequency - 1
+	if denom < 1 {
+		denom = 1
+	}
+	score := 1.0 - float64(distinctTopologies-1)/float64(denom)
+	if score < 0.1 {
+		return 0.1
+	}
+	if score > 1.0 {
+		return 1.0
+	}
+	return score
 }
 
 // computeAtomReuseRate returns the fraction of slots in the topology that

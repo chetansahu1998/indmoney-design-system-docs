@@ -65,10 +65,20 @@ func seedPromoFixture(t *testing.T) promoFixture {
 }
 
 // seedMatches writes detected_organism_match rows for the given (fileID,
-// fingerprint_hash) pairs. Each call writes one row. atom_signature +
-// slot_topology are minimal valid JSON. match_kind defaults to 'novel'
-// so the aggregator picks them up.
+// fingerprint_hash) pairs. Each call writes one row. atom_signature defaults
+// to ["a","b"] for tests that don't care; pass a custom atomSig via
+// seedMatchWithAtoms for tests asserting cluster separation. match_kind
+// defaults to 'novel' so the aggregator picks them up.
 func (f promoFixture) seedMatch(t *testing.T, fileID, fingerprint, slotTopologyJSON string, kind string, confidence float64) {
+	t.Helper()
+	f.seedMatchWithAtoms(t, fileID, fingerprint, `["a","b"]`, slotTopologyJSON, kind, confidence)
+}
+
+// seedMatchWithAtoms is the explicit form. atomSig becomes the loose-clustering
+// key (post-Bias-#3-fix: promotion candidates GROUP BY atom_signature_json,
+// not fingerprint_hash). Pass distinct atomSig values when a test needs two
+// separate clusters.
+func (f promoFixture) seedMatchWithAtoms(t *testing.T, fileID, fingerprint, atomSig, slotTopologyJSON string, kind string, confidence float64) {
 	t.Helper()
 	screenID := f.screenIDsByFile[fileID]
 	versionID := f.versionIDByFile[fileID]
@@ -78,7 +88,7 @@ func (f promoFixture) seedMatch(t *testing.T, fileID, fingerprint, slotTopologyJ
 		ScreenID:          screenID,
 		MatchKind:         kind,
 		FingerprintHash:   fingerprint,
-		AtomSignatureJSON: `["a","b"]`,
+		AtomSignatureJSON: atomSig,
 		SlotTopologyJSON:  slotTopologyJSON,
 		Confidence:        confidence,
 		ManifestHash:      "mh1",
@@ -113,8 +123,9 @@ func TestRebuildPromotion_HappyPath(t *testing.T) {
 		t.Fatalf("expected 1 candidate; got %d", len(got))
 	}
 	c := got[0]
-	if c.FingerprintHash != "fp-hello" {
-		t.Errorf("hash = %q; want fp-hello", c.FingerprintHash)
+	wantHash := hashClusterKey(`["a","b"]`)
+	if c.FingerprintHash != wantHash {
+		t.Errorf("hash = %q; want %q (sha256[:16] of atom_signature_json)", c.FingerprintHash, wantHash)
 	}
 	if c.Frequency != 3 {
 		t.Errorf("frequency = %d; want 3", c.Frequency)
@@ -122,9 +133,96 @@ func TestRebuildPromotion_HappyPath(t *testing.T) {
 	if c.FileCount != 2 {
 		t.Errorf("file_count = %d; want 2", c.FileCount)
 	}
+	// All three matches share the same slot_topology → DistinctTopologies=1
+	// → StabilityScore=1.0.
+	if c.StabilityScore != 1.0 {
+		t.Errorf("stability = %v; want 1.0 (uniform topology)", c.StabilityScore)
+	}
 	// AtomReuseRate: both slots have non-empty atom_slug → 2/2 = 1.0
 	if c.AtomReuseRate != 1.0 {
 		t.Errorf("atom_reuse_rate = %v; want 1.0", c.AtomReuseRate)
+	}
+}
+
+// TestRebuildPromotion_LooseKeyClustering — the Bias #3 case from the
+// 2026-05-14 generalization audit. Same atom_set arranged into different
+// slot_topologies across product files (Networth, INDstocks V4/V5, US
+// Stocks) — the position-card pattern. Under strict-identity clustering
+// (pre-fix) these would split into N candidates and fall below K/N
+// thresholds; under loose clustering they collapse into one high-frequency
+// candidate that DS team can act on.
+func TestRebuildPromotion_LooseKeyClustering(t *testing.T) {
+	fx := seedPromoFixture(t)
+	ctx := context.Background()
+	atomSig := `["position-name","price","pnl","quantity"]`
+
+	// 4 frames, same atom set, three distinct layouts across two files —
+	// emulates the same atoms being arranged differently in Networth's
+	// holdings card vs INDstocks V4 position card vs V5.
+	topoA := `[{"slot_kind":"LEFT_TEXT","bbox_rank":0,"atom_slug":"position-name"},{"slot_kind":"RIGHT_TEXT","bbox_rank":1,"atom_slug":"price"}]`
+	topoB := `[{"slot_kind":"OVERLINE","bbox_rank":0,"atom_slug":"position-name"},{"slot_kind":"SUBTEXT","bbox_rank":1,"atom_slug":"price"}]`
+	topoC := `[{"slot_kind":"LEFT_TEXT","bbox_rank":0,"atom_slug":"position-name"},{"slot_kind":"BADGE","bbox_rank":1,"atom_slug":"pnl"}]`
+
+	fx.seedMatchWithAtoms(t, "file-1", "fp-strictA", atomSig, topoA, "novel", 0.0)
+	fx.seedMatchWithAtoms(t, "file-1", "fp-strictA2", atomSig, topoA, "novel", 0.0)
+	fx.seedMatchWithAtoms(t, "file-2", "fp-strictB", atomSig, topoB, "novel", 0.0)
+	fx.seedMatchWithAtoms(t, "file-2", "fp-strictC", atomSig, topoC, "novel", 0.0)
+
+	// Strict thresholds: K=3, N=2 — exactly the production gates from
+	// DefaultPromotionThresholds. Under strict-identity clustering these
+	// 4 rows would split into 3 clusters of {2, 1, 1} and none would meet
+	// K=3. Loose clustering merges them into one cluster of 4 across 2
+	// files, which meets the gates.
+	if err := fx.repo.RebuildPromotionCandidates(ctx, PromotionThresholds{
+		MinFrequency: 3, MinFileCount: 2,
+	}); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	got, _ := fx.repo.ListPromotionCandidates(ctx, 0)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 loose-cluster candidate (Bias #3 fix); got %d", len(got))
+	}
+	c := got[0]
+	if c.Frequency != 4 {
+		t.Errorf("frequency = %d; want 4 (all four wild copies in one cluster)", c.Frequency)
+	}
+	if c.FileCount != 2 {
+		t.Errorf("file_count = %d; want 2", c.FileCount)
+	}
+	// 3 distinct topologies across 4 frames → stability = 1 - (3-1)/(4-1) = 0.333...
+	wantStability := 1.0 - 2.0/3.0
+	if diff := c.StabilityScore - wantStability; diff < -0.01 || diff > 0.01 {
+		t.Errorf("stability = %v; want ~%v (3 distinct topologies / 4 frames)", c.StabilityScore, wantStability)
+	}
+	// Cluster id is hash of the atom_signature, not any of the per-row
+	// fingerprint values.
+	if c.FingerprintHash != hashClusterKey(atomSig) {
+		t.Errorf("cluster hash = %q; want %q", c.FingerprintHash, hashClusterKey(atomSig))
+	}
+}
+
+// TestRebuildPromotion_DistinctAtomSets — atom-set differences DO produce
+// separate clusters under loose-key. Guards against over-collapsing.
+func TestRebuildPromotion_DistinctAtomSets(t *testing.T) {
+	fx := seedPromoFixture(t)
+	ctx := context.Background()
+	slot := `[{"slot_kind":"LEFT_ICON","bbox_rank":0,"atom_slug":"x"}]`
+
+	// Two clusters, each ≥2 frames across ≥2 files, with different
+	// atom_signatures — they should NOT merge.
+	fx.seedMatchWithAtoms(t, "file-1", "fp-1", `["a","b"]`, slot, "novel", 0.0)
+	fx.seedMatchWithAtoms(t, "file-2", "fp-2", `["a","b"]`, slot, "novel", 0.0)
+	fx.seedMatchWithAtoms(t, "file-1", "fp-3", `["c","d"]`, slot, "novel", 0.0)
+	fx.seedMatchWithAtoms(t, "file-2", "fp-4", `["c","d"]`, slot, "novel", 0.0)
+
+	if err := fx.repo.RebuildPromotionCandidates(ctx, PromotionThresholds{
+		MinFrequency: 2, MinFileCount: 2,
+	}); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	got, _ := fx.repo.ListPromotionCandidates(ctx, 0)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 separate clusters (distinct atom_sets); got %d", len(got))
 	}
 }
 
@@ -305,6 +403,31 @@ func TestRebuildPromotion_TenantIsolation(t *testing.T) {
 	got, _ := fx.otherRepo.ListPromotionCandidates(ctx, 0)
 	if len(got) != 0 {
 		t.Errorf("tenant B leaked %d rows from tenant A's corpus", len(got))
+	}
+}
+
+// TestStabilityFromTopologyVariance — direct unit test of the loose-cluster
+// stability mapping. Bounds, edge cases, monotonic decline.
+func TestStabilityFromTopologyVariance(t *testing.T) {
+	cases := []struct {
+		freq, distinct int
+		want           float64
+	}{
+		{0, 0, 0.0},  // degenerate
+		{1, 1, 1.0},  // single match, single topology
+		{5, 1, 1.0},  // 5 matches, all same topology → maxed
+		{4, 2, 1.0 - 1.0/3.0},
+		{4, 3, 1.0 - 2.0/3.0},
+		{4, 4, 0.1}, // every member has a different topology → floor
+		{10, 10, 0.1},
+		{1, 5, 0.1}, // pathological (more topologies than frames) → floor
+	}
+	for _, c := range cases {
+		got := stabilityFromTopologyVariance(c.freq, c.distinct)
+		if diff := got - c.want; diff < -0.01 || diff > 0.01 {
+			t.Errorf("stabilityFromTopologyVariance(%d, %d) = %v; want ~%v",
+				c.freq, c.distinct, got, c.want)
+		}
 	}
 }
 
