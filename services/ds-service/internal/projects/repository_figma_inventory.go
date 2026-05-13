@@ -624,6 +624,164 @@ type FigmaSectionRow struct {
 	OrderIndex int
 }
 
+// ─── single-file lookups (powers the Promote endpoint, U5) ──────────────────
+
+// LookupFigmaFile returns one figma_file row keyed on file_key. Excludes
+// soft-deleted rows by default — callers wanting to surface a deleted
+// file should pass includeDeleted=true. Returns ErrNotFound when the
+// file isn't in the tenant's inventory.
+func (t *TenantRepo) LookupFigmaFile(ctx context.Context, fileKey string, includeDeleted bool) (FigmaFileRow, error) {
+	if t.tenantID == "" {
+		return FigmaFileRow{}, errors.New("projects: tenant_id required")
+	}
+	if fileKey == "" {
+		return FigmaFileRow{}, errors.New("projects: file_key required")
+	}
+	deletedClause := " AND deleted_at IS NULL"
+	if includeDeleted {
+		deletedClause = ""
+	}
+	row := t.r.db.QueryRowContext(ctx, `
+		SELECT file_key, project_id, team_id, name,
+		       COALESCE(thumbnail_url, ''),
+		       COALESCE(last_modified, ''),
+		       COALESCE(version, ''),
+		       COALESCE(editor_type, ''),
+		       COALESCE(link_access, ''),
+		       COALESCE(role, ''),
+		       COALESCE(branch_of_file_key, ''),
+		       COALESCE(pages_last_synced_at, ''),
+		       COALESCE(pages_sync_version, ''),
+		       first_seen_at, last_seen_at, COALESCE(deleted_at, '')
+		  FROM figma_file
+		 WHERE tenant_id = ? AND file_key = ?`+deletedClause, t.tenantID, fileKey)
+	var r FigmaFileRow
+	var lastMod, pagesSyncedAt, firstSeen, lastSeen, deletedAt string
+	err := row.Scan(
+		&r.FileKey, &r.ProjectID, &r.TeamID, &r.Name,
+		&r.ThumbnailURL, &lastMod, &r.Version, &r.EditorType,
+		&r.LinkAccess, &r.Role, &r.BranchOfFileKey,
+		&pagesSyncedAt, &r.PagesSyncVersion,
+		&firstSeen, &lastSeen, &deletedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FigmaFileRow{}, ErrNotFound
+	}
+	if err != nil {
+		return FigmaFileRow{}, fmt.Errorf("lookup figma_file: %w", err)
+	}
+	r.TenantID = t.tenantID
+	r.LastModified = parseTime(lastMod)
+	r.PagesLastSyncedAt = parseTime(pagesSyncedAt)
+	r.FirstSeenAt = parseTime(firstSeen)
+	r.LastSeenAt = parseTime(lastSeen)
+	r.DeletedAt = parseTime(deletedAt)
+	return r, nil
+}
+
+// LookupFigmaProject returns one figma_project row keyed on project_id.
+// Used by the promote handler to derive a Product label from the Figma
+// project name. Excludes soft-deleted rows.
+func (t *TenantRepo) LookupFigmaProject(ctx context.Context, projectID string) (FigmaProjectRow, error) {
+	if t.tenantID == "" {
+		return FigmaProjectRow{}, errors.New("projects: tenant_id required")
+	}
+	if projectID == "" {
+		return FigmaProjectRow{}, errors.New("projects: project_id required")
+	}
+	row := t.r.db.QueryRowContext(ctx, `
+		SELECT project_id, team_id, name, first_seen_at, last_seen_at
+		  FROM figma_project
+		 WHERE tenant_id = ? AND project_id = ? AND deleted_at IS NULL
+	`, t.tenantID, projectID)
+	var r FigmaProjectRow
+	var firstSeen, lastSeen string
+	err := row.Scan(&r.ProjectID, &r.TeamID, &r.Name, &firstSeen, &lastSeen)
+	if errors.Is(err, sql.ErrNoRows) {
+		return FigmaProjectRow{}, ErrNotFound
+	}
+	if err != nil {
+		return FigmaProjectRow{}, fmt.Errorf("lookup figma_project: %w", err)
+	}
+	r.TenantID = t.tenantID
+	r.FirstSeenAt = parseTime(firstSeen)
+	r.LastSeenAt = parseTime(lastSeen)
+	return r, nil
+}
+
+// LookupProjectByFileKey returns the DS-internal projects row already
+// linked to this file_key, if one exists. Powers the linkage badge on
+// the inventory tree (U7) and the idempotency check inside the promote
+// endpoint (U5). Returns ErrNotFound when no link exists yet.
+//
+// The lookup uses the existing partial unique index on
+// `projects(tenant_id, file_id) WHERE deleted_at IS NULL` so the read
+// stays index-scan cheap.
+func (t *TenantRepo) LookupProjectByFileKey(ctx context.Context, fileKey string) (Project, error) {
+	if t.tenantID == "" {
+		return Project{}, errors.New("projects: tenant_id required")
+	}
+	if fileKey == "" {
+		return Project{}, errors.New("projects: file_key required")
+	}
+	row := t.r.db.QueryRowContext(ctx, `
+		SELECT id, slug, name, platform, product, path,
+		       COALESCE(file_id, ''), owner_user_id, created_at, updated_at
+		  FROM projects
+		 WHERE tenant_id = ? AND file_id = ? AND deleted_at IS NULL
+	`, t.tenantID, fileKey)
+	var p Project
+	var createdAt, updatedAt string
+	err := row.Scan(&p.ID, &p.Slug, &p.Name, &p.Platform, &p.Product, &p.Path,
+		&p.FileID, &p.OwnerUserID, &createdAt, &updatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Project{}, ErrNotFound
+	}
+	if err != nil {
+		return Project{}, fmt.Errorf("lookup project by file_key: %w", err)
+	}
+	p.TenantID = t.tenantID
+	p.CreatedAt = parseTime(createdAt)
+	p.UpdatedAt = parseTime(updatedAt)
+	return p, nil
+}
+
+// ProjectFileKeysForTenant returns the set of file_keys currently linked
+// to a DS-internal projects row for this tenant (deleted projects
+// excluded). Used by GetFigmaInventoryTree (U7) to surface linkage
+// state on file nodes in a single batch read rather than one query per
+// file. Returns map[file_key]Project so the tree builder can stitch in
+// both project_id and slug.
+func (t *TenantRepo) ProjectFileKeysForTenant(ctx context.Context) (map[string]Project, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	rows, err := t.r.db.QueryContext(ctx, `
+		SELECT id, slug, name, platform, product, path, file_id
+		  FROM projects
+		 WHERE tenant_id = ? AND file_id IS NOT NULL AND deleted_at IS NULL
+	`, t.tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list linked projects: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]Project, 32)
+	for rows.Next() {
+		var p Project
+		var fileID sql.NullString
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Platform, &p.Product, &p.Path, &fileID); err != nil {
+			return nil, fmt.Errorf("scan linked project: %w", err)
+		}
+		if !fileID.Valid || fileID.String == "" {
+			continue
+		}
+		p.TenantID = t.tenantID
+		p.FileID = fileID.String
+		out[fileID.String] = p
+	}
+	return out, rows.Err()
+}
+
 // ─── tree read for admin UI ──────────────────────────────────────────────────
 
 // FigmaInventoryTreeNode is a generic tree node returned to the admin UI.
@@ -640,7 +798,13 @@ type FigmaInventoryTreeNode struct {
 	LastModified string                    `json:"last_modified,omitempty"`
 	ThumbnailURL string                    `json:"thumbnail_url,omitempty"`
 	DeletedAt    string                    `json:"deleted_at,omitempty"`
-	Children     []*FigmaInventoryTreeNode `json:"children,omitempty"`
+	// U7 — set on `file` nodes when this file_key has been promoted to a
+	// DS-internal projects row. Empty on non-file nodes and on unlinked
+	// files. The tree builder fetches all linked file_keys for the tenant
+	// in one batch query before stitching, so per-file cost stays flat.
+	LinkedProjectID   string                    `json:"linked_project_id,omitempty"`
+	LinkedProjectSlug string                    `json:"linked_project_slug,omitempty"`
+	Children          []*FigmaInventoryTreeNode `json:"children,omitempty"`
 }
 
 // GetFigmaInventoryTree returns the full team>project>file>page>section
@@ -700,6 +864,17 @@ func (t *TenantRepo) GetFigmaInventoryTree(ctx context.Context, teamID string, i
 		return nil, err
 	}
 
+	// linked-project lookup (U7) — one batch query per tree fetch.
+	// Excludes deleted projects via the existing partial unique index
+	// `projects(tenant_id, file_id) WHERE deleted_at IS NULL`. Returns
+	// map[file_key]Project for O(1) stitch in the file loop below.
+	linkedByFileKey, err := t.ProjectFileKeysForTenant(ctx)
+	if err != nil {
+		// Non-fatal — surface tree without linkage rather than failing
+		// the whole admin page on a linkage query hiccup.
+		linkedByFileKey = map[string]Project{}
+	}
+
 	// files
 	filesByKey := map[string]*FigmaInventoryTreeNode{}
 	fileTeamScopeFilter := " AND team_id = ?"
@@ -720,6 +895,10 @@ func (t *TenantRepo) GetFigmaInventoryTree(ctx context.Context, teamID string, i
 			&n.LastModified, &n.DeletedAt); err != nil {
 			fRows.Close()
 			return nil, fmt.Errorf("scan figma_file: %w", err)
+		}
+		if linked, ok := linkedByFileKey[n.ID]; ok {
+			n.LinkedProjectID = linked.ID
+			n.LinkedProjectSlug = linked.Slug
 		}
 		filesByKey[n.ID] = n
 		if parent, ok := projectsByID[projectID]; ok {

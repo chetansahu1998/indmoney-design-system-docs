@@ -771,6 +771,10 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventorySync)))
 	mux.HandleFunc("GET /v1/admin/figma-inventory/runs",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryRuns)))
+	// Phase 2B U5 — Promote-to-project. Creates (or returns) a DS-internal
+	// `projects` row linked on (tenant_id, file_id=file_key). Idempotent.
+	mux.HandleFunc("POST /v1/admin/figma-inventory/files/{file_key}/promote",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryPromote)))
 	// organism-pattern-detection (2026-05-13) — Part C dashboard endpoints
 	// powering /atlas/admin/organisms.
 	mux.HandleFunc("GET /v1/admin/organisms/adoption",

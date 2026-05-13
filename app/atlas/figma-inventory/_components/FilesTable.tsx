@@ -50,10 +50,20 @@ interface FileRow {
   sectionCount: number;
   thumbnailURL?: string;
   deletedAt?: string;
+  // U7 — set when this file has been promoted to a DS-internal project.
+  linkedProjectID?: string;
+  linkedProjectSlug?: string;
 }
 
 type StatusFilter = "all" | "synced" | "pending" | "deleted";
+type LinkFilter = "all" | "linked" | "unlinked";
 type RecencyFilter = "any" | "24h" | "7d" | "30d";
+
+const LINK_LABEL: Record<LinkFilter, string> = {
+  all: "Any link",
+  linked: "Linked",
+  unlinked: "Unlinked",
+};
 
 const RECENCY_LABEL: Record<RecencyFilter, string> = {
   any: "Any time",
@@ -79,6 +89,7 @@ export function FilesTable({ teamID }: Props) {
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [linkFilter, setLinkFilter] = useState<LinkFilter>("all");
   const [recencyFilter, setRecencyFilter] = useState<RecencyFilter>("any");
   const [sortField, setSortField] = useState<SortField>("last_modified");
   const [sortDir, setSortDir] = useState<SortDirection>("desc");
@@ -134,6 +145,8 @@ export function FilesTable({ teamID }: Props) {
           sectionCount,
           thumbnailURL: file.thumbnail_url,
           deletedAt: file.deleted_at,
+          linkedProjectID: file.linked_project_id,
+          linkedProjectSlug: file.linked_project_slug,
         });
       }
     }
@@ -170,6 +183,10 @@ export function FilesTable({ teamID }: Props) {
       if (statusFilter !== "deleted" && isDeleted) return false; // hide deleted unless explicitly chosen
       if (statusFilter === "synced" && !isSynced) return false;
       if (statusFilter === "pending" && isSynced) return false;
+      // Linkage filter
+      const isLinked = !!r.linkedProjectID;
+      if (linkFilter === "linked" && !isLinked) return false;
+      if (linkFilter === "unlinked" && isLinked) return false;
       // Recency filter
       if (windowMs > 0) {
         const t = r.lastModified ? new Date(r.lastModified).getTime() : 0;
@@ -177,7 +194,7 @@ export function FilesTable({ teamID }: Props) {
       }
       return true;
     });
-  }, [allRows, search, projectFilter, statusFilter, recencyFilter]);
+  }, [allRows, search, projectFilter, statusFilter, linkFilter, recencyFilter]);
 
   // Sort.
   const sorted = useMemo(() => {
@@ -229,7 +246,25 @@ export function FilesTable({ teamID }: Props) {
     setSearch("");
     setProjectFilter(new Set());
     setStatusFilter("all");
+    setLinkFilter("all");
     setRecencyFilter("any");
+  }
+
+  async function promoteFile(fileKey: string, fileName: string): Promise<void> {
+    if (!window.confirm(
+      `Promote "${fileName}" to a DS-internal project? This makes it available to the audit pipeline.`,
+    )) {
+      return;
+    }
+    try {
+      await adminFetchJSON<{ project_id: string; project_slug: string; created: boolean }>(
+        `/v1/admin/figma-inventory/files/${encodeURIComponent(fileKey)}/promote`,
+        { method: "POST", body: { platform: "web" } },
+      );
+      await load();
+    } catch (e) {
+      window.alert(`Promote failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   function toggleExpand(key: string) {
@@ -293,8 +328,14 @@ export function FilesTable({ teamID }: Props) {
             {STATUS_LABEL[k]}
           </Pill>
         ))}
+        <span style={{ width: 1, height: 20, background: "var(--border, rgba(255,255,255,0.12))" }} aria-hidden />
+        {(["all", "linked", "unlinked"] as LinkFilter[]).map((k) => (
+          <Pill key={k} active={linkFilter === k} onClick={() => setLinkFilter(k)}>
+            {LINK_LABEL[k]}
+          </Pill>
+        ))}
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          {(search || projectFilter.size > 0 || statusFilter !== "all" || recencyFilter !== "any") && (
+          {(search || projectFilter.size > 0 || statusFilter !== "all" || linkFilter !== "all" || recencyFilter !== "any") && (
             <GhostBtn onClick={clearFilters}>Reset filters</GhostBtn>
           )}
           <GhostBtn onClick={() => void load()} disabled={loading}>
@@ -413,6 +454,7 @@ export function FilesTable({ teamID }: Props) {
                   onToggle={() => toggleExpand(r.fileKey)}
                   isDeleted={isDeleted}
                   isSynced={isSynced}
+                  onPromote={() => void promoteFile(r.fileKey, r.fileName)}
                 />
               );
             })}
@@ -429,12 +471,14 @@ function FileRowView({
   onToggle,
   isDeleted,
   isSynced,
+  onPromote,
 }: {
   row: FileRow;
   isOpen: boolean;
   onToggle: () => void;
   isDeleted: boolean;
   isSynced: boolean;
+  onPromote: () => void;
 }) {
   return (
     <>
@@ -479,23 +523,63 @@ function FileRowView({
           )}
         </Td>
         <Td align="right">
-          <a
-            href={`https://www.figma.com/design/${row.fileKey}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              padding: "4px 10px",
-              background: "var(--accent-soft, rgba(80, 180, 255, 0.1))",
-              border: "1px solid var(--accent, rgba(80, 180, 255, 0.4))",
-              color: "var(--accent, rgba(150, 200, 255, 1))",
-              borderRadius: 6,
-              textDecoration: "none",
-              fontSize: 12,
-              whiteSpace: "nowrap",
-            }}
-          >
-            Open ↗
-          </a>
+          <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            {row.linkedProjectID ? (
+              <a
+                href={`/atlas/projects/${row.linkedProjectSlug || row.linkedProjectID}`}
+                title={`Linked project — ${row.linkedProjectSlug}`}
+                style={{
+                  padding: "4px 10px",
+                  background: "rgba(34, 197, 94, 0.12)",
+                  border: "1px solid rgba(34, 197, 94, 0.4)",
+                  color: "#4ade80",
+                  borderRadius: 6,
+                  textDecoration: "none",
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                ✓ Linked
+              </a>
+            ) : (
+              !isDeleted && (
+                <button
+                  type="button"
+                  onClick={onPromote}
+                  title="Create a DS-internal project row for this file so the audit pipeline can pick it up"
+                  style={{
+                    padding: "4px 10px",
+                    background: "transparent",
+                    border: "1px dashed var(--border, rgba(255,255,255,0.25))",
+                    color: "var(--text-2, #aaa)",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  + Promote
+                </button>
+              )
+            )}
+            <a
+              href={`https://www.figma.com/design/${row.fileKey}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                padding: "4px 10px",
+                background: "var(--accent-soft, rgba(80, 180, 255, 0.1))",
+                border: "1px solid var(--accent, rgba(80, 180, 255, 0.4))",
+                color: "var(--accent, rgba(150, 200, 255, 1))",
+                borderRadius: 6,
+                textDecoration: "none",
+                fontSize: 12,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Open ↗
+            </a>
+          </div>
         </Td>
       </tr>
       {isOpen && row.pageCount > 0 && (

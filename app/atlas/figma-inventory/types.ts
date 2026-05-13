@@ -43,6 +43,10 @@ export interface InventoryTreeNode {
   // File-level
   last_modified?: string;
   thumbnail_url?: string;
+  // U7 — populated on `file` nodes when the file_key has been promoted
+  // to a DS-internal projects row. Empty on non-file nodes.
+  linked_project_id?: string;
+  linked_project_slug?: string;
   // Section-level — bbox in canvas coords. NULL on team/project/file/page.
   x?: number;
   y?: number;
@@ -52,6 +56,16 @@ export interface InventoryTreeNode {
   deleted_at?: string;
   // Recursive children (each node carries its descendants inline).
   children?: InventoryTreeNode[];
+}
+
+// U5 — Promote-to-project response shape.
+export interface PromoteResponse {
+  project_id: string;
+  project_slug: string;
+  project_name: string;
+  created: boolean;
+  file_key: string;
+  file_name: string;
 }
 
 // ─── Runs ────────────────────────────────────────────────────────────────────
