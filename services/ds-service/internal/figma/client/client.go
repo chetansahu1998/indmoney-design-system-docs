@@ -178,6 +178,47 @@ func (c *Client) GetFileComponentSets(ctx context.Context, fileKey string) (map[
 	return out, nil
 }
 
+// FileVersion is a single entry from /v1/files/<key>/versions. Figma returns
+// the page in reverse chronological order, so the first entry is the most
+// recent commit and is what the autosync owner-filter compares against the
+// allowlist.
+type FileVersion struct {
+	ID          string `json:"id"`
+	CreatedAt   string `json:"created_at"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	User        struct {
+		ID     string `json:"id"`
+		Handle string `json:"handle"`
+		// Figma started returning `img_url` and (since 2024) the team-member
+		// display name in `name` — but only when the PAT has team-membership
+		// scope. We capture whichever fields are present and the allowlist
+		// matcher tries name first, falling back to handle.
+		Name   string `json:"name"`
+		ImgURL string `json:"img_url"`
+		Email  string `json:"email"`
+	} `json:"user"`
+}
+
+type FileVersionsResponse struct {
+	Versions   []FileVersion `json:"versions"`
+	Pagination struct {
+		PrevPage string `json:"prev_page"`
+		NextPage string `json:"next_page"`
+	} `json:"pagination"`
+}
+
+// GetFileVersions fetches /v1/files/<key>/versions. Returns the first page
+// only (most-recent ~30 versions), which is all the autosync owner-filter
+// needs — it cares about who last touched the file, not historical authors.
+func (c *Client) GetFileVersions(ctx context.Context, fileKey string) (*FileVersionsResponse, error) {
+	var out FileVersionsResponse
+	if err := c.get(ctx, "/v1/files/"+fileKey+"/versions", &out, tier3); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // GetStyles fetches the published-styles list for the file.
 // Used to extract typography (TEXT styles) which Glyph DOES expose.
 func (c *Client) GetStyles(ctx context.Context, fileKey string) (map[string]any, error) {

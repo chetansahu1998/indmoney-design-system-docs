@@ -476,6 +476,97 @@ func (t *TenantRepo) UpdateFigmaFilePagesSynced(ctx context.Context, f FigmaFile
 	return nil
 }
 
+// FigmaFileLastEditor is the subset of /v1/files/<key>/versions data the
+// autosync owner-filter consumes. Populated by cmd/figma-owner-fetch and by
+// future poller integration; consumed by ListFigmaFilesForAutoSync's join
+// against figma_owner_allowlist.
+type FigmaFileLastEditor struct {
+	UserID string
+	Handle string
+	Name   string
+	At     time.Time
+}
+
+// UpdateFigmaFileLastEditor writes the most-recent version's user metadata
+// onto figma_file. Idempotent — re-running with the same data is a no-op.
+// Tenant-scoped.
+func (t *TenantRepo) UpdateFigmaFileLastEditor(ctx context.Context, fileKey string, e FigmaFileLastEditor) error {
+	if t.tenantID == "" {
+		return errors.New("projects: tenant_id required")
+	}
+	if fileKey == "" {
+		return errors.New("projects: file_key required")
+	}
+	var at any
+	if !e.At.IsZero() {
+		at = rfc3339(e.At.UTC())
+	}
+	_, err := t.handle().ExecContext(ctx, `
+		UPDATE figma_file
+		   SET last_editor_user_id = NULLIF(?, ''),
+		       last_editor_handle  = NULLIF(?, ''),
+		       last_editor_name    = NULLIF(?, ''),
+		       last_editor_at      = ?
+		 WHERE tenant_id = ? AND file_key = ?
+	`, e.UserID, e.Handle, e.Name, at, t.tenantID, fileKey)
+	if err != nil {
+		return fmt.Errorf("update figma_file last_editor: %w", err)
+	}
+	return nil
+}
+
+// FigmaFileForOwnerFetch is a slim view used by the owner-backfill CLI.
+type FigmaFileForOwnerFetch struct {
+	FileKey      string
+	Name         string
+	LastModified time.Time
+}
+
+// ListFilesNeedingOwnerFetch returns files modified in the given window
+// whose last_editor_* columns are NULL. Caller uses this to drive the
+// /v1/files/<key>/versions backfill. Ordered by last_modified DESC so the
+// most-recent files get fetched first.
+func (t *TenantRepo) ListFilesNeedingOwnerFetch(ctx context.Context, since time.Time, limit int) ([]FigmaFileForOwnerFetch, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	q := `
+		SELECT file_key, name, last_modified
+		  FROM figma_file
+		 WHERE tenant_id = ?
+		   AND last_editor_name IS NULL
+		   AND last_modified IS NOT NULL
+		   AND last_modified >= ?
+		   AND (deleted_at IS NULL OR deleted_at = '')
+		 ORDER BY last_modified DESC
+	`
+	args := []any{t.tenantID, rfc3339(since.UTC())}
+	if limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := t.handle().QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list files needing owner-fetch: %w", err)
+	}
+	defer rows.Close()
+	var out []FigmaFileForOwnerFetch
+	for rows.Next() {
+		var r FigmaFileForOwnerFetch
+		var lm sql.NullString
+		if err := rows.Scan(&r.FileKey, &r.Name, &lm); err != nil {
+			return nil, err
+		}
+		if lm.Valid && lm.String != "" {
+			if ts, err := time.Parse(time.RFC3339, lm.String); err == nil {
+				r.LastModified = ts
+			}
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ─── pages ───────────────────────────────────────────────────────────────────
 
 // FigmaPageRow is one figma_page row.
