@@ -190,19 +190,31 @@ func main() {
 	}
 
 	// Phase 5.2 P4 — Figma PAT resolver. Returns the decrypted per-tenant
-	// PAT for the figma-frame-metadata proxy. Tenants without a configured
-	// PAT get an empty string + nil error so the proxy falls back to URL-
-	// only metadata gracefully.
+	// PAT for the figma-frame-metadata proxy and the FIGMA DB inventory
+	// poller. Tenants without a configured PAT get the FIGMA_PAT env var
+	// (if set) so local dev / first-run sync works without uploading a
+	// token, matching the pipelineFactory's existing fallback. If neither
+	// the DB row nor the env var has a value, returns empty + nil so
+	// callers can degrade gracefully (e.g. the frame-metadata proxy).
 	figmaPATResolver := func(ctx context.Context, tenantID string) (string, error) {
 		rec, err := dbConn.GetFigmaToken(ctx, tenantID)
-		if err != nil {
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			if envPAT := os.Getenv("FIGMA_PAT"); envPAT != "" {
+				return envPAT, nil
+			}
 			return "", err
 		}
 		if rec == nil {
+			if envPAT := os.Getenv("FIGMA_PAT"); envPAT != "" {
+				return envPAT, nil
+			}
 			return "", nil
 		}
 		pat, err := cfg.EncryptionKey.Decrypt(rec.EncryptedToken)
 		if err != nil {
+			if envPAT := os.Getenv("FIGMA_PAT"); envPAT != "" {
+				return envPAT, nil
+			}
 			return "", err
 		}
 		return string(pat), nil
