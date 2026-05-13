@@ -601,11 +601,18 @@ type FigmaPageRow struct {
 // don't leave half-synced rows.
 //
 // Returns (pagesUpserted, sectionsUpserted, error).
+// subtreesBySectionID: keyed by figma section_id, each value is the section's
+// full descendant list (including the SECTION node itself as the root).
+// Encoded via EncodeSubtreeBlob and written to figma_section.subtree_json_zstd
+// + subtree_node_count inside the same tx as the section UPSERT. Pass nil
+// (or omit keys) to leave those columns as SQL NULL — used by tests that
+// don't exercise the blob path.
 func (t *TenantRepo) UpsertFigmaPagesAndSections(
 	ctx context.Context,
 	fileKey string,
 	pages []FigmaPageRow,
 	sections []FigmaSectionRow,
+	subtreesBySectionID map[string][]FigmaNodeRow,
 	seenAt time.Time,
 ) (int, int, error) {
 	if t.tenantID == "" {
@@ -714,6 +721,45 @@ func (t *TenantRepo) UpsertFigmaPagesAndSections(
 			now, now,
 		); err != nil {
 			return 0, 0, fmt.Errorf("upsert figma_section %s/%s: %w", s.PageID, s.SectionID, err)
+		}
+	}
+
+	// Per-section subtree blobs (U4 of plan 002). One UPDATE per section
+	// that received a non-empty subtree slice. Sections not present in
+	// subtreesBySectionID are left with NULL blob columns (e.g. the test
+	// helper path that doesn't exercise blobs). Empty slices become SQL
+	// NULL via EncodeSubtreeBlob's nil-return contract.
+	if len(subtreesBySectionID) > 0 {
+		blobStmt, err := tx.PrepareContext(ctx, `
+			UPDATE figma_section
+			   SET subtree_json_zstd = ?,
+			       subtree_node_count = ?
+			 WHERE tenant_id = ? AND file_key = ? AND section_id = ?
+		`)
+		if err != nil {
+			return 0, 0, fmt.Errorf("prepare update figma_section subtree blob: %w", err)
+		}
+		defer blobStmt.Close()
+		for secID, subtree := range subtreesBySectionID {
+			if secID == "" {
+				continue
+			}
+			blob, encErr := EncodeSubtreeBlob(subtree)
+			if encErr != nil {
+				return 0, 0, fmt.Errorf("encode subtree blob for section %s: %w", secID, encErr)
+			}
+			// blob is nil when subtree is empty — write SQL NULL via nil any.
+			var blobArg any
+			var countArg any
+			if blob != nil {
+				blobArg = blob
+				countArg = len(subtree)
+			}
+			if _, err := blobStmt.ExecContext(ctx,
+				blobArg, countArg, t.tenantID, fileKey, secID,
+			); err != nil {
+				return 0, 0, fmt.Errorf("update figma_section subtree blob %s: %w", secID, err)
+			}
 		}
 	}
 
@@ -918,16 +964,21 @@ func (t *TenantRepo) ProjectFileKeysForTenant(ctx context.Context) (map[string]P
 	return out, rows.Err()
 }
 
-// ─── deep node tree (Phase 2C — figma_node) ──────────────────────────────────
+// ─── deep node tree (per-section subtree blobs — plan 002, migration 0030) ──
 
-// FigmaNodeRow mirrors one figma_node row. Built by the poller from a
-// FlatNode (internal/figma/client) and passed to UpsertFigmaNodes in
-// big batches.
+// FigmaNodeRow mirrors one row from the in-memory flat-node list the
+// poller produces via FileDeepTree.Flatten(). Used as the input shape for
+// EncodeSubtreeBlob (figma_section.subtree_json_zstd payload) and as the
+// output shape of LoadSectionSubtree on the autosync read path.
+//
+// Pre-plan-002 (migrations 0027–0030) these rows landed in the figma_node
+// table; post-plan-002 they live grouped-by-section inside the blob column
+// on figma_section. The figma_node table is dropped by migration 0031.
 type FigmaNodeRow struct {
 	TenantID     string
 	FileKey      string
 	NodeID       string
-	ParentID     string  // empty for the document root
+	ParentID     string // empty for the document root
 	NodeType     string
 	Name         string
 	HasBBox      bool
@@ -941,101 +992,9 @@ type FigmaNodeRow struct {
 	ComponentKey string
 }
 
-// UpsertFigmaNodes batches the whole flat node list for one file into a
-// single transaction: prepared INSERT with ON CONFLICT, then a sweep
-// stamping deleted_at on rows the current crawl didn't touch.
-//
-// Returns the number of node rows upserted. Empty list is allowed —
-// it'll just run the sweep (which marks every node as deleted if the
-// file emptied out, e.g. after a FILE_DELETE webhook).
-func (t *TenantRepo) UpsertFigmaNodes(ctx context.Context, fileKey string, nodes []FigmaNodeRow, seenAt time.Time) (int, error) {
-	if t.tenantID == "" {
-		return 0, errors.New("projects: tenant_id required")
-	}
-	if fileKey == "" {
-		return 0, errors.New("projects: file_key required")
-	}
-	now := rfc3339(seenAt.UTC())
-	tx, err := t.r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO figma_node (
-			tenant_id, file_key, node_id, parent_id, node_type, name,
-			x, y, width, height, depth, order_index,
-			component_id, component_key,
-			first_seen_at, last_seen_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(tenant_id, file_key, node_id) DO UPDATE SET
-			parent_id     = excluded.parent_id,
-			node_type     = excluded.node_type,
-			name          = excluded.name,
-			x             = excluded.x,
-			y             = excluded.y,
-			width         = excluded.width,
-			height        = excluded.height,
-			depth         = excluded.depth,
-			order_index   = excluded.order_index,
-			component_id  = excluded.component_id,
-			component_key = excluded.component_key,
-			last_seen_at  = excluded.last_seen_at,
-			deleted_at    = NULL
-	`)
-	if err != nil {
-		return 0, fmt.Errorf("prepare upsert figma_node: %w", err)
-	}
-	defer stmt.Close()
-
-	upserted := 0
-	for _, n := range nodes {
-		if n.NodeID == "" {
-			continue
-		}
-		// Nullable column args — empty string maps to SQL NULL so the
-		// component_key partial index stays correct.
-		var xArg, yArg, wArg, hArg any
-		if n.HasBBox {
-			xArg, yArg, wArg, hArg = n.X, n.Y, n.Width, n.Height
-		}
-		if _, err := stmt.ExecContext(ctx,
-			t.tenantID, fileKey, n.NodeID,
-			nullableStr(n.ParentID), n.NodeType, n.Name,
-			xArg, yArg, wArg, hArg,
-			n.Depth, n.OrderIndex,
-			nullableStr(n.ComponentID), nullableStr(n.ComponentKey),
-			now, now,
-		); err != nil {
-			return 0, fmt.Errorf("upsert figma_node %s: %w", n.NodeID, err)
-		}
-		upserted++
-	}
-
-	// sweep — anything in this file not touched this cycle gets
-	// deleted_at stamped. Same single-tx pattern as
-	// UpsertFigmaPagesAndSections so partial failures don't leave
-	// half-synced state.
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE figma_node
-		   SET deleted_at = ?
-		 WHERE tenant_id = ? AND file_key = ?
-		   AND deleted_at IS NULL
-		   AND last_seen_at < ?
-	`, now, t.tenantID, fileKey, now); err != nil {
-		return 0, fmt.Errorf("sweep figma_node: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return upserted, nil
-}
-
 // UpdateFigmaFileDeepSynced writes the deep-sync state onto figma_file
 // (deep_synced_at, deep_sync_version, node_count). Called by the poller
-// after a successful UpsertFigmaNodes.
+// after the per-section subtree blob writes commit.
 func (t *TenantRepo) UpdateFigmaFileDeepSynced(ctx context.Context, fileKey, version string, nodeCount int, syncedAt time.Time) error {
 	if t.tenantID == "" {
 		return errors.New("projects: tenant_id required")

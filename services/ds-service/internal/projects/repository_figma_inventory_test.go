@@ -75,7 +75,7 @@ func TestFigmaInventory_FullRoundTrip(t *testing.T) {
 		{FileKey: "fk-A", PageID: "0:1", SectionID: "3:8", Name: "Cards",
 			X: 0, Y: 1000, Width: 1440, Height: 500, OrderIndex: 1},
 	}
-	pn, sn, err := repo.UpsertFigmaPagesAndSections(ctx, "fk-A", pages, sections, seenAt)
+	pn, sn, err := repo.UpsertFigmaPagesAndSections(ctx, "fk-A", pages, sections, nil, seenAt)
 	if err != nil || pn != 2 || sn != 2 {
 		t.Fatalf("upsert pages+sections: %v p=%d s=%d", err, pn, sn)
 	}

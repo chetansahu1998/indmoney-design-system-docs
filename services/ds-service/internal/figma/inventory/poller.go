@@ -546,18 +546,43 @@ func (p *Poller) syncFileDeep(
 		}
 	}
 
-	// Pages + sections first (small tx, small failure blast radius).
-	pageCount, sectionCount, err = repo.UpsertFigmaPagesAndSections(ctx, f.FileKey, pageRows, sectionRows, seenAt)
+	// Group the flat node list by nearest-SECTION ancestor (plan 002 U4).
+	// The poller's FileDeepTree.Flatten() guarantees parents come before
+	// children, so a single forward pass suffices: a node's section-ancestor
+	// is either itself (if it's a SECTION) or its parent's section-ancestor
+	// (looked up from the already-populated map). Nodes whose parent chain
+	// never crosses a SECTION (page-level slot-only nodes) are dropped from
+	// the map and not blob-stored — the autosync planner walks SECTION
+	// subtrees only.
+	subtreesBySection := make(map[string][]projects.FigmaNodeRow)
+	sectionAncestorByID := make(map[string]string, len(nodeRows))
+	for _, n := range nodeRows {
+		var secID string
+		if n.NodeType == "SECTION" {
+			secID = n.NodeID
+		} else if anc, ok := sectionAncestorByID[n.ParentID]; ok && anc != "" {
+			secID = anc
+		}
+		if secID == "" {
+			continue // page-level / above-section node, not blob-stored
+		}
+		sectionAncestorByID[n.NodeID] = secID
+		subtreesBySection[secID] = append(subtreesBySection[secID], n)
+	}
+
+	// Pages + sections + per-section subtree blobs in one tx (plan 002 U4
+	// folds the former separate figma_node tx into this one).
+	pageCount, sectionCount, err = repo.UpsertFigmaPagesAndSections(ctx, f.FileKey, pageRows, sectionRows, subtreesBySection, seenAt)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("upsert pages+sections: %w", err)
 	}
 
-	// Nodes second (separate tx — the flat node list can be 10k+ rows
-	// for big files; isolating it keeps pages/sections writes from being
-	// rolled back if the node-upsert hits a row-level error).
-	nodeCount, err = repo.UpsertFigmaNodes(ctx, f.FileKey, nodeRows, seenAt)
-	if err != nil {
-		return pageCount, sectionCount, 0, fmt.Errorf("upsert figma_node: %w", err)
+	// nodeCount carries the total number of descendants persisted to the
+	// section blobs — UpdateFigmaFileDeepSynced still records it on
+	// figma_file.node_count for poll-cycle telemetry.
+	nodeCount = 0
+	for _, sub := range subtreesBySection {
+		nodeCount += len(sub)
 	}
 
 	// Mark the file synced for BOTH pages and deep trees in one update —

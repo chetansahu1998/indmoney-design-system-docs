@@ -70,7 +70,7 @@ func seedFile(t *testing.T, repo *projects.TenantRepo, file projects.FigmaFileRo
 		t.Fatalf("seed file: %v", err)
 	}
 	if len(pages) > 0 || len(sections) > 0 {
-		if _, _, err := repo.UpsertFigmaPagesAndSections(ctx, file.FileKey, pages, sections, now); err != nil {
+		if _, _, err := repo.UpsertFigmaPagesAndSections(ctx, file.FileKey, pages, sections, nil, now); err != nil {
 			t.Fatalf("seed pages+sections: %v", err)
 		}
 	}
