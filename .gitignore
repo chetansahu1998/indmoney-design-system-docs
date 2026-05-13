@@ -98,3 +98,6 @@ figma-plugin.zip
 /tmp/
 services/ds-service/import-figma-url
 services/ds-service/variants
+services/ds-service/data/*.bak*
+services/ds-service/figma-*-sync
+services/ds-service/figma-autosync-*
