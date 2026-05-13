@@ -21,7 +21,6 @@ import { useState } from "react";
 
 import { Shell } from "@/app/atlas/_lib/Shell";
 
-import { ComponentsPanel } from "./_components/ComponentsPanel";
 import { FilesTable } from "./_components/FilesTable";
 import { RunsStrip } from "./_components/RunsStrip";
 import { TeamBar } from "./_components/TeamBar";
@@ -36,7 +35,6 @@ export default function FigmaInventoryAdminPage() {
     >
       <TeamBar selectedTeamID={selectedTeamID} onSelectTeam={setSelectedTeamID} />
       <FilesTable teamID={selectedTeamID} />
-      <ComponentsPanel />
       <RunsStrip />
     </Shell>
   );

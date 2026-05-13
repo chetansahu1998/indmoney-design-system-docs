@@ -775,17 +775,9 @@ func (s *server) routes(mux *http.ServeMux) {
 	// `projects` row linked on (tenant_id, file_id=file_key). Idempotent.
 	mux.HandleFunc("POST /v1/admin/figma-inventory/files/{file_key}/promote",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryPromote)))
-	// Phase 2C — deep node-tree browser. Returns every figma_node row for
-	// one file as a flat list ordered depth-first; client stitches the
-	// tree via parent_id.
-	mux.HandleFunc("GET /v1/admin/figma-inventory/files/{file_key}/nodes",
-		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryFileNodes)))
-	// Phase 2C — cross-file component usage analytic. Ranks library
-	// component masters by INSTANCE count across every crawled file.
-	mux.HandleFunc("GET /v1/admin/figma-inventory/components",
-		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryComponentUsage)))
-	mux.HandleFunc("GET /v1/admin/figma-inventory/components/{component_key}/usage",
-		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryComponentUsageDetail)))
+	// Phase 2C admin routes for the deep node-tree browser + cross-file
+	// component usage analytics were deleted by plan 002 U6. The
+	// underlying figma_node table is dropped by migration 0031.
 	// organism-pattern-detection (2026-05-13) — Part C dashboard endpoints
 	// powering /atlas/admin/organisms.
 	mux.HandleFunc("GET /v1/admin/organisms/adoption",

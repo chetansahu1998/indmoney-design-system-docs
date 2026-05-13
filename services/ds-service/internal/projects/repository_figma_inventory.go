@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -1066,314 +1067,6 @@ func (t *TenantRepo) FilesNeedingDeepSync(ctx context.Context, limit int) ([]Fig
 	return out, rows.Err()
 }
 
-// FigmaNodeView is the trimmed row shape returned to the admin UI.
-type FigmaNodeView struct {
-	NodeID       string  `json:"node_id"`
-	ParentID     string  `json:"parent_id,omitempty"`
-	NodeType     string  `json:"node_type"`
-	Name         string  `json:"name"`
-	HasBBox      bool    `json:"has_bbox"`
-	X            float64 `json:"x,omitempty"`
-	Y            float64 `json:"y,omitempty"`
-	Width        float64 `json:"width,omitempty"`
-	Height       float64 `json:"height,omitempty"`
-	Depth        int     `json:"depth"`
-	OrderIndex   int     `json:"order_index"`
-	ComponentID  string  `json:"component_id,omitempty"`
-	ComponentKey string  `json:"component_key,omitempty"`
-}
-
-// ListFigmaNodesForFile returns every live node row in a file ordered
-// depth-first (depth ASC, order_index ASC). Caps at limit rows so a
-// 19k-node file doesn't blow up the admin UI. The UI can paginate or
-// filter for cases with too many nodes.
-func (t *TenantRepo) ListFigmaNodesForFile(ctx context.Context, fileKey string, limit int) ([]FigmaNodeView, error) {
-	if t.tenantID == "" {
-		return nil, errors.New("projects: tenant_id required")
-	}
-	if fileKey == "" {
-		return nil, errors.New("projects: file_key required")
-	}
-	if limit <= 0 {
-		limit = 2000
-	}
-	rows, err := t.r.db.QueryContext(ctx, `
-		SELECT node_id, COALESCE(parent_id, ''), node_type, name,
-		       x, y, width, height,
-		       depth, order_index,
-		       COALESCE(component_id, ''), COALESCE(component_key, '')
-		  FROM figma_node
-		 WHERE tenant_id = ? AND file_key = ? AND deleted_at IS NULL
-		 ORDER BY depth ASC, order_index ASC, node_id ASC
-		 LIMIT ?
-	`, t.tenantID, fileKey, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list figma_node: %w", err)
-	}
-	defer rows.Close()
-	out := make([]FigmaNodeView, 0, 256)
-	for rows.Next() {
-		var v FigmaNodeView
-		var x, y, w, h sql.NullFloat64
-		if err := rows.Scan(&v.NodeID, &v.ParentID, &v.NodeType, &v.Name,
-			&x, &y, &w, &h,
-			&v.Depth, &v.OrderIndex,
-			&v.ComponentID, &v.ComponentKey,
-		); err != nil {
-			return nil, fmt.Errorf("scan figma_node: %w", err)
-		}
-		if x.Valid {
-			v.HasBBox = true
-			v.X = x.Float64
-			v.Y = y.Float64
-			v.Width = w.Float64
-			v.Height = h.Float64
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
-// FigmaSectionFrameChild is a slim view of one FRAME node directly under
-// a SECTION. Used by the autosync executor to build ExportRequest.frames.
-type FigmaSectionFrameChild struct {
-	NodeID     string
-	Name       string
-	X          float64
-	Y          float64
-	Width      float64
-	Height     float64
-	OrderIndex int
-}
-
-// ListFrameChildrenOfSection returns FRAME-type nodes whose parent_id is
-// the section. Ordered by order_index so the section's visual order is
-// preserved in the synthesized ExportRequest.
-//
-// Only direct children with HasBBox-equivalent (x/y non-null) — we skip
-// frames missing dimensions because the pipeline can't render them.
-func (t *TenantRepo) ListFrameChildrenOfSection(ctx context.Context, fileKey, sectionID string) ([]FigmaSectionFrameChild, error) {
-	if t.tenantID == "" {
-		return nil, errors.New("projects: tenant_id required")
-	}
-	if fileKey == "" || sectionID == "" {
-		return nil, errors.New("projects: file_key and section_id required")
-	}
-	rows, err := t.r.db.QueryContext(ctx, `
-		SELECT node_id, name, x, y, width, height, order_index
-		  FROM figma_node
-		 WHERE tenant_id = ? AND file_key = ?
-		   AND parent_id = ?
-		   AND node_type = 'FRAME'
-		   AND deleted_at IS NULL
-		   AND x IS NOT NULL
-		   AND width IS NOT NULL
-		 ORDER BY order_index ASC, node_id ASC
-	`, t.tenantID, fileKey, sectionID)
-	if err != nil {
-		return nil, fmt.Errorf("list frame children of section: %w", err)
-	}
-	defer rows.Close()
-	out := make([]FigmaSectionFrameChild, 0, 16)
-	for rows.Next() {
-		var c FigmaSectionFrameChild
-		if err := rows.Scan(&c.NodeID, &c.Name, &c.X, &c.Y, &c.Width, &c.Height, &c.OrderIndex); err != nil {
-			return nil, fmt.Errorf("scan frame child: %w", err)
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-// UpdateFlowName updates flows.name for one (file_id, section_id) pair.
-// Used by the autosync cheap-update path when a section's name changed
-// but content_hash didn't — flips the flow display name without
-// re-running the export pipeline. Returns rows affected.
-func (t *TenantRepo) UpdateFlowName(ctx context.Context, fileID, sectionID, newName string) (int64, error) {
-	if t.tenantID == "" {
-		return 0, errors.New("projects: tenant_id required")
-	}
-	if fileID == "" || sectionID == "" {
-		return 0, errors.New("projects: file_id and section_id required")
-	}
-	if newName == "" {
-		return 0, errors.New("projects: new_name required")
-	}
-	res, err := t.handle().ExecContext(ctx, `
-		UPDATE flows
-		   SET name = ?, updated_at = ?
-		 WHERE tenant_id = ? AND file_id = ? AND section_id = ?
-	`, newName, rfc3339(t.now().UTC()), t.tenantID, fileID, sectionID)
-	if err != nil {
-		return 0, fmt.Errorf("update flow name: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	return n, nil
-}
-
-// ─── cross-file component usage (Phase 2C analytic) ─────────────────────────
-
-// ComponentUsageRow summarises one master component's reach across the
-// tenant: how many files use it, how many total instances exist, and
-// where the master itself lives if it's in our inventory. The (master_
-// file_key, master_node_id) pair is empty when the master is in a
-// library file we haven't crawled yet — the durable component_key on
-// every INSTANCE is still enough to count usage.
-type ComponentUsageRow struct {
-	ComponentKey    string `json:"component_key"`
-	MasterName      string `json:"master_name,omitempty"`
-	MasterFileKey   string `json:"master_file_key,omitempty"`
-	MasterNodeID    string `json:"master_node_id,omitempty"`
-	FilesUsing      int    `json:"files_using"`
-	TotalInstances  int    `json:"total_instances"`
-}
-
-// ListComponentUsage returns top-N master components ranked by total
-// instance count. The query joins INSTANCE rows by component_key (the
-// durable library identifier the walker stamped onto every INSTANCE
-// at deep-fetch time) — works the same whether the master is local or
-// remote.
-//
-// LEFT JOIN against figma_node masters surfaces the master's own
-// location when it's in the inventory; library masters we haven't
-// crawled still appear in the list with empty master_* fields.
-func (t *TenantRepo) ListComponentUsage(ctx context.Context, limit int) ([]ComponentUsageRow, error) {
-	if t.tenantID == "" {
-		return nil, errors.New("projects: tenant_id required")
-	}
-	if limit <= 0 {
-		limit = 50
-	}
-	rows, err := t.r.db.QueryContext(ctx, `
-		SELECT
-		    i.component_key,
-		    COALESCE(MAX(m.name), ''),
-		    COALESCE(MAX(m.file_key), ''),
-		    COALESCE(MAX(m.node_id), ''),
-		    COUNT(DISTINCT i.file_key) AS files_using,
-		    COUNT(*) AS total_instances
-		  FROM figma_node i
-		  LEFT JOIN figma_node m
-		         ON m.tenant_id = i.tenant_id
-		        AND m.component_key = i.component_key
-		        AND m.node_type IN ('COMPONENT','COMPONENT_SET')
-		        AND m.deleted_at IS NULL
-		 WHERE i.tenant_id = ?
-		   AND i.node_type = 'INSTANCE'
-		   AND i.component_key IS NOT NULL
-		   AND i.deleted_at IS NULL
-		 GROUP BY i.component_key
-		 ORDER BY total_instances DESC
-		 LIMIT ?
-	`, t.tenantID, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list component usage: %w", err)
-	}
-	defer rows.Close()
-	out := make([]ComponentUsageRow, 0, limit)
-	for rows.Next() {
-		var r ComponentUsageRow
-		if err := rows.Scan(
-			&r.ComponentKey, &r.MasterName, &r.MasterFileKey, &r.MasterNodeID,
-			&r.FilesUsing, &r.TotalInstances,
-		); err != nil {
-			return nil, fmt.Errorf("scan component usage: %w", err)
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// ComponentUsageDetail is one row of "where is this component used".
-type ComponentUsageDetail struct {
-	FileKey      string `json:"file_key"`
-	FileName     string `json:"file_name"`
-	ProjectName  string `json:"project_name"`
-	InstanceNodeID string `json:"instance_node_id"`
-	InstanceName string `json:"instance_name"`
-	ParentID     string `json:"parent_id,omitempty"`
-	Depth        int    `json:"depth"`
-}
-
-// ListComponentUsageDetail returns every INSTANCE referencing the
-// given component_key, grouped by (file, project). Powers the drill-in
-// view: "show me the 1,347 places where button-primary lives."
-func (t *TenantRepo) ListComponentUsageDetail(ctx context.Context, componentKey string, limit int) ([]ComponentUsageDetail, error) {
-	if t.tenantID == "" {
-		return nil, errors.New("projects: tenant_id required")
-	}
-	if componentKey == "" {
-		return nil, errors.New("projects: component_key required")
-	}
-	if limit <= 0 {
-		limit = 500
-	}
-	rows, err := t.r.db.QueryContext(ctx, `
-		SELECT
-		    i.file_key,
-		    COALESCE(f.name, ''),
-		    COALESCE(p.name, ''),
-		    i.node_id, i.name, COALESCE(i.parent_id, ''), i.depth
-		  FROM figma_node i
-		  LEFT JOIN figma_file f
-		         ON f.tenant_id = i.tenant_id AND f.file_key = i.file_key
-		  LEFT JOIN figma_project p
-		         ON p.tenant_id = f.tenant_id AND p.project_id = f.project_id
-		 WHERE i.tenant_id = ?
-		   AND i.node_type = 'INSTANCE'
-		   AND i.component_key = ?
-		   AND i.deleted_at IS NULL
-		 ORDER BY p.name ASC, f.name ASC, i.depth ASC
-		 LIMIT ?
-	`, t.tenantID, componentKey, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list component usage detail: %w", err)
-	}
-	defer rows.Close()
-	out := make([]ComponentUsageDetail, 0, 64)
-	for rows.Next() {
-		var r ComponentUsageDetail
-		if err := rows.Scan(
-			&r.FileKey, &r.FileName, &r.ProjectName,
-			&r.InstanceNodeID, &r.InstanceName, &r.ParentID, &r.Depth,
-		); err != nil {
-			return nil, fmt.Errorf("scan component usage detail: %w", err)
-		}
-		out = append(out, r)
-	}
-	return out, rows.Err()
-}
-
-// CountFigmaNodesByFile returns a map[file_key]int of how many live
-// (non-deleted) nodes each file currently has. Powers the inventory
-// admin UI's per-file node-count badge without forcing the tree
-// endpoint to load every node row.
-func (t *TenantRepo) CountFigmaNodesByFile(ctx context.Context) (map[string]int, error) {
-	if t.tenantID == "" {
-		return nil, errors.New("projects: tenant_id required")
-	}
-	rows, err := t.r.db.QueryContext(ctx, `
-		SELECT file_key, COUNT(*)
-		  FROM figma_node
-		 WHERE tenant_id = ? AND deleted_at IS NULL
-		 GROUP BY file_key
-	`, t.tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("count figma_node by file: %w", err)
-	}
-	defer rows.Close()
-	out := make(map[string]int, 64)
-	for rows.Next() {
-		var fk string
-		var n int
-		if err := rows.Scan(&fk, &n); err != nil {
-			return nil, err
-		}
-		out[fk] = n
-	}
-	return out, rows.Err()
-}
-
 // ─── tree read for admin UI ──────────────────────────────────────────────────
 
 // FigmaInventoryTreeNode is a generic tree node returned to the admin UI.
@@ -1719,4 +1412,96 @@ func inClause(vals []string) (string, []any) {
 		args[i] = v
 	}
 	return ph, args
+}
+
+// ─── autosync executor support (plan 002 U6) ─────────────────────────────────
+
+// FigmaSectionFrameChild is a slim view of one FRAME node directly under
+// a SECTION. Used by the autosync executor to build ExportRequest.frames.
+type FigmaSectionFrameChild struct {
+	NodeID     string
+	Name       string
+	X          float64
+	Y          float64
+	Width      float64
+	Height     float64
+	OrderIndex int
+}
+
+// ListFrameChildrenOfSection returns FRAME-type nodes whose parent_id is
+// the section, ordered by order_index. Used by the autosync executor
+// (plan 001 U10) to build ExportRequest.frames.
+//
+// Pre-plan-002 this read directly from figma_node via SQL. Post-plan-002
+// (migration 0031 drops figma_node) it decodes the section's subtree blob
+// from figma_section.subtree_json_zstd via LoadSectionSubtree and filters
+// in-memory. Same signature, blob-backed implementation — autosync_executor
+// keeps working without changes.
+func (t *TenantRepo) ListFrameChildrenOfSection(ctx context.Context, fileKey, sectionID string) ([]FigmaSectionFrameChild, error) {
+	nodes, err := t.LoadSectionSubtree(ctx, fileKey, sectionID)
+	if err != nil {
+		// ErrNotFound (no row or NULL blob) → empty slice, no error.
+		// The executor treats "no frames" as a normal skip; the previous
+		// SQL impl returned an empty slice in that case too.
+		if errors.Is(err, ErrNotFound) {
+			return []FigmaSectionFrameChild{}, nil
+		}
+		return nil, err
+	}
+	out := make([]FigmaSectionFrameChild, 0, 16)
+	for _, n := range nodes {
+		if n.ParentID != sectionID {
+			continue
+		}
+		if n.NodeType != "FRAME" {
+			continue
+		}
+		if !n.HasBBox {
+			continue
+		}
+		out = append(out, FigmaSectionFrameChild{
+			NodeID:     n.NodeID,
+			Name:       n.Name,
+			X:          n.X,
+			Y:          n.Y,
+			Width:      n.Width,
+			Height:     n.Height,
+			OrderIndex: n.OrderIndex,
+		})
+	}
+	// Stable order by order_index → node_id (mirrors the previous SQL
+	// `ORDER BY order_index ASC, node_id ASC`).
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].OrderIndex != out[j].OrderIndex {
+			return out[i].OrderIndex < out[j].OrderIndex
+		}
+		return out[i].NodeID < out[j].NodeID
+	})
+	return out, nil
+}
+
+// UpdateFlowName updates flows.name for one (file_id, section_id) pair.
+// Used by the autosync cheap-update path when a section's name changed
+// but content_hash didn't — flips the flow display name without
+// re-running the export pipeline. Returns rows affected.
+func (t *TenantRepo) UpdateFlowName(ctx context.Context, fileID, sectionID, newName string) (int64, error) {
+	if t.tenantID == "" {
+		return 0, errors.New("projects: tenant_id required")
+	}
+	if fileID == "" || sectionID == "" {
+		return 0, errors.New("projects: file_id and section_id required")
+	}
+	if newName == "" {
+		return 0, errors.New("projects: new_name required")
+	}
+	res, err := t.handle().ExecContext(ctx, `
+		UPDATE flows
+		   SET name = ?, updated_at = ?
+		 WHERE tenant_id = ? AND file_id = ? AND section_id = ?
+	`, newName, rfc3339(t.now().UTC()), t.tenantID, fileID, sectionID)
+	if err != nil {
+		return 0, fmt.Errorf("update flow name: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
