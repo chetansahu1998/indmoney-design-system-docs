@@ -193,6 +193,41 @@ func (s *Server) HandleFigmaInventorySync(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// HandleFigmaInventoryFileNodes serves GET
+// /v1/admin/figma-inventory/files/{file_key}/nodes?limit=
+//
+// Returns the deep node tree (Phase 2C) for one file as a flat list,
+// ordered depth-first. Caller stitches the tree client-side using
+// parent_id. Capped at limit (default 2000) so huge files don't blow
+// up the admin payload — the UI offers a "fetch all" override.
+func (s *Server) HandleFigmaInventoryFileNodes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	tenantID, ok := s.requireFigmaInventoryAdminTenant(w, r)
+	if !ok {
+		return
+	}
+	fileKey := r.PathValue("file_key")
+	if fileKey == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_file_key", "file_key required")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	nodes, err := repo.ListFigmaNodesForFile(r.Context(), fileKey, limit)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "list_nodes", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"file_key": fileKey,
+		"nodes":    nodes,
+		"count":    len(nodes),
+	})
+}
+
 // HandleFigmaInventoryRuns serves GET /v1/admin/figma-inventory/runs.
 func (s *Server) HandleFigmaInventoryRuns(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

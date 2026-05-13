@@ -47,6 +47,9 @@ export interface InventoryTreeNode {
   // to a DS-internal projects row. Empty on non-file nodes.
   linked_project_id?: string;
   linked_project_slug?: string;
+  // Phase 2C — deep node-tree mirror stats (file nodes only).
+  node_count?: number;
+  deep_synced_at?: string;
   // Section-level — bbox in canvas coords. NULL on team/project/file/page.
   x?: number;
   y?: number;
@@ -66,6 +69,29 @@ export interface PromoteResponse {
   created: boolean;
   file_key: string;
   file_name: string;
+}
+
+// Phase 2C — single node row from the deep node-tree browser.
+export interface FigmaNodeRow {
+  node_id: string;
+  parent_id?: string;
+  node_type: string;
+  name: string;
+  has_bbox: boolean;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  depth: number;
+  order_index: number;
+  component_id?: string;
+  component_key?: string;
+}
+
+export interface FileNodesResponse {
+  file_key: string;
+  nodes: FigmaNodeRow[];
+  count: number;
 }
 
 // ─── Runs ────────────────────────────────────────────────────────────────────

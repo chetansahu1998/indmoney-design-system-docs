@@ -971,6 +971,74 @@ func (t *TenantRepo) FilesNeedingDeepSync(ctx context.Context, limit int) ([]Fig
 	return out, rows.Err()
 }
 
+// FigmaNodeView is the trimmed row shape returned to the admin UI.
+type FigmaNodeView struct {
+	NodeID       string  `json:"node_id"`
+	ParentID     string  `json:"parent_id,omitempty"`
+	NodeType     string  `json:"node_type"`
+	Name         string  `json:"name"`
+	HasBBox      bool    `json:"has_bbox"`
+	X            float64 `json:"x,omitempty"`
+	Y            float64 `json:"y,omitempty"`
+	Width        float64 `json:"width,omitempty"`
+	Height       float64 `json:"height,omitempty"`
+	Depth        int     `json:"depth"`
+	OrderIndex   int     `json:"order_index"`
+	ComponentID  string  `json:"component_id,omitempty"`
+	ComponentKey string  `json:"component_key,omitempty"`
+}
+
+// ListFigmaNodesForFile returns every live node row in a file ordered
+// depth-first (depth ASC, order_index ASC). Caps at limit rows so a
+// 19k-node file doesn't blow up the admin UI. The UI can paginate or
+// filter for cases with too many nodes.
+func (t *TenantRepo) ListFigmaNodesForFile(ctx context.Context, fileKey string, limit int) ([]FigmaNodeView, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	if fileKey == "" {
+		return nil, errors.New("projects: file_key required")
+	}
+	if limit <= 0 {
+		limit = 2000
+	}
+	rows, err := t.r.db.QueryContext(ctx, `
+		SELECT node_id, COALESCE(parent_id, ''), node_type, name,
+		       x, y, width, height,
+		       depth, order_index,
+		       COALESCE(component_id, ''), COALESCE(component_key, '')
+		  FROM figma_node
+		 WHERE tenant_id = ? AND file_key = ? AND deleted_at IS NULL
+		 ORDER BY depth ASC, order_index ASC, node_id ASC
+		 LIMIT ?
+	`, t.tenantID, fileKey, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list figma_node: %w", err)
+	}
+	defer rows.Close()
+	out := make([]FigmaNodeView, 0, 256)
+	for rows.Next() {
+		var v FigmaNodeView
+		var x, y, w, h sql.NullFloat64
+		if err := rows.Scan(&v.NodeID, &v.ParentID, &v.NodeType, &v.Name,
+			&x, &y, &w, &h,
+			&v.Depth, &v.OrderIndex,
+			&v.ComponentID, &v.ComponentKey,
+		); err != nil {
+			return nil, fmt.Errorf("scan figma_node: %w", err)
+		}
+		if x.Valid {
+			v.HasBBox = true
+			v.X = x.Float64
+			v.Y = y.Float64
+			v.Width = w.Float64
+			v.Height = h.Float64
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // CountFigmaNodesByFile returns a map[file_key]int of how many live
 // (non-deleted) nodes each file currently has. Powers the inventory
 // admin UI's per-file node-count badge without forcing the tree
@@ -1023,7 +1091,10 @@ type FigmaInventoryTreeNode struct {
 	// in one batch query before stitching, so per-file cost stays flat.
 	LinkedProjectID   string                    `json:"linked_project_id,omitempty"`
 	LinkedProjectSlug string                    `json:"linked_project_slug,omitempty"`
-	Children          []*FigmaInventoryTreeNode `json:"children,omitempty"`
+	// Phase 2C — deep node-tree mirror stats (set on `file` nodes only).
+	NodeCount      int    `json:"node_count,omitempty"`
+	DeepSyncedAt   string `json:"deep_synced_at,omitempty"`
+	Children       []*FigmaInventoryTreeNode `json:"children,omitempty"`
 }
 
 // GetFigmaInventoryTree returns the full team>project>file>page>section
@@ -1099,7 +1170,8 @@ func (t *TenantRepo) GetFigmaInventoryTree(ctx context.Context, teamID string, i
 	fileTeamScopeFilter := " AND team_id = ?"
 	fRows, err := t.r.db.QueryContext(ctx, `
 		SELECT file_key, project_id, name, COALESCE(thumbnail_url, ''),
-		       COALESCE(last_modified, ''), COALESCE(deleted_at, '')
+		       COALESCE(last_modified, ''), COALESCE(deleted_at, ''),
+		       COALESCE(node_count, 0), COALESCE(deep_synced_at, '')
 		  FROM figma_file
 		 WHERE tenant_id = ?`+fileTeamScopeFilter+deletedClause+`
 		 ORDER BY name ASC
@@ -1111,7 +1183,8 @@ func (t *TenantRepo) GetFigmaInventoryTree(ctx context.Context, teamID string, i
 		n := &FigmaInventoryTreeNode{Kind: "file"}
 		var projectID string
 		if err := fRows.Scan(&n.ID, &projectID, &n.Name, &n.ThumbnailURL,
-			&n.LastModified, &n.DeletedAt); err != nil {
+			&n.LastModified, &n.DeletedAt,
+			&n.NodeCount, &n.DeepSyncedAt); err != nil {
 			fRows.Close()
 			return nil, fmt.Errorf("scan figma_file: %w", err)
 		}

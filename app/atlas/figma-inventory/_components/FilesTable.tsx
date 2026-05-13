@@ -37,7 +37,7 @@ interface Props {
   teamID: string;
 }
 
-type SortField = "name" | "project" | "last_modified" | "pages" | "sections";
+type SortField = "name" | "project" | "last_modified" | "pages" | "sections" | "nodes";
 
 interface FileRow {
   fileKey: string;
@@ -53,6 +53,9 @@ interface FileRow {
   // U7 — set when this file has been promoted to a DS-internal project.
   linkedProjectID?: string;
   linkedProjectSlug?: string;
+  // Phase 2C — deep node-tree mirror.
+  nodeCount: number;
+  deepSyncedAt?: string;
 }
 
 type StatusFilter = "all" | "synced" | "pending" | "deleted";
@@ -147,6 +150,8 @@ export function FilesTable({ teamID }: Props) {
           deletedAt: file.deleted_at,
           linkedProjectID: file.linked_project_id,
           linkedProjectSlug: file.linked_project_slug,
+          nodeCount: file.node_count ?? 0,
+          deepSyncedAt: file.deep_synced_at,
         });
       }
     }
@@ -218,6 +223,8 @@ export function FilesTable({ teamID }: Props) {
           return mul * (a.pageCount - b.pageCount) || a.fileName.localeCompare(b.fileName);
         case "sections":
           return mul * (a.sectionCount - b.sectionCount) || a.fileName.localeCompare(b.fileName);
+        case "nodes":
+          return mul * (a.nodeCount - b.nodeCount) || a.fileName.localeCompare(b.fileName);
       }
     });
     return arr;
@@ -229,7 +236,7 @@ export function FilesTable({ teamID }: Props) {
     } else {
       setSortField(field);
       // Sensible default direction per field.
-      setSortDir(field === "last_modified" || field === "pages" || field === "sections" ? "desc" : "asc");
+      setSortDir(field === "last_modified" || field === "pages" || field === "sections" || field === "nodes" ? "desc" : "asc");
     }
   }
 
@@ -437,6 +444,9 @@ export function FilesTable({ teamID }: Props) {
               <SortableTh field="sections" current={sortField} direction={sortDir} onClick={toggleSort} align="right">
                 Sections
               </SortableTh>
+              <SortableTh field="nodes" current={sortField} direction={sortDir} onClick={toggleSort} align="right">
+                Nodes
+              </SortableTh>
               <Th>Status</Th>
               <Th align="right">Actions</Th>
             </tr>
@@ -513,14 +523,26 @@ function FileRowView({
         <Td align="right" muted={row.sectionCount === 0}>
           <span style={{ fontVariantNumeric: "tabular-nums" }}>{row.sectionCount}</span>
         </Td>
+        <Td align="right" muted={row.nodeCount === 0} title={row.deepSyncedAt ? `Deep-synced ${row.deepSyncedAt}` : "Not yet deep-synced"}>
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>
+            {row.nodeCount > 999 ? `${(row.nodeCount / 1000).toFixed(1)}k` : row.nodeCount}
+          </span>
+        </Td>
         <Td>
-          {isDeleted ? (
-            <StatusBadge kind="muted">deleted</StatusBadge>
-          ) : isSynced ? (
-            <StatusBadge kind="ok">synced</StatusBadge>
-          ) : (
-            <StatusBadge kind="pending">pending</StatusBadge>
-          )}
+          <div style={{ display: "inline-flex", gap: 4, flexWrap: "wrap" }}>
+            {isDeleted ? (
+              <StatusBadge kind="muted">deleted</StatusBadge>
+            ) : isSynced ? (
+              <StatusBadge kind="ok">synced</StatusBadge>
+            ) : (
+              <StatusBadge kind="pending">pending</StatusBadge>
+            )}
+            {!isDeleted && row.nodeCount > 0 && (
+              <StatusBadge kind="ok" title={`${row.nodeCount.toLocaleString()} nodes — deep tree mirrored`}>
+                deep
+              </StatusBadge>
+            )}
+          </div>
         </Td>
         <Td align="right">
           <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>

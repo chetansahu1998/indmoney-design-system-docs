@@ -775,6 +775,11 @@ func (s *server) routes(mux *http.ServeMux) {
 	// `projects` row linked on (tenant_id, file_id=file_key). Idempotent.
 	mux.HandleFunc("POST /v1/admin/figma-inventory/files/{file_key}/promote",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryPromote)))
+	// Phase 2C — deep node-tree browser. Returns every figma_node row for
+	// one file as a flat list ordered depth-first; client stitches the
+	// tree via parent_id.
+	mux.HandleFunc("GET /v1/admin/figma-inventory/files/{file_key}/nodes",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryFileNodes)))
 	// organism-pattern-detection (2026-05-13) — Part C dashboard endpoints
 	// powering /atlas/admin/organisms.
 	mux.HandleFunc("GET /v1/admin/organisms/adoption",
