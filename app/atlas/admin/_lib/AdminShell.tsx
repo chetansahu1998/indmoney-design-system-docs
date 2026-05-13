@@ -39,6 +39,10 @@ const NAV_LINKS: { href: string; label: string; key: string }[] = [
   // Adoption + drift + promotion-candidate ranking driven by Stage 6.7's
   // detected_organism_match corpus.
   { href: "/atlas/admin/organisms", label: "Organisms", key: "organisms" },
+  // 2026-05-13 — FIGMA DB Phase 2 (U1). Inventory tree (team → project →
+  // file → page → section), seed management, runs log, sync trigger.
+  // Backed by /v1/admin/figma-inventory/* + the 5-min poller from Phase 1.
+  { href: "/atlas/admin/figma-inventory", label: "Figma inventory", key: "figma-inventory" },
 ];
 
 function dsBaseURL(): string {
