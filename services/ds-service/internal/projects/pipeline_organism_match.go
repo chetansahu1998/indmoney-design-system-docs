@@ -746,10 +746,14 @@ func (p *Pipeline) runOrganismDetection(parentCtx context.Context, versionID str
 		)
 	}
 
-	// TODO(U13): trigger RebuildPromotionCandidates(tenant_id) here. Part D
-	// aggregates the novel-bucket fingerprints across all view_ready versions
-	// in the tenant into promotion_candidate rows. Deferred until U13 ships
-	// — the corpus is the prerequisite, not the consumer.
+	// Stage 6.7 epilogue — Part D aggregation (U13). Re-cluster the tenant's
+	// full corpus into promotion_candidate rows so the dashboard reflects
+	// the freshly-imported version. Replace-set semantics inside the
+	// rebuild — stale clusters drop, current clusters refresh.
+	if rebuildErr := p.Repo.RebuildPromotionCandidates(ctx, DefaultPromotionThresholds); rebuildErr != nil && p.Log != nil {
+		p.Log.Warn("stage 6.7: rebuild promotion candidates failed",
+			"version_id", versionID, "err", rebuildErr.Error())
+	}
 }
 
 // buildDetectedMatchRow assembles a DetectedOrganismMatch row from the

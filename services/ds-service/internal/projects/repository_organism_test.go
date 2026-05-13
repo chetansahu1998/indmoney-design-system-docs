@@ -16,10 +16,12 @@ import (
 type orgTestFixture struct {
 	repo      *TenantRepo
 	otherRepo *TenantRepo // a second tenant for isolation checks
+	projectID string      // for tests that need to create additional flows/versions
 	versionID string
 	screenID  string
 	tenantA   string
 	tenantB   string
+	userID    string // captured from newTestDB so additional CreateVersion calls satisfy FK
 }
 
 func seedOrgFixture(t *testing.T) orgTestFixture {
@@ -52,8 +54,11 @@ func seedOrgFixture(t *testing.T) orgTestFixture {
 		t.Fatalf("insert screens: %v", err)
 	}
 	return orgTestFixture{
-		repo: repo, otherRepo: other, versionID: v.ID, screenID: screens[0].ID,
+		repo: repo, otherRepo: other,
+		projectID: p.ID,
+		versionID: v.ID, screenID: screens[0].ID,
 		tenantA: tA, tenantB: tB,
+		userID: uA,
 	}
 }
 
