@@ -184,6 +184,7 @@ func main() {
 			ImageFillResolver: imageFillResolver, // ditto — pre-warms image-fill cache during Stage 4
 			ShutdownCtx:       shutdownCtx,       // wires SIGTERM into Stage 9 background prerender
 			PrerenderStatus:   prerenderStatus,   // U8 — operator observability
+			ManifestPath: filepath.Join(cfg.RepoDir, "public/icons/glyph/manifest.json"), // Stage 6.7 organism detection
 		}, nil
 	}
 

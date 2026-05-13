@@ -1,12 +1,15 @@
 package projects
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // pipeline_organism_match.go — Phase 1 of the organism-pattern-detection plan
@@ -612,4 +615,178 @@ func computeAtomDiff(fpAtoms, sigAtoms []string) []OrganismSlotDelta {
 		out = append(out, OrganismSlotDelta{Kind: "missing", AtomSlug: a})
 	}
 	return out
+}
+
+// ─── Stage 6.7 pipeline integration (U5) ─────────────────────────────────────
+
+// stage67Budget caps the wall-clock for organism detection per project_version
+// import. The walker is ~10ms per screen × 100s of screens = under 5s in
+// practice; this budget exists as a safety valve so a pathological canonical
+// tree can't stall the pipeline.
+const stage67Budget = 60 * time.Second
+
+// runOrganismDetection is Stage 6.7's entry point. Called from pipeline.go
+// after Stage 6's transaction commits and before Stage 7's SSE publish.
+// Detection failure is logged but never re-surfaced — view_ready is already
+// durable when this runs (R9 idempotency + non-blocking guarantee).
+//
+// Inputs are deliberately primitive slices (screenIDs + treeJSONs) instead
+// of the unexported screenReattach struct so the method signature doesn't
+// leak that internal type across file boundaries.
+func (p *Pipeline) runOrganismDetection(parentCtx context.Context, versionID string, screenIDs, treeJSONs []string) {
+	if p == nil || p.Repo == nil {
+		return
+	}
+	if len(screenIDs) != len(treeJSONs) {
+		if p.Log != nil {
+			p.Log.Warn("stage 6.7: screenIDs/treeJSONs length mismatch",
+				"screens", len(screenIDs), "trees", len(treeJSONs))
+		}
+		return
+	}
+	if len(screenIDs) == 0 {
+		return
+	}
+
+	// Recover from any walker panics so the pipeline never crashes on a
+	// pathological canonical tree.
+	defer func() {
+		if r := recover(); r != nil && p.Log != nil {
+			p.Log.Error("stage 6.7: panic in organism detection",
+				"version_id", versionID,
+				"panic", fmt.Sprintf("%v", r),
+			)
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(parentCtx, stage67Budget)
+	defer cancel()
+
+	// Load the published organism signature catalog. ManifestPath empty or
+	// missing manifest → empty catalog → every fingerprint classifies as
+	// novel. Detection still writes rows so Part D's clustering can run.
+	signatures, manifestHash, err := BuildOrganismSignatures(p.ManifestPath)
+	if err != nil && p.Log != nil {
+		p.Log.Warn("stage 6.7: failed to load organism signatures; proceeding with empty catalog",
+			"version_id", versionID, "manifest_path", p.ManifestPath, "err", err.Error())
+		// Fall through with nil signatures — runOrganismDetection still
+		// produces novel verdicts which Part D will cluster.
+	}
+
+	now := time.Now().UTC()
+	verdicts := make([]DetectedOrganismMatch, 0, len(screenIDs)*2)
+	thresholds := DefaultOrganismMatchThresholds
+
+	for i, screenID := range screenIDs {
+		if err := ctx.Err(); err != nil {
+			if p.Log != nil {
+				p.Log.Warn("stage 6.7: budget exceeded; truncating detection",
+					"version_id", versionID,
+					"screens_processed", i,
+					"screens_total", len(screenIDs),
+				)
+			}
+			break
+		}
+		treeJSON := treeJSONs[i]
+		if treeJSON == "" {
+			continue
+		}
+		var tree map[string]any
+		if err := json.Unmarshal([]byte(treeJSON), &tree); err != nil {
+			if p.Log != nil {
+				p.Log.Warn("stage 6.7: unparseable canonical_tree; skipping screen",
+					"version_id", versionID, "screen_id", screenID, "err", err.Error())
+			}
+			continue
+		}
+		fps := WalkOrganismCandidates(tree)
+		for _, fp := range fps {
+			v := ClassifyFingerprint(fp, signatures, thresholds)
+			row, err := buildDetectedMatchRow(versionID, screenID, fp, v, string(manifestHash), now)
+			if err != nil {
+				if p.Log != nil {
+					p.Log.Warn("stage 6.7: failed to build verdict row; skipping",
+						"version_id", versionID, "frame_id", fp.FrameID, "err", err.Error())
+				}
+				continue
+			}
+			verdicts = append(verdicts, row)
+		}
+	}
+
+	if len(verdicts) == 0 {
+		if p.Log != nil {
+			p.Log.Info("stage 6.7: no organism candidates",
+				"version_id", versionID, "screens", len(screenIDs))
+		}
+		return
+	}
+
+	if err := p.Repo.UpsertOrganismMatches(ctx, verdicts); err != nil {
+		if p.Log != nil {
+			p.Log.Error("stage 6.7: upsert organism matches failed",
+				"version_id", versionID, "rows", len(verdicts), "err", err.Error())
+		}
+		return
+	}
+	if p.Log != nil {
+		// Per-kind tally for operator triage.
+		byKind := map[OrganismMatchKind]int{}
+		for _, v := range verdicts {
+			byKind[OrganismMatchKind(v.MatchKind)]++
+		}
+		p.Log.Info("stage 6.7: organism detection complete",
+			"version_id", versionID,
+			"screens", len(screenIDs),
+			"matches", len(verdicts),
+			"exact", byKind[MatchKindExact],
+			"near", byKind[MatchKindNear],
+			"novel", byKind[MatchKindNovel],
+		)
+	}
+
+	// TODO(U13): trigger RebuildPromotionCandidates(tenant_id) here. Part D
+	// aggregates the novel-bucket fingerprints across all view_ready versions
+	// in the tenant into promotion_candidate rows. Deferred until U13 ships
+	// — the corpus is the prerequisite, not the consumer.
+}
+
+// buildDetectedMatchRow assembles a DetectedOrganismMatch row from the
+// walker's fingerprint + the classifier's verdict, JSON-serializing the
+// atom signature, slot topology, and diff. Returns an error only when JSON
+// marshaling fails (shouldn't happen — types are pure value).
+func buildDetectedMatchRow(versionID, screenID string, fp OrganismFingerprint, v OrganismMatchVerdict, manifestHash string, now time.Time) (DetectedOrganismMatch, error) {
+	atomJSON, err := json.Marshal(fp.AtomSet)
+	if err != nil {
+		return DetectedOrganismMatch{}, fmt.Errorf("marshal atom_signature: %w", err)
+	}
+	slotJSON, err := json.Marshal(fp.SlotTopology)
+	if err != nil {
+		return DetectedOrganismMatch{}, fmt.Errorf("marshal slot_topology: %w", err)
+	}
+	var diffJSON string
+	if len(v.Diff) > 0 {
+		b, err := json.Marshal(v.Diff)
+		if err != nil {
+			return DetectedOrganismMatch{}, fmt.Errorf("marshal diff: %w", err)
+		}
+		diffJSON = string(b)
+	}
+	return DetectedOrganismMatch{
+		VersionID:           versionID,
+		FrameID:             fp.FrameID,
+		ScreenID:            screenID,
+		SuspectedSlug:       v.SuspectedSlug,
+		SuspectedVariantKey: v.SuspectedVariant,
+		MatchKind:           string(v.Kind),
+		FingerprintHash:     fp.Hash,
+		AtomSignatureJSON:   string(atomJSON),
+		SlotTopologyJSON:    string(slotJSON),
+		DiffJSON:            diffJSON,
+		Confidence:          v.Confidence,
+		ManifestHash:        manifestHash,
+		ParentFrameID:       fp.ParentFrameID,
+		DetectedAt:          now,
+	}, nil
 }

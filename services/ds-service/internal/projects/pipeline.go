@@ -152,6 +152,14 @@ type Pipeline struct {
 	// allowed (tests, embedded use); the stage-9 spawn skips the
 	// recording cleanly via the buffer's nil-safe Append.
 	PrerenderStatus *PrerenderStatusBuffer
+	// ManifestPath — path to public/icons/glyph/manifest.json used by
+	// Stage 6.7's organism-pattern-detection pass (U5 of the 2026-05-13
+	// organism-pattern-detection plan). When empty, Stage 6.7 still runs
+	// but every fingerprint classifies as `novel` (empty signature
+	// catalog). main() wires this from the same Sources.ManifestPath
+	// the graph rebuilder uses. nil/empty is allowed; the pipeline never
+	// fails on detection issues (R9).
+	ManifestPath string
 }
 
 // PipelineInputs is what the HTTP handler hands off after persisting the
@@ -633,6 +641,26 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
+	}
+
+	// Stage 6.7 — organism-pattern detection (U5 of 2026-05-13 organism-
+	// pattern-detection plan). Walk every screen's canonical_tree,
+	// fingerprint organism-shaped FRAMEs, classify against the published
+	// manifest's organism signatures, write verdicts to
+	// detected_organism_match.
+	//
+	// Detection failure logs + continues — view_ready is already
+	// committed and the pipeline must not regress on detection bugs (R9).
+	// The corpus is reader-only downstream; missing rows for one version
+	// simply mean dashboards have no signal until the next import.
+	{
+		screenIDs := make([]string, len(reattaches))
+		treeJSONs := make([]string, len(reattaches))
+		for i, r := range reattaches {
+			screenIDs[i] = r.screenID
+			treeJSONs[i] = r.treeJSON
+		}
+		p.runOrganismDetection(ctx, in.VersionID, screenIDs, treeJSONs)
 	}
 
 	// Stage 7 — SSE event.
