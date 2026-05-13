@@ -1,0 +1,522 @@
+// Package inventory polls Figma teams > projects > files > pages > sections
+// every 5 minutes and mirrors the metadata into the FIGMA DB (migration
+// 0025). It does not store node trees.
+//
+// Two-tier change detection:
+//
+//   Tier A — every 5 min: per tenant, for each enabled team seed:
+//                         GET /v1/teams/<id>/projects     (tier-2, 40 RPM)
+//                         GET /v1/projects/<id>/files     (tier-2, 40 RPM)
+//                         Upsert project + file shells with the cheap
+//                         `last_modified` from the file-list endpoint.
+//
+//   Tier B — same cycle: for files whose API `last_modified` is newer than
+//                        the cached row, fetch
+//                        GET /v1/files/<key>?depth=2     (tier-1, 12 RPM)
+//                        and upsert pages + sections.
+//
+// All HTTP calls go through the shared per-PAT rate limiter built into
+// client.Client, so the inventory poller cooperates politely with the
+// audit pipeline's pre-existing Figma calls. The poller never aborts a
+// cycle on error — per-team/per-file failures are logged + counted and
+// the next cycle re-attempts.
+//
+// Wiring: cmd/server/main.go constructs one *Poller per process and calls
+// Start(ctx) alongside the audit worker pool. Stops when ctx is cancelled.
+package inventory
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects"
+)
+
+// DefaultInterval is the poll cadence. 5 minutes matches the user's
+// requirement; can be lowered for tests via PollerConfig.Interval.
+const DefaultInterval = 5 * time.Minute
+
+// DefaultPagesSyncBatch is the per-cycle cap on Tier-B (depth=2) fetches.
+// At 12 RPM tier-1 budget, 30 files in a 5-minute window leaves ~50%
+// headroom for the audit pipeline's other tier-1 calls (GetFileNodes etc.).
+const DefaultPagesSyncBatch = 30
+
+// PATResolver returns the decrypted Figma PAT for one tenant, or
+// (empty string, nil) when no token is configured. Mirrors the signature
+// already used by cmd/server/main.go's figmaPATResolver closure so we
+// can pass that closure straight in.
+type PATResolver func(ctx context.Context, tenantID string) (string, error)
+
+// TenantLister returns the set of tenant_ids the poller should crawl
+// each cycle. Pass discoverTenantIDs from cmd/server/main.go (or a
+// fixed list in tests).
+type TenantLister func(ctx context.Context) []string
+
+// Config bundles the dependencies. Required: DB, ResolvePAT, ListTenants.
+// Optional: Interval (default 5m), PagesSyncBatch (default 30), Logger.
+type Config struct {
+	DB             *sql.DB
+	ResolvePAT     PATResolver
+	ListTenants    TenantLister
+	Interval       time.Duration
+	PagesSyncBatch int
+	NewClient      func(pat string) FigmaInventoryClient // optional override for tests
+	Logger         *slog.Logger
+	Now            func() time.Time // injectable clock
+}
+
+// FigmaInventoryClient is the slice of *client.Client this poller calls.
+// Defining the interface here means tests can pass a fake without spinning
+// up an HTTP server.
+type FigmaInventoryClient interface {
+	GetTeamProjects(ctx context.Context, teamID string) (*client.TeamProjectsResponse, error)
+	GetProjectFiles(ctx context.Context, projectID string) (*client.ProjectFilesResponse, error)
+	GetFilePagesAndSections(ctx context.Context, fileKey string) (*client.FilePagesAndSections, error)
+}
+
+// Poller is the long-lived crawler. Construct via New(), then call Start(ctx).
+type Poller struct {
+	cfg Config
+
+	// triggerCh receives manual-sync requests from the admin "Sync now"
+	// endpoint. Buffered so multiple admins clicking the button don't block
+	// — extra notifications collapse into one in-progress cycle.
+	triggerCh chan struct{}
+
+	// onCycleDone, when set, is called at the end of every cycle with the
+	// per-cycle stats. Only used by tests; production passes nil.
+	onCycleDone func(stats RunStats)
+
+	stoppedMu sync.Mutex
+	stopped   bool
+}
+
+// RunStats is the per-cycle counters surfaced to the figma_inventory_run row.
+type RunStats struct {
+	TenantsCrawled   int
+	TeamsCrawled     int
+	ProjectsSeen     int
+	FilesSeen        int
+	FilesRefetched   int
+	PagesUpserted    int
+	SectionsUpserted int
+	Errors           []string
+}
+
+// New builds a Poller. Returns an error if required deps are missing.
+func New(cfg Config) (*Poller, error) {
+	if cfg.DB == nil {
+		return nil, errors.New("inventory: DB required")
+	}
+	if cfg.ResolvePAT == nil {
+		return nil, errors.New("inventory: ResolvePAT required")
+	}
+	if cfg.ListTenants == nil {
+		return nil, errors.New("inventory: ListTenants required")
+	}
+	if cfg.Interval <= 0 {
+		cfg.Interval = DefaultInterval
+	}
+	if cfg.PagesSyncBatch <= 0 {
+		cfg.PagesSyncBatch = DefaultPagesSyncBatch
+	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	if cfg.NewClient == nil {
+		cfg.NewClient = func(pat string) FigmaInventoryClient {
+			return client.New(pat)
+		}
+	}
+	return &Poller{
+		cfg:       cfg,
+		triggerCh: make(chan struct{}, 1),
+	}, nil
+}
+
+// Start launches the polling loop. Non-blocking — returns immediately after
+// spawning the goroutine. The loop exits when ctx is cancelled.
+func (p *Poller) Start(ctx context.Context) {
+	go p.loop(ctx)
+}
+
+// TriggerSync requests an out-of-band cycle. Non-blocking — collapses
+// multiple back-to-back requests into a single follow-up cycle.
+func (p *Poller) TriggerSync() {
+	select {
+	case p.triggerCh <- struct{}{}:
+	default:
+	}
+}
+
+func (p *Poller) loop(ctx context.Context) {
+	t := time.NewTicker(p.cfg.Interval)
+	defer t.Stop()
+
+	// First cycle runs after a short delay so the server finishes booting
+	// before we start hammering the Figma API. 30s mirrors the existing
+	// WorkerLeaseDuration cadence already in projects/worker.go.
+	first := time.NewTimer(30 * time.Second)
+	defer first.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			p.cfg.Logger.Info("figma_inventory: poller stopping")
+			return
+		case <-first.C:
+			p.runCycle(ctx)
+		case <-t.C:
+			p.runCycle(ctx)
+		case <-p.triggerCh:
+			p.runCycle(ctx)
+		}
+	}
+}
+
+// runCycle performs one full pass: enumerate tenants, then per-tenant
+// enumerate teams, projects, files, and selectively refresh pages.
+// Errors are accumulated, never thrown.
+func (p *Poller) runCycle(ctx context.Context) {
+	start := p.cfg.Now()
+	tenants := p.cfg.ListTenants(ctx)
+	if len(tenants) == 0 {
+		p.cfg.Logger.Debug("figma_inventory: no tenants to crawl")
+		return
+	}
+
+	totalStats := RunStats{TenantsCrawled: len(tenants)}
+	for _, tenantID := range tenants {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		stats := p.crawlTenant(ctx, tenantID)
+		totalStats.TeamsCrawled += stats.TeamsCrawled
+		totalStats.ProjectsSeen += stats.ProjectsSeen
+		totalStats.FilesSeen += stats.FilesSeen
+		totalStats.FilesRefetched += stats.FilesRefetched
+		totalStats.PagesUpserted += stats.PagesUpserted
+		totalStats.SectionsUpserted += stats.SectionsUpserted
+		totalStats.Errors = append(totalStats.Errors, stats.Errors...)
+	}
+
+	p.cfg.Logger.Info("figma_inventory: cycle complete",
+		"duration_ms", time.Since(start).Milliseconds(),
+		"tenants", totalStats.TenantsCrawled,
+		"teams", totalStats.TeamsCrawled,
+		"projects", totalStats.ProjectsSeen,
+		"files", totalStats.FilesSeen,
+		"files_refetched", totalStats.FilesRefetched,
+		"pages", totalStats.PagesUpserted,
+		"sections", totalStats.SectionsUpserted,
+		"errors", len(totalStats.Errors),
+	)
+
+	if p.onCycleDone != nil {
+		p.onCycleDone(totalStats)
+	}
+}
+
+// crawlTenant runs one tenant's full pass. PAT is resolved once; if it's
+// missing we skip the tenant entirely (no point recording an empty run).
+func (p *Poller) crawlTenant(ctx context.Context, tenantID string) RunStats {
+	logger := p.cfg.Logger.With("tenant", tenantID)
+	stats := RunStats{}
+
+	pat, err := p.cfg.ResolvePAT(ctx, tenantID)
+	if err != nil {
+		logger.Warn("figma_inventory: pat resolve failed",
+			"err", err.Error())
+		stats.Errors = append(stats.Errors, fmt.Sprintf("pat_resolve: %s", err.Error()))
+		return stats
+	}
+	if pat == "" {
+		logger.Debug("figma_inventory: tenant has no PAT, skipping")
+		return stats
+	}
+
+	repo := projects.NewTenantRepo(p.cfg.DB, tenantID)
+	seeds, err := repo.ListEnabledFigmaTeamSeeds(ctx)
+	if err != nil {
+		logger.Warn("figma_inventory: list seeds failed",
+			"err", err.Error())
+		stats.Errors = append(stats.Errors, fmt.Sprintf("list_seeds: %s", err.Error()))
+		return stats
+	}
+	if len(seeds) == 0 {
+		return stats
+	}
+
+	runID, err := repo.StartFigmaInventoryRun(ctx, p.cfg.Now())
+	if err != nil {
+		logger.Warn("figma_inventory: start run row failed",
+			"err", err.Error())
+		// Continue anyway — we'd rather crawl without an audit row than skip the cycle.
+		runID = 0
+	}
+
+	fc := p.cfg.NewClient(pat)
+	seenAt := p.cfg.Now()
+
+	for _, seed := range seeds {
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
+		teamStats := p.crawlTeam(ctx, fc, repo, seed, seenAt, logger)
+		stats.TeamsCrawled++
+		stats.ProjectsSeen += teamStats.ProjectsSeen
+		stats.FilesSeen += teamStats.FilesSeen
+		stats.Errors = append(stats.Errors, teamStats.Errors...)
+	}
+
+	// Tier-B: drain files needing pages-sync, bounded by PagesSyncBatch.
+	files, err := repo.FilesNeedingPagesSync(ctx, p.cfg.PagesSyncBatch)
+	if err != nil {
+		logger.Warn("figma_inventory: list files needing sync failed",
+			"err", err.Error())
+		stats.Errors = append(stats.Errors, fmt.Sprintf("files_needing_sync: %s", err.Error()))
+	}
+	for _, f := range files {
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
+		pageCount, sectionCount, err := p.syncFilePages(ctx, fc, repo, f, seenAt, logger)
+		if err != nil {
+			stats.Errors = append(stats.Errors,
+				fmt.Sprintf("sync_pages %s: %s", f.FileKey, errSummary(err)))
+			continue
+		}
+		stats.FilesRefetched++
+		stats.PagesUpserted += pageCount
+		stats.SectionsUpserted += sectionCount
+	}
+
+	if runID > 0 {
+		finishStats := projects.FigmaInventoryRunRow{
+			TeamsCrawled:    stats.TeamsCrawled,
+			ProjectsSeen:    stats.ProjectsSeen,
+			FilesSeen:       stats.FilesSeen,
+			FilesRefetched:  stats.FilesRefetched,
+			PagesUpserted:   stats.PagesUpserted,
+			SectionsUpserted: stats.SectionsUpserted,
+			ErrorCount:      len(stats.Errors),
+		}
+		if err := repo.FinishFigmaInventoryRun(ctx, runID, finishStats, stats.Errors); err != nil {
+			logger.Warn("figma_inventory: finish run row failed",
+				"err", err.Error(), "run_id", runID)
+		}
+	}
+
+	return stats
+}
+
+// crawlTeam fetches one team's projects + per-project files (Tier-A only).
+// Page/section fan-out is handled separately in Tier-B so the per-team
+// loop can stay simple.
+func (p *Poller) crawlTeam(
+	ctx context.Context,
+	fc FigmaInventoryClient,
+	repo *projects.TenantRepo,
+	seed projects.FigmaTeamSeed,
+	seenAt time.Time,
+	logger *slog.Logger,
+) RunStats {
+	stats := RunStats{}
+
+	tpResp, err := fc.GetTeamProjects(ctx, seed.TeamID)
+	if err != nil {
+		status := "error"
+		if apiErr, ok := err.(*client.APIError); ok && apiErr.IsAuth() {
+			status = "forbidden"
+		}
+		_ = repo.MarkFigmaTeamSeedCrawl(ctx, seed.TeamID, status, errSummary(err))
+		stats.Errors = append(stats.Errors,
+			fmt.Sprintf("get_team_projects %s: %s", seed.TeamID, errSummary(err)))
+		logger.Warn("figma_inventory: GetTeamProjects failed",
+			"team", seed.TeamID, "status", status, "err", err.Error())
+		return stats
+	}
+
+	// figma_team observed row — name comes from the projects response.
+	teamName := tpResp.Name
+	if teamName == "" {
+		teamName = seed.TeamName
+	}
+	if err := repo.UpsertFigmaTeam(ctx, seed.TeamID, teamName); err != nil {
+		stats.Errors = append(stats.Errors,
+			fmt.Sprintf("upsert_team %s: %s", seed.TeamID, err.Error()))
+	}
+
+	// projects
+	projRows := make([]projects.FigmaProjectRow, 0, len(tpResp.Projects))
+	for _, pr := range tpResp.Projects {
+		if pr.ID == "" {
+			continue
+		}
+		projRows = append(projRows, projects.FigmaProjectRow{
+			ProjectID: pr.ID,
+			TeamID:    seed.TeamID,
+			Name:      pr.Name,
+		})
+	}
+	if err := repo.UpsertFigmaProjects(ctx, seed.TeamID, projRows, seenAt); err != nil {
+		stats.Errors = append(stats.Errors,
+			fmt.Sprintf("upsert_projects %s: %s", seed.TeamID, err.Error()))
+	}
+	if _, err := repo.SweepFigmaProjects(ctx, seed.TeamID, seenAt); err != nil {
+		stats.Errors = append(stats.Errors,
+			fmt.Sprintf("sweep_projects %s: %s", seed.TeamID, err.Error()))
+	}
+	stats.ProjectsSeen = len(projRows)
+
+	// files per project
+	for _, pr := range tpResp.Projects {
+		select {
+		case <-ctx.Done():
+			return stats
+		default:
+		}
+		pfResp, err := fc.GetProjectFiles(ctx, pr.ID)
+		if err != nil {
+			stats.Errors = append(stats.Errors,
+				fmt.Sprintf("get_project_files %s: %s", pr.ID, errSummary(err)))
+			logger.Warn("figma_inventory: GetProjectFiles failed",
+				"project", pr.ID, "err", err.Error())
+			continue
+		}
+		fileRows := make([]projects.FigmaFileRow, 0, len(pfResp.Files))
+		for _, f := range pfResp.Files {
+			if f.Key == "" {
+				continue
+			}
+			fileRows = append(fileRows, projects.FigmaFileRow{
+				FileKey:      f.Key,
+				Name:         f.Name,
+				ThumbnailURL: f.ThumbnailURL,
+				LastModified: parseAPITime(f.LastModified),
+			})
+		}
+		if err := repo.UpsertFigmaFilesShell(ctx, pr.ID, seed.TeamID, fileRows, seenAt); err != nil {
+			stats.Errors = append(stats.Errors,
+				fmt.Sprintf("upsert_files %s: %s", pr.ID, err.Error()))
+		}
+		if _, err := repo.SweepFigmaFiles(ctx, pr.ID, seenAt); err != nil {
+			stats.Errors = append(stats.Errors,
+				fmt.Sprintf("sweep_files %s: %s", pr.ID, err.Error()))
+		}
+		stats.FilesSeen += len(fileRows)
+	}
+
+	_ = repo.MarkFigmaTeamSeedCrawl(ctx, seed.TeamID, "ok", "")
+	return stats
+}
+
+// syncFilePages does the Tier-B depth=2 fetch + upsert for one file.
+// Returns (pageCount, sectionCount, err).
+func (p *Poller) syncFilePages(
+	ctx context.Context,
+	fc FigmaInventoryClient,
+	repo *projects.TenantRepo,
+	f projects.FigmaFileRow,
+	seenAt time.Time,
+	logger *slog.Logger,
+) (int, int, error) {
+	resp, err := fc.GetFilePagesAndSections(ctx, f.FileKey)
+	if err != nil {
+		logger.Warn("figma_inventory: GetFilePagesAndSections failed",
+			"file", f.FileKey, "err", err.Error())
+		return 0, 0, err
+	}
+
+	pages := resp.Pages()
+	pageRows := make([]projects.FigmaPageRow, 0, len(pages))
+	sectionRows := make([]projects.FigmaSectionRow, 0)
+	for i, pg := range pages {
+		pageRows = append(pageRows, projects.FigmaPageRow{
+			FileKey:            f.FileKey,
+			PageID:             pg.ID,
+			Name:               pg.Name,
+			OrderIndex:         i,
+			BackgroundColorHex: pg.BackgroundColorHex,
+		})
+		for j, sec := range pg.Sections {
+			sectionRows = append(sectionRows, projects.FigmaSectionRow{
+				FileKey:    f.FileKey,
+				PageID:     pg.ID,
+				SectionID:  sec.ID,
+				Name:       sec.Name,
+				X:          sec.X,
+				Y:          sec.Y,
+				Width:      sec.Width,
+				Height:     sec.Height,
+				OrderIndex: j,
+			})
+		}
+	}
+
+	pageCount, sectionCount, err := repo.UpsertFigmaPagesAndSections(ctx, f.FileKey, pageRows, sectionRows, seenAt)
+	if err != nil {
+		return 0, 0, fmt.Errorf("upsert pages+sections: %w", err)
+	}
+
+	if err := repo.UpdateFigmaFilePagesSynced(ctx, projects.FigmaFileRow{
+		FileKey:           f.FileKey,
+		Name:              resp.Name,
+		ThumbnailURL:      resp.ThumbnailURL,
+		LastModified:      parseAPITime(resp.LastModified),
+		Version:           resp.Version,
+		EditorType:        resp.EditorType,
+		LinkAccess:        resp.LinkAccess,
+		Role:              resp.Role,
+		BranchOfFileKey:   resp.MainFileKey,
+		PagesLastSyncedAt: seenAt,
+		PagesSyncVersion:  resp.Version,
+	}); err != nil {
+		return pageCount, sectionCount, fmt.Errorf("mark synced: %w", err)
+	}
+	return pageCount, sectionCount, nil
+}
+
+// parseAPITime accepts the Figma API's lastModified format. The API uses
+// RFC3339 with timezone "Z" (UTC). Returns zero time on parse failure
+// rather than failing the row.
+func parseAPITime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t
+	}
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
+}
+
+// errSummary returns a short error string suitable for the last_crawl_error
+// column. APIError bodies are sometimes multi-line JSON; collapse those.
+func errSummary(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) > 1000 {
+		s = s[:1000] + "...(truncated)"
+	}
+	return s
+}
