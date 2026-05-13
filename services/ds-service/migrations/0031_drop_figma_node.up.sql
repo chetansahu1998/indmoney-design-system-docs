@@ -1,0 +1,26 @@
+-- 0031_drop_figma_node — removes the per-Figma-node table introduced in
+-- migration 0027. Per-section subtree storage now lives on figma_section
+-- via subtree_json_zstd (added by migration 0030); see migration 0030's
+-- header and docs/plans/2026-05-14-002-feat-figma-section-subtree-blob-plan.md.
+--
+-- Why this lands in the same release as 0030:
+--   * 0030 adds subtree_json_zstd + subtree_node_count to figma_section.
+--   * Plan-002 U4 stops the poller from writing figma_node rows.
+--   * Plan-002 U5's LoadSectionSubtree is the new read path.
+--   * Plan-002 U6 deletes the four admin queries + handlers + UI panel
+--     that were the only callers of figma_node.
+-- By the time the runner reaches this migration, no caller queries
+-- figma_node. The DROP is safe.
+--
+-- SQLite's DROP TABLE cascades index deletion automatically, so the
+-- five secondary indexes (parent, file+depth, name, type,
+-- component_key) and the composite-PK autoindex are gone in one
+-- statement. No data backfill — the local DB was wiped to 836KB
+-- before plan-002 shipped; Fly is also empty.
+--
+-- Pre-drop measurement (local DB before today's wipe): 4.8 GB table
+-- + ~8.6 GB across the six btree indexes = ~13 GB reclaimed by this
+-- migration on environments that still hold the pre-wipe data. The
+-- next VACUUM after deploy realizes the space.
+
+DROP TABLE IF EXISTS figma_node;
