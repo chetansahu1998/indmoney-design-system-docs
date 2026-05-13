@@ -274,7 +274,17 @@ func (p *Planner) Plan(ctx context.Context, tenantID, fileKey string) (FilePlan,
 				LiveContentHash:  sec.ContentHash,
 				LivePositionHash: sec.PositionHash,
 			}
-			ps.SubProduct, ps.SubFlow = projects.ParseSectionName(sec.Name)
+			// Prefer Claude/admin-supplied taxonomy overrides over the
+			// section-name parser when both fields are non-empty. The
+			// parser remains the fallback so a freshly-crawled section
+			// with no overrides still produces a usable (sub_product,
+			// sub_flow) pair.
+			if sec.SubProductOverride != "" && sec.SubFlowOverride != "" {
+				ps.SubProduct = sec.SubProductOverride
+				ps.SubFlow = sec.SubFlowOverride
+			} else {
+				ps.SubProduct, ps.SubFlow = projects.ParseSectionName(sec.Name)
+			}
 
 			// Section's hashes not yet populated — same hash_not_ready treatment.
 			if sec.ContentHash == "" {

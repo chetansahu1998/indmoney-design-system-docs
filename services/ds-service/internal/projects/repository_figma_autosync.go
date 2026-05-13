@@ -307,6 +307,11 @@ type FigmaSectionRowFull struct {
 	OrderIndex   int
 	ContentHash  string
 	PositionHash string
+	// Migration 0029 — Claude/admin-supplied taxonomy overrides. When set,
+	// the planner uses these in preference to ParseSectionName(name).
+	SubProductOverride string
+	SubFlowOverride    string
+	ClassifiedSource   string // 'section_name' | 'claude_heuristic' | 'admin_override' | ''
 }
 
 // ListFigmaSectionsForPage returns every live section under a page.
@@ -319,7 +324,10 @@ func (t *TenantRepo) ListFigmaSectionsForPage(ctx context.Context, fileKey, page
 	}
 	rows, err := t.r.db.QueryContext(ctx, `
 		SELECT section_id, name, x, y, width, height, order_index,
-		       COALESCE(content_hash, ''), COALESCE(position_hash, '')
+		       COALESCE(content_hash, ''), COALESCE(position_hash, ''),
+		       COALESCE(sub_product_override, ''),
+		       COALESCE(sub_flow_override, ''),
+		       COALESCE(classified_source, '')
 		  FROM figma_section
 		 WHERE tenant_id = ? AND file_key = ? AND page_id = ? AND deleted_at IS NULL
 		 ORDER BY order_index ASC, section_id ASC
@@ -334,6 +342,7 @@ func (t *TenantRepo) ListFigmaSectionsForPage(ctx context.Context, fileKey, page
 		if err := rows.Scan(
 			&r.SectionID, &r.Name, &r.X, &r.Y, &r.Width, &r.Height, &r.OrderIndex,
 			&r.ContentHash, &r.PositionHash,
+			&r.SubProductOverride, &r.SubFlowOverride, &r.ClassifiedSource,
 		); err != nil {
 			return nil, fmt.Errorf("scan figma_section: %w", err)
 		}
@@ -347,12 +356,18 @@ func (t *TenantRepo) ListFigmaSectionsForPage(ctx context.Context, fileKey, page
 
 // ListFigmaFilesForAutoSync returns every figma_file row that's
 // eligible for the AutoSyncPlanner: in-window (last_modified >= cutoff)
-// AND its figma_project_mapping has enabled_for_autosync=1.
+// AND its figma_project_mapping has enabled_for_autosync=1
+// AND — when the tenant has a non-empty figma_owner_allowlist — the
+// file's last_editor_name appears on the allowlist.
+//
+// The allowlist join is conditional via "OR allowlist-is-empty" so a
+// fresh install with no allowlist rows behaves as "allow all". A tenant
+// that seeds even one name flips into allowlist-mode and unrecognised
+// last-editor names are filtered out (or filtered out as "missing" if
+// last_editor_name IS NULL — caller must run owner-fetch first).
+//
 // Soft-deleted files excluded. Ordered by last_modified DESC so recent
 // files surface first.
-//
-// Caller passes the 6-month cutoff time; this method doesn't bake the
-// window in.
 func (t *TenantRepo) ListFigmaFilesForAutoSync(ctx context.Context, cutoff time.Time) ([]FigmaFileRow, error) {
 	if t.tenantID == "" {
 		return nil, errors.New("projects: tenant_id required")
@@ -377,8 +392,12 @@ func (t *TenantRepo) ListFigmaFilesForAutoSync(ctx context.Context, cutoff time.
 		 WHERE f.tenant_id = ?
 		   AND f.deleted_at IS NULL
 		   AND f.last_modified >= ?
+		   AND (
+		         (SELECT COUNT(*) FROM figma_owner_allowlist WHERE tenant_id = ?) = 0
+		         OR f.last_editor_name IN (SELECT full_name FROM figma_owner_allowlist WHERE tenant_id = ?)
+		       )
 		 ORDER BY f.last_modified DESC
-	`, t.tenantID, rfc3339(cutoff.UTC()))
+	`, t.tenantID, rfc3339(cutoff.UTC()), t.tenantID, t.tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list figma_file for autosync: %w", err)
 	}
@@ -544,4 +563,55 @@ func (t *TenantRepo) ListFigmaProjectMappings(ctx context.Context) ([]FigmaProje
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// ─── section classification overrides (migration 0029) ──────────────────────
+
+// SectionClassification is what the Claude classifier or admin override
+// writes into figma_section.{sub_product,sub_flow}_override.
+type SectionClassification struct {
+	FileKey    string
+	PageID     string
+	SectionID  string
+	SubProduct string
+	SubFlow    string
+	// Source distinguishes hand-entered designer naming ('section_name'),
+	// Claude/heuristic pass ('claude_heuristic'), or admin override
+	// ('admin_override'). The planner doesn't branch on source today but
+	// the column lets the UI surface provenance.
+	Source string
+}
+
+// UpsertSectionClassification writes the override columns for one section.
+// Idempotent; tenant-scoped. Empty SubProduct + SubFlow are rejected — the
+// caller should delete the row's override via DeleteSectionClassification
+// instead of writing empty strings.
+func (t *TenantRepo) UpsertSectionClassification(ctx context.Context, c SectionClassification) error {
+	if t.tenantID == "" {
+		return errors.New("projects: tenant_id required")
+	}
+	if c.FileKey == "" || c.PageID == "" || c.SectionID == "" {
+		return errors.New("projects: file_key, page_id, section_id required")
+	}
+	if c.SubProduct == "" || c.SubFlow == "" {
+		return errors.New("projects: sub_product and sub_flow required")
+	}
+	if c.Source == "" {
+		c.Source = "claude_heuristic"
+	}
+	_, err := t.handle().ExecContext(ctx, `
+		UPDATE figma_section
+		   SET sub_product_override = ?,
+		       sub_flow_override    = ?,
+		       classified_source    = ?,
+		       classified_at        = ?
+		 WHERE tenant_id = ? AND file_key = ? AND page_id = ? AND section_id = ?
+	`,
+		c.SubProduct, c.SubFlow, c.Source, rfc3339(t.now().UTC()),
+		t.tenantID, c.FileKey, c.PageID, c.SectionID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert section classification: %w", err)
+	}
+	return nil
 }
