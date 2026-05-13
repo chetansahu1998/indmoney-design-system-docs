@@ -412,6 +412,127 @@ func TestWalker_DS_ComponentSetSkipped(t *testing.T) {
 	}
 }
 
+// ─── Wrapper-type generalization (2026-05-14 — Bias #1 fix) ──────────────────
+
+// TestWalker_GroupWrapperBecomesCandidate — a GROUP with ≥ 2 atom INSTANCEs
+// in its subtree should now be a candidate (was excluded pre-2026-05-14).
+func TestWalker_GroupWrapperBecomesCandidate(t *testing.T) {
+	group := map[string]any{
+		"id":   "g1",
+		"name": "List/Full width",
+		"type": "GROUP",
+		"absoluteBoundingBox": map[string]any{"x": 0.0, "y": 0.0, "width": 343.0, "height": 56.0},
+		"children": []any{
+			map[string]any{
+				"id": "g1-li", "type": "INSTANCE", "name": "Left Icon/Default", "componentId": "229:4715",
+				"absoluteBoundingBox": map[string]any{"x": 0.0, "y": 0.0, "width": 24.0, "height": 24.0},
+			},
+			map[string]any{
+				"id": "g1-rt", "type": "INSTANCE", "name": "Right Text", "componentId": "228:5960",
+				"absoluteBoundingBox": map[string]any{"x": 100.0, "y": 0.0, "width": 100.0, "height": 24.0},
+			},
+		},
+	}
+	out := WalkOrganismCandidates(WrapForOrganismWalk(group))
+	if len(out) == 0 {
+		t.Fatal("expected GROUP wrapper to be a candidate; got 0")
+	}
+	if out[0].FrameID != "g1" {
+		t.Errorf("FrameID = %q; want g1", out[0].FrameID)
+	}
+}
+
+// TestWalker_InstanceWrapperBecomesCandidate — an INSTANCE that contains
+// atom INSTANCEs (e.g., a designer reusing a local unpublished component
+// repeatedly) is now a candidate so the DS team can see it.
+func TestWalker_InstanceWrapperBecomesCandidate(t *testing.T) {
+	inst := map[string]any{
+		"id":   "i1",
+		"name": "Position card local",
+		"type": "INSTANCE",
+		// This INSTANCE has a componentId — i.e., it's actually a real
+		// reference. The walker still emits it; the classifier will
+		// produce `exact` against any published organism it matches,
+		// which is the healthy-state outcome.
+		"componentId": "local:99",
+		"absoluteBoundingBox": map[string]any{"x": 0.0, "y": 0.0, "width": 343.0, "height": 200.0},
+		"children": []any{
+			map[string]any{
+				"id": "i1-a", "type": "INSTANCE", "name": "Left Icon/Default", "componentId": "229:4715",
+				"absoluteBoundingBox": map[string]any{"x": 0.0, "y": 0.0, "width": 24.0, "height": 24.0},
+			},
+			map[string]any{
+				"id": "i1-b", "type": "INSTANCE", "name": "Right Text", "componentId": "228:5960",
+				"absoluteBoundingBox": map[string]any{"x": 100.0, "y": 0.0, "width": 100.0, "height": 24.0},
+			},
+		},
+	}
+	out := WalkOrganismCandidates(WrapForOrganismWalk(inst))
+	if len(out) == 0 {
+		t.Fatal("expected INSTANCE wrapper to be a candidate; got 0")
+	}
+	if out[0].FrameID != "i1" {
+		t.Errorf("FrameID = %q; want i1", out[0].FrameID)
+	}
+}
+
+// TestWalker_ComponentWrapperBecomesCandidate — a COMPONENT (a published
+// component definition in the file itself) is also a candidate now.
+// Rare in product files but harmless to surface.
+func TestWalker_ComponentWrapperBecomesCandidate(t *testing.T) {
+	comp := map[string]any{
+		"id":   "c1",
+		"name": "MyLocalComponent",
+		"type": "COMPONENT",
+		"absoluteBoundingBox": map[string]any{"x": 0.0, "y": 0.0, "width": 343.0, "height": 56.0},
+		"children": []any{
+			map[string]any{
+				"id": "c1-a", "type": "INSTANCE", "name": "Left Icon/Default", "componentId": "229:4715",
+				"absoluteBoundingBox": map[string]any{"x": 0.0, "y": 0.0, "width": 24.0, "height": 24.0},
+			},
+			map[string]any{
+				"id": "c1-b", "type": "INSTANCE", "name": "Right Text", "componentId": "228:5960",
+				"absoluteBoundingBox": map[string]any{"x": 100.0, "y": 0.0, "width": 100.0, "height": 24.0},
+			},
+		},
+	}
+	out := WalkOrganismCandidates(WrapForOrganismWalk(comp))
+	if len(out) == 0 {
+		t.Fatal("expected COMPONENT wrapper to be a candidate; got 0")
+	}
+	if out[0].FrameID != "c1" {
+		t.Errorf("FrameID = %q; want c1", out[0].FrameID)
+	}
+}
+
+// TestWalker_ComponentSetExcluded — COMPONENT_SET is Figma's variant
+// container, not an organism. It should NOT become a candidate even if
+// it contains atom INSTANCEs (its children are variants, not slots).
+func TestWalker_ComponentSetExcluded(t *testing.T) {
+	cs := map[string]any{
+		"id":   "cs1",
+		"name": "List 343",
+		"type": "COMPONENT_SET",
+		"absoluteBoundingBox": map[string]any{"x": 0.0, "y": 0.0, "width": 800.0, "height": 400.0},
+		"children": []any{
+			map[string]any{
+				"id": "cs1-a", "type": "INSTANCE", "name": "Left Icon/Default", "componentId": "229:4715",
+				"absoluteBoundingBox": map[string]any{"x": 0.0, "y": 0.0, "width": 24.0, "height": 24.0},
+			},
+			map[string]any{
+				"id": "cs1-b", "type": "INSTANCE", "name": "Right Text", "componentId": "228:5960",
+				"absoluteBoundingBox": map[string]any{"x": 100.0, "y": 0.0, "width": 100.0, "height": 24.0},
+			},
+		},
+	}
+	out := WalkOrganismCandidates(WrapForOrganismWalk(cs))
+	for _, fp := range out {
+		if fp.FrameID == "cs1" {
+			t.Errorf("COMPONENT_SET %q must NOT be emitted as a candidate", fp.FrameID)
+		}
+	}
+}
+
 // ─── U4 classifier tests ─────────────────────────────────────────────────────
 
 // listOnSurfaceSig is a synthetic OrganismSignature used as the test catalog.

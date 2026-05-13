@@ -199,14 +199,40 @@ func WrapForOrganismWalk(node map[string]any) map[string]any {
 	}
 }
 
+// candidateWrapperTypes — every Figma container type that can be a hand-built
+// organism wrapper. Pre-2026-05-14 the walker only considered FRAME, which
+// missed:
+//
+//   - GROUP — designers sometimes wrap a composition in a GROUP for
+//     transient grouping (e.g., position cards in INDstocks V4 sub-flow).
+//   - INSTANCE — an INSTANCE of an UNPUBLISHED local component is the
+//     designer's "I built this once and reused it" pattern. We still want
+//     to surface it as a candidate so the DS team can see it. INSTANCEs
+//     that already point at a published organism will surface here too and
+//     classify as `exact` matches against themselves — the desired healthy-
+//     state outcome.
+//   - COMPONENT — rare in product files, but possible.
+//
+// COMPONENT_SET is intentionally excluded: it's Figma's variant container,
+// not a user-facing composition. BOOLEAN_OPERATION is excluded because
+// those are vector shape operators.
+var candidateWrapperTypes = map[string]struct{}{
+	"FRAME":     {},
+	"GROUP":     {},
+	"INSTANCE":  {},
+	"COMPONENT": {},
+}
+
 // walkOrganismFromNode evaluates `node` as a candidate, then recurses into
 // children. parentChain[len-1] is the nearest enclosing candidate; new
-// candidates inherit it as parent_frame_id.
+// candidates inherit it as parent_frame_id (note: the field name is
+// historical from when only FRAME was a candidate type — it now records
+// the enclosing GROUP / INSTANCE / COMPONENT id too).
 //
-// Recursion descends through ALL container types so a candidate FRAME nested
-// inside a GROUP / BOOLEAN_OPERATION / INSTANCE still surfaces. We do NOT
-// stop at a candidate (unlike walkClusters which stops to avoid double-
-// rasterizing); organism candidates can be legitimately nested.
+// Recursion descends through ALL container types so a candidate nested
+// inside a BOOLEAN_OPERATION still surfaces. We do NOT stop at a candidate
+// (unlike walkClusters which stops to avoid double-rasterizing); organism
+// candidates can be legitimately nested.
 func walkOrganismFromNode(node map[string]any, parentChain []*OrganismFingerprint, out *[]OrganismFingerprint) {
 	if node == nil {
 		return
@@ -220,7 +246,7 @@ func walkOrganismFromNode(node map[string]any, parentChain []*OrganismFingerprin
 
 	t, _ := node["type"].(string)
 	candidateAdded := false
-	if t == "FRAME" {
+	if _, isCandidate := candidateWrapperTypes[t]; isCandidate {
 		if fp, ok := buildFingerprint(node); ok {
 			if len(parentChain) > 0 {
 				fp.ParentFrameID = parentChain[len(parentChain)-1].FrameID
