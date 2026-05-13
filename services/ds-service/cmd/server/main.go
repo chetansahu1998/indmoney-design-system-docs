@@ -45,6 +45,7 @@ import (
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/auth"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/db"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/inventory"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/extractor"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects/rules"
@@ -359,6 +360,24 @@ func main() {
 		Log:       log,
 	}
 
+	// FIGMA DB inventory poller (migration 0025). Re-discovers tenants on
+	// each cycle via discoverTenantIDs so a freshly-onboarded tenant joins
+	// without a restart. Uses the same figmaPATResolver as the audit
+	// pipeline — the shared per-PAT rate limiter inside client.Client
+	// keeps the inventory poller polite alongside Pipeline calls.
+	inventoryPoller, err := inventory.New(inventory.Config{
+		DB:         dbConn.DB,
+		ResolvePAT: figmaPATResolver,
+		ListTenants: func(ctx context.Context) []string {
+			return discoverTenantIDs(ctx, dbConn.DB, log)
+		},
+		Logger: log,
+	})
+	if err != nil {
+		log.Error("figma_inventory poller init", "err", err)
+		os.Exit(1)
+	}
+
 	// Now that graphRebuildPool exists, build projectsServer with T3's
 	// post-commit enqueue dependency wired in. NewServer captures the
 	// ServerDeps by value, so subsequent changes to graphRebuildPool's
@@ -380,6 +399,7 @@ func main() {
 		ImageFillResolver: imageFillResolver,
 		PreviewPyramid:    previewPyramid,
 		GraphRebuildPool:  graphRebuildPool,
+		InventoryPoller:   inventoryPoller,
 		Log:              log,
 	})
 
@@ -409,6 +429,11 @@ func main() {
 		log.Error("graph rebuild pool start", "err", err)
 		os.Exit(1)
 	}
+	// Start the FIGMA DB inventory poller. Lives off workerCtx so it stops
+	// on the same SIGTERM as the audit + graph workers. First crawl runs
+	// 30s after boot (avoids hammering Figma while the server is still
+	// finishing other init); subsequent cycles run every 5 min.
+	inventoryPoller.Start(workerCtx)
 
 	srv := &server{
 		cfg:             cfg,
@@ -719,6 +744,21 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaBlocklistList)))
 	mux.HandleFunc("DELETE /v1/admin/figma-render-blocklist/{file_id}/{node_id}",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaBlocklistClear)))
+	// FIGMA DB inventory admin (2026-05-13, migration 0025). Admin-managed
+	// team seed list + read-only inventory tree + manual sync trigger +
+	// per-cycle run log. The poller (Started above) does the actual crawling.
+	mux.HandleFunc("GET /v1/admin/figma-inventory/teams",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryListTeams)))
+	mux.HandleFunc("POST /v1/admin/figma-inventory/teams",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryAddTeam)))
+	mux.HandleFunc("DELETE /v1/admin/figma-inventory/teams/{team_id}",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryRemoveTeam)))
+	mux.HandleFunc("GET /v1/admin/figma-inventory/tree",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryTree)))
+	mux.HandleFunc("POST /v1/admin/figma-inventory/sync",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventorySync)))
+	mux.HandleFunc("GET /v1/admin/figma-inventory/runs",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaInventoryRuns)))
 	// organism-pattern-detection (2026-05-13) — Part C dashboard endpoints
 	// powering /atlas/admin/organisms.
 	mux.HandleFunc("GET /v1/admin/organisms/adoption",
@@ -734,6 +774,16 @@ func (s *server) routes(mux *http.ServeMux) {
 	// Part B U9 — designer "Mark as intentional fork" assertion.
 	mux.HandleFunc("POST /v1/audit/organism-match/fork",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleOrganismForkMark)))
+	// U14b — reviewer sets a name on a promotion candidate.
+	mux.HandleFunc("PATCH /v1/admin/organisms/promotion-candidates/{hash}",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandlePromotionCandidatePatch)))
+	// Plugin "Replace with INSTANCE" deeplink — resolves a slug to the
+	// Figma file + node id where the published organism lives, so the
+	// plugin can open the source file and the designer can drag the
+	// real INSTANCE manually. Library-key + automated swap is a
+	// separate follow-up.
+	mux.HandleFunc("GET /v1/admin/organisms/{slug}/deeplink",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleOrganismDeeplink)))
 	mux.HandleFunc("GET /v1/projects",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectList)))
 	mux.HandleFunc("GET /v1/projects/{slug}",

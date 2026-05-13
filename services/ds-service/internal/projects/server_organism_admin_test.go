@@ -500,6 +500,161 @@ func TestOrganismForkMark_TenantIsolation(t *testing.T) {
 	}
 }
 
+// ─── HandlePromotionCandidatePatch (U14b) + HandleOrganismDeeplink ───────────
+
+func callPatchPromotion(t *testing.T, srv *Server, claims *auth.Claims, hash, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPatch,
+		"/v1/admin/organisms/promotion-candidates/"+hash,
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("hash", hash)
+	if claims != nil {
+		req = req.WithContext(context.WithValue(req.Context(), ctxKeyClaims, claims))
+	}
+	w := httptest.NewRecorder()
+	srv.HandlePromotionCandidatePatch(w, req)
+	return w
+}
+
+func TestPromotionCandidatePatch_SetsName(t *testing.T) {
+	srv, claims, fx := seedAdminFixture(t)
+	if err := fx.repo.UpsertPromotionCandidates(context.Background(), []PromotionCandidate{
+		{FingerprintHash: "h1", Frequency: 5, FileCount: 2,
+			StabilityScore: 0.9, AtomReuseRate: 0.95},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	w := callPatchPromotion(t, srv, claims, "h1", `{"proposed_name":"Stock Holding Card"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", w.Code, w.Body.String())
+	}
+	got, _ := fx.repo.ListPromotionCandidates(context.Background(), 10)
+	if len(got) == 0 || got[0].ProposedName != "Stock Holding Card" {
+		t.Errorf("proposed_name not persisted: %+v", got)
+	}
+}
+
+func TestPromotionCandidatePatch_ClearsName(t *testing.T) {
+	srv, claims, fx := seedAdminFixture(t)
+	if err := fx.repo.UpsertPromotionCandidates(context.Background(), []PromotionCandidate{
+		{FingerprintHash: "h1", Frequency: 5, FileCount: 2,
+			StabilityScore: 0.9, AtomReuseRate: 0.95, ProposedName: "Old Name"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	w := callPatchPromotion(t, srv, claims, "h1", `{"proposed_name":""}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	got, _ := fx.repo.ListPromotionCandidates(context.Background(), 10)
+	if got[0].ProposedName != "" {
+		t.Errorf("expected proposed_name cleared; got %q", got[0].ProposedName)
+	}
+}
+
+func TestPromotionCandidatePatch_NotFound(t *testing.T) {
+	srv, claims, _ := seedAdminFixture(t)
+	w := callPatchPromotion(t, srv, claims, "does-not-exist", `{"proposed_name":"X"}`)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d; want 404", w.Code)
+	}
+}
+
+func TestPromotionCandidatePatch_MissingHash(t *testing.T) {
+	srv, claims, _ := seedAdminFixture(t)
+	req := httptest.NewRequest(http.MethodPatch, "/v1/admin/organisms/promotion-candidates/",
+		strings.NewReader(`{"proposed_name":"X"}`))
+	req = req.WithContext(context.WithValue(req.Context(), ctxKeyClaims, claims))
+	w := httptest.NewRecorder()
+	srv.HandlePromotionCandidatePatch(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d; want 400", w.Code)
+	}
+}
+
+func TestPromotionCandidatePatch_Unauthorized(t *testing.T) {
+	srv, _, _ := seedAdminFixture(t)
+	w := callPatchPromotion(t, srv, nil, "h1", `{"proposed_name":"X"}`)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d; want 401", w.Code)
+	}
+}
+
+func TestPromotionCandidatePatch_MethodNotAllowed(t *testing.T) {
+	srv, claims, _ := seedAdminFixture(t)
+	req := httptest.NewRequest(http.MethodGet,
+		"/v1/admin/organisms/promotion-candidates/h1", nil)
+	req.SetPathValue("hash", "h1")
+	req = req.WithContext(context.WithValue(req.Context(), ctxKeyClaims, claims))
+	w := httptest.NewRecorder()
+	srv.HandlePromotionCandidatePatch(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d; want 405", w.Code)
+	}
+}
+
+// ─── LookupOrganismDeeplink (the manifest-reading helper) ────────────────────
+
+func TestLookupOrganismDeeplink_Happy(t *testing.T) {
+	body := `{
+		"file_key": "FILEKEY",
+		"icons": [
+			{"slug": "list-on-surface", "kind": "component", "set_id": "1625:46664"}
+		]
+	}`
+	path := writeTempManifest(t, body)
+	loc, err := LookupOrganismDeeplink(path, "list-on-surface")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := "https://www.figma.com/design/FILEKEY?node-id=1625-46664"
+	if loc.FigmaURL != want {
+		t.Errorf("FigmaURL = %q; want %q", loc.FigmaURL, want)
+	}
+	if loc.FileKey != "FILEKEY" || loc.SetID != "1625:46664" {
+		t.Errorf("unexpected loc: %+v", loc)
+	}
+}
+
+func TestLookupOrganismDeeplink_NotFound(t *testing.T) {
+	body := `{"file_key":"X","icons":[]}`
+	path := writeTempManifest(t, body)
+	_, err := LookupOrganismDeeplink(path, "missing-slug")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound; got %v", err)
+	}
+}
+
+func TestLookupOrganismDeeplink_WrongKind(t *testing.T) {
+	body := `{"file_key":"X","icons":[
+		{"slug":"chevron","kind":"icon","set_id":"1:2"}
+	]}`
+	path := writeTempManifest(t, body)
+	_, err := LookupOrganismDeeplink(path, "chevron")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("kind=icon should be ErrNotFound for deeplink lookup; got %v", err)
+	}
+}
+
+func TestLookupOrganismDeeplink_MissingSetID(t *testing.T) {
+	body := `{"file_key":"X","icons":[
+		{"slug":"weird","kind":"component"}
+	]}`
+	path := writeTempManifest(t, body)
+	_, err := LookupOrganismDeeplink(path, "weird")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing set_id should be ErrNotFound; got %v", err)
+	}
+}
+
+func TestLookupOrganismDeeplink_NoFile(t *testing.T) {
+	_, err := LookupOrganismDeeplink("/nonexistent/manifest.json", "any")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing manifest should be ErrNotFound; got %v", err)
+	}
+}
+
 // ─── Tenant isolation ────────────────────────────────────────────────────────
 
 func TestOrganismAdmin_TenantIsolation(t *testing.T) {

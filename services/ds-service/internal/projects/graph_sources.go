@@ -834,6 +834,114 @@ func (s OrganismSignature) AtomSlugSet() map[string]struct{} {
 	return out
 }
 
+// OrganismDeeplink is the wire shape returned by
+// GET /v1/admin/organisms/{slug}/deeplink. Plugin uses figma_url to open
+// the published-component file at the right node so the designer can drag
+// the real INSTANCE into their canvas.
+type OrganismDeeplink struct {
+	Slug     string `json:"slug"`
+	FileKey  string `json:"file_key"`
+	SetID    string `json:"set_id"`
+	FigmaURL string `json:"figma_url"`
+}
+
+// LookupOrganismDeeplink resolves a slug to its publishing file + node id
+// via the components manifest. Returns ErrNotFound when the slug isn't a
+// kind=component entry (or doesn't have a set_id). Not cached — re-parses
+// the manifest on every call. Fine for low-frequency admin endpoints; if
+// profiling shows otherwise we can wrap a per-process cache keyed on
+// manifestHash.
+func LookupOrganismDeeplink(manifestPath, slug string) (OrganismDeeplink, error) {
+	if manifestPath == "" {
+		return OrganismDeeplink{}, errors.New("graph_sources: manifestPath required")
+	}
+	if slug == "" {
+		return OrganismDeeplink{}, errors.New("graph_sources: slug required")
+	}
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return OrganismDeeplink{}, ErrNotFound
+		}
+		return OrganismDeeplink{}, fmt.Errorf("read manifest: %w", err)
+	}
+	// Top-level file_key + per-entry slug + set_id are all we need.
+	type entry struct {
+		Slug  string `json:"slug"`
+		Kind  string `json:"kind"`
+		SetID string `json:"set_id,omitempty"`
+		// Some entries carry a per-entry file override; default is the
+		// manifest's top-level file_key.
+		FileOverride string `json:"file_key,omitempty"`
+	}
+	type m struct {
+		FileKey string  `json:"file_key"`
+		Icons   []entry `json:"icons"`
+	}
+	var parsed m
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return OrganismDeeplink{}, fmt.Errorf("parse manifest: %w", err)
+	}
+	for _, it := range parsed.Icons {
+		if it.Slug != slug {
+			continue
+		}
+		if !strings.EqualFold(it.Kind, "component") {
+			return OrganismDeeplink{}, ErrNotFound
+		}
+		if it.SetID == "" {
+			return OrganismDeeplink{}, ErrNotFound
+		}
+		fileKey := it.FileOverride
+		if fileKey == "" {
+			fileKey = parsed.FileKey
+		}
+		if fileKey == "" {
+			return OrganismDeeplink{}, fmt.Errorf("manifest missing file_key for slug %q", slug)
+		}
+		// Figma deeplink format: https://www.figma.com/design/<file>?node-id=<X-Y>
+		nodeURL := strings.ReplaceAll(it.SetID, ":", "-")
+		return OrganismDeeplink{
+			Slug:     slug,
+			FileKey:  fileKey,
+			SetID:    it.SetID,
+			FigmaURL: "https://www.figma.com/design/" + fileKey + "?node-id=" + nodeURL,
+		}, nil
+	}
+	return OrganismDeeplink{}, ErrNotFound
+}
+
+// organismManifestPathFromDataDir converts a Server.deps.DataDir
+// ("<repo>/services/ds-service/data") into the conventional manifest
+// location ("<repo>/public/icons/glyph/manifest.json"). Production wiring
+// in cmd/server/main.go does this from cfg.RepoDir directly; this helper
+// gives the admin handlers an equivalent path without dragging
+// Pipeline.ManifestPath through ServerDeps.
+func organismManifestPathFromDataDir(dataDir string) string {
+	// dataDir = .../services/ds-service/data
+	// repoRoot = .../  → two parents up from data, plus parent of services
+	clean := filepath.Clean(dataDir)
+	// Walk up until we either hit a 'services' segment or the filesystem root.
+	repoRoot := clean
+	for i := 0; i < 6; i++ {
+		parent := filepath.Dir(repoRoot)
+		if parent == repoRoot {
+			return ""
+		}
+		repoRoot = parent
+		if filepath.Base(parent) == "indmoney-design-system-docs" ||
+			fileExists(filepath.Join(parent, "public", "icons", "glyph", "manifest.json")) {
+			break
+		}
+	}
+	return filepath.Join(repoRoot, "public", "icons", "glyph", "manifest.json")
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 // ─── Tokens (parsed from lib/tokens/indmoney/{base,semantic,*}.json) ─────────
 
 // dtcgTokenFile is the slice of a DTCG token catalog the worker reads.

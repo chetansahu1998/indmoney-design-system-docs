@@ -497,6 +497,38 @@ func (t *TenantRepo) UpsertPromotionCandidates(ctx context.Context, rows []Promo
 	return tx.Commit()
 }
 
+// SetPromotionCandidateProposedName sets the reviewer-supplied name on a
+// single promotion_candidate row (U14b). Passing an empty name clears it
+// (sets to NULL). Returns ErrNotFound when the hash doesn't exist for
+// this tenant — we don't want a silent no-op to hide a stale URL.
+func (t *TenantRepo) SetPromotionCandidateProposedName(ctx context.Context, fingerprintHash, name string) error {
+	if t.tenantID == "" {
+		return errors.New("projects: tenant_id required")
+	}
+	if fingerprintHash == "" {
+		return errors.New("projects: fingerprint_hash required")
+	}
+	var nameArg any
+	if strings.TrimSpace(name) == "" {
+		nameArg = nil
+	} else {
+		nameArg = strings.TrimSpace(name)
+	}
+	res, err := t.r.db.ExecContext(ctx, `
+		UPDATE promotion_candidate
+		SET proposed_name = ?
+		WHERE tenant_id = ? AND fingerprint_hash = ?
+	`, nameArg, t.tenantID, fingerprintHash)
+	if err != nil {
+		return fmt.Errorf("set proposed_name: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ListPromotionCandidates returns the tenant's candidates ranked by
 // (frequency * stability_score * atom_reuse_rate) DESC, omitting dismissed
 // rows. Powers Part C U14's promotion panel.

@@ -120,6 +120,117 @@ func (s *Server) HandleOrganismMatchesBySlug(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// HandlePromotionCandidatePatch serves
+//
+//	PATCH /v1/admin/organisms/promotion-candidates/{hash}
+//	Body: { "proposed_name": "<reviewer-supplied name>" }
+//
+// U14b — DS-team reviewer sets a human name on a promotion candidate so
+// the dashboard / future "submit as DS proposal" surface can refer to
+// it with intent. Empty name clears the field.
+func (s *Server) HandlePromotionCandidatePatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "PATCH only")
+		return
+	}
+	tenantID, ok := s.requireOrganismAdminTenant(w, r)
+	if !ok {
+		return
+	}
+	hash := r.PathValue("hash")
+	if strings.TrimSpace(hash) == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_hash", "fingerprint hash required")
+		return
+	}
+	var req struct {
+		ProposedName string `json:"proposed_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	if err := repo.SetPromotionCandidateProposedName(r.Context(), hash, req.ProposedName); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "no promotion candidate with that hash")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "set_proposed_name", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":               true,
+		"fingerprint_hash": hash,
+		"proposed_name":    strings.TrimSpace(req.ProposedName),
+	})
+}
+
+// HandleOrganismDeeplink serves
+//
+//	GET /v1/admin/organisms/{slug}/deeplink
+//
+// Returns the Figma deeplink for a published organism so the plugin's
+// "Replace with INSTANCE" button can open the source file at the right
+// component-set node. The plugin doesn't carry the manifest itself;
+// the server is the source of truth for which Figma file + node id
+// corresponds to a given slug.
+//
+// Response: { slug, file_key, set_id, figma_url } or 404 when the slug
+// isn't a published organism in the current manifest.
+func (s *Server) HandleOrganismDeeplink(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	if _, ok := s.requireOrganismAdminTenant(w, r); !ok {
+		return
+	}
+	slug := r.PathValue("slug")
+	if strings.TrimSpace(slug) == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_slug", "slug required")
+		return
+	}
+
+	// Resolve via the existing components manifest. We re-parse on every
+	// request because manifest reads are cheap (~2 MB JSON, parsed in
+	// ~10 ms) and this is a low-frequency endpoint. If profiling shows
+	// otherwise we can add a per-process cache keyed on manifestHash.
+	manifestPath := organismManifestPath(s)
+	if manifestPath == "" {
+		writeJSONErr(w, http.StatusServiceUnavailable, "manifest_unavailable", "")
+		return
+	}
+	loc, err := LookupOrganismDeeplink(manifestPath, slug)
+	if errors.Is(err, ErrNotFound) {
+		writeJSONErr(w, http.StatusNotFound, "not_found", "no published organism with that slug")
+		return
+	}
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "deeplink_lookup", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, loc)
+}
+
+// organismManifestPath resolves the manifest path the server boots with.
+// Read off Pipeline.ManifestPath which main.go wires from cfg.RepoDir.
+// We fall back to the conventional path so this stays useful in tests
+// (Server isn't usually wired with a Pipeline directly).
+func organismManifestPath(s *Server) string {
+	// The handler doesn't have a direct accessor to Pipeline; PipelineFactory
+	// is the canonical injection point but constructing one just to read a
+	// path is overkill. The deps DataDir lives next to the repo root in
+	// production wiring (cfg.RepoDir/services/ds-service/data); the manifest
+	// sits one level up at <repo>/public/icons/glyph/manifest.json. We
+	// reverse-engineer that here. If DataDir is empty (tests), the caller
+	// gets an empty string and a 503 response.
+	if s == nil || s.deps.DataDir == "" {
+		return ""
+	}
+	// DataDir is <repo>/services/ds-service/data; repo = parent of "services".
+	return organismManifestPathFromDataDir(s.deps.DataDir)
+}
+
 // HandleOrganismVerdictLookup serves
 //
 //	POST /v1/audit/organism-match

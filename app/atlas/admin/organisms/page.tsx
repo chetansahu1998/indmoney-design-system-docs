@@ -138,6 +138,28 @@ export default function OrganismsAdminPage() {
     }
   }, [token]);
 
+  const renamePromotionCandidate = useCallback(
+    async (hash: string, name: string) => {
+      await adminFetchJSON<{ ok: boolean }>(
+        `/v1/admin/organisms/promotion-candidates/${encodeURIComponent(hash)}`,
+        { method: "PATCH", body: { proposed_name: name } },
+      );
+      // Optimistic update — write back into the local cache so the input
+      // mirrors the server's truth without a full refresh.
+      setPromotions((prev) =>
+        prev
+          ? {
+              ...prev,
+              candidates: prev.candidates.map((c) =>
+                c.fingerprint_hash === hash ? { ...c, proposed_name: name } : c,
+              ),
+            }
+          : prev,
+      );
+    },
+    [],
+  );
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -159,7 +181,12 @@ export default function OrganismsAdminPage() {
 
       {adoption && <AdoptionTable rows={adoption.rows} total={adoption.total_matches} />}
 
-      {promotions && <PromotionCandidatesPanel candidates={promotions.candidates} />}
+      {promotions && (
+        <PromotionCandidatesPanel
+          candidates={promotions.candidates}
+          onRename={renamePromotionCandidate}
+        />
+      )}
 
       <button
         type="button"
@@ -293,7 +320,13 @@ function AdoptionTable({ rows, total }: { rows: AdoptionRow[]; total: number }) 
   );
 }
 
-function PromotionCandidatesPanel({ candidates }: { candidates: PromotionCandidate[] }) {
+function PromotionCandidatesPanel({
+  candidates,
+  onRename,
+}: {
+  candidates: PromotionCandidate[];
+  onRename: (hash: string, name: string) => Promise<void>;
+}) {
   return (
     <section>
       <h2 style={{ fontSize: 18, marginBottom: 4 }}>
@@ -302,8 +335,8 @@ function PromotionCandidatesPanel({ candidates }: { candidates: PromotionCandida
       <p style={{ color: "#888", fontSize: 12, marginBottom: 12 }}>
         Patterns that recur K+ times across N+ files in the tenant but
         don&apos;t match any published organism. Ranked by composite score
-        (<code>frequency × stability × atom_reuse_rate</code>). The top entries
-        are the strongest cases for new DS components.
+        (<code>frequency × stability × atom_reuse_rate</code>). Click any row&apos;s
+        name cell to give a candidate a working title for the DS team.
       </p>
       {candidates.length === 0 && (
         <p
@@ -331,6 +364,7 @@ function PromotionCandidatesPanel({ candidates }: { candidates: PromotionCandida
           <thead>
             <tr style={{ borderBottom: "1px solid #333", textAlign: "left" }}>
               <Th>Fingerprint</Th>
+              <Th>Proposed name</Th>
               <Th align="right">Frequency</Th>
               <Th align="right">Files</Th>
               <Th align="right">Stability</Th>
@@ -345,9 +379,12 @@ function PromotionCandidatesPanel({ candidates }: { candidates: PromotionCandida
                   <code style={{ fontFamily: "ui-monospace, monospace", fontSize: 11 }}>
                     {c.fingerprint_hash.slice(0, 12)}…
                   </code>
-                  {c.proposed_name && (
-                    <span style={{ marginLeft: 8, color: "#5eead4" }}>{c.proposed_name}</span>
-                  )}
+                </Td>
+                <Td>
+                  <NameEditor
+                    initial={c.proposed_name ?? ""}
+                    onCommit={(name) => onRename(c.fingerprint_hash, name)}
+                  />
                 </Td>
                 <Td align="right">{c.frequency}×</Td>
                 <Td align="right">{c.file_count}</Td>
@@ -366,6 +403,72 @@ function PromotionCandidatesPanel({ candidates }: { candidates: PromotionCandida
         </table>
       )}
     </section>
+  );
+}
+
+function NameEditor({
+  initial,
+  onCommit,
+}: {
+  initial: string;
+  onCommit: (name: string) => Promise<void>;
+}) {
+  const [value, setValue] = useState(initial);
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  // Mirror prop changes (refreshes after fetch) only when not actively editing.
+  useEffect(() => {
+    if (status === "idle") setValue(initial);
+  }, [initial, status]);
+
+  const commit = async () => {
+    if (value === initial) return;
+    setStatus("saving");
+    try {
+      await onCommit(value.trim());
+      setStatus("saved");
+      setTimeout(() => setStatus("idle"), 1200);
+    } catch {
+      setStatus("error");
+    }
+  };
+
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") {
+            setValue(initial);
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        placeholder="Click to name…"
+        style={{
+          minWidth: 160,
+          padding: "3px 6px",
+          fontSize: 12,
+          background: status === "error" ? "rgba(220, 38, 38, 0.08)" : "transparent",
+          border: "1px solid transparent",
+          borderRadius: 3,
+          color: value ? "#5eead4" : "#666",
+          fontFamily: "inherit",
+          outline: "none",
+        }}
+        onFocus={(e) =>
+          (e.target.style.borderColor = "#444")
+        }
+        onBlurCapture={(e) =>
+          ((e.target as HTMLInputElement).style.borderColor = "transparent")
+        }
+      />
+      {status === "saving" && <span style={{ fontSize: 10, color: "#888" }}>saving…</span>}
+      {status === "saved" && <span style={{ fontSize: 10, color: "#16a34a" }}>✓</span>}
+      {status === "error" && <span style={{ fontSize: 10, color: "#dc2626" }}>err</span>}
+    </span>
   );
 }
 
