@@ -251,6 +251,8 @@ func (t *TenantRepo) ListOrganismMatchesBySlug(ctx context.Context, slug, kind s
 
 	var sb strings.Builder
 	args := []any{t.tenantID, slug}
+	// COALESCE so empty-string slug matches both "" and NULL suspected_slug
+	// (the "(unmatched-novel)" bucket on the admin dashboard).
 	sb.WriteString(`
 		SELECT version_id, frame_id, screen_id, tenant_id,
 		       COALESCE(suspected_slug, ''), COALESCE(suspected_variant_key, ''),
@@ -259,7 +261,7 @@ func (t *TenantRepo) ListOrganismMatchesBySlug(ctx context.Context, slug, kind s
 		       confidence, manifest_hash, COALESCE(parent_frame_id, ''),
 		       detected_at
 		FROM detected_organism_match
-		WHERE tenant_id = ? AND suspected_slug = ?
+		WHERE tenant_id = ? AND COALESCE(suspected_slug, '') = ?
 	`)
 	if kind != "" {
 		sb.WriteString(" AND match_kind = ?")
@@ -292,6 +294,56 @@ func (t *TenantRepo) ListOrganismMatchesBySlug(ctx context.Context, slug, kind s
 			rec.DetectedAt = time.Time{}
 		}
 		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+// ─── Adoption rollup (U10 — dashboard ingredient) ────────────────────────────
+
+// OrganismAdoptionRow is one slug's adoption snapshot for the admin
+// dashboard. Slug == "" means the row represents the "(unmatched-novel)"
+// bucket — patterns that didn't match any published organism.
+type OrganismAdoptionRow struct {
+	Slug          string `json:"slug"`
+	Name          string `json:"name,omitempty"`
+	Category      string `json:"category,omitempty"`
+	InstanceCount int    `json:"instance_count"` // placeholder — populated once graph_index uses-edges are wired
+	Exact         int    `json:"exact"`
+	Near          int    `json:"near"`
+	Novel         int    `json:"novel"`
+}
+
+// OrganismAdoptionRollup returns one OrganismAdoptionRow per
+// distinct suspected_slug (incl. the empty bucket as "(unmatched)").
+// Powers U11's adoption table. Sorted with empty-slug last so the
+// "real" rows render at the top of the table.
+func (t *TenantRepo) OrganismAdoptionRollup(ctx context.Context) ([]OrganismAdoptionRow, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	rows, err := t.r.db.QueryContext(ctx, `
+		SELECT
+		  COALESCE(suspected_slug, '') AS slug,
+		  SUM(CASE WHEN match_kind = 'exact' THEN 1 ELSE 0 END) AS exact_count,
+		  SUM(CASE WHEN match_kind = 'near'  THEN 1 ELSE 0 END) AS near_count,
+		  SUM(CASE WHEN match_kind = 'novel' THEN 1 ELSE 0 END) AS novel_count
+		FROM detected_organism_match
+		WHERE tenant_id = ?
+		GROUP BY COALESCE(suspected_slug, '')
+		ORDER BY CASE WHEN COALESCE(suspected_slug,'') = '' THEN 1 ELSE 0 END, slug
+	`, t.tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("adoption rollup: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]OrganismAdoptionRow, 0)
+	for rows.Next() {
+		var r OrganismAdoptionRow
+		if err := rows.Scan(&r.Slug, &r.Exact, &r.Near, &r.Novel); err != nil {
+			return nil, fmt.Errorf("scan adoption row: %w", err)
+		}
+		out = append(out, r)
 	}
 	return out, rows.Err()
 }

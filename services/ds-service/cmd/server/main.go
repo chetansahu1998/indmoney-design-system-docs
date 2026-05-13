@@ -719,6 +719,14 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaBlocklistList)))
 	mux.HandleFunc("DELETE /v1/admin/figma-render-blocklist/{file_id}/{node_id}",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaBlocklistClear)))
+	// organism-pattern-detection (2026-05-13) — Part C dashboard endpoints
+	// powering /atlas/admin/organisms.
+	mux.HandleFunc("GET /v1/admin/organisms/adoption",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleOrganismAdoption)))
+	mux.HandleFunc("GET /v1/admin/organisms/promotion-candidates",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleOrganismPromotionCandidates)))
+	mux.HandleFunc("GET /v1/admin/organisms/{slug}/matches",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleOrganismMatchesBySlug)))
 	mux.HandleFunc("GET /v1/projects",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectList)))
 	mux.HandleFunc("GET /v1/projects/{slug}",

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/db"
 )
 
 // repository_organism_test.go — exercises the TenantRepo organism-detection
@@ -16,6 +18,7 @@ import (
 type orgTestFixture struct {
 	repo      *TenantRepo
 	otherRepo *TenantRepo // a second tenant for isolation checks
+	db        *db.DB      // for server-level tests that need *db.DB in ServerDeps
 	projectID string      // for tests that need to create additional flows/versions
 	versionID string
 	screenID  string
@@ -54,7 +57,7 @@ func seedOrgFixture(t *testing.T) orgTestFixture {
 		t.Fatalf("insert screens: %v", err)
 	}
 	return orgTestFixture{
-		repo: repo, otherRepo: other,
+		repo: repo, otherRepo: other, db: d,
 		projectID: p.ID,
 		versionID: v.ID, screenID: screens[0].ID,
 		tenantA: tA, tenantB: tB,
