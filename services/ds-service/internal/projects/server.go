@@ -266,7 +266,7 @@ type RunExportResult struct {
 	NewPersonas    []Persona
 }
 
-// runExport is the in-process pipeline used by both HandleExport and the
+// RunExport is the in-process pipeline used by both HandleExport and the
 // autosync bridge. Validates, transactionally writes project+version+flows
 // +screens, commits, fires audit_log, and spawns the async pipeline
 // goroutine. Returns the result so HTTP handlers can SSE-publish + encode
@@ -274,7 +274,7 @@ type RunExportResult struct {
 //
 // Caller is responsible for auth, rate-limiting, idempotency cache check,
 // and (for HTTP) writing the response body.
-func (s *Server) runExport(ctx context.Context, p RunExportParams) (RunExportResult, error) {
+func (s *Server) RunExport(ctx context.Context, p RunExportParams) (RunExportResult, error) {
 	if p.TenantID == "" {
 		return RunExportResult{}, errors.New("run_export: tenant_id required")
 	}
@@ -501,7 +501,7 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := s.runExport(r.Context(), RunExportParams{
+	result, err := s.RunExport(r.Context(), RunExportParams{
 		TenantID:  tenantID,
 		UserID:    claims.Sub,
 		Source:    "http",

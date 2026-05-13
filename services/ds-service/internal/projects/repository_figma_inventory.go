@@ -1175,6 +1175,83 @@ func (t *TenantRepo) ListFigmaNodesForFile(ctx context.Context, fileKey string, 
 	return out, rows.Err()
 }
 
+// FigmaSectionFrameChild is a slim view of one FRAME node directly under
+// a SECTION. Used by the autosync executor to build ExportRequest.frames.
+type FigmaSectionFrameChild struct {
+	NodeID     string
+	Name       string
+	X          float64
+	Y          float64
+	Width      float64
+	Height     float64
+	OrderIndex int
+}
+
+// ListFrameChildrenOfSection returns FRAME-type nodes whose parent_id is
+// the section. Ordered by order_index so the section's visual order is
+// preserved in the synthesized ExportRequest.
+//
+// Only direct children with HasBBox-equivalent (x/y non-null) — we skip
+// frames missing dimensions because the pipeline can't render them.
+func (t *TenantRepo) ListFrameChildrenOfSection(ctx context.Context, fileKey, sectionID string) ([]FigmaSectionFrameChild, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	if fileKey == "" || sectionID == "" {
+		return nil, errors.New("projects: file_key and section_id required")
+	}
+	rows, err := t.r.db.QueryContext(ctx, `
+		SELECT node_id, name, x, y, width, height, order_index
+		  FROM figma_node
+		 WHERE tenant_id = ? AND file_key = ?
+		   AND parent_id = ?
+		   AND node_type = 'FRAME'
+		   AND deleted_at IS NULL
+		   AND x IS NOT NULL
+		   AND width IS NOT NULL
+		 ORDER BY order_index ASC, node_id ASC
+	`, t.tenantID, fileKey, sectionID)
+	if err != nil {
+		return nil, fmt.Errorf("list frame children of section: %w", err)
+	}
+	defer rows.Close()
+	out := make([]FigmaSectionFrameChild, 0, 16)
+	for rows.Next() {
+		var c FigmaSectionFrameChild
+		if err := rows.Scan(&c.NodeID, &c.Name, &c.X, &c.Y, &c.Width, &c.Height, &c.OrderIndex); err != nil {
+			return nil, fmt.Errorf("scan frame child: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// UpdateFlowName updates flows.name for one (file_id, section_id) pair.
+// Used by the autosync cheap-update path when a section's name changed
+// but content_hash didn't — flips the flow display name without
+// re-running the export pipeline. Returns rows affected.
+func (t *TenantRepo) UpdateFlowName(ctx context.Context, fileID, sectionID, newName string) (int64, error) {
+	if t.tenantID == "" {
+		return 0, errors.New("projects: tenant_id required")
+	}
+	if fileID == "" || sectionID == "" {
+		return 0, errors.New("projects: file_id and section_id required")
+	}
+	if newName == "" {
+		return 0, errors.New("projects: new_name required")
+	}
+	res, err := t.handle().ExecContext(ctx, `
+		UPDATE flows
+		   SET name = ?, updated_at = ?
+		 WHERE tenant_id = ? AND file_id = ? AND section_id = ?
+	`, newName, rfc3339(t.now().UTC()), t.tenantID, fileID, sectionID)
+	if err != nil {
+		return 0, fmt.Errorf("update flow name: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // ─── cross-file component usage (Phase 2C analytic) ─────────────────────────
 
 // ComponentUsageRow summarises one master component's reach across the

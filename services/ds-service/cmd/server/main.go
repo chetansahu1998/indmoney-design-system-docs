@@ -811,6 +811,16 @@ func (s *server) routes(mux *http.ServeMux) {
 	// separate follow-up.
 	mux.HandleFunc("GET /v1/admin/organisms/{slug}/deeplink",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleOrganismDeeplink)))
+	// Autosync bridge — POST /v1/admin/figma-autosync/execute. Drives the
+	// Planner + Executor in-process: builds a FilePlan for every in-window
+	// mapped file (or one -file_key=) and runs each section's full_export /
+	// cheap_update / skip action. Synchronous from the HTTP caller's
+	// perspective; the pipeline goroutines spawned by RunExport keep
+	// running after the response returns.
+	mux.HandleFunc("POST /v1/admin/figma-autosync/execute",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, func(w http.ResponseWriter, r *http.Request) {
+			handleAutosyncExecute(w, r, s.projectsServer, s.db.DB)
+		})))
 	mux.HandleFunc("GET /v1/projects",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectList)))
 	mux.HandleFunc("GET /v1/projects/{slug}",
@@ -1621,4 +1631,122 @@ type figmaImageFillURLFetcherFunc func(ctx context.Context, fileKey string) (map
 
 func (f figmaImageFillURLFetcherFunc) GetFileImageFills(ctx context.Context, fileKey string) (map[string]string, error) {
 	return f(ctx, fileKey)
+}
+
+// adminAutoSyncDB adapts a *sql.DB to inventory.AutoSyncDB. Returns a
+// fresh TenantRepo per tenant. Used by handleAutosyncExecute.
+type adminAutoSyncDB struct{ db *sql.DB }
+
+func (a adminAutoSyncDB) NewTenantRepo(tenantID string) *projects.TenantRepo {
+	return projects.NewTenantRepo(a.db, tenantID)
+}
+
+// handleAutosyncExecute runs the autosync Planner + Executor in-process.
+// Body (optional): {"file_key": "..."} to scope to a single file.
+// Default: every in-window mapped file for the tenant.
+//
+// Response:
+//
+//	{
+//	  "tenant_id": "...",
+//	  "files":     [{"file_key":"...", "file_name":"...",
+//	                 "sections":N, "full_export":N, "cheap_update":N,
+//	                 "skip_unchanged":N, "quarantined":N, "errors":[...]}],
+//	  "totals":    {...}
+//	}
+func handleAutosyncExecute(w http.ResponseWriter, r *http.Request, ps *projects.Server, sqlDB *sql.DB) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Resolve tenant via DEV_AUTH_BYPASS shape (claims live on context).
+	type bodyT struct {
+		FileKey string `json:"file_key"`
+	}
+	var body bodyT
+	_ = json.NewDecoder(r.Body).Decode(&body) // empty body is fine
+
+	tenantID := r.URL.Query().Get("tenant_id")
+	if tenantID == "" {
+		tenantID = os.Getenv("DEV_AUTH_BYPASS_TENANT")
+	}
+	if tenantID == "" {
+		http.Error(w, "tenant_id required (query param)", http.StatusBadRequest)
+		return
+	}
+
+	planner := inventory.NewPlanner(adminAutoSyncDB{db: sqlDB}, inventory.PlannerConfig{})
+	executor := inventory.NewExecutor(adminAutoSyncDB{db: sqlDB}, ps.RunExport)
+
+	var plans []inventory.FilePlan
+	if body.FileKey != "" {
+		fp, err := planner.Plan(r.Context(), tenantID, body.FileKey)
+		if err != nil {
+			http.Error(w, "plan: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		plans = []inventory.FilePlan{fp}
+	} else {
+		ps2, err := planner.PlanTenant(r.Context(), tenantID)
+		if err != nil {
+			http.Error(w, "plan_tenant: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		plans = ps2
+	}
+
+	type fileSummary struct {
+		FileKey       string   `json:"file_key"`
+		FileName      string   `json:"file_name"`
+		Sections      int      `json:"sections"`
+		FullExport    int      `json:"full_export"`
+		CheapUpdate   int      `json:"cheap_update"`
+		SkipUnchanged int      `json:"skip_unchanged"`
+		Quarantined   int      `json:"quarantined"`
+		FileSkip      string   `json:"file_skip,omitempty"`
+		Errors        []string `json:"errors,omitempty"`
+	}
+	out := struct {
+		TenantID string        `json:"tenant_id"`
+		Files    []fileSummary `json:"files"`
+		Totals   struct {
+			Files         int `json:"files"`
+			FullExport    int `json:"full_export"`
+			CheapUpdate   int `json:"cheap_update"`
+			SkipUnchanged int `json:"skip_unchanged"`
+			Quarantined   int `json:"quarantined"`
+			Errors        int `json:"errors"`
+		} `json:"totals"`
+	}{TenantID: tenantID}
+
+	for _, plan := range plans {
+		fs := fileSummary{FileKey: plan.FileKey, FileName: plan.FileName}
+		if plan.FileSkip != nil {
+			fs.FileSkip = string(plan.FileSkip.Code)
+			out.Files = append(out.Files, fs)
+			continue
+		}
+		res, err := executor.Execute(r.Context(), plan)
+		if err != nil {
+			fs.Errors = []string{"execute: " + err.Error()}
+			out.Files = append(out.Files, fs)
+			out.Totals.Errors++
+			continue
+		}
+		fs.Sections = res.Sections
+		fs.FullExport = res.FullExported
+		fs.CheapUpdate = res.CheapUpdated
+		fs.SkipUnchanged = res.SkippedAlready
+		fs.Quarantined = res.SkippedQuar
+		fs.Errors = res.Errors
+		out.Files = append(out.Files, fs)
+		out.Totals.Files++
+		out.Totals.FullExport += res.FullExported
+		out.Totals.CheapUpdate += res.CheapUpdated
+		out.Totals.SkipUnchanged += res.SkippedAlready
+		out.Totals.Quarantined += res.SkippedQuar
+		out.Totals.Errors += len(res.Errors)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
 }
