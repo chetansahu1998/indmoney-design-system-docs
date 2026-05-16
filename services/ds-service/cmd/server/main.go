@@ -459,6 +459,21 @@ func main() {
 	// finishing other init); subsequent cycles run every 5 min.
 	inventoryPoller.Start(workerCtx)
 
+	// Autosync auto-retry ticker. Re-runs the Planner+Executor across
+	// every in-window allowlist file at a regular cadence. The planner
+	// now treats project_versions.status='failed' as a retry trigger
+	// (SkipRetryFailedPipeline), so this loop self-heals async-pipeline
+	// failures (Figma 5xx, PNG render timeouts) without operator action.
+	// Interval is env-configurable; default 15 min keeps it well below
+	// Figma's per-PAT tier-1 budget. Set FIGMA_AUTOSYNC_INTERVAL=0 to
+	// disable (useful for tests + when running cmd/figma-autosync-* CLIs
+	// against a server-managed DB).
+	if interval := autosyncIntervalFromEnv(); interval > 0 {
+		startAutosyncRetryLoop(workerCtx, log, projectsServer, dbConn.DB, interval)
+	} else {
+		log.Info("autosync retry loop disabled (FIGMA_AUTOSYNC_INTERVAL=0)")
+	}
+
 	srv := &server{
 		cfg:             cfg,
 		db:              dbConn,
@@ -1753,4 +1768,104 @@ func handleAutosyncExecute(w http.ResponseWriter, r *http.Request, ps *projects.
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// autosyncIntervalFromEnv parses FIGMA_AUTOSYNC_INTERVAL. Accepts a Go
+// duration ("15m", "30s") or seconds-as-int. 0 disables the loop.
+// Default: 15 min when the var is unset.
+func autosyncIntervalFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("FIGMA_AUTOSYNC_INTERVAL"))
+	if raw == "" {
+		return 15 * time.Minute
+	}
+	if raw == "0" {
+		return 0
+	}
+	if d, err := time.ParseDuration(raw); err == nil {
+		return d
+	}
+	if secs, err := strconv.Atoi(raw); err == nil && secs >= 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return 15 * time.Minute
+}
+
+// startAutosyncRetryLoop kicks off a goroutine that calls the Planner +
+// Executor for the bypass tenant every `interval`. First run fires 90s
+// after boot so the inventory poller can finish its initial cycle (and
+// populate hashes) before autosync inspects them. Subsequent runs fire
+// every `interval`.
+//
+// Bypass-tenant only for now: production multi-tenant rollout will key
+// off figma_team_seed (each seeded tenant gets its own retry cadence).
+func startAutosyncRetryLoop(
+	ctx context.Context,
+	log *slog.Logger,
+	ps *projects.Server,
+	sqlDB *sql.DB,
+	interval time.Duration,
+) {
+	tenantID := strings.TrimSpace(os.Getenv("DEV_AUTH_BYPASS_TENANT"))
+	if tenantID == "" {
+		log.Info("autosync retry loop: no DEV_AUTH_BYPASS_TENANT, skipping")
+		return
+	}
+	go func() {
+		log.Info("autosync retry loop started",
+			"tenant", tenantID, "interval", interval.String(), "first_run_in", "90s")
+		// Initial delay: let the inventory poller do its first cycle.
+		select {
+		case <-time.After(90 * time.Second):
+		case <-ctx.Done():
+			return
+		}
+		runOnce := func() {
+			planner := inventory.NewPlanner(adminAutoSyncDB{db: sqlDB}, inventory.PlannerConfig{})
+			executor := inventory.NewExecutor(adminAutoSyncDB{db: sqlDB}, ps.RunExport)
+			plans, err := planner.PlanTenant(ctx, tenantID)
+			if err != nil {
+				log.Warn("autosync retry: plan failed", "err", err.Error())
+				return
+			}
+			var totalFull, totalCheap, totalRetry, totalErr int
+			for _, plan := range plans {
+				if plan.FileSkip != nil {
+					continue
+				}
+				// Count retries (FullExports whose reason is the new
+				// retry_failed_pipeline) so the log line tells the
+				// operator "self-heal" vs "fresh export" volume.
+				for _, ps2 := range plan.Sections {
+					if ps2.Action == inventory.ActionFullExport && ps2.Reason == inventory.SkipRetryFailedPipeline {
+						totalRetry++
+					}
+				}
+				res, err := executor.Execute(ctx, plan)
+				if err != nil {
+					log.Warn("autosync retry: execute failed", "file", plan.FileKey, "err", err.Error())
+					totalErr++
+					continue
+				}
+				totalFull += res.FullExported
+				totalCheap += res.CheapUpdated
+				totalErr += len(res.Errors)
+			}
+			log.Info("autosync retry cycle complete",
+				"files", len(plans), "full_export", totalFull,
+				"cheap_update", totalCheap, "retried_failed_pipeline", totalRetry,
+				"errors", totalErr)
+		}
+		runOnce()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				log.Info("autosync retry loop stopped")
+				return
+			case <-ticker.C:
+				runOnce()
+			}
+		}
+	}()
 }

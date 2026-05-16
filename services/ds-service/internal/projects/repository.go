@@ -756,6 +756,30 @@ func (t *TenantRepo) GetVersionIndex(ctx context.Context, versionID string) (int
 	return idx, nil
 }
 
+// GetVersionStatus returns project_versions.status for one id.
+// Used by the autosync planner to detect async-pipeline failures: when
+// figma_auto_sync_state shows last_attempt_status='ok' (synchronous
+// RunExport succeeded) but the resulting version's pipeline failed,
+// the planner forces a retry instead of skipping as already_synced.
+// Returns ErrNotFound when the row is gone (e.g. cleanup-versions ran).
+func (t *TenantRepo) GetVersionStatus(ctx context.Context, versionID string) (string, error) {
+	if versionID == "" {
+		return "", errors.New("projects: version_id required")
+	}
+	row := t.handle().QueryRowContext(ctx, `
+		SELECT status FROM project_versions
+		 WHERE id = ? AND tenant_id = ?
+	`, versionID, t.tenantID)
+	var status string
+	if err := row.Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return status, nil
+}
+
 // ListProjects returns active projects for the tenant ordered by updated_at DESC.
 func (t *TenantRepo) ListProjects(ctx context.Context, limit int) ([]Project, error) {
 	if t.tenantID == "" {

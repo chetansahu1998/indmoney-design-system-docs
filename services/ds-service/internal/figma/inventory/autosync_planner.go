@@ -49,6 +49,11 @@ const (
 	SkipNewSection      = "new_section"       // FullExport reason: never synced before
 	SkipContentChanged  = "content_changed"   // FullExport reason: subtree hash flipped
 	SkipPositionOnly    = "position_or_name_changed" // CheapUpdate reason
+	// FullExport reason: figma_auto_sync_state shows 'ok' (synchronous
+	// RunExport succeeded) but the resulting project_versions row reached
+	// status='failed' afterwards (async pipeline error — Figma 5xx, PNG
+	// timeout, etc.). Planner re-queues the section for a fresh export.
+	SkipRetryFailedPipeline = "retry_failed_pipeline"
 )
 
 // PlanReason carries the FILE-level skip reason (when no section-level plan
@@ -312,8 +317,28 @@ func (p *Planner) Plan(ctx context.Context, tenantID, fileKey string) (FilePlan,
 				ps.PriorLastSyncedAt = prior.LastSyncedAt.Format(time.RFC3339)
 			}
 
-			// Idempotent skip: prior was 'ok' AND hashes match.
+			// Idempotent skip: prior was 'ok' AND hashes match. EXCEPT —
+			// the synchronous RunExport recording 'ok' only tells us the
+			// flow + screens rows landed; the async pipeline goroutine
+			// (Stage 2-9: PNG render, audit, etc.) may have failed later.
+			// Re-check the resulting version's status; if 'failed', force
+			// a retry so PNG/canonical-tree gaps self-heal.
 			if prior.LastAttemptStatus == "ok" && prior.ContentHash == sec.ContentHash {
+				pipelineFailed := false
+				if prior.LastSyncedVersionID != "" {
+					status, vErr := repo.GetVersionStatus(ctx, prior.LastSyncedVersionID)
+					if vErr == nil && status == "failed" {
+						pipelineFailed = true
+					}
+					// Errors (incl. ErrNotFound — version was pruned)
+					// silently fall through to the position/skip branch.
+				}
+				if pipelineFailed {
+					ps.Action = ActionFullExport
+					ps.Reason = SkipRetryFailedPipeline
+					fp.Sections = append(fp.Sections, ps)
+					continue
+				}
 				if prior.PositionHash == sec.PositionHash {
 					ps.Action = ActionSkipUnchanged
 					ps.SkipReason = SkipAlreadySynced
