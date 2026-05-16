@@ -116,7 +116,7 @@ func (s *Server) HandleWarmAssetCache(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Tenant scope check — same as HandleBulkAssetExport.
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if _, err := repo.GetProjectBySlug(r.Context(), slug); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeJSONErr(w, http.StatusNotFound, "warm_project_not_found",
@@ -274,7 +274,7 @@ func (s *Server) HandleServeRawAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	row, hit, err := repo.LookupImageFillByRef(r.Context(), tenantID, imageRef)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "lookup_image_fill", err.Error())

@@ -90,7 +90,7 @@ func (s *Server) HandleListOverrides(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	var (
 		out []ScreenTextOverride
 		err error
@@ -167,7 +167,7 @@ func (s *Server) HandlePutOverride(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	endpoint := fmt.Sprintf("/v1/projects/%s/screens/%s/text-overrides/%s",
 		slug, screenID, figmaNodeID)
 	auditFn := func(tx *sql.Tx, flowID string, oldValue string, newRev int) error {
@@ -259,7 +259,7 @@ func (s *Server) HandleDeleteOverride(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	endpoint := fmt.Sprintf("/v1/projects/%s/screens/%s/text-overrides/%s",
 		slug, screenID, figmaNodeID)
 	auditFn := func(tx *sql.Tx, flowID string, oldValue string) error {
@@ -390,7 +390,7 @@ func (s *Server) HandleBulkUpsertOverrides(w http.ResponseWriter, r *http.Reques
 		rows = append(rows, row)
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	summary, err := repo.BulkUpsertOverrides(r.Context(), slug, rows, claims.Sub)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "bulk_upsert", err.Error())
@@ -517,7 +517,7 @@ func (s *Server) HandleCSVExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 
 	screens, err := repo.listLeafScreensForCSV(r.Context(), slug, leafID)
 	if err != nil {
@@ -702,7 +702,7 @@ func (s *Server) HandleCSVImport(w http.ResponseWriter, r *http.Request) {
 	// conflict check + bulk fan-out happens with a clean snapshot. This
 	// avoids holding the SQLite writer lock while we look up 1000 rows
 	// (Learning #4 from phase-7-8-closure).
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 
 	dirty := make([]csvImportRow, 0, len(rows))
 	for _, row := range rows {

@@ -342,7 +342,7 @@ func (s *Server) RunExport(ctx context.Context, p RunExportParams) (RunExportRes
 	tenantID := p.TenantID
 	req := p.Req
 	traceID := uuid.NewString()
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 
 	tx, err := repo.BeginTx(ctx)
 	if err != nil {
@@ -710,7 +710,7 @@ func (s *Server) HandleVersionRetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 
 	project, err := repo.GetProjectBySlug(r.Context(), slug)
 	if err != nil {
@@ -849,7 +849,7 @@ func (s *Server) HandleProjectGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := r.PathValue("slug")
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	p, err := repo.GetProjectBySlug(r.Context(), slug)
 	if err == nil {
 		// U12: bundle versions / screens / screen_modes / personas in
@@ -1014,7 +1014,7 @@ func (s *Server) HandleListViolations(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusBadRequest, "missing_slug", "")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	project, err := repo.GetProjectBySlug(r.Context(), slug)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -1151,7 +1151,7 @@ func (s *Server) HandleProjectList(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	// Pr33 — accept ?limit (default 100, max 500) so the client can opt
 	// in to larger pages instead of silently truncating at 100. The repo
 	// caps at 500 internally as well; same value here keeps the contract
@@ -1211,7 +1211,7 @@ func (s *Server) HandleGetDRD(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	rec, err := repo.GetDRD(r.Context(), slug, flowID)
 	if errors.Is(err, ErrNotFound) {
 		writeJSONErr(w, http.StatusNotFound, "not_found", "")
@@ -1309,7 +1309,7 @@ func (s *Server) HandlePutDRD(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	newRev, err := repo.UpsertDRD(r.Context(), slug, flowID, []byte(req.Content), req.ExpectedRevision, claims.Sub)
 	if errors.Is(err, ErrNotFound) {
 		writeJSONErr(w, http.StatusNotFound, "not_found", "")
@@ -1366,7 +1366,7 @@ func (s *Server) HandleScreenCanonicalTree(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	res, err := repo.GetCanonicalTree(r.Context(), slug, screenID)
 	if errors.Is(err, ErrNotFound) {
 		writeJSONErr(w, http.StatusNotFound, "not_found", "")
@@ -1427,7 +1427,7 @@ func (s *Server) HandleEventsTicket(w http.ResponseWriter, r *http.Request) {
 
 	// Defense in depth: confirm the slug really belongs to this tenant.
 	// Cross-tenant slug → 404 (no existence oracle).
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if _, err := repo.GetProjectBySlug(r.Context(), slug); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeJSONErr(w, http.StatusNotFound, "not_found", "")
@@ -1477,7 +1477,7 @@ func (s *Server) HandleProjectEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Defense in depth: project's tenant_id must match ticket's tenant_id.
 	slug := r.PathValue("slug")
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if _, err := repo.GetProjectBySlug(r.Context(), slug); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeJSONErr(w, http.StatusForbidden, "tenant_mismatch", "")
@@ -1603,7 +1603,7 @@ func (s *Server) HandlePatchViolation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	current, err := repo.GetViolationForLifecycle(r.Context(), violationID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -1855,7 +1855,7 @@ func (s *Server) HandleBulkAcknowledge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	loaded, err := repo.LoadViolationsForBulk(r.Context(), req.ViolationIDs)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
@@ -2059,7 +2059,7 @@ func (s *Server) HandleDecisionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 
 	// Defense in depth: confirm the slug refers to a project that owns
 	// this flow inside the caller's tenant. The repo's
@@ -2175,7 +2175,7 @@ func (s *Server) HandleDecisionList(w http.ResponseWriter, r *http.Request) {
 	}
 	includeSuperseded := r.URL.Query().Get("include_superseded") == "1"
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	out, err := repo.ListDecisionsForFlow(r.Context(), flowID, includeSuperseded)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -2212,7 +2212,7 @@ func (s *Server) HandleDecisionGet(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusBadRequest, "missing_id", "")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	rec, err := repo.GetDecision(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -2259,7 +2259,7 @@ func (s *Server) HandleDecisionViolations(w http.ResponseWriter, r *http.Request
 	// Verify the decision belongs to this tenant before returning links.
 	// Same gate as HandleDecisionGet so a leaked decision id doesn't enable
 	// cross-tenant violation enumeration.
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if _, err := repo.GetDecision(r.Context(), id); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeJSONErr(w, http.StatusNotFound, "not_found", "")
@@ -2479,7 +2479,7 @@ func (s *Server) HandleDRDTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if _, err := repo.resolveDRDFlowID(r.Context(), slug, flowID); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeJSONErr(w, http.StatusNotFound, "not_found", "")
@@ -2592,7 +2592,7 @@ func (s *Server) HandleDRDInternalLoad(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusBadRequest, "missing_params", "flow_id + tenant_id required")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	state, err := repo.LoadYDocState(r.Context(), flowID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -2637,7 +2637,7 @@ func (s *Server) HandleDRDInternalSnapshot(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	rev, err := repo.PersistYDocSnapshot(r.Context(), flowID, userID, body)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -2810,7 +2810,7 @@ func (s *Server) HandleFlowActivity(w http.ResponseWriter, r *http.Request) {
 
 	// Defense in depth: confirm the slug exists in the caller's tenant +
 	// the flow lives inside that project. Wrong slug → 404 (no oracle).
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if _, err := repo.GetProjectBySlug(r.Context(), slug); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeJSONErr(w, http.StatusNotFound, "not_found", "")
@@ -2929,7 +2929,7 @@ func (s *Server) HandleCommentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if _, err := repo.GetProjectBySlug(r.Context(), slug); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeJSONErr(w, http.StatusNotFound, "not_found", "")
@@ -2992,7 +2992,7 @@ func (s *Server) HandleCommentList(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusBadRequest, "missing_target", "target_kind and target_id required")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	out, err := repo.ListCommentsForTarget(r.Context(), CommentTargetKind(kind), target)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "list_comments", err.Error())
@@ -3025,7 +3025,7 @@ func (s *Server) HandleCommentResolve(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusBadRequest, "missing_id", "")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if err := repo.ResolveComment(r.Context(), id, claims.Sub); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeJSONErr(w, http.StatusNotFound, "not_found", "")
@@ -3063,7 +3063,7 @@ func (s *Server) HandleNotificationsList(w http.ResponseWriter, r *http.Request)
 			limit = n
 		}
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	out, err := repo.ListNotificationsForUser(r.Context(), claims.Sub, unread, limit)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "list_notifications", err.Error())
@@ -3109,7 +3109,7 @@ func (s *Server) HandleNotificationsMarkRead(w http.ResponseWriter, r *http.Requ
 		writeJSONErr(w, http.StatusBadRequest, "too_many_ids", "max 200")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	n, err := repo.MarkNotificationsRead(r.Context(), claims.Sub, req.IDs)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "mark_read", err.Error())
@@ -3261,7 +3261,7 @@ func (s *Server) HandleViolationGet(w http.ResponseWriter, r *http.Request) {
 		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	d, err := repo.GetViolation(r.Context(), slug, violationID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -3317,7 +3317,7 @@ func (s *Server) HandleViolationFixApplied(w http.ResponseWriter, r *http.Reques
 	var req fixAppliedRequest
 	_ = json.Unmarshal(body, &req)
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	current, err := repo.GetViolationForLifecycle(r.Context(), violationID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -3590,7 +3590,7 @@ func (s *Server) HandleInbox(w http.ResponseWriter, r *http.Request) {
 		filters.Offset = n
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	rows, total, err := repo.GetInbox(r.Context(), claims.Sub, isEditor, filters)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "inbox", err.Error())
@@ -3730,7 +3730,7 @@ func (s *Server) HandleFigmaBlocklistList(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	rows, err := repo.ListFigmaRenderBlocklist(r.Context())
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "blocklist_list", err.Error())
@@ -3807,7 +3807,7 @@ func (s *Server) HandleFigmaAutosyncClearQuarantine(w http.ResponseWriter, r *ht
 		writeJSONErr(w, http.StatusBadRequest, "missing_params", "file_key, page_id, section_id required")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	cleared, err := repo.ClearAutoSyncQuarantine(r.Context(), fileKey, pageID, sectionID)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "clear_quarantine", err.Error())
@@ -3892,7 +3892,7 @@ func (s *Server) HandleFigmaAutosyncListState(w http.ResponseWriter, r *http.Req
 	if offset < 0 {
 		offset = 0
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	rows, err := repo.ListAutoSyncState(r.Context(), AutoSyncStateFilter{
 		FileKey:    q.Get("file_key"),
 		Status:     q.Get("status"),
@@ -3950,7 +3950,7 @@ func (s *Server) HandleFigmaProjectMappingUpsert(w http.ResponseWriter, r *http.
 			"project_id, domain, product required")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if err := repo.UpsertFigmaProjectMapping(r.Context(), FigmaProjectMapping{
 		ProjectID:          body.ProjectID,
 		Domain:             body.Domain,
@@ -3989,7 +3989,7 @@ func (s *Server) HandleFigmaBlocklistClear(w http.ResponseWriter, r *http.Reques
 		writeJSONErr(w, http.StatusBadRequest, "missing_params", "file_id and node_id required")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if err := repo.ClearFigmaRenderFailure(r.Context(), fileID, nodeID); err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "blocklist_clear", err.Error())
 		return

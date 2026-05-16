@@ -118,7 +118,7 @@ func (t *TenantRepo) ListFigmaTeamSeeds(ctx context.Context) ([]FigmaTeamSeed, e
 	if t.tenantID == "" {
 		return nil, errors.New("projects: tenant_id required")
 	}
-	rows, err := t.r.db.QueryContext(ctx, `
+	rows, err := t.readHandle().QueryContext(ctx, `
 		SELECT tenant_id, team_id, team_name, added_by_user_id, added_at,
 		       enabled,
 		       COALESCE(last_crawl_at, ''), COALESCE(last_crawl_status, ''),
@@ -158,7 +158,7 @@ func (t *TenantRepo) ListEnabledFigmaTeamSeeds(ctx context.Context) ([]FigmaTeam
 	if t.tenantID == "" {
 		return nil, errors.New("projects: tenant_id required")
 	}
-	rows, err := t.r.db.QueryContext(ctx, `
+	rows, err := t.readHandle().QueryContext(ctx, `
 		SELECT tenant_id, team_id, team_name
 		  FROM figma_team_seed
 		 WHERE tenant_id = ? AND enabled = 1
@@ -394,7 +394,7 @@ func (t *TenantRepo) FilesNeedingPagesSync(ctx context.Context, limit int) ([]Fi
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := t.r.db.QueryContext(ctx, `
+	rows, err := t.readHandle().QueryContext(ctx, `
 		SELECT file_key, project_id, team_id, name,
 		       COALESCE(last_modified, ''),
 		       COALESCE(version, ''),
@@ -824,7 +824,7 @@ func (t *TenantRepo) LookupFigmaFile(ctx context.Context, fileKey string, includ
 	if includeDeleted {
 		deletedClause = ""
 	}
-	row := t.r.db.QueryRowContext(ctx, `
+	row := t.readHandle().QueryRowContext(ctx, `
 		SELECT file_key, project_id, team_id, name,
 		       COALESCE(thumbnail_url, ''),
 		       COALESCE(last_modified, ''),
@@ -872,7 +872,7 @@ func (t *TenantRepo) LookupFigmaProject(ctx context.Context, projectID string) (
 	if projectID == "" {
 		return FigmaProjectRow{}, errors.New("projects: project_id required")
 	}
-	row := t.r.db.QueryRowContext(ctx, `
+	row := t.readHandle().QueryRowContext(ctx, `
 		SELECT project_id, team_id, name, first_seen_at, last_seen_at
 		  FROM figma_project
 		 WHERE tenant_id = ? AND project_id = ? AND deleted_at IS NULL
@@ -907,7 +907,7 @@ func (t *TenantRepo) LookupProjectByFileKey(ctx context.Context, fileKey string)
 	if fileKey == "" {
 		return Project{}, errors.New("projects: file_key required")
 	}
-	row := t.r.db.QueryRowContext(ctx, `
+	row := t.readHandle().QueryRowContext(ctx, `
 		SELECT id, slug, name, platform, product, path,
 		       COALESCE(file_id, ''), owner_user_id, created_at, updated_at
 		  FROM projects
@@ -939,7 +939,7 @@ func (t *TenantRepo) ProjectFileKeysForTenant(ctx context.Context) (map[string]P
 	if t.tenantID == "" {
 		return nil, errors.New("projects: tenant_id required")
 	}
-	rows, err := t.r.db.QueryContext(ctx, `
+	rows, err := t.readHandle().QueryContext(ctx, `
 		SELECT id, slug, name, platform, product, path, file_id
 		  FROM projects
 		 WHERE tenant_id = ? AND file_id IS NOT NULL AND deleted_at IS NULL
@@ -1029,7 +1029,7 @@ func (t *TenantRepo) FilesNeedingDeepSync(ctx context.Context, limit int) ([]Fig
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := t.r.db.QueryContext(ctx, `
+	rows, err := t.readHandle().QueryContext(ctx, `
 		SELECT file_key, project_id, team_id, name,
 		       COALESCE(last_modified, ''),
 		       COALESCE(version, ''),
@@ -1115,7 +1115,7 @@ func (t *TenantRepo) GetFigmaInventoryTree(ctx context.Context, teamID string, i
 	}
 
 	// team
-	teamRow := t.r.db.QueryRowContext(ctx, `
+	teamRow := t.readHandle().QueryRowContext(ctx, `
 		SELECT name FROM figma_team WHERE tenant_id = ? AND team_id = ?
 	`, t.tenantID, teamID)
 	var teamName string
@@ -1129,7 +1129,7 @@ func (t *TenantRepo) GetFigmaInventoryTree(ctx context.Context, teamID string, i
 
 	// projects
 	projectsByID := map[string]*FigmaInventoryTreeNode{}
-	pRows, err := t.r.db.QueryContext(ctx, `
+	pRows, err := t.readHandle().QueryContext(ctx, `
 		SELECT project_id, name, COALESCE(deleted_at, '')
 		  FROM figma_project
 		 WHERE tenant_id = ? AND team_id = ?`+deletedClause+`
@@ -1166,7 +1166,7 @@ func (t *TenantRepo) GetFigmaInventoryTree(ctx context.Context, teamID string, i
 	// files
 	filesByKey := map[string]*FigmaInventoryTreeNode{}
 	fileTeamScopeFilter := " AND team_id = ?"
-	fRows, err := t.r.db.QueryContext(ctx, `
+	fRows, err := t.readHandle().QueryContext(ctx, `
 		SELECT file_key, project_id, name, COALESCE(thumbnail_url, ''),
 		       COALESCE(last_modified, ''), COALESCE(deleted_at, ''),
 		       COALESCE(node_count, 0), COALESCE(deep_synced_at, '')
@@ -1210,7 +1210,7 @@ func (t *TenantRepo) GetFigmaInventoryTree(ctx context.Context, teamID string, i
 	}
 	pageInClause, pageArgs := inClause(fileKeys)
 	pagesByFK := map[string]map[string]*FigmaInventoryTreeNode{}
-	gRows, err := t.r.db.QueryContext(ctx, `
+	gRows, err := t.readHandle().QueryContext(ctx, `
 		SELECT file_key, page_id, name, order_index, COALESCE(deleted_at, '')
 		  FROM figma_page
 		 WHERE tenant_id = ? AND file_key IN (`+pageInClause+`)`+deletedClause+`
@@ -1241,7 +1241,7 @@ func (t *TenantRepo) GetFigmaInventoryTree(ctx context.Context, teamID string, i
 	}
 
 	// sections
-	sRows, err := t.r.db.QueryContext(ctx, `
+	sRows, err := t.readHandle().QueryContext(ctx, `
 		SELECT file_key, page_id, section_id, name, x, y, width, height,
 		       order_index, COALESCE(deleted_at, '')
 		  FROM figma_section
@@ -1354,7 +1354,7 @@ func (t *TenantRepo) ListFigmaInventoryRuns(ctx context.Context, limit int) ([]F
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := t.r.db.QueryContext(ctx, `
+	rows, err := t.readHandle().QueryContext(ctx, `
 		SELECT id, tenant_id, started_at, COALESCE(finished_at, ''),
 		       teams_crawled, projects_seen, files_seen, files_refetched,
 		       pages_upserted, sections_upserted,

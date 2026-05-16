@@ -202,7 +202,7 @@ func (t *TenantRepo) LookupAutoSyncState(ctx context.Context, fileKey, pageID, s
 	// which we COALESCE to empty string so the planner sees "no known
 	// status" the same as ErrNotFound. project_versions.id is PK so the
 	// join is index-backed and free.
-	row := t.r.db.QueryRowContext(ctx, `
+	row := t.readHandle().QueryRowContext(ctx, `
 		SELECT s.tenant_id, s.file_key, s.page_id, s.section_id,
 		       COALESCE(s.content_hash, ''), COALESCE(s.position_hash, ''),
 		       COALESCE(s.last_synced_flow_id, ''), COALESCE(s.last_synced_version_id, ''),
@@ -352,7 +352,7 @@ func (t *TenantRepo) ListAutoSyncState(ctx context.Context, f AutoSyncStateFilte
 	sqlStr += ` ORDER BY s.last_attempt_at DESC LIMIT ? OFFSET ?`
 	args = append(args, f.Limit, f.Offset)
 
-	rows, err := t.r.db.QueryContext(ctx, sqlStr, args...)
+	rows, err := t.readHandle().QueryContext(ctx, sqlStr, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list figma_auto_sync_state: %w", err)
 	}
@@ -413,7 +413,7 @@ func (t *TenantRepo) ListFigmaPagesForFile(ctx context.Context, fileKey string) 
 	if fileKey == "" {
 		return nil, errors.New("projects: file_key required")
 	}
-	rows, err := t.r.db.QueryContext(ctx, `
+	rows, err := t.readHandle().QueryContext(ctx, `
 		SELECT page_id, name, order_index, COALESCE(background_color, ''),
 		       COALESCE(content_hash, ''), COALESCE(position_hash, ''),
 		       COALESCE(derived_last_modified, ''),
@@ -478,7 +478,7 @@ func (t *TenantRepo) ListFigmaSectionsForPage(ctx context.Context, fileKey, page
 	if fileKey == "" || pageID == "" {
 		return nil, errors.New("projects: file_key and page_id required")
 	}
-	rows, err := t.r.db.QueryContext(ctx, `
+	rows, err := t.readHandle().QueryContext(ctx, `
 		SELECT section_id, name, x, y, width, height, order_index,
 		       COALESCE(content_hash, ''), COALESCE(position_hash, ''),
 		       COALESCE(sub_product_override, ''),
@@ -528,7 +528,7 @@ func (t *TenantRepo) ListFigmaFilesForAutoSync(ctx context.Context, cutoff time.
 	if t.tenantID == "" {
 		return nil, errors.New("projects: tenant_id required")
 	}
-	rows, err := t.r.db.QueryContext(ctx, `
+	rows, err := t.readHandle().QueryContext(ctx, `
 		SELECT f.file_key, f.project_id, f.team_id, f.name,
 		       COALESCE(f.thumbnail_url, ''),
 		       COALESCE(f.last_modified, ''),
@@ -659,7 +659,7 @@ func (t *TenantRepo) LookupFigmaProjectMapping(ctx context.Context, projectID st
 	if t.tenantID == "" {
 		return FigmaProjectMapping{}, errors.New("projects: tenant_id required")
 	}
-	row := t.r.db.QueryRowContext(ctx, `
+	row := t.readHandle().QueryRowContext(ctx, `
 		SELECT tenant_id, project_id, domain, product, platform_default,
 		       enabled_for_autosync, mapped_by_user_id, mapped_at, updated_at
 		  FROM figma_project_mapping
@@ -690,7 +690,7 @@ func (t *TenantRepo) ListFigmaProjectMappings(ctx context.Context) ([]FigmaProje
 	if t.tenantID == "" {
 		return nil, errors.New("projects: tenant_id required")
 	}
-	rows, err := t.r.db.QueryContext(ctx, `
+	rows, err := t.readHandle().QueryContext(ctx, `
 		SELECT tenant_id, project_id, domain, product, platform_default,
 		       enabled_for_autosync, mapped_by_user_id, mapped_at, updated_at
 		  FROM figma_project_mapping
@@ -798,7 +798,7 @@ func (t *TenantRepo) LoadSectionSubtree(ctx context.Context, fileKey, sectionID 
 		return nil, errors.New("projects: file_key and section_id required")
 	}
 	var blob []byte
-	row := t.r.db.QueryRowContext(ctx, `
+	row := t.readHandle().QueryRowContext(ctx, `
 		SELECT subtree_json_zstd
 		  FROM figma_section
 		 WHERE tenant_id = ? AND file_key = ? AND section_id = ?

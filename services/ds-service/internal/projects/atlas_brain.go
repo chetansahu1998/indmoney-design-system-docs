@@ -145,7 +145,7 @@ func (s *Server) HandleAtlasBrainNodes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	nodes, err := repo.ListAtlasBrainNodes(r.Context(), platform, limit)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "atlas_brain_nodes", err.Error())
@@ -265,7 +265,7 @@ func (s *Server) HandleAtlasBrainProducts(w http.ResponseWriter, r *http.Request
 			limit = n
 		}
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	products, err := repo.ListAtlasBrainProducts(r.Context(), platform, limit)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "atlas_brain_products", err.Error())

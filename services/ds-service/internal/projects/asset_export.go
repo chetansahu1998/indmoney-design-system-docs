@@ -919,7 +919,7 @@ func (s *Server) HandleMintAssetExportToken() http.HandlerFunc {
 		// Tenant scoping: the project must belong to this tenant. Cross-tenant
 		// reads return 404 (no existence oracle) — same posture as the PNG
 		// route.
-		repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+		repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 		project, err := repo.GetProjectBySlug(ctx, slug)
 		if errors.Is(err, ErrNotFound) {
 			http.NotFound(w, r)
@@ -1011,7 +1011,7 @@ func (s *Server) HandleAssetDownload() http.HandlerFunc {
 		// SingleAssetSyncRenderBudget. The render path delegates to U4's
 		// AssetExporter.RenderAssetsForLeaf — which honours the per-tenant
 		// rate limiter so we never accidentally swing past Figma's quota.
-		repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+		repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 		_, versionIndex, lerr := s.lookupVersionForFile(ctx, repo, fileID)
 		if lerr != nil {
 			writeJSONErr(w, http.StatusInternalServerError, "version_lookup", lerr.Error())
@@ -1297,7 +1297,7 @@ func (s *Server) HandleBulkAssetExport() http.HandlerFunc {
 		}
 
 		// Tenant scope check.
-		repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+		repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 		if _, err := repo.GetProjectBySlug(ctx, slug); err != nil {
 			if errors.Is(err, ErrNotFound) {
 				http.NotFound(w, r)
@@ -1709,7 +1709,7 @@ func (s *Server) tenantExporter(tenantID string) *AssetExporter {
 		return nil
 	}
 	cp := *base
-	cp.Repo = NewTenantRepo(s.deps.DB.DB, tenantID)
+	cp.Repo = NewTenantRepoFromPool(s.deps.DB, tenantID)
 	return &cp
 }
 

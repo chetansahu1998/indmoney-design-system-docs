@@ -44,7 +44,7 @@ func (s *Server) HandleFigmaInventoryListTeams(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	seeds, err := repo.ListFigmaTeamSeeds(r.Context())
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "list_teams", err.Error())
@@ -90,7 +90,7 @@ func (s *Server) HandleFigmaInventoryAddTeam(w http.ResponseWriter, r *http.Requ
 	if claims != nil {
 		userID = claims.Sub
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if err := repo.UpsertFigmaTeamSeed(r.Context(), FigmaTeamSeed{
 		TeamID:        req.TeamID,
 		TeamName:      req.TeamName,
@@ -129,7 +129,7 @@ func (s *Server) HandleFigmaInventoryRemoveTeam(w http.ResponseWriter, r *http.R
 		writeJSONErr(w, http.StatusBadRequest, "missing_team_id", "team_id required")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if err := repo.SetFigmaTeamSeedEnabled(r.Context(), teamID, false); err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "disable_team", err.Error())
 		return
@@ -158,7 +158,7 @@ func (s *Server) HandleFigmaInventoryTree(w http.ResponseWriter, r *http.Request
 		return
 	}
 	includeDeleted := r.URL.Query().Get("include_deleted") == "1"
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	tree, err := repo.GetFigmaInventoryTree(r.Context(), teamID, includeDeleted)
 	if errors.Is(err, ErrNotFound) {
 		writeJSONErr(w, http.StatusNotFound, "team_not_found", "team not crawled yet")
@@ -209,7 +209,7 @@ func (s *Server) HandleFigmaInventoryRuns(w http.ResponseWriter, r *http.Request
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	runs, err := repo.ListFigmaInventoryRuns(r.Context(), limit)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "list_runs", err.Error())

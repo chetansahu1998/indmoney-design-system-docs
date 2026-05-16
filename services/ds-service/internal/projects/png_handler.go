@@ -94,7 +94,7 @@ func (s *Server) HandleScreenPNG() http.HandlerFunc {
 
 		// Repo enforces tenant scoping. Cross-tenant reads return ErrNotFound
 		// → 404 below (NOT 403) so existence-oracle attacks fail.
-		repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+		repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 		info, err := repo.GetScreenForServe(ctx, slug, screenID)
 		if errors.Is(err, ErrNotFound) {
 			http.NotFound(w, r)
@@ -216,7 +216,7 @@ func (s *Server) HandleScreenKTX2() http.HandlerFunc {
 			return
 		}
 
-		repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+		repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 		info, err := repo.GetScreenForServe(ctx, slug, screenID)
 		if errors.Is(err, ErrNotFound) {
 			http.NotFound(w, r)
@@ -382,7 +382,7 @@ func (s *Server) HandleMintAssetToken() http.HandlerFunc {
 		}
 		// Tenant scoping — confirm the screen belongs to this tenant before
 		// minting a token for it. Returns 404 cross-tenant (no oracle).
-		repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+		repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 		info, err := repo.GetScreenForServe(ctx, slug, screenID)
 		if err != nil || info == nil {
 			http.NotFound(w, r)

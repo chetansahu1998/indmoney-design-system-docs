@@ -479,7 +479,7 @@ func main() {
 	// disable (useful for tests + when running cmd/figma-autosync-* CLIs
 	// against a server-managed DB).
 	if interval := autosyncIntervalFromEnv(); interval > 0 {
-		startAutosyncRetryLoop(workerCtx, log, projectsServer, dbConn.DB, interval, inventoryPoller.Ready())
+		startAutosyncRetryLoop(workerCtx, log, projectsServer, dbConn, interval, inventoryPoller.Ready())
 	} else {
 		log.Info("autosync retry loop disabled (FIGMA_AUTOSYNC_INTERVAL=0)")
 	}
@@ -910,7 +910,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	// re-checks via RequireAdminTenant, defense-in-depth.
 	mux.HandleFunc("POST /v1/admin/figma-autosync/execute",
 		s.requireSuperAdmin(projects.AdaptAuthMiddleware(claimsReader, func(w http.ResponseWriter, r *http.Request) {
-			handleAutosyncExecute(w, r, s.projectsServer, s.db.DB, s.log)
+			handleAutosyncExecute(w, r, s.projectsServer, s.db, s.log)
 		})))
 	// F4 follow-up — manual escape hatch from auto-quarantine. Operators
 	// hit this after fixing whatever caused 5 consecutive failures (file
@@ -1760,12 +1760,15 @@ func (f figmaImageFillURLFetcherFunc) GetFileImageFills(ctx context.Context, fil
 	return f(ctx, fileKey)
 }
 
-// adminAutoSyncDB adapts a *sql.DB to inventory.AutoSyncDB. Returns a
-// fresh TenantRepo per tenant. Used by handleAutosyncExecute.
-type adminAutoSyncDB struct{ db *sql.DB }
+// adminAutoSyncDB adapts a *db.DB to inventory.AutoSyncDB. Returns a
+// fresh TenantRepo per tenant, wired to both pools (plan
+// 2026-05-16-001 U3). The planner's per-section LookupAutoSyncState
+// runs on the read pool; the executor's UpsertAutoSyncState runs on
+// the write pool. Used by handleAutosyncExecute + startAutosyncRetryLoop.
+type adminAutoSyncDB struct{ pool *db.DB }
 
 func (a adminAutoSyncDB) NewTenantRepo(tenantID string) *projects.TenantRepo {
-	return projects.NewTenantRepo(a.db, tenantID)
+	return projects.NewTenantRepoFromPool(a.pool, tenantID)
 }
 
 // autosyncLeaseTTL bounds how long one acquisition holds the autosync
@@ -1816,7 +1819,8 @@ func releaseAutosyncLease(ctx context.Context, db *sql.DB, log *slog.Logger, ten
 //	                 "skip_unchanged":N, "quarantined":N, "errors":[...]}],
 //	  "totals":    {...}
 //	}
-func handleAutosyncExecute(w http.ResponseWriter, r *http.Request, ps *projects.Server, sqlDB *sql.DB, log *slog.Logger) {
+func handleAutosyncExecute(w http.ResponseWriter, r *http.Request, ps *projects.Server, pool *db.DB, log *slog.Logger) {
+	sqlDB := pool.Write() // lease + raw-SQL helpers use the write pool
 	if r.Method != http.MethodPost {
 		projects.WriteJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
 		return
@@ -1850,8 +1854,8 @@ func handleAutosyncExecute(w http.ResponseWriter, r *http.Request, ps *projects.
 	}
 	defer releaseAutosyncLease(r.Context(), sqlDB, log, tenantID)
 
-	planner := inventory.NewPlanner(adminAutoSyncDB{db: sqlDB}, inventory.PlannerConfig{Log: log})
-	executor := inventory.NewExecutor(adminAutoSyncDB{db: sqlDB}, ps.RunExport)
+	planner := inventory.NewPlanner(adminAutoSyncDB{pool: pool}, inventory.PlannerConfig{Log: log})
+	executor := inventory.NewExecutor(adminAutoSyncDB{pool: pool}, ps.RunExport)
 
 	var plans []inventory.FilePlan
 	if body.FileKey != "" {
@@ -2001,10 +2005,11 @@ func startAutosyncRetryLoop(
 	ctx context.Context,
 	log *slog.Logger,
 	ps *projects.Server,
-	sqlDB *sql.DB,
+	pool *db.DB,
 	interval time.Duration,
 	pollerReady <-chan struct{},
 ) {
+	sqlDB := pool.Write() // lease + raw-SQL helpers use the write pool
 	tenantID := strings.TrimSpace(os.Getenv("DEV_AUTH_BYPASS_TENANT"))
 	if tenantID == "" {
 		log.Info("autosync retry loop: no DEV_AUTH_BYPASS_TENANT, skipping")
@@ -2058,8 +2063,8 @@ func startAutosyncRetryLoop(
 			// below the 15min default tick interval.
 			cycleCtx, cycleCancel := context.WithTimeout(ctx, 10*time.Minute)
 			defer cycleCancel()
-			planner := inventory.NewPlanner(adminAutoSyncDB{db: sqlDB}, inventory.PlannerConfig{Log: log})
-			executor := inventory.NewExecutor(adminAutoSyncDB{db: sqlDB}, ps.RunExport)
+			planner := inventory.NewPlanner(adminAutoSyncDB{pool: pool}, inventory.PlannerConfig{Log: log})
+			executor := inventory.NewExecutor(adminAutoSyncDB{pool: pool}, ps.RunExport)
 			plans, err := planner.PlanTenant(cycleCtx, tenantID)
 			if err != nil {
 				log.Warn("autosync retry: plan failed", "err", err.Error())

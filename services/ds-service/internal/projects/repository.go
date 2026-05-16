@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/db"
 )
 
 // ErrNotFound is returned by TenantRepo when a row exists for another tenant
@@ -21,8 +23,17 @@ var ErrNotFound = errors.New("projects: not found")
 
 // repo is the unexported plain handle. Every public method must go through
 // TenantRepo so the tenant_id filter is impossible to forget at the call site.
+//
+// Pool fields (plan 2026-05-16-001):
+//   - db: the write pool (single conn, all writes + read-your-write
+//     critical paths). Set by every constructor.
+//   - read: the read pool (multi-conn mode=ro, ms-stale reads OK).
+//     Set only by NewTenantRepoFromPool; nil when constructed from
+//     a single *sql.DB (CLIs, tests). When nil, readHandle() falls
+//     back to db so the API surface is uniform.
 type repo struct {
-	db *sql.DB
+	db   *sql.DB
+	read *sql.DB
 }
 
 // TenantRepo is the only public way to read or write project rows. It carries
@@ -43,8 +54,29 @@ type TenantRepo struct {
 
 // NewTenantRepo builds a tenant-scoped repository. Pass *sql.DB (not *db.DB) so
 // tests can substitute a bare connection without going through migrations.
-func NewTenantRepo(db *sql.DB, tenantID string) *TenantRepo {
-	return &TenantRepo{r: &repo{db: db}, tenantID: tenantID, now: time.Now}
+//
+// The repo's read field is nil — every read routes through the same
+// handle as writes. Tests and CLIs use this form because they don't
+// benefit from a separate read pool (single-threaded or short-lived).
+// Server code should use NewTenantRepoFromPool to get the parallelism
+// win on read-only HTTP endpoints and background poller cycles.
+func NewTenantRepo(handle *sql.DB, tenantID string) *TenantRepo {
+	return &TenantRepo{r: &repo{db: handle}, tenantID: tenantID, now: time.Now}
+}
+
+// NewTenantRepoFromPool builds a tenant-scoped repository wired to the
+// split write/read pools. Writes + read-your-write paths use pool.Write();
+// methods that explicitly opt into the read pool via readHandle() use
+// pool.Read(). Server code passes the *db.DB it received from db.Open
+// so HTTP read endpoints get concurrent-read parallelism.
+//
+// See docs/plans/2026-05-16-001-fix-sqlite-pool-split-plan.md U3-U5.
+func NewTenantRepoFromPool(pool *db.DB, tenantID string) *TenantRepo {
+	return &TenantRepo{
+		r:        &repo{db: pool.Write(), read: pool.Read()},
+		tenantID: tenantID,
+		now:      time.Now,
+	}
 }
 
 // WithTx returns a clone of the repo whose writes go through `tx` instead of
@@ -67,9 +99,33 @@ type dbtx interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// handle returns the write-pool handle (or the active tx). Use for writes
+// and for reads that must observe writes made earlier in the same flow
+// (read-your-write paths — heartbeat → recovery, executor → planner,
+// worker lease renew). Plan 2026-05-16-001 U2 — safe default.
 func (t *TenantRepo) handle() dbtx {
 	if t.tx != nil {
 		return t.tx
+	}
+	return t.r.db
+}
+
+// readHandle returns the read-pool handle when the repo was constructed
+// via NewTenantRepoFromPool, falling back to the write handle otherwise.
+// Inside an active tx, always returns the tx so the caller's view stays
+// consistent.
+//
+// Use for read-only methods where ms-staleness is acceptable: HTTP
+// list/get endpoints, dashboard queries, inventory poller's per-file
+// lookups, audit log queries.
+//
+// Do NOT use for read-your-write paths. Plan 2026-05-16-001 U3 + U5.
+func (t *TenantRepo) readHandle() dbtx {
+	if t.tx != nil {
+		return t.tx
+	}
+	if t.r.read != nil {
+		return t.r.read
 	}
 	return t.r.db
 }

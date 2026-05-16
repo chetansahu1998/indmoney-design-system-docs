@@ -60,7 +60,7 @@ func (s *Server) HandleGraphAggregate(w http.ResponseWriter, r *http.Request) {
 			"platform must be 'mobile' or 'web'")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	rows, err := repo.LoadGraph(r.Context(), platform)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "load_graph", err.Error())

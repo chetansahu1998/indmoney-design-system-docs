@@ -45,7 +45,7 @@ func (s *Server) HandleOrganismAdoption(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	rows, err := repo.OrganismAdoptionRollup(r.Context())
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "adoption_rollup", err.Error())
@@ -100,7 +100,7 @@ func (s *Server) HandleOrganismMatchesBySlug(w http.ResponseWriter, r *http.Requ
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	matches, err := repo.ListOrganismMatchesBySlug(r.Context(), slug, kind, limit, offset)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "list_matches", err.Error())
@@ -149,7 +149,7 @@ func (s *Server) HandlePromotionCandidatePatch(w http.ResponseWriter, r *http.Re
 		writeJSONErr(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if err := repo.SetPromotionCandidateProposedName(r.Context(), hash, req.ProposedName); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeJSONErr(w, http.StatusNotFound, "not_found", "no promotion candidate with that hash")
@@ -268,7 +268,7 @@ func (s *Server) HandleOrganismVerdictLookup(w http.ResponseWriter, r *http.Requ
 		writeJSONErr(w, http.StatusBadRequest, "missing_node_id", "node_id required")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	match, err := repo.LookupOrganismMatchByFrame(r.Context(), req.NodeID)
 	if errors.Is(err, ErrNotFound) {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -337,7 +337,7 @@ func (s *Server) HandleOrganismForkMark(w http.ResponseWriter, r *http.Request) 
 		writeJSONErr(w, http.StatusBadRequest, "missing_node_id", "node_id required")
 		return
 	}
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	if err := repo.UpsertOrganismForkMark(r.Context(), OrganismForkMark{
 		FrameID:        req.NodeID,
 		MarkedByUserID: claims.Sub,
@@ -369,7 +369,7 @@ func (s *Server) HandleOrganismPromotionCandidates(w http.ResponseWriter, r *htt
 		return
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	candidates, err := repo.ListPromotionCandidates(r.Context(), limit)
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "list_promotion_candidates", err.Error())

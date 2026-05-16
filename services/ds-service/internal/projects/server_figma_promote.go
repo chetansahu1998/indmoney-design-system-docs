@@ -73,7 +73,7 @@ func (s *Server) HandleFigmaInventoryPromote(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 
 	// 1. Read the figma_file row — verifies it exists in this tenant.
 	file, err := repo.LookupFigmaFile(r.Context(), fileKey, false)

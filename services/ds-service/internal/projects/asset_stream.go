@@ -141,7 +141,7 @@ func (s *Server) HandleAssetStreamTicket(w http.ResponseWriter, r *http.Request)
 	// migration the frontend passes the project slug as leaf_id (see
 	// screen_image_fills.go:135 for the same pattern); resolve to a real
 	// flow UUID before LookupLeafFigmaContext, which expects a flow id.
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	resolvedLeafID := leafID
 	if leafID == slug {
 		flowID, ferr := repo.PrimaryFlowIDForSlug(r.Context(), slug)
@@ -249,7 +249,7 @@ func (s *Server) HandleAssetStream(w http.ResponseWriter, r *http.Request) {
 	// streamed cluster URLs for only one flow's icons. Use AllFlowIDsForSlug
 	// when the frontend passes the project slug as the leafID (post brain-
 	// products convention) so the stream covers every flow in the project.
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 	var flowIDs []string
 	var resolvedLeafID string
 	if leafID == slug {
@@ -364,7 +364,7 @@ func streamLeafAssets(
 	tier, _ := ParsePreviewTierFormat(AssetStreamDefaultTier)
 	tierFormat := tier.FormatString()
 
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
 
 	var rendered, failed atomic.Int64
 	var serializeMu sync.Mutex
