@@ -13,7 +13,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-client";
 import PageShell from "@/components/PageShell";
 
-import { adminFetchJSON } from "../../atlas/admin/_lib/adminFetch";
+import { adminFetchJSON } from "../../atlas/_lib/adminFetch";
 
 interface PrefRecord {
   user_id: string;

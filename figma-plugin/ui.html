@@ -3136,6 +3136,19 @@ window.onmessage = (event) => {
         level: msg.payload.level,
       });
       break;
+    case "organism.check-result": {
+      // 2026-05-13 — organism-pattern-detection Part B U8. Render a
+      // verdict card showing the suspected DS organism for the user's
+      // selected FRAME, with kind / variant / diff / confidence.
+      renderOrganismVerdict(msg.payload);
+      break;
+    }
+    case "organism.fork-result": {
+      // U9 — designer's "Mark as intentional fork" assertion landed.
+      // Update the verdict card affordance state.
+      applyOrganismForkResult(msg.payload);
+      break;
+    }
     case "projects.detected-groups": {
       projectsState.detected = msg.payload;
       // Drop edits for groups that no longer exist; keep edits for surviving keys.
@@ -3353,6 +3366,335 @@ $("btn-autofix-apply")?.addEventListener("click", () => {
   $("projects-autofix-modal").hidden = true;
   autofixState = null;
 });
+
+/* ════════════════════════════════════════════════════════════════════
+   Organism check verdict card (2026-05-13 — Part B U8 of the
+   organism-pattern-detection plan)
+
+   Triggered when the user runs the "Check selection against DS" menu
+   command. code.ts POSTs the selected FRAME's node id to ds-service's
+   /v1/audit/organism-match, then emits `organism.check-result`. We
+   render an overlay card with the suspected slug, variant, diff, and
+   confidence — plus action buttons (Replace with INSTANCE is disabled
+   until U9 ships; Mark as intentional fork wires to /fork in U9).
+   ════════════════════════════════════════════════════════════════════ */
+
+function ensureOrganismCard() {
+  let host = document.getElementById("organism-verdict-overlay");
+  if (host) return host;
+  host = document.createElement("div");
+  host.id = "organism-verdict-overlay";
+  Object.assign(host.style, {
+    position: "fixed",
+    inset: "0",
+    background: "rgba(20, 20, 24, 0.55)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: "9000",
+    padding: "16px",
+  });
+  host.addEventListener("click", (e) => {
+    if (e.target === host) host.remove();
+  });
+  document.body.appendChild(host);
+  return host;
+}
+
+function organismKindColor(kind) {
+  switch (kind) {
+    case "exact":  return { fg: "#22c55e", label: "Exact match" };
+    case "near":   return { fg: "#eab308", label: "Near match" };
+    case "novel":  return { fg: "#60a5fa", label: "Novel composition" };
+    default:       return { fg: "#94a3b8", label: kind || "Unknown" };
+  }
+}
+
+function renderOrganismVerdict(payload) {
+  const host = ensureOrganismCard();
+  host.innerHTML = "";
+  const card = document.createElement("div");
+  Object.assign(card.style, {
+    background: "#fff",
+    color: "#111",
+    borderRadius: "10px",
+    padding: "20px 22px",
+    width: "min(420px, 100%)",
+    maxHeight: "82vh",
+    overflow: "auto",
+    boxShadow: "0 10px 40px rgba(0,0,0,0.25)",
+    fontSize: "13px",
+    lineHeight: "1.5",
+  });
+
+  // Close button.
+  const close = document.createElement("button");
+  close.textContent = "✕";
+  Object.assign(close.style, {
+    position: "absolute",
+    top: "8px",
+    right: "8px",
+    border: "none",
+    background: "transparent",
+    cursor: "pointer",
+    fontSize: "18px",
+    color: "#666",
+  });
+  close.addEventListener("click", () => host.remove());
+  card.style.position = "relative";
+  card.appendChild(close);
+
+  // Header.
+  const header = document.createElement("div");
+  Object.assign(header.style, {
+    fontSize: "11px",
+    textTransform: "uppercase",
+    letterSpacing: "0.5px",
+    color: "#666",
+    marginBottom: "4px",
+  });
+  header.textContent = "Organism check";
+  card.appendChild(header);
+
+  const title = document.createElement("div");
+  Object.assign(title.style, { fontWeight: "600", fontSize: "16px", marginBottom: "12px" });
+  title.textContent = payload?.node_name || payload?.node_id || "Selected frame";
+  card.appendChild(title);
+
+  // Body — varies by ok/verdict/error state.
+  if (!payload?.ok) {
+    const err = document.createElement("div");
+    err.style.color = "#c43";
+    err.textContent =
+      payload?.error === "network"
+        ? `Couldn't reach ds-service: ${payload?.detail || "unknown"}`
+        : `Error ${payload?.error || ""}${payload?.detail ? `: ${payload.detail}` : ""}`;
+    card.appendChild(err);
+  } else if (!payload?.verdict) {
+    const reason = document.createElement("div");
+    reason.innerHTML =
+      "<strong>No verdict yet.</strong> This frame hasn't been seen by the pipeline. " +
+      "Import the file via <em>Audit file</em> first, then re-run this check.";
+    card.appendChild(reason);
+  } else {
+    const v = payload.verdict;
+    const tone = organismKindColor(v.match_kind);
+
+    const kindRow = document.createElement("div");
+    Object.assign(kindRow.style, {
+      display: "flex",
+      alignItems: "center",
+      gap: "10px",
+      marginBottom: "10px",
+    });
+    const dot = document.createElement("span");
+    Object.assign(dot.style, {
+      display: "inline-block",
+      width: "10px",
+      height: "10px",
+      borderRadius: "50%",
+      background: tone.fg,
+    });
+    const kindLabel = document.createElement("strong");
+    kindLabel.style.color = tone.fg;
+    kindLabel.textContent = tone.label;
+    kindRow.appendChild(dot);
+    kindRow.appendChild(kindLabel);
+    const conf = document.createElement("span");
+    conf.style.color = "#666";
+    conf.textContent = ` · ${(Math.round((v.confidence ?? 0) * 100))}% confidence`;
+    kindRow.appendChild(conf);
+    card.appendChild(kindRow);
+
+    if (v.suspected_slug) {
+      const slugRow = document.createElement("div");
+      slugRow.style.marginBottom = "6px";
+      slugRow.innerHTML =
+        `Suspected organism: <code style="background:#f4f4f4;padding:1px 6px;border-radius:3px;">${escapeHTML(v.suspected_slug)}</code>` +
+        (v.suspected_variant_key
+          ? ` <span style="color:#666">(${escapeHTML(v.suspected_variant_key)})</span>`
+          : "");
+      card.appendChild(slugRow);
+    } else {
+      const novelRow = document.createElement("div");
+      novelRow.style.marginBottom = "6px";
+      novelRow.style.color = "#444";
+      novelRow.innerHTML =
+        "No published DS organism matches this structure. The DS team may want to publish this pattern as a new component.";
+      card.appendChild(novelRow);
+    }
+
+    // Diff list.
+    if (v.diff_json) {
+      try {
+        const diff = JSON.parse(v.diff_json);
+        if (Array.isArray(diff) && diff.length > 0) {
+          const diffWrap = document.createElement("details");
+          diffWrap.style.marginTop = "10px";
+          diffWrap.style.fontSize = "12px";
+          const summary = document.createElement("summary");
+          summary.style.cursor = "pointer";
+          summary.style.color = "#666";
+          summary.textContent = `Diff (${diff.length} atom${diff.length === 1 ? "" : "s"})`;
+          diffWrap.appendChild(summary);
+          const list = document.createElement("ul");
+          list.style.margin = "6px 0 0 0";
+          list.style.paddingLeft = "16px";
+          for (const d of diff.slice(0, 20)) {
+            const item = document.createElement("li");
+            const tag = d.kind === "added" ? "+" : "−";
+            item.textContent = `${tag} ${d.atom_slug || ""}`;
+            item.style.color = d.kind === "added" ? "#16a34a" : "#dc2626";
+            list.appendChild(item);
+          }
+          if (diff.length > 20) {
+            const more = document.createElement("li");
+            more.textContent = `… +${diff.length - 20} more`;
+            more.style.color = "#666";
+            list.appendChild(more);
+          }
+          diffWrap.appendChild(list);
+          card.appendChild(diffWrap);
+        }
+      } catch {}
+    }
+
+    // Action bar.
+    const actions = document.createElement("div");
+    Object.assign(actions.style, {
+      marginTop: "16px",
+      display: "flex",
+      gap: "8px",
+      flexWrap: "wrap",
+    });
+
+    const replaceBtn = document.createElement("button");
+    const replaceEnabled = !!v.suspected_slug;
+    replaceBtn.textContent = replaceEnabled
+      ? "Open published in Figma"
+      : "Replace with INSTANCE";
+    replaceBtn.disabled = !replaceEnabled;
+    replaceBtn.title = replaceEnabled
+      ? `Opens the DS file at the ${v.suspected_slug} component-set node so you can drag the real INSTANCE into your canvas.`
+      : "No published organism matched — nothing to replace with yet.";
+    Object.assign(replaceBtn.style, {
+      padding: "6px 12px",
+      fontSize: "12px",
+      background: replaceEnabled ? "#0a66c2" : "#f4f4f4",
+      color: replaceEnabled ? "#fff" : "#999",
+      border: replaceEnabled ? "1px solid #0a66c2" : "1px solid #ddd",
+      borderRadius: "4px",
+      cursor: replaceEnabled ? "pointer" : "not-allowed",
+    });
+    if (replaceEnabled) {
+      replaceBtn.addEventListener("click", () => {
+        replaceBtn.textContent = "Opening…";
+        replaceBtn.disabled = true;
+        post("organism.open-published", { slug: v.suspected_slug });
+        // Restore after a short delay; the open-external fires
+        // synchronously but the toast confirms.
+        setTimeout(() => {
+          replaceBtn.textContent = "Open published in Figma";
+          replaceBtn.disabled = false;
+        }, 1500);
+      });
+    }
+    actions.appendChild(replaceBtn);
+
+    const forkBtn = document.createElement("button");
+    forkBtn.id = "organism-fork-btn";
+    forkBtn.dataset.frameId = v.frame_id || "";
+    const alreadyMarked = !!payload.is_intentional_fork;
+    const setForkLabel = (marked) => {
+      if (marked) {
+        forkBtn.textContent = "✓ Marked as intentional fork";
+        forkBtn.disabled = true;
+        forkBtn.title = payload.fork_reason
+          ? `Reason: ${payload.fork_reason}`
+          : "Marked as intentional fork";
+        Object.assign(forkBtn.style, {
+          background: "#e7f7ec",
+          color: "#16a34a",
+          borderColor: "#bce4c6",
+          cursor: "default",
+        });
+      } else {
+        forkBtn.textContent = "Mark as intentional fork";
+        forkBtn.disabled = false;
+        forkBtn.title = "Records that this hand-built composition is an authored choice, not drift.";
+        Object.assign(forkBtn.style, {
+          background: "transparent",
+          color: "#374151",
+          borderColor: "#d1d5db",
+          cursor: "pointer",
+        });
+      }
+    };
+    Object.assign(forkBtn.style, {
+      padding: "6px 12px",
+      fontSize: "12px",
+      borderStyle: "solid",
+      borderWidth: "1px",
+      borderRadius: "4px",
+    });
+    setForkLabel(alreadyMarked);
+    forkBtn.addEventListener("click", () => {
+      if (forkBtn.disabled) return;
+      forkBtn.textContent = "Marking…";
+      forkBtn.disabled = true;
+      post("organism.mark-fork", { node_id: v.frame_id, reason: "" });
+    });
+    actions.appendChild(forkBtn);
+
+    card.appendChild(actions);
+
+    // Metadata footer.
+    const footer = document.createElement("div");
+    Object.assign(footer.style, {
+      marginTop: "14px",
+      paddingTop: "10px",
+      borderTop: "1px solid #eee",
+      fontSize: "11px",
+      color: "#888",
+      fontFamily: "ui-monospace, monospace",
+    });
+    footer.textContent = `frame ${v.frame_id} · fp ${(v.fingerprint_hash || "").slice(0, 12)}…`;
+    card.appendChild(footer);
+  }
+
+  host.appendChild(card);
+}
+
+function escapeHTML(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function applyOrganismForkResult(payload) {
+  const btn = document.getElementById("organism-fork-btn");
+  if (!btn) return;
+  if (payload?.ok) {
+    btn.textContent = "✓ Marked as intentional fork";
+    btn.disabled = true;
+    Object.assign(btn.style, {
+      background: "#e7f7ec",
+      color: "#16a34a",
+      borderColor: "#bce4c6",
+      cursor: "default",
+    });
+    pushToast({ message: "Marked as intentional fork", level: "success" });
+  } else {
+    btn.textContent = "Mark as intentional fork";
+    btn.disabled = false;
+    const msg = payload?.error === "no_token"
+      ? "Set your docs auth token first (Settings → paste your JWT)."
+      : `Fork mark failed: ${payload?.detail || payload?.error || "unknown"}`;
+    pushToast({ message: msg, level: "error" });
+  }
+}
 
 /* Initial sync */
 post("ready");

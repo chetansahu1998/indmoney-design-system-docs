@@ -26,6 +26,8 @@
     { "name": "Audit selection",         "command": "auditSelection" },
     { "name": "Audit file",              "command": "auditFile" },
     { "separator": true },
+    { "name": "Check selection against DS", "command": "checkOrganism" },
+    { "separator": true },
     { "name": "Open Projects mode",      "command": "openProjects" },
     {
       "name":       "Apply auto-fix from docs",

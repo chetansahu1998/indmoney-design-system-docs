@@ -143,7 +143,8 @@ type Manifest struct {
 
 func main() {
 	var (
-		kind     = flag.String("kind", "component", "Asset kind to enumerate variants for")
+		kind         = flag.String("kind", "component", "Asset kind to enumerate variants for")
+		skipDownload = flag.Bool("skip-svg-download", false, "Skip step 6 (SVG download). Composition refs + variant metadata still land in manifest. Useful when a stuck Figma CDN connection would otherwise hang the run; the existing SVG files on disk are reused.")
 		max      = flag.Int("max", 0, "Limit number of sets processed (0 = all)")
 		manifest = flag.String("manifest", "", "Path to manifest.json (default: <repo>/public/icons/glyph/manifest.json)")
 		variants = flag.String("variants-dir", "", "Output dir for variant SVGs (default: <manifest dir>/variants)")
@@ -384,41 +385,46 @@ func main() {
 		log.Info("svg urls resolved", "progress", fmt.Sprintf("%d/%d", end, len(pending)))
 	}
 
-	// 3. Download SVGs concurrently
-	manifestDir := filepath.Dir(*manifest)
-	type result struct {
-		i   int
-		err error
-	}
-	resCh := make(chan result, len(pending))
-	sema := make(chan struct{}, 10)
-	var wg sync.WaitGroup
-	for i, p := range pending {
-		url := urlByID[p.variant.VariantID]
-		if url == "" {
-			continue
+	// 3. Download SVGs concurrently (skippable via --skip-svg-download
+	// for runs that only care about manifest + composition_refs).
+	if *skipDownload {
+		log.Info("skipping SVG download (--skip-svg-download); manifest will be written with existing on-disk SVGs intact")
+	} else {
+		manifestDir := filepath.Dir(*manifest)
+		type result struct {
+			i   int
+			err error
 		}
-		wg.Add(1)
-		sema <- struct{}{}
-		go func(i int, p variantKey, url string) {
-			defer wg.Done()
-			defer func() { <-sema }()
-			dst := filepath.Join(manifestDir, p.variant.File)
-			err := downloadSVG(ctx, url, dst)
-			resCh <- result{i, err}
-		}(i, p, url)
-	}
-	wg.Wait()
-	close(resCh)
-	ok, fail := 0, 0
-	for r := range resCh {
-		if r.err != nil {
-			fail++
-		} else {
-			ok++
+		resCh := make(chan result, len(pending))
+		sema := make(chan struct{}, 10)
+		var wg sync.WaitGroup
+		for i, p := range pending {
+			url := urlByID[p.variant.VariantID]
+			if url == "" {
+				continue
+			}
+			wg.Add(1)
+			sema <- struct{}{}
+			go func(i int, p variantKey, url string) {
+				defer wg.Done()
+				defer func() { <-sema }()
+				dst := filepath.Join(manifestDir, p.variant.File)
+				err := downloadSVG(ctx, url, dst)
+				resCh <- result{i, err}
+			}(i, p, url)
 		}
+		wg.Wait()
+		close(resCh)
+		ok, fail := 0, 0
+		for r := range resCh {
+			if r.err != nil {
+				fail++
+			} else {
+				ok++
+			}
+		}
+		log.Info("download summary", "ok", ok, "failed", fail)
 	}
-	log.Info("download summary", "ok", ok, "failed", fail)
 
 	// 4. Stitch variants back into the manifest
 	byEntry := map[int][]Variant{}
@@ -561,12 +567,19 @@ func imagesURLs(ctx context.Context, c *client.Client, fileKey string, ids []str
 	return parsed.Images, nil
 }
 
+// svgDownloadClient bounds each SVG fetch to 30s end-to-end. Without
+// this, http.DefaultClient has no timeout and a single slow Figma CDN
+// connection can stall the entire wg.Wait() in the parallel download
+// loop indefinitely. Observed 2026-05-13: 1044/1132 SVGs landed then
+// the run hung for ~10 min with no recovery.
+var svgDownloadClient = &http.Client{Timeout: 30 * time.Second}
+
 func downloadSVG(ctx context.Context, url, dst string) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := svgDownloadClient.Do(req)
 	if err != nil {
 		return err
 	}

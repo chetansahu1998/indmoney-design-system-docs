@@ -366,6 +366,10 @@ figma.ui.onmessage = async (msg) => {
                 return;
             case "projects.autofix":
                 return runAutoFix(msg.payload);
+            case "organism.mark-fork":
+                return runOrganismForkMark(msg.payload);
+            case "organism.open-published":
+                return runOrganismOpenPublished(msg.payload);
         }
     }
     catch (e) {
@@ -528,6 +532,182 @@ if (figma.command === "autofix") {
 if (figma.command === "openDocsSite") {
     figma.openExternal(docsURL);
     figma.closePlugin();
+}
+// 2026-05-13 — organism-pattern-detection plan, Part B U8.
+// Reads the current selection, POSTs the FRAME's node id to ds-service's
+// /v1/audit/organism-match, and emits an `organism.check-result` message
+// to the UI for rendering the verdict card.
+if (figma.command === "checkOrganism") {
+    void runOrganismCheck();
+}
+async function runOrganismCheck() {
+    var _a;
+    const sel = figma.currentPage.selection;
+    if (sel.length === 0) {
+        toast("Select a FRAME first, then run Check selection against DS.", "error");
+        return;
+    }
+    if (sel.length > 1) {
+        toast("Pick exactly one FRAME — multi-select isn't supported yet.", "error");
+        return;
+    }
+    const node = sel[0];
+    if (node.type !== "FRAME" && node.type !== "INSTANCE" && node.type !== "COMPONENT") {
+        toast(`Selected node is a ${node.type}; pick a FRAME / INSTANCE / COMPONENT instead.`, "error");
+        return;
+    }
+    const dsURL = (await figma.clientStorage.getAsync("ds_service_url")) ||
+        "https://indmoney-ds-service.fly.dev";
+    const tok = (await figma.clientStorage.getAsync("docs_auth_token"));
+    if (!tok) {
+        toast("Set your docs auth token first (Settings → paste your JWT).", "error");
+        return;
+    }
+    try {
+        const res = await fetch(`${dsURL}/v1/audit/organism-match`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${tok}`,
+            },
+            body: JSON.stringify({ node_id: node.id, file_id: (_a = figma.fileKey) !== null && _a !== void 0 ? _a : "" }),
+        });
+        if (!res.ok) {
+            const text = await res.text();
+            send({
+                type: "organism.check-result",
+                payload: {
+                    ok: false,
+                    error: `http_${res.status}`,
+                    detail: text.slice(0, 200),
+                    node_id: node.id,
+                    node_name: node.name,
+                },
+            });
+            return;
+        }
+        const body = (await res.json());
+        send({
+            type: "organism.check-result",
+            payload: {
+                ok: true,
+                verdict: body.verdict,
+                reason: body.reason,
+                node_id: node.id,
+                node_name: node.name,
+            },
+        });
+    }
+    catch (err) {
+        send({
+            type: "organism.check-result",
+            payload: {
+                ok: false,
+                error: "network",
+                detail: err.message,
+                node_id: node.id,
+                node_name: node.name,
+            },
+        });
+    }
+}
+// Replace-with-INSTANCE scaffold — resolves the published organism's
+// Figma deeplink via /v1/admin/organisms/{slug}/deeplink and opens the
+// source file at the matching node. Library-key plumbing for an
+// automated swap is a separate plan; for now this gives the designer a
+// one-click jump to where the real INSTANCE lives so they can drag it
+// into their canvas.
+async function runOrganismOpenPublished(payload) {
+    var _a;
+    const slug = (_a = payload === null || payload === void 0 ? void 0 : payload.slug) === null || _a === void 0 ? void 0 : _a.trim();
+    if (!slug) {
+        toast("No suspected organism on this frame — open Check selection against DS first.", "error");
+        return;
+    }
+    const dsURL = (await figma.clientStorage.getAsync("ds_service_url")) ||
+        "https://indmoney-ds-service.fly.dev";
+    const tok = (await figma.clientStorage.getAsync("docs_auth_token"));
+    if (!tok) {
+        toast("Set your docs auth token first (Settings → paste your JWT).", "error");
+        return;
+    }
+    try {
+        const res = await fetch(`${dsURL}/v1/admin/organisms/${encodeURIComponent(slug)}/deeplink`, { headers: { Authorization: `Bearer ${tok}` } });
+        if (!res.ok) {
+            toast(res.status === 404
+                ? `No published organism for slug ${slug}.`
+                : `Couldn't resolve deeplink: HTTP ${res.status}`, "error");
+            return;
+        }
+        const body = (await res.json());
+        if (!body.figma_url) {
+            toast("Deeplink response missing figma_url.", "error");
+            return;
+        }
+        figma.openExternal(body.figma_url);
+        toast(`Opened ${slug} in the DS file. Drag the variant into your canvas.`, "info");
+    }
+    catch (err) {
+        toast(`Couldn't reach ds-service: ${err.message}`, "error");
+    }
+}
+// U9 — designer asserts the given frame_id is an intentional fork from
+// the published organism. UI's "Mark as intentional fork" button posts
+// here; we POST to /v1/audit/organism-match/fork and echo a result the
+// UI uses to update the verdict card affordance.
+async function runOrganismForkMark(payload) {
+    var _a;
+    const nodeID = (_a = payload === null || payload === void 0 ? void 0 : payload.node_id) === null || _a === void 0 ? void 0 : _a.trim();
+    if (!nodeID) {
+        send({
+            type: "organism.fork-result",
+            payload: { ok: false, error: "missing_node_id" },
+        });
+        return;
+    }
+    const dsURL = (await figma.clientStorage.getAsync("ds_service_url")) ||
+        "https://indmoney-ds-service.fly.dev";
+    const tok = (await figma.clientStorage.getAsync("docs_auth_token"));
+    if (!tok) {
+        send({
+            type: "organism.fork-result",
+            payload: { ok: false, error: "no_token" },
+        });
+        return;
+    }
+    try {
+        const res = await fetch(`${dsURL}/v1/audit/organism-match/fork`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${tok}`,
+            },
+            body: JSON.stringify({ node_id: nodeID, reason: payload.reason || "" }),
+        });
+        if (!res.ok) {
+            const text = await res.text();
+            send({
+                type: "organism.fork-result",
+                payload: { ok: false, error: `http_${res.status}`, detail: text.slice(0, 200), node_id: nodeID },
+            });
+            return;
+        }
+        send({
+            type: "organism.fork-result",
+            payload: { ok: true, node_id: nodeID, reason: payload.reason || "" },
+        });
+    }
+    catch (err) {
+        send({
+            type: "organism.fork-result",
+            payload: {
+                ok: false,
+                error: "network",
+                detail: err.message,
+                node_id: nodeID,
+            },
+        });
+    }
 }
 /* ── Health polling ─────────────────────────────────────────────────── */
 function startHealthPolling() {

@@ -1,0 +1,32 @@
+-- 0030_figma_section_subtree_blob — replaces row-per-Figma-node storage
+-- (figma_node from migration 0027) with per-section zstd-compressed
+-- subtree blobs on figma_section.
+--
+-- Plan: docs/plans/2026-05-14-002-feat-figma-section-subtree-blob-plan.md
+--
+-- Why: the figma_node table from Phase 2C's depth-14 deep crawl reached
+-- 26.89M rows × 5 indexes = ~13 GB on the local dev DB (pre-wipe
+-- measurement: 4.8 GB table + 2.1 GB PK index + 2.1 GB parent index +
+-- 1.8 GB file+depth index + 1.4 GB name index + 1.2 GB type index).
+-- Production scale would explode further. Both real consumers — the U4
+-- subtree hash function and the planned U10 ExportRequest builder in
+-- docs/plans/2026-05-14-001 — operate over a single section's
+-- descendants at a time. Row-per-node addressing and the five indexes
+-- support no query shape we actually run.
+--
+-- Replacement shape: one zstd-compressed JSON blob per figma_section
+-- row, holding the section's full descendant list. Mirrors the
+-- screen_canonical_trees pattern from migration 0022 (zstd via the
+-- existing CompressTreeZstd / DecompressTreeZstd helpers in
+-- services/ds-service/internal/projects/canonical_tree.go).
+--
+-- Both columns nullable: population happens on the next poll cycle.
+-- No new index — the autosync planner reads by figma_section's
+-- existing PK (tenant_id, file_key, section_id), which is already
+-- indexed via the table's primary key.
+--
+-- Migration 0031 in the same release drops the figma_node table once
+-- this column ships and the poller + planner are switched over.
+
+ALTER TABLE figma_section ADD COLUMN subtree_json_zstd BLOB;
+ALTER TABLE figma_section ADD COLUMN subtree_node_count INTEGER;

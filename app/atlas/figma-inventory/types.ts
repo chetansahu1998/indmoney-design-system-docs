@@ -1,0 +1,124 @@
+/**
+ * TypeScript shapes for /atlas/figma-inventory.
+ *
+ * Mirror the Go DTOs in:
+ *   services/ds-service/internal/projects/server_figma_inventory_admin.go
+ *   services/ds-service/internal/projects/repository_figma_inventory.go
+ *
+ * Keep these in sync manually — when a Go field is added there, add it
+ * here too. (No code-gen until the surface is bigger.)
+ */
+
+// ─── Team seeds ──────────────────────────────────────────────────────────────
+
+export interface FigmaTeamSeed {
+  team_id: string;
+  team_name: string;
+  added_by_user_id?: string;
+  added_at: string; // RFC3339
+  enabled: boolean;
+  last_crawl_at?: string;
+  last_crawl_status?: "ok" | "forbidden" | "error" | "";
+  last_crawl_error?: string;
+}
+
+export interface ListTeamsResponse {
+  teams: FigmaTeamSeed[];
+  count: number;
+}
+
+export interface AddTeamRequest {
+  team_id: string;
+  team_name: string;
+}
+
+// ─── Inventory tree ──────────────────────────────────────────────────────────
+
+export type InventoryNodeKind = "team" | "project" | "file" | "page" | "section";
+
+export interface InventoryTreeNode {
+  kind: InventoryNodeKind;
+  id: string;
+  name: string;
+  // File-level
+  last_modified?: string;
+  thumbnail_url?: string;
+  // U7 — populated on `file` nodes when the file_key has been promoted
+  // to a DS-internal projects row. Empty on non-file nodes.
+  linked_project_id?: string;
+  linked_project_slug?: string;
+  // Phase 2C — deep node-tree mirror stats (file nodes only).
+  node_count?: number;
+  deep_synced_at?: string;
+  // Section-level — bbox in canvas coords. NULL on team/project/file/page.
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  // Soft-delete timestamp when include_deleted=1 was passed.
+  deleted_at?: string;
+  // Recursive children (each node carries its descendants inline).
+  children?: InventoryTreeNode[];
+}
+
+// U5 — Promote-to-project response shape.
+export interface PromoteResponse {
+  project_id: string;
+  project_slug: string;
+  project_name: string;
+  created: boolean;
+  file_key: string;
+  file_name: string;
+}
+
+// Phase 2C — single node row from the deep node-tree browser.
+export interface FigmaNodeRow {
+  node_id: string;
+  parent_id?: string;
+  node_type: string;
+  name: string;
+  has_bbox: boolean;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  depth: number;
+  order_index: number;
+  component_id?: string;
+  component_key?: string;
+}
+
+export interface FileNodesResponse {
+  file_key: string;
+  nodes: FigmaNodeRow[];
+  count: number;
+}
+
+// ─── Runs ────────────────────────────────────────────────────────────────────
+
+export interface InventoryRun {
+  id: number;
+  started_at: string;
+  finished_at?: string;
+  duration_ms?: number;
+  teams_crawled: number;
+  projects_seen: number;
+  files_seen: number;
+  files_refetched: number;
+  pages_upserted: number;
+  sections_upserted: number;
+  error_count: number;
+  error_sample?: string[];
+}
+
+export interface ListRunsResponse {
+  runs: InventoryRun[];
+  count: number;
+}
+
+// ─── Sync trigger ────────────────────────────────────────────────────────────
+
+export interface SyncTriggerResponse {
+  triggered: boolean;
+  at: string;
+}

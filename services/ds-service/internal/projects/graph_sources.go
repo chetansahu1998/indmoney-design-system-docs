@@ -2,7 +2,9 @@ package projects
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -648,6 +650,296 @@ func BuildComponentRows(manifestPath, tenantID, platform string, variableIDToTok
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// ─── Organism signatures (parsed from manifest composition_refs) ────────────
+//
+// Phase 1 of the organism-pattern-detection plan
+// (docs/plans/2026-05-13-001-feat-organism-pattern-detection-plan.md U2).
+// We re-shape the manifest's `composition_refs[]` field into a fingerprint
+// catalog the Stage 6.7 walker (U3) + classifier (U4) can compare against.
+//
+// Why a new struct and not just GraphIndexRow:
+//   - GraphIndexRow is the mind-graph node shape (one row per
+//     component/atom/flow/screen). Its `EdgesUses` field already encodes the
+//     molecule → atom relationship for the mind graph. Organism detection
+//     needs the *reverse* index — for each candidate FRAME, what published
+//     organism's atom-set does it most resemble. That's lookup-heavy and
+//     wants a sorted atom-slug slice + slug → signature map.
+//   - OrganismSignature is read-only and pipeline-scoped. Caching once at
+//     Stage 6.7 start and re-using across every screen in the run keeps the
+//     walker pure + deterministic (R3 idempotency).
+//
+// Manifest may currently be empty of composition_refs (the field is present
+// in cmd/variants output but the latest committed manifest hasn't been
+// regenerated since the feature shipped). BuildOrganismSignatures returns
+// zero signatures + a stable hash in that case; the downstream classifier
+// classifies every fingerprint as 'novel', which is correct (no published
+// organism to match against). When cmd/variants is re-run, organism
+// signatures populate without any code change here.
+
+// OrganismSignature is one published organism's atom-set fingerprint.
+type OrganismSignature struct {
+	// Slug uniquely identifies the published organism (e.g. "list-on-surface").
+	Slug string
+	// Name is the human-readable display label from the manifest.
+	Name string
+	// Category is the manifest category folder (used for grouping in
+	// dashboards — Part C, U11).
+	Category string
+	// AtomSlugs is the sorted unique set of atom slugs this organism
+	// composes. Drives Jaccard similarity scoring in U4.
+	AtomSlugs []string
+	// VariantNames lists the published variant labels for this organism
+	// (e.g. "Top Separator=Yes, Bottom Separator=No"). The Go-side variant-key
+	// derivation is intentionally loose — match_kind classification cares
+	// about atom set + slot topology, not variant name parsing.
+	VariantNames []string
+}
+
+// ManifestHash is the canonical fingerprint of the manifest contents at
+// signature-derivation time. Stored on each detected_organism_match row so
+// the dashboard can surface stale-verdict warnings when the current manifest
+// hash drifts from a row's stored hash.
+type ManifestHash string
+
+// BuildOrganismSignatures parses the manifest at the given path and emits
+// one OrganismSignature per kind="component" entry that has at least one
+// non-empty atom_slug in its composition_refs[].
+//
+// Empty manifest, missing file, or zero components with composition_refs
+// all return (nil, hash, nil) — never a fatal error. The Stage 6.7 walker
+// in U5 must continue regardless (R9). Caller checks len(signatures) before
+// assuming a match is possible.
+func BuildOrganismSignatures(manifestPath string) ([]OrganismSignature, ManifestHash, error) {
+	if manifestPath == "" {
+		return nil, "", errors.New("graph_sources: manifestPath required")
+	}
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, "", nil
+		}
+		return nil, "", fmt.Errorf("read manifest: %w", err)
+	}
+
+	// Hash is over the raw file bytes so it's deterministic across runs and
+	// detects any meaningful manifest change (including whitespace) without
+	// having to re-parse + canonicalize.
+	sum := sha256.Sum256(data)
+	hash := ManifestHash(hex.EncodeToString(sum[:16])) // sha256_16 — matches U3 fingerprint hash size
+
+	// Extend the existing componentManifest parser to read both:
+	//   - per-component composition_refs[] (legacy / future field at the
+	//     entry level), and
+	//   - per-variant composes[] (the field cmd/variants writes today —
+	//     see cmd/variants/main.go:83 `Composes []CompositionRef \`json:"composes,omitempty"\``)
+	// The atom signature for an organism is the UNION of atom_slug values
+	// across ALL variants' composes[] plus any top-level composition_refs.
+	// Designers often add atoms to one variant but not another (e.g.,
+	// "Type=Primary" has an icon slot; "Type=Secondary" doesn't); for
+	// detection purposes we want the maximal atom set the organism can
+	// host.
+	type composeRef struct {
+		AtomSlug string `json:"atom_slug,omitempty"`
+	}
+	type variantEntry struct {
+		Name     string       `json:"name,omitempty"`
+		Composes []composeRef `json:"composes,omitempty"`
+	}
+	type iconEntry struct {
+		Slug            string         `json:"slug"`
+		Name            string         `json:"name"`
+		Kind            string         `json:"kind"`
+		Category        string         `json:"category"`
+		CompositionRefs []composeRef   `json:"composition_refs,omitempty"`
+		Variants        []variantEntry `json:"variants,omitempty"`
+	}
+	type manifest struct {
+		Icons []iconEntry `json:"icons"`
+	}
+	var m manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, hash, fmt.Errorf("parse manifest: %w", err)
+	}
+
+	out := make([]OrganismSignature, 0, len(m.Icons)/4) // most entries aren't components-with-refs
+	for _, it := range m.Icons {
+		if !strings.EqualFold(it.Kind, "component") {
+			continue
+		}
+		// Self-references and empty refs are non-signaling — same filter as
+		// BuildComponentRows U6 line 622. Union across composition_refs[]
+		// at the entry level AND every variant's composes[].
+		seen := map[string]struct{}{}
+		var atoms []string
+		addRef := func(atomSlug string) {
+			if atomSlug == "" || atomSlug == it.Slug {
+				return
+			}
+			if _, dup := seen[atomSlug]; dup {
+				return
+			}
+			seen[atomSlug] = struct{}{}
+			atoms = append(atoms, atomSlug)
+		}
+		for _, ref := range it.CompositionRefs {
+			addRef(ref.AtomSlug)
+		}
+		for _, v := range it.Variants {
+			for _, ref := range v.Composes {
+				addRef(ref.AtomSlug)
+			}
+		}
+		if len(atoms) == 0 {
+			// No usable refs across composition_refs or variants[].composes.
+			// Skip silently; the component still appears in BuildComponentRows
+			// for the mind graph, just not in the organism catalog.
+			continue
+		}
+		sort.Strings(atoms)
+
+		var variantNames []string
+		for _, v := range it.Variants {
+			if strings.TrimSpace(v.Name) == "" {
+				continue
+			}
+			variantNames = append(variantNames, v.Name)
+		}
+		// Sort variant names too so the slice ordering is deterministic
+		// across runs (manifest order isn't guaranteed stable across
+		// cmd/variants re-extractions).
+		sort.Strings(variantNames)
+
+		out = append(out, OrganismSignature{
+			Slug:         it.Slug,
+			Name:         it.Name,
+			Category:     it.Category,
+			AtomSlugs:    atoms,
+			VariantNames: variantNames,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
+	return out, hash, nil
+}
+
+// AtomSlugSet returns the signature's atom slugs as a hash-set for cheap
+// membership + Jaccard checks. The result is a fresh map per call; safe to
+// mutate.
+func (s OrganismSignature) AtomSlugSet() map[string]struct{} {
+	out := make(map[string]struct{}, len(s.AtomSlugs))
+	for _, a := range s.AtomSlugs {
+		out[a] = struct{}{}
+	}
+	return out
+}
+
+// OrganismDeeplink is the wire shape returned by
+// GET /v1/admin/organisms/{slug}/deeplink. Plugin uses figma_url to open
+// the published-component file at the right node so the designer can drag
+// the real INSTANCE into their canvas.
+type OrganismDeeplink struct {
+	Slug     string `json:"slug"`
+	FileKey  string `json:"file_key"`
+	SetID    string `json:"set_id"`
+	FigmaURL string `json:"figma_url"`
+}
+
+// LookupOrganismDeeplink resolves a slug to its publishing file + node id
+// via the components manifest. Returns ErrNotFound when the slug isn't a
+// kind=component entry (or doesn't have a set_id). Not cached — re-parses
+// the manifest on every call. Fine for low-frequency admin endpoints; if
+// profiling shows otherwise we can wrap a per-process cache keyed on
+// manifestHash.
+func LookupOrganismDeeplink(manifestPath, slug string) (OrganismDeeplink, error) {
+	if manifestPath == "" {
+		return OrganismDeeplink{}, errors.New("graph_sources: manifestPath required")
+	}
+	if slug == "" {
+		return OrganismDeeplink{}, errors.New("graph_sources: slug required")
+	}
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return OrganismDeeplink{}, ErrNotFound
+		}
+		return OrganismDeeplink{}, fmt.Errorf("read manifest: %w", err)
+	}
+	// Top-level file_key + per-entry slug + set_id are all we need.
+	type entry struct {
+		Slug  string `json:"slug"`
+		Kind  string `json:"kind"`
+		SetID string `json:"set_id,omitempty"`
+		// Some entries carry a per-entry file override; default is the
+		// manifest's top-level file_key.
+		FileOverride string `json:"file_key,omitempty"`
+	}
+	type m struct {
+		FileKey string  `json:"file_key"`
+		Icons   []entry `json:"icons"`
+	}
+	var parsed m
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return OrganismDeeplink{}, fmt.Errorf("parse manifest: %w", err)
+	}
+	for _, it := range parsed.Icons {
+		if it.Slug != slug {
+			continue
+		}
+		if !strings.EqualFold(it.Kind, "component") {
+			return OrganismDeeplink{}, ErrNotFound
+		}
+		if it.SetID == "" {
+			return OrganismDeeplink{}, ErrNotFound
+		}
+		fileKey := it.FileOverride
+		if fileKey == "" {
+			fileKey = parsed.FileKey
+		}
+		if fileKey == "" {
+			return OrganismDeeplink{}, fmt.Errorf("manifest missing file_key for slug %q", slug)
+		}
+		// Figma deeplink format: https://www.figma.com/design/<file>?node-id=<X-Y>
+		nodeURL := strings.ReplaceAll(it.SetID, ":", "-")
+		return OrganismDeeplink{
+			Slug:     slug,
+			FileKey:  fileKey,
+			SetID:    it.SetID,
+			FigmaURL: "https://www.figma.com/design/" + fileKey + "?node-id=" + nodeURL,
+		}, nil
+	}
+	return OrganismDeeplink{}, ErrNotFound
+}
+
+// organismManifestPathFromDataDir converts a Server.deps.DataDir
+// ("<repo>/services/ds-service/data") into the conventional manifest
+// location ("<repo>/public/icons/glyph/manifest.json"). Production wiring
+// in cmd/server/main.go does this from cfg.RepoDir directly; this helper
+// gives the admin handlers an equivalent path without dragging
+// Pipeline.ManifestPath through ServerDeps.
+func organismManifestPathFromDataDir(dataDir string) string {
+	// dataDir = .../services/ds-service/data
+	// repoRoot = .../  → two parents up from data, plus parent of services
+	clean := filepath.Clean(dataDir)
+	// Walk up until we either hit a 'services' segment or the filesystem root.
+	repoRoot := clean
+	for i := 0; i < 6; i++ {
+		parent := filepath.Dir(repoRoot)
+		if parent == repoRoot {
+			return ""
+		}
+		repoRoot = parent
+		if filepath.Base(parent) == "indmoney-design-system-docs" ||
+			fileExists(filepath.Join(parent, "public", "icons", "glyph", "manifest.json")) {
+			break
+		}
+	}
+	return filepath.Join(repoRoot, "public", "icons", "glyph", "manifest.json")
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // ─── Tokens (parsed from lib/tokens/indmoney/{base,semantic,*}.json) ─────────

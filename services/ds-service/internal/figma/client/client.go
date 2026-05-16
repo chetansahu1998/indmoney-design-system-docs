@@ -178,6 +178,47 @@ func (c *Client) GetFileComponentSets(ctx context.Context, fileKey string) (map[
 	return out, nil
 }
 
+// FileVersion is a single entry from /v1/files/<key>/versions. Figma returns
+// the page in reverse chronological order, so the first entry is the most
+// recent commit and is what the autosync owner-filter compares against the
+// allowlist.
+type FileVersion struct {
+	ID          string `json:"id"`
+	CreatedAt   string `json:"created_at"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+	User        struct {
+		ID     string `json:"id"`
+		Handle string `json:"handle"`
+		// Figma started returning `img_url` and (since 2024) the team-member
+		// display name in `name` — but only when the PAT has team-membership
+		// scope. We capture whichever fields are present and the allowlist
+		// matcher tries name first, falling back to handle.
+		Name   string `json:"name"`
+		ImgURL string `json:"img_url"`
+		Email  string `json:"email"`
+	} `json:"user"`
+}
+
+type FileVersionsResponse struct {
+	Versions   []FileVersion `json:"versions"`
+	Pagination struct {
+		PrevPage string `json:"prev_page"`
+		NextPage string `json:"next_page"`
+	} `json:"pagination"`
+}
+
+// GetFileVersions fetches /v1/files/<key>/versions. Returns the first page
+// only (most-recent ~30 versions), which is all the autosync owner-filter
+// needs — it cares about who last touched the file, not historical authors.
+func (c *Client) GetFileVersions(ctx context.Context, fileKey string) (*FileVersionsResponse, error) {
+	var out FileVersionsResponse
+	if err := c.get(ctx, "/v1/files/"+fileKey+"/versions", &out, tier3); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // GetStyles fetches the published-styles list for the file.
 // Used to extract typography (TEXT styles) which Glyph DOES expose.
 func (c *Client) GetStyles(ctx context.Context, fileKey string) (map[string]any, error) {
@@ -302,6 +343,436 @@ func (c *Client) Identity(ctx context.Context) (map[string]any, error) {
 // Token returns the bearer token (used by helper packages that make their own
 // HTTP requests against /v1/images, etc.).
 func (c *Client) Token() string { return c.token }
+
+// ─── Inventory endpoints (FIGMA DB — internal/figma/inventory) ──────────────
+//
+// The inventory poller mirrors team > project > file > page > section as
+// metadata only. These three endpoints are the cheap fan-out path:
+//
+//   /v1/teams/<id>/projects        — list projects in a team    (tier 2)
+//   /v1/projects/<id>/files        — list files in a project    (tier 2)
+//   /v1/files/<key>?depth=2        — pages + their top-level    (tier 1)
+//                                    SECTION children
+//
+// All three live behind the existing per-PAT rate limiter; tier 2 = 40 RPM
+// (80% of 50), tier 1 = 12 RPM (80% of 15). The poller runs every 5 minutes
+// and pages/sections are only refetched when /v1/projects/<id>/files
+// reports a newer `last_modified` than the cached row.
+
+// TeamProject is one row of GET /v1/teams/<id>/projects.
+type TeamProject struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// TeamProjectsResponse is the full response shape.
+type TeamProjectsResponse struct {
+	Name     string        `json:"name"`     // team name (the only place the API surfaces it)
+	Projects []TeamProject `json:"projects"`
+}
+
+// GetTeamProjects fetches `/v1/teams/<team_id>/projects`. Tier-2.
+//
+// Requires `projects:read` on the PAT. Returns 403 if the PAT's account
+// can't see the team (handled by *APIError.IsAuth at the call site).
+func (c *Client) GetTeamProjects(ctx context.Context, teamID string) (*TeamProjectsResponse, error) {
+	if teamID == "" {
+		return nil, errors.New("teamID is empty")
+	}
+	var out TeamProjectsResponse
+	if err := c.get(ctx, "/v1/teams/"+teamID+"/projects", &out, tier2); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ProjectFile is one row of GET /v1/projects/<id>/files. The `last_modified`
+// field is the cheap change-detection signal the inventory poller uses to
+// decide whether to do the expensive depth=2 page/section refresh.
+type ProjectFile struct {
+	Key          string `json:"key"`
+	Name         string `json:"name"`
+	ThumbnailURL string `json:"thumbnail_url"`
+	LastModified string `json:"last_modified"`
+}
+
+// ProjectFilesResponse wraps the file list.
+type ProjectFilesResponse struct {
+	Name  string        `json:"name"` // project name
+	Files []ProjectFile `json:"files"`
+}
+
+// GetProjectFiles fetches `/v1/projects/<project_id>/files`. Tier-2.
+func (c *Client) GetProjectFiles(ctx context.Context, projectID string) (*ProjectFilesResponse, error) {
+	if projectID == "" {
+		return nil, errors.New("projectID is empty")
+	}
+	var out ProjectFilesResponse
+	if err := c.get(ctx, "/v1/projects/"+projectID+"/files", &out, tier2); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// FilePagesAndSections is the trimmed shape of GET /v1/files/<key>?depth=2
+// that the inventory walker needs: file-level metadata plus pages, plus
+// each page's immediate SECTION children.
+type FilePagesAndSections struct {
+	Name         string         `json:"name"`
+	Role         string         `json:"role"`
+	LastModified string         `json:"lastModified"`
+	EditorType   string         `json:"editorType"`
+	ThumbnailURL string         `json:"thumbnailUrl"`
+	Version      string         `json:"version"`
+	LinkAccess   string         `json:"linkAccess"`
+	MainFileKey  string         `json:"mainFileKey"`
+	Document     filePagesDoc   `json:"document"`
+}
+
+// filePagesDoc is the document subtree. We only consume `children` (pages).
+type filePagesDoc struct {
+	Children []filePageNode `json:"children"`
+}
+
+// filePageNode is one CANVAS child (a page). We retain `backgroundColor`
+// when present and walk `children` for SECTION nodes.
+type filePageNode struct {
+	ID              string             `json:"id"`
+	Name            string             `json:"name"`
+	Type            string             `json:"type"` // "CANVAS"
+	BackgroundColor *figmaColor        `json:"backgroundColor,omitempty"`
+	Children        []filePageChildRaw `json:"children"`
+}
+
+// filePageChildRaw is a top-level child of a page. We accept anything but
+// surface only nodes whose Type == "SECTION" to the caller. `absoluteBoundingBox`
+// is the bbox in canvas coordinates.
+type filePageChildRaw struct {
+	ID                  string       `json:"id"`
+	Name                string       `json:"name"`
+	Type                string       `json:"type"`
+	AbsoluteBoundingBox *figmaBBox   `json:"absoluteBoundingBox,omitempty"`
+}
+
+type figmaBBox struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+type figmaColor struct {
+	R float64 `json:"r"`
+	G float64 `json:"g"`
+	B float64 `json:"b"`
+	A float64 `json:"a"`
+}
+
+// Pages returns the canvas children as a typed page slice (callers don't
+// need to know about CANVAS vs other top-level types — the API guarantees
+// document.children are pages).
+func (f *FilePagesAndSections) Pages() []FilePage {
+	out := make([]FilePage, 0, len(f.Document.Children))
+	for _, p := range f.Document.Children {
+		page := FilePage{
+			ID:   p.ID,
+			Name: p.Name,
+		}
+		if p.BackgroundColor != nil {
+			page.BackgroundColorHex = colorToHex(*p.BackgroundColor)
+		}
+		for _, c := range p.Children {
+			if c.Type != "SECTION" {
+				continue
+			}
+			s := FileSection{ID: c.ID, Name: c.Name}
+			if c.AbsoluteBoundingBox != nil {
+				s.X = c.AbsoluteBoundingBox.X
+				s.Y = c.AbsoluteBoundingBox.Y
+				s.Width = c.AbsoluteBoundingBox.Width
+				s.Height = c.AbsoluteBoundingBox.Height
+			}
+			page.Sections = append(page.Sections, s)
+		}
+		out = append(out, page)
+	}
+	return out
+}
+
+// FilePage is the inventory-poller-friendly representation of one CANVAS.
+type FilePage struct {
+	ID                 string
+	Name               string
+	BackgroundColorHex string
+	Sections           []FileSection
+}
+
+// FileSection is one SECTION node directly under a page.
+type FileSection struct {
+	ID     string
+	Name   string
+	X      float64
+	Y      float64
+	Width  float64
+	Height float64
+}
+
+func colorToHex(c figmaColor) string {
+	clamp := func(v float64) int {
+		i := int(v*255 + 0.5)
+		if i < 0 {
+			return 0
+		}
+		if i > 255 {
+			return 255
+		}
+		return i
+	}
+	return fmt.Sprintf("#%02x%02x%02x", clamp(c.R), clamp(c.G), clamp(c.B))
+}
+
+// GetFilePagesAndSections fetches `/v1/files/<key>?depth=2`. Tier-1.
+//
+// depth=2 returns the file's document with each page's direct children
+// included but NOT recursed — exactly what the inventory poller wants
+// (pages + top-level SECTION nodes, nothing deeper). The response is
+// typically <1 MB even for large product files because frame interiors
+// are pruned.
+//
+// Deprecated by `GetFileDeepTree` in Phase 2C (2026-05-13). Kept here so
+// any external caller still hitting depth=2 keeps working, but the
+// inventory poller now uses GetFileDeepTree which returns this same
+// pages/sections view *plus* the full descendant tree in one call.
+func (c *Client) GetFilePagesAndSections(ctx context.Context, fileKey string) (*FilePagesAndSections, error) {
+	if fileKey == "" {
+		return nil, errors.New("fileKey is empty")
+	}
+	var out FilePagesAndSections
+	if err := c.get(ctx, "/v1/files/"+fileKey+"?depth=2", &out, tier1); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ─── Deep tree fetch (Phase 2C — figma_node table) ───────────────────────────
+//
+// The inventory poller upgraded from depth=2 (pages + sections only) to a
+// configurable depth (default 14) so we can mirror the full structural
+// tree of every file as metadata-only rows in figma_node. Same single
+// /v1/files/<key> call, same tier-1 rate budget — just a deeper response.
+
+// DeepNode is the typed shape of one Figma node in the deep walk. Mirrors
+// the API response, scoped to ONLY the fields the inventory needs:
+// identity, type, name, bbox, component master reference. Everything else
+// (fills, strokes, effects, characters, styles) is dropped at decode time
+// to keep the in-memory tree compact.
+type DeepNode struct {
+	ID                  string      `json:"id"`
+	Name                string      `json:"name"`
+	Type                string      `json:"type"`
+	AbsoluteBoundingBox *figmaBBox  `json:"absoluteBoundingBox,omitempty"`
+	BackgroundColor     *figmaColor `json:"backgroundColor,omitempty"`
+	// componentId — populated only on INSTANCE nodes; the node_id of the
+	// master COMPONENT this instance was spawned from. The master may
+	// live in this file OR in a remote library file. Either way, the
+	// file-level `components` map (FileDeepTree.Components) carries the
+	// durable key for whichever node_id this is, so the walker can
+	// enrich the INSTANCE row with component_key at flatten time.
+	ComponentID string     `json:"componentId,omitempty"`
+	Children    []DeepNode `json:"children,omitempty"`
+}
+
+// componentMetadata is the per-master entry in the file-level
+// `components` / `componentSets` maps. The map is keyed on the master's
+// node_id (whether that master is local to this file or remote from a
+// library). The `key` field is the durable library identifier that's
+// stable across publish cycles — the join key for cross-file usage.
+type componentMetadata struct {
+	Key           string `json:"key"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	Remote        bool   `json:"remote"`
+	DocumentationLinks []struct {
+		URI string `json:"uri"`
+	} `json:"documentationLinks,omitempty"`
+}
+
+// FileDeepTree is the file-level response. Reuses the same top-level shape
+// as FilePagesAndSections so callers can lift pages/sections out of it
+// without a second decode.
+type FileDeepTree struct {
+	Name         string   `json:"name"`
+	Role         string   `json:"role"`
+	LastModified string   `json:"lastModified"`
+	EditorType   string   `json:"editorType"`
+	ThumbnailURL string   `json:"thumbnailUrl"`
+	Version      string   `json:"version"`
+	LinkAccess   string   `json:"linkAccess"`
+	MainFileKey  string   `json:"mainFileKey"`
+	Document     DeepNode `json:"document"`
+	// File-level metadata for component masters referenced anywhere in
+	// this file's tree (either as local COMPONENT/COMPONENT_SET nodes
+	// or as remote library masters reached via INSTANCE.componentId).
+	// Keyed on the master's node_id (same id space as ComponentID).
+	Components    map[string]componentMetadata `json:"components,omitempty"`
+	ComponentSets map[string]componentMetadata `json:"componentSets,omitempty"`
+}
+
+// FlatNode is the shape the repository layer consumes — one row per node,
+// with parent/depth/order_index resolved during the walk.
+type FlatNode struct {
+	NodeID       string
+	ParentID     string  // empty on the document root
+	NodeType     string
+	Name         string
+	HasBBox      bool    // true when AbsoluteBoundingBox was present
+	X            float64
+	Y            float64
+	Width        float64
+	Height       float64
+	Depth        int     // 0 = document, 1 = page, 2 = top-level frame, ...
+	OrderIndex   int     // sibling order within parent
+	ComponentID  string  // for INSTANCE → master's same-file node_id
+	ComponentKey string  // for COMPONENT / COMPONENT_SET → durable library key
+}
+
+// Flatten walks the deep tree depth-first and emits one FlatNode per
+// visited node. Walk order is parent-before-children so a caller can
+// stream rows into an INSERT without needing to defer parent_id resolution.
+//
+// While walking, each node gets enriched with `component_key` looked up
+// from the file-level Components / ComponentSets maps:
+//   - COMPONENT     → key from Components[node.id]
+//   - COMPONENT_SET → key from ComponentSets[node.id]
+//   - INSTANCE      → key from Components[node.componentId] (the master,
+//                     local or remote — the file-level map carries the
+//                     durable key either way)
+//
+// This is the join hinge for cross-file usage queries: every INSTANCE
+// of "button-primary" across every file carries the same component_key
+// regardless of which library file owns the master.
+//
+// The caller's responsibility:
+//   - Pass the FlatNode list to a single batched UPSERT (the figma_node
+//     PK enforces uniqueness on (tenant, file_key, node_id)).
+//   - Walk stops naturally at the leaves Figma returned for the requested
+//     depth — no extra capping needed here.
+func (f *FileDeepTree) Flatten() []FlatNode {
+	if f == nil {
+		return nil
+	}
+	// Pre-allocate a reasonable starting size — most files land in the
+	// 100-5000-node range; this avoids the first few growth allocations.
+	out := make([]FlatNode, 0, 1024)
+
+	// Helper: resolve durable key for a node, falling back across both
+	// component maps. Returns "" when the node isn't a known master.
+	lookupKey := func(nodeID string) string {
+		if nodeID == "" {
+			return ""
+		}
+		if md, ok := f.Components[nodeID]; ok && md.Key != "" {
+			return md.Key
+		}
+		if md, ok := f.ComponentSets[nodeID]; ok && md.Key != "" {
+			return md.Key
+		}
+		return ""
+	}
+
+	var walk func(node *DeepNode, parentID string, depth, orderIndex int)
+	walk = func(node *DeepNode, parentID string, depth, orderIndex int) {
+		fn := FlatNode{
+			NodeID:      node.ID,
+			ParentID:    parentID,
+			NodeType:    node.Type,
+			Name:        node.Name,
+			Depth:       depth,
+			OrderIndex:  orderIndex,
+			ComponentID: node.ComponentID,
+		}
+		// Resolve component_key from the file-level maps. For
+		// COMPONENT/COMPONENT_SET the lookup is on this node's own id;
+		// for INSTANCE it's on the master's id (componentId).
+		switch node.Type {
+		case "COMPONENT", "COMPONENT_SET":
+			fn.ComponentKey = lookupKey(node.ID)
+		case "INSTANCE":
+			fn.ComponentKey = lookupKey(node.ComponentID)
+		}
+		if node.AbsoluteBoundingBox != nil {
+			fn.HasBBox = true
+			fn.X = node.AbsoluteBoundingBox.X
+			fn.Y = node.AbsoluteBoundingBox.Y
+			fn.Width = node.AbsoluteBoundingBox.Width
+			fn.Height = node.AbsoluteBoundingBox.Height
+		}
+		out = append(out, fn)
+		for i := range node.Children {
+			walk(&node.Children[i], node.ID, depth+1, i)
+		}
+	}
+	walk(&f.Document, "", 0, 0)
+	return out
+}
+
+// Pages returns the file's pages + their top-level SECTION children, in
+// the same shape FilePagesAndSections.Pages produced. Lets the poller
+// keep the existing figma_page / figma_section writes unchanged while
+// adding the deep node-tree write on the side.
+func (f *FileDeepTree) Pages() []FilePage {
+	out := make([]FilePage, 0, len(f.Document.Children))
+	for _, p := range f.Document.Children {
+		page := FilePage{ID: p.ID, Name: p.Name}
+		if p.BackgroundColor != nil {
+			page.BackgroundColorHex = colorToHex(*p.BackgroundColor)
+		}
+		for _, c := range p.Children {
+			if c.Type != "SECTION" {
+				continue
+			}
+			s := FileSection{ID: c.ID, Name: c.Name}
+			if c.AbsoluteBoundingBox != nil {
+				s.X = c.AbsoluteBoundingBox.X
+				s.Y = c.AbsoluteBoundingBox.Y
+				s.Width = c.AbsoluteBoundingBox.Width
+				s.Height = c.AbsoluteBoundingBox.Height
+			}
+			page.Sections = append(page.Sections, s)
+		}
+		out = append(out, page)
+	}
+	return out
+}
+
+// GetFileDeepTree fetches `/v1/files/<key>?depth=<n>`. Tier-1.
+//
+// depth=14 (Phase 2C default) returns the full document tree clamped at
+// 14 levels deep. Figma doesn't document a max depth, but 14 covers
+// every production INDmoney file we've inspected with margin to spare
+// (real trees bottom out around depth 8-10 for the heaviest screens).
+//
+// Response size scales with tree breadth, not depth — a flat page with
+// 2000 frames produces a bigger payload than a deeply-nested artboard
+// with 200 nodes. The 1 GB body cap in Client.get covers both shapes.
+//
+// To minimize payload, the typed DeepNode struct drops every field the
+// inventory doesn't need (fills, effects, characters, styles, …) at
+// json.Unmarshal time — only the 9 fields listed on DeepNode survive.
+func (c *Client) GetFileDeepTree(ctx context.Context, fileKey string, depth int) (*FileDeepTree, error) {
+	if fileKey == "" {
+		return nil, errors.New("fileKey is empty")
+	}
+	if depth <= 0 {
+		depth = 14
+	}
+	path := fmt.Sprintf("/v1/files/%s?depth=%d", fileKey, depth)
+	var out FileDeepTree
+	if err := c.get(ctx, path, &out, tier1); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
 
 func truncate(s string, n int) string {
 	if len(s) <= n {

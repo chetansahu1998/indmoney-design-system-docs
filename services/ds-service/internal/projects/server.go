@@ -132,6 +132,13 @@ type ServerDeps struct {
 	// handler logic.
 	GraphRebuildPool *GraphRebuildPool
 
+	// InventoryPoller — FIGMA DB (migration 0025). The admin "Sync now"
+	// button + add-team handler call TriggerSync() on this so admins don't
+	// have to wait the full 5-min tick to see their team show up. nil-tolerant:
+	// when not wired (tests, dev), the sync endpoint returns 503 and add-team
+	// silently skips the trigger.
+	InventoryPoller InventoryPoller
+
 	Log *slog.Logger
 }
 
@@ -228,6 +235,221 @@ func (s *Server) enqueueGraphRebuild(tenantID string, kind GraphSourceKind, ref 
 //  6. audit_log row.
 //  7. 202 response + cache it for the idempotency window.
 //  8. Spawn pipeline goroutine.
+// RunExportParams is the in-process equivalent of an HTTP /v1/projects/export
+// call. The autosync bridge (and any other internal caller — sheets-sync,
+// import-figma-url, future webhooks) constructs this directly and skips the
+// HTTP layer's auth + body parsing + rate limit + idempotency dance.
+//
+// Source is recorded in audit_log to distinguish ('http', 'autosync',
+// 'plugin', etc.). Callers MUST pass a stable UserID — autosync uses a
+// service-account user-id ("autosync") rather than impersonating a designer.
+type RunExportParams struct {
+	TenantID  string
+	UserID    string
+	Source    string
+	ClientIP  string
+	UserAgent string
+	Req       ExportRequest
+}
+
+// RunExportResult is what HandleExport encodes as ExportResponse and what
+// the autosync bridge writes into figma_auto_sync_state.last_synced_*.
+type RunExportResult struct {
+	ProjectID   string
+	ProjectSlug string
+	VersionID   string
+	TraceID     string
+	// PipelineFrames + NewPersonas surface for HTTP-handler post-processing
+	// (SSE publish, audit log) and let autosync wait on pipeline completion
+	// when needed.
+	PipelineFrames []PipelineFrame
+	NewPersonas    []Persona
+}
+
+// RunExport is the in-process pipeline used by both HandleExport and the
+// autosync bridge. Validates, transactionally writes project+version+flows
+// +screens, commits, fires audit_log, and spawns the async pipeline
+// goroutine. Returns the result so HTTP handlers can SSE-publish + encode
+// a response and autosync can persist the resulting flow_id+version_id.
+//
+// Caller is responsible for auth, rate-limiting, idempotency cache check,
+// and (for HTTP) writing the response body.
+func (s *Server) RunExport(ctx context.Context, p RunExportParams) (RunExportResult, error) {
+	if p.TenantID == "" {
+		return RunExportResult{}, errors.New("run_export: tenant_id required")
+	}
+	if p.UserID == "" {
+		return RunExportResult{}, errors.New("run_export: user_id required")
+	}
+	if err := validateExport(p.Req); err != nil {
+		return RunExportResult{}, fmt.Errorf("invalid_payload: %w", err)
+	}
+
+	tenantID := p.TenantID
+	req := p.Req
+	traceID := uuid.NewString()
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+
+	tx, err := repo.BeginTx(ctx)
+	if err != nil {
+		return RunExportResult{}, fmt.Errorf("begin_tx: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	txRepo := repo.WithTx(tx)
+
+	first := req.Flows[0]
+	project, err := txRepo.UpsertProject(ctx, Project{
+		Name:        first.Name,
+		Platform:    first.Platform,
+		Product:     first.Product,
+		Path:        first.Path,
+		FileID:      req.FileID,
+		OwnerUserID: p.UserID,
+	})
+	if err != nil {
+		return RunExportResult{}, fmt.Errorf("upsert_project: %w", err)
+	}
+	version, err := txRepo.CreateVersion(ctx, project.ID, p.UserID)
+	if err != nil {
+		return RunExportResult{}, fmt.Errorf("create_version: %w", err)
+	}
+
+	var newPersonas []Persona
+	var pipelineFrames []PipelineFrame
+	for _, flow := range req.Flows {
+		var personaID *string
+		if flow.PersonaName != "" {
+			persona, wasNew, err := txRepo.UpsertPersonaTracked(ctx, flow.PersonaName, p.UserID)
+			if err != nil {
+				return RunExportResult{}, fmt.Errorf("upsert_persona: %w", err)
+			}
+			id := persona.ID
+			personaID = &id
+			if wasNew {
+				newPersonas = append(newPersonas, persona)
+			}
+		}
+		f, err := txRepo.UpsertFlow(ctx, Flow{
+			ProjectID: project.ID,
+			FileID:    req.FileID,
+			SectionID: flow.SectionID,
+			Name:      flow.Name,
+			PersonaID: personaID,
+		})
+		if err != nil {
+			return RunExportResult{}, fmt.Errorf("upsert_flow: %w", err)
+		}
+		var screens []Screen
+		for _, fr := range flow.Frames {
+			screens = append(screens, Screen{
+				VersionID: version.ID,
+				FlowID:    f.ID,
+				X:         fr.X,
+				Y:         fr.Y,
+				Width:     fr.Width,
+				Height:    fr.Height,
+			})
+		}
+		if err := txRepo.InsertScreens(ctx, screens); err != nil {
+			return RunExportResult{}, fmt.Errorf("insert_screens: %w", err)
+		}
+		for i, fr := range flow.Frames {
+			pipelineFrames = append(pipelineFrames, PipelineFrame{
+				ScreenID:                  screens[i].ID,
+				FigmaFrameID:              fr.FrameID,
+				X:                         fr.X,
+				Y:                         fr.Y,
+				Width:                     fr.Width,
+				Height:                    fr.Height,
+				VariableCollectionID:      fr.VariableCollectionID,
+				ModeID:                    fr.ModeID,
+				ModeLabel:                 fr.ModeLabel,
+				ExplicitVariableModesJSON: fr.ExplicitVariableModesJSON,
+			})
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return RunExportResult{}, fmt.Errorf("commit: %w", err)
+	}
+	committed = true
+
+	// Atlas freshness — project + flow rows just changed.
+	s.enqueueGraphRebuild(tenantID, GraphSourceProjects, project.ID)
+	s.enqueueGraphRebuild(tenantID, GraphSourceFlows, project.ID)
+	if len(newPersonas) > 0 {
+		s.enqueueGraphRebuild(tenantID, GraphSourcePersonas, "")
+	}
+
+	// Audit log.
+	if s.deps.AuditLogger != nil {
+		auditFrames := make([]ExportAuditFrame, 0, len(pipelineFrames))
+		for _, pf := range pipelineFrames {
+			auditFrames = append(auditFrames, ExportAuditFrame{
+				ScreenID:     pf.ScreenID,
+				FigmaFrameID: pf.FigmaFrameID,
+				X:            pf.X,
+				Y:            pf.Y,
+				Width:        pf.Width,
+				Height:       pf.Height,
+			})
+		}
+		action := AuditActionExport
+		_ = s.deps.AuditLogger.WriteExport(ctx, AuditExportEvent{
+			Action:    action,
+			UserID:    p.UserID,
+			TenantID:  tenantID,
+			FileID:    req.FileID,
+			ProjectID: project.ID,
+			VersionID: version.ID,
+			IP:        p.ClientIP,
+			UserAgent: p.UserAgent,
+			TraceID:   traceID,
+			Frames:    auditFrames,
+		})
+	}
+
+	// Spawn pipeline goroutine — fresh context, callers do NOT block on it.
+	if s.deps.PipelineFactory != nil {
+		go func(versionID, projectID, projectSlug, userID, fileID, idempotencyKey, traceID, ip, ua string, frames []PipelineFrame) {
+			pCtx := context.Background()
+			pipeline, err := s.deps.PipelineFactory(pCtx, tenantID, repo)
+			if err != nil {
+				s.deps.Log.Error("pipeline factory", "err", err)
+				_ = repo.RecordFailed(pCtx, versionID, "pipeline factory: "+err.Error())
+				return
+			}
+			_ = pipeline.RunFastPreview(pCtx, PipelineInputs{
+				VersionID:      versionID,
+				ProjectID:      projectID,
+				ProjectSlug:    projectSlug,
+				TenantID:       tenantID,
+				UserID:         userID,
+				FileID:         fileID,
+				IdempotencyKey: idempotencyKey,
+				TraceID:        traceID,
+				IP:             ip,
+				UserAgent:      ua,
+				Frames:         frames,
+			})
+		}(version.ID, project.ID, project.Slug, p.UserID, req.FileID, req.IdempotencyKey, traceID, p.ClientIP, p.UserAgent, pipelineFrames)
+	}
+
+	return RunExportResult{
+		ProjectID:      project.ID,
+		ProjectSlug:    project.Slug,
+		VersionID:      version.ID,
+		TraceID:        traceID,
+		PipelineFrames: pipelineFrames,
+		NewPersonas:    newPersonas,
+	}, nil
+}
+
 func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
@@ -249,7 +471,6 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 
 	var req ExportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		// MaxBytesReader exhausting reads as "http: request body too large".
 		if strings.Contains(err.Error(), "too large") {
 			writeJSONErr(w, http.StatusRequestEntityTooLarge, "body_too_large",
 				fmt.Sprintf("body exceeds %d bytes", MaxBodyBytes))
@@ -280,182 +501,36 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	traceID := uuid.NewString()
-	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
-
-	// Plan 2026-05-03-001 / T2 — wrap every write below in a single tx so
-	// a failure on flow N (e.g. UpsertFlow returns an error mid-loop) rolls
-	// back the project + version + previously-inserted flows + screens.
-	// Pre-T2 these were autocommit-per-method, so a partial export left
-	// orphan rows that the idempotency cache then preserved on retry.
-	//
-	// Persona insertions are ALSO inside the tx (UpsertPersonaTracked uses
-	// t.handle() so it joins). Persona SSE publish stays outside — it
-	// fires only after the tx commits successfully.
-	tx, err := repo.BeginTx(r.Context())
-	if err != nil {
-		writeJSONErr(w, http.StatusInternalServerError, "begin_tx", err.Error())
-		return
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-	txRepo := repo.WithTx(tx)
-
-	// Phase 1 keeps it simple: one flow per export → one project + one version.
-	// The plan permits up to 20 flows, so we treat the first flow as the
-	// driver and create one version that holds every flow's screens.
-	first := req.Flows[0]
-	project, err := txRepo.UpsertProject(r.Context(), Project{
-		Name:        first.Name,
-		Platform:    first.Platform,
-		Product:     first.Product,
-		Path:        first.Path,
-		FileID:      req.FileID, // T5 — uniqueness key, not just metadata
-		OwnerUserID: claims.Sub,
+	result, err := s.RunExport(r.Context(), RunExportParams{
+		TenantID:  tenantID,
+		UserID:    claims.Sub,
+		Source:    "http",
+		ClientIP:  clientIP(r),
+		UserAgent: r.UserAgent(),
+		Req:       req,
 	})
 	if err != nil {
-		writeJSONErr(w, http.StatusInternalServerError, "upsert_project", err.Error())
+		writeJSONErr(w, http.StatusInternalServerError, "run_export", err.Error())
 		return
 	}
-	version, err := txRepo.CreateVersion(r.Context(), project.ID, claims.Sub)
-	if err != nil {
-		writeJSONErr(w, http.StatusInternalServerError, "create_version", err.Error())
-		return
-	}
-
-	// Persona-pending SSE events get queued to fire ONLY after the tx
-	// commits — otherwise a rollback would leave subscribers staring at a
-	// notification for a row that no longer exists.
-	type pendingPersonaPub struct{ persona Persona }
-	var personaPubs []pendingPersonaPub
-
-	// Iterate flows. Each gets a flow row; each frame becomes a screen row.
-	var pipelineFrames []PipelineFrame
-	for _, flow := range req.Flows {
-		var personaID *string
-		if flow.PersonaName != "" {
-			persona, wasNew, err := txRepo.UpsertPersonaTracked(r.Context(), flow.PersonaName, claims.Sub)
-			if err != nil {
-				writeJSONErr(w, http.StatusInternalServerError, "upsert_persona", err.Error())
-				return
-			}
-			id := persona.ID
-			personaID = &id
-			if wasNew && s.deps.Broker != nil {
-				personaPubs = append(personaPubs, pendingPersonaPub{persona: persona})
-			}
-		}
-		f, err := txRepo.UpsertFlow(r.Context(), Flow{
-			ProjectID: project.ID,
-			FileID:    req.FileID,
-			SectionID: flow.SectionID,
-			Name:      flow.Name,
-			PersonaID: personaID,
-		})
-		if err != nil {
-			writeJSONErr(w, http.StatusInternalServerError, "upsert_flow", err.Error())
-			return
-		}
-
-		var screens []Screen
-		for _, fr := range flow.Frames {
-			screens = append(screens, Screen{
-				VersionID: version.ID,
-				FlowID:    f.ID,
-				X:         fr.X,
-				Y:         fr.Y,
-				Width:     fr.Width,
-				Height:    fr.Height,
-			})
-		}
-		if err := txRepo.InsertScreens(r.Context(), screens); err != nil {
-			writeJSONErr(w, http.StatusInternalServerError, "insert_screens", err.Error())
-			return
-		}
-		// Build pipeline frames in the same iteration so we don't lose the
-		// (screen ID ↔ Figma frame ID) mapping.
-		for i, fr := range flow.Frames {
-			pipelineFrames = append(pipelineFrames, PipelineFrame{
-				ScreenID:                  screens[i].ID,
-				FigmaFrameID:              fr.FrameID,
-				X:                         fr.X,
-				Y:                         fr.Y,
-				Width:                     fr.Width,
-				Height:                    fr.Height,
-				VariableCollectionID:      fr.VariableCollectionID,
-				ModeID:                    fr.ModeID,
-				ModeLabel:                 fr.ModeLabel,
-				ExplicitVariableModesJSON: fr.ExplicitVariableModesJSON,
-			})
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		writeJSONErr(w, http.StatusInternalServerError, "commit", err.Error())
-		return
-	}
-	committed = true
 
 	// Persona SSE — fire only now that the rows are durable.
-	for _, pp := range personaPubs {
-		s.deps.Broker.Publish(inboxBroadcastChannel(tenantID), sse.PersonaPending{
-			Tenant:          tenantID,
-			PersonaID:       pp.persona.ID,
-			Name:            pp.persona.Name,
-			CreatedByUserID: pp.persona.CreatedByUserID,
-		})
-	}
-
-	// T3 — atlas freshness. Project rows + flow rows just changed; enqueue
-	// rebuilds for both source kinds. Personas only enqueued when the
-	// export actually created pending personas (otherwise the personas
-	// slice is unchanged from the last rebuild).
-	s.enqueueGraphRebuild(tenantID, GraphSourceProjects, project.ID)
-	s.enqueueGraphRebuild(tenantID, GraphSourceFlows, project.ID)
-	if len(personaPubs) > 0 {
-		s.enqueueGraphRebuild(tenantID, GraphSourcePersonas, "")
-	}
-
-	// audit_log row (always — success or failure). Persist the per-frame
-	// (screen_id, figma_frame_id, x, y, w, h) snapshot inside `details` so
-	// a future recovery cmd can replay the pipeline without re-walking the
-	// Figma file (audit finding B5). Capped to MaxFramesPerProject (~250)
-	// in normal operation; the JSON blob is bounded.
-	if s.deps.AuditLogger != nil {
-		auditFrames := make([]ExportAuditFrame, 0, len(pipelineFrames))
-		for _, pf := range pipelineFrames {
-			auditFrames = append(auditFrames, ExportAuditFrame{
-				ScreenID:     pf.ScreenID,
-				FigmaFrameID: pf.FigmaFrameID,
-				X:            pf.X,
-				Y:            pf.Y,
-				Width:        pf.Width,
-				Height:       pf.Height,
+	if s.deps.Broker != nil {
+		for _, persona := range result.NewPersonas {
+			s.deps.Broker.Publish(inboxBroadcastChannel(tenantID), sse.PersonaPending{
+				Tenant:          tenantID,
+				PersonaID:       persona.ID,
+				Name:            persona.Name,
+				CreatedByUserID: persona.CreatedByUserID,
 			})
 		}
-		_ = s.deps.AuditLogger.WriteExport(r.Context(), AuditExportEvent{
-			Action:    AuditActionExport,
-			UserID:    claims.Sub,
-			TenantID:  tenantID,
-			FileID:    req.FileID,
-			ProjectID: project.ID,
-			VersionID: version.ID,
-			IP:        clientIP(r),
-			UserAgent: r.UserAgent(),
-			TraceID:   traceID,
-			Frames:    auditFrames,
-		})
 	}
 
 	resp := ExportResponse{
-		ProjectID:     project.ID,
-		VersionID:     version.ID,
-		Deeplink:      "/projects/" + project.Slug + "?v=" + version.ID,
-		TraceID:       traceID,
+		ProjectID:     result.ProjectID,
+		VersionID:     result.VersionID,
+		Deeplink:      "/projects/" + result.ProjectSlug + "?v=" + result.VersionID,
+		TraceID:       result.TraceID,
 		SchemaVersion: ProjectsSchemaVersion,
 	}
 	bs, _ := json.Marshal(resp)
@@ -465,34 +540,8 @@ func (s *Server) HandleExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = w.Write(bs)
-
-	// Spawn pipeline. Use a fresh context — request context is about to be
-	// canceled when the handler returns.
-	if s.deps.PipelineFactory != nil {
-		go func() {
-			ctx := context.Background()
-			pipeline, err := s.deps.PipelineFactory(ctx, tenantID, repo)
-			if err != nil {
-				s.deps.Log.Error("pipeline factory", "err", err)
-				_ = repo.RecordFailed(ctx, version.ID, "pipeline factory: "+err.Error())
-				return
-			}
-			_ = pipeline.RunFastPreview(ctx, PipelineInputs{
-				VersionID:      version.ID,
-				ProjectID:      project.ID,
-				ProjectSlug:    project.Slug,
-				TenantID:       tenantID,
-				UserID:         claims.Sub,
-				FileID:         req.FileID,
-				IdempotencyKey: req.IdempotencyKey,
-				TraceID:        traceID,
-				IP:             clientIP(r),
-				UserAgent:      r.UserAgent(),
-				Frames:         pipelineFrames,
-			})
-		}()
-	}
 }
+
 
 // validateExport applies every cap + regex check from the U4 plan section.
 // Returns the first error encountered; the handler maps it to 400.

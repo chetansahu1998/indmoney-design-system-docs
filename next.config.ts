@@ -20,6 +20,16 @@ const nextConfig: NextConfig = {
     "react-force-graph-3d",
     "three-spritetext",
   ],
+  // 2026-05-13 — /atlas/admin/* collapsed into /atlas/* (one frontend with
+  // role-gated tabs). Old admin URLs still resolve via permanent redirect
+  // so bookmarks, docs links, and SSE-sourced URLs continue to work.
+  async redirects() {
+    return [
+      { source: "/atlas/admin", destination: "/atlas/dashboard", permanent: true },
+      { source: "/atlas/admin/:path*", destination: "/atlas/:path*", permanent: true },
+    ];
+  },
+
   // Phase 9 U1 — auto-wrap router navigation in document.startViewTransition
   // so cross-route morphs work via the browser-native View Transitions API
   // (CSS view-transition-name on source + target). React 19.2.4 stable does
