@@ -601,6 +601,20 @@ func (p *Poller) syncFileDeep(
 		return 0, 0, 0, fmt.Errorf("upsert pages+sections: %w", err)
 	}
 
+	// Plan 2026-05-17-002 U2 — bridge each freshly-upserted section into
+	// the sub_product / sub_flow taxonomy (mig 0036). Idempotent on
+	// re-runs: U1's upserts return the existing row on UNIQUE collision,
+	// and LinkSubFlowToFigmaSection is a no-op when the binding is
+	// already in place. Logged at WARN — a single bad section name must
+	// not abort the rest of the file's autosync.
+	for _, sec := range sectionRows {
+		if _, sfErr := repo.UpsertSubFlowFromSection(ctx, f.FileKey, sec.PageID, sec.SectionID, sec.Name); sfErr != nil {
+			logger.Warn("figma_inventory: sub_flow upsert failed",
+				"file", f.FileKey, "page", sec.PageID, "section", sec.SectionID,
+				"name", sec.Name, "err", sfErr.Error())
+		}
+	}
+
 	// nodeCount carries the total number of descendants persisted to the
 	// section blobs — UpdateFigmaFileDeepSynced still records it on
 	// figma_file.node_count for poll-cycle telemetry.
