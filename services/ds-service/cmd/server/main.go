@@ -36,7 +36,6 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
-	stdsync "sync"
 	"strings"
 	"syscall"
 	"time"
@@ -434,6 +433,7 @@ func main() {
 		PreviewPyramid:    previewPyramid,
 		GraphRebuildPool:  graphRebuildPool,
 		InventoryPoller:   inventoryPoller,
+		ShutdownCtx:       workerCtx, // #3 audit fix — RunExport pipeline goroutines
 		Log:              log,
 	})
 
@@ -516,14 +516,33 @@ func main() {
 	// HTTP requests gracefully instead of getting SIGKILL'd 30s later.
 	// Both listeners (TLS + cleartext) share the same handler but get
 	// their own server struct so Shutdown can flip them independently.
-	cleartextSrv := &http.Server{Addr: addr, Handler: handler}
+	// #7 audit fix: explicit timeouts. WriteTimeout is generous (5 min)
+	// to accommodate /v1/admin/figma-autosync/execute and similar
+	// long-running admin handlers; ReadHeaderTimeout protects against
+	// slowloris-style clients. IdleTimeout keeps keep-alive connections
+	// from leaking. ReadTimeout deliberately omitted because some POST
+	// handlers stream large bodies (Figma trees) and capping the *total*
+	// read time would kill legitimate uploads on slow links.
+	cleartextSrv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       120 * time.Second,
+	}
 	var tlsSrv *http.Server
 	if cfg.TLSCertPath != "" && cfg.TLSKeyPath != "" {
 		tlsAddr := cfg.TLSAddr
 		if tlsAddr == "" {
 			tlsAddr = ":8443"
 		}
-		tlsSrv = &http.Server{Addr: tlsAddr, Handler: handler}
+		tlsSrv = &http.Server{
+			Addr:              tlsAddr,
+			Handler:           handler,
+			ReadHeaderTimeout: 10 * time.Second,
+			WriteTimeout:      5 * time.Minute,
+			IdleTimeout:       120 * time.Second,
+		}
 		log.Info("ds-service listening (TLS, HTTP/2)",
 			"addr", tlsAddr,
 			"cert", cfg.TLSCertPath,
@@ -590,6 +609,22 @@ func loadConfig(log *slog.Logger) (*config, error) {
 		TLSAddr:     getenv("DS_TLS_ADDR", ":8443"),
 	}
 	if c.DevAuthBypass {
+		// #9 audit fix: refuse to start when DEV_AUTH_BYPASS is set in
+		// an environment that smells like production. Combined with the
+		// SEC-2/3 admin-gate fixes this still leaves an attacker with
+		// no entry, but defense-in-depth: production must never honor
+		// the bypass without an explicit operator override.
+		looksLikeProd := os.Getenv("FLY_APP_NAME") != "" ||
+			os.Getenv("GO_ENV") == "production" ||
+			os.Getenv("NODE_ENV") == "production" ||
+			os.Getenv("DS_ENV") == "production"
+		if looksLikeProd && os.Getenv("ALLOW_DEV_AUTH_BYPASS_IN_PROD") != "1" {
+			return nil, fmt.Errorf("DEV_AUTH_BYPASS=1 refused in production environment "+
+				"(detected via FLY_APP_NAME=%q, GO_ENV=%q, NODE_ENV=%q, DS_ENV=%q); "+
+				"unset DEV_AUTH_BYPASS, or set ALLOW_DEV_AUTH_BYPASS_IN_PROD=1 to override",
+				os.Getenv("FLY_APP_NAME"), os.Getenv("GO_ENV"),
+				os.Getenv("NODE_ENV"), os.Getenv("DS_ENV"))
+		}
 		log.Warn("DEV_AUTH_BYPASS=1 — JWT verification SKIPPED for every request",
 			"tenant", c.DevAuthBypassTenant, "email", c.DevAuthBypassEmail,
 			"warning", "MUST NOT be set in production. Unset on Fly to disable.")
@@ -812,10 +847,12 @@ func (s *server) routes(mux *http.ServeMux) {
 	// Used by ops to see which (file_id, node_id) frames are currently
 	// suppressed by the persistent-failure skip list and to manually
 	// clear an entry when the upstream issue is known-fixed.
+	// #8 audit fix: requireSuperAdmin (not requireAuth) — handlers also
+	// re-check via requireAdminTenant, defense-in-depth.
 	mux.HandleFunc("GET /v1/admin/figma-render-blocklist",
-		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaBlocklistList)))
+		s.requireSuperAdmin(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaBlocklistList)))
 	mux.HandleFunc("DELETE /v1/admin/figma-render-blocklist/{file_id}/{node_id}",
-		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaBlocklistClear)))
+		s.requireSuperAdmin(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaBlocklistClear)))
 	// FIGMA DB inventory admin (2026-05-13, migration 0025). Admin-managed
 	// team seed list + read-only inventory tree + manual sync trigger +
 	// per-cycle run log. The poller (Started above) does the actual crawling.
@@ -869,15 +906,26 @@ func (s *server) routes(mux *http.ServeMux) {
 	// cheap_update / skip action. Synchronous from the HTTP caller's
 	// perspective; the pipeline goroutines spawned by RunExport keep
 	// running after the response returns.
+	// SEC-1 fix: requireSuperAdmin (not requireAuth) — the handler also
+	// re-checks via RequireAdminTenant, defense-in-depth.
 	mux.HandleFunc("POST /v1/admin/figma-autosync/execute",
-		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, func(w http.ResponseWriter, r *http.Request) {
+		s.requireSuperAdmin(projects.AdaptAuthMiddleware(claimsReader, func(w http.ResponseWriter, r *http.Request) {
 			handleAutosyncExecute(w, r, s.projectsServer, s.db.DB, s.log)
 		})))
 	// F4 follow-up — manual escape hatch from auto-quarantine. Operators
 	// hit this after fixing whatever caused 5 consecutive failures (file
-	// renamed, frame removed, designer recreated a section, etc.).
+	// renamed, frame removed, designer recreated a section, etc.). SEC-2
+	// fix: requireSuperAdmin (handler also re-checks admin).
 	mux.HandleFunc("DELETE /v1/admin/figma-autosync/state/{file_key}/{page_id}/{section_id}/quarantine",
-		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaAutosyncClearQuarantine)))
+		s.requireSuperAdmin(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaAutosyncClearQuarantine)))
+	// #12 audit fix — paginated state inspection so operators can find
+	// quarantined sections (and any other state) without raw SQL.
+	mux.HandleFunc("GET /v1/admin/figma-autosync/state",
+		s.requireSuperAdmin(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaAutosyncListState)))
+	// #25 audit fix — figma_project_mapping upsert via HTTP so the
+	// runbook's "raw SQL" instruction can be retired.
+	mux.HandleFunc("POST /v1/admin/figma-project-mapping",
+		s.requireSuperAdmin(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaProjectMappingUpsert)))
 	mux.HandleFunc("GET /v1/projects",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectList)))
 	mux.HandleFunc("GET /v1/projects/{slug}",
@@ -1283,6 +1331,21 @@ type ctxKey string
 
 const ctxClaims ctxKey = "claims"
 
+// pathAllowsTokenQueryParam returns true for binary-loader endpoints
+// where browsers cannot attach an Authorization header (THREE textures,
+// KTX2, raw canonical-tree bytes for the atlas viewer). Every other GET
+// must use Authorization: Bearer or the short-lived ?at= asset token.
+//
+// #10 audit fix — narrows the ?token=<jwt> fallback so a 7-day JWT no
+// longer leaks via Referer / CDN logs / browser history on arbitrary
+// GET endpoints. Update this list when a new binary-loader route is
+// added; non-binary GETs should never accept JWTs in the URL.
+func pathAllowsTokenQueryParam(path string) bool {
+	return strings.HasSuffix(path, "/png") ||
+		strings.HasSuffix(path, "/ktx2") ||
+		strings.HasSuffix(path, "/canonical-tree")
+}
+
 func claimsFrom(r *http.Request) *auth.Claims {
 	c, _ := r.Context().Value(ctxClaims).(*auth.Claims)
 	return c
@@ -1323,7 +1386,14 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		// canvas. Gated to GET so we don't accept tokens-in-URL on any
 		// state-changing request — bears the same tradeoffs as
 		// CloudFront signed URLs / Vercel image-signing tokens.
-		if token == "" && r.Method == http.MethodGet {
+		//
+		// #10 audit fix: previously this fallback applied to EVERY GET,
+		// which leaked full 7-day JWTs to CDN/proxy/Referer logs for any
+		// API call that pasted ?token= in. Restrict to the binary-loader
+		// path suffixes that genuinely cannot use the Authorization
+		// header. All other GETs must use Authorization or ?at= asset
+		// tokens (short-lived scoped tokens).
+		if token == "" && r.Method == http.MethodGet && pathAllowsTokenQueryParam(r.URL.Path) {
 			token = r.URL.Query().Get("token")
 		}
 		// Pr8 — asset-token path: when the caller supplies `?at=<token>`
@@ -1698,17 +1768,40 @@ func (a adminAutoSyncDB) NewTenantRepo(tenantID string) *projects.TenantRepo {
 	return projects.NewTenantRepo(a.db, tenantID)
 }
 
-// autosyncMu serialises the ticker + the HTTP /v1/admin/figma-autosync/execute
-// handler so two concurrent runs don't double-export the same section
-// (finding F11). TryLock semantics: the loser logs/returns "already
-// running" rather than waiting in line — a queued retry would just
-// repeat the same work, and the next ticker fires soon anyway.
-var autosyncMu stdsync.Mutex
+// autosyncLeaseTTL bounds how long one acquisition holds the autosync
+// lease (#10 audit fix — see migration 0033). Sized to per-cycle
+// budget plus comfortable slack so a crashed replica's lease auto-
+// reclaims on the next attempt.
+const autosyncLeaseTTL = 15 * time.Minute
 
-// tryAutosyncLock returns true and grabs the mutex when no one else
-// holds it; returns false otherwise. Caller MUST unlock via
-// autosyncMu.Unlock() when they win.
-func tryAutosyncLock() bool { return autosyncMu.TryLock() }
+// autosyncHolderID identifies this replica for figma_autosync_lease
+// rows. Generated once at process start so a successful
+// TryAcquireAutosyncLease + later ReleaseAutosyncLease are guaranteed
+// to use the same id. Format: hostname:pid:nanoid (nanoid avoids
+// collisions when the same hostname/pid combo cycles fast under
+// orchestrators).
+var autosyncHolderID = func() string {
+	host, _ := os.Hostname()
+	if host == "" {
+		host = "unknown"
+	}
+	return fmt.Sprintf("%s:%d:%s", host, os.Getpid(), uuid.NewString()[:8])
+}()
+
+// tryAcquireAutosyncLease wraps projects.TryAcquireAutosyncLease with
+// the boot-generated holder id + the standard TTL. Returns true iff
+// the caller now holds the per-tenant lease.
+func tryAcquireAutosyncLease(ctx context.Context, db *sql.DB, tenantID string) (bool, error) {
+	return projects.TryAcquireAutosyncLease(ctx, db, tenantID, autosyncHolderID, autosyncLeaseTTL)
+}
+
+// releaseAutosyncLease wraps projects.ReleaseAutosyncLease. Logs but
+// doesn't fail on error — the row will expire on its own TTL anyway.
+func releaseAutosyncLease(ctx context.Context, db *sql.DB, log *slog.Logger, tenantID string) {
+	if err := projects.ReleaseAutosyncLease(ctx, db, tenantID, autosyncHolderID); err != nil && log != nil {
+		log.Warn("autosync: release lease failed", "tenant", tenantID, "err", err.Error())
+	}
+}
 
 // handleAutosyncExecute runs the autosync Planner + Executor in-process.
 // Body (optional): {"file_key": "..."} to scope to a single file.
@@ -1725,33 +1818,37 @@ func tryAutosyncLock() bool { return autosyncMu.TryLock() }
 //	}
 func handleAutosyncExecute(w http.ResponseWriter, r *http.Request, ps *projects.Server, sqlDB *sql.DB, log *slog.Logger) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		projects.WriteJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
 		return
 	}
-	// Resolve tenant via DEV_AUTH_BYPASS shape (claims live on context).
+	// SEC-1 fix: tenant comes from authenticated claims, never the URL.
+	// Combined with the requireSuperAdmin gate at the route, this is
+	// admin-only AND tenant-scoped to the caller — cross-tenant
+	// invocations are no longer possible.
+	tenantID, ok := ps.RequireAdminTenant(w, r)
+	if !ok {
+		return
+	}
 	type bodyT struct {
 		FileKey string `json:"file_key"`
 	}
 	var body bodyT
 	_ = json.NewDecoder(r.Body).Decode(&body) // empty body is fine
 
-	tenantID := r.URL.Query().Get("tenant_id")
-	if tenantID == "" {
-		tenantID = os.Getenv("DEV_AUTH_BYPASS_TENANT")
-	}
-	if tenantID == "" {
-		http.Error(w, "tenant_id required (query param)", http.StatusBadRequest)
+	// F11 — collapse concurrent runs (HTTP + ticker, or two HTTP calls
+	// or two replicas). Per-tenant SQLite advisory lease (#10) covers
+	// multi-replica deployments — TryAcquire returns false when a
+	// healthy holder owns the lease.
+	ok, err := tryAcquireAutosyncLease(r.Context(), sqlDB, tenantID)
+	if err != nil {
+		projects.WriteJSONErr(w, http.StatusInternalServerError, "lease_error", err.Error())
 		return
 	}
-
-	// F11 — collapse concurrent runs (HTTP + ticker, or two HTTP calls).
-	// TryLock and bail with 409 if someone's already running — a queued
-	// retry would just repeat the same work.
-	if !tryAutosyncLock() {
-		http.Error(w, "autosync already running, retry shortly", http.StatusConflict)
+	if !ok {
+		projects.WriteJSONErr(w, http.StatusConflict, "already_running", "autosync already running, retry shortly")
 		return
 	}
-	defer autosyncMu.Unlock()
+	defer releaseAutosyncLease(r.Context(), sqlDB, log, tenantID)
 
 	planner := inventory.NewPlanner(adminAutoSyncDB{db: sqlDB}, inventory.PlannerConfig{Log: log})
 	executor := inventory.NewExecutor(adminAutoSyncDB{db: sqlDB}, ps.RunExport)
@@ -1760,14 +1857,16 @@ func handleAutosyncExecute(w http.ResponseWriter, r *http.Request, ps *projects.
 	if body.FileKey != "" {
 		fp, err := planner.Plan(r.Context(), tenantID, body.FileKey)
 		if err != nil {
-			http.Error(w, "plan: "+err.Error(), http.StatusInternalServerError)
+			status, code := autosyncPlanErrorMapping(err)
+			projects.WriteJSONErr(w, status, code, err.Error())
 			return
 		}
 		plans = []inventory.FilePlan{fp}
 	} else {
 		ps2, err := planner.PlanTenant(r.Context(), tenantID)
 		if err != nil {
-			http.Error(w, "plan_tenant: "+err.Error(), http.StatusInternalServerError)
+			status, code := autosyncPlanErrorMapping(err)
+			projects.WriteJSONErr(w, status, code, err.Error())
 			return
 		}
 		plans = ps2
@@ -1825,8 +1924,27 @@ func handleAutosyncExecute(w http.ResponseWriter, r *http.Request, ps *projects.
 		out.Totals.Quarantined += res.SkippedQuar
 		out.Totals.Errors += len(res.Errors)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
+	projects.WriteJSON(w, http.StatusOK, out)
+}
+
+// autosyncPlanErrorMapping converts the planner's error into the
+// (HTTP status, error code) tuple. Input-shape errors return 400 so the
+// operator sees them as their own bug; everything else is a real
+// incident (DB unreachable, txn aborted, etc.) and surfaces as 500.
+// project_unmapped / mapping_disabled never bubble here — the planner
+// returns them as FilePlan.FileSkip values inline.
+func autosyncPlanErrorMapping(err error) (int, string) {
+	if err == nil {
+		return http.StatusOK, ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "tenant_id required"),
+		strings.Contains(msg, "file_key required"):
+		return http.StatusBadRequest, "bad_request"
+	default:
+		return http.StatusInternalServerError, "plan_error"
+	}
 }
 
 // autosyncIntervalFromEnv parses FIGMA_AUTOSYNC_INTERVAL. Accepts a Go
@@ -1922,32 +2040,55 @@ func startAutosyncRetryLoop(
 			// F11 — collapse with any in-flight HTTP /execute. TryLock
 			// rather than block: a queued cycle would repeat the same
 			// work, and the next tick fires in `interval` anyway.
-			if !tryAutosyncLock() {
+			ok, err := tryAcquireAutosyncLease(ctx, sqlDB, tenantID)
+			if err != nil {
+				log.Warn("autosync retry: lease acquire failed", "err", err.Error())
+				return
+			}
+			if !ok {
 				log.Info("autosync retry: skipped (handler already running)")
 				return
 			}
-			defer autosyncMu.Unlock()
+			defer releaseAutosyncLease(context.Background(), sqlDB, log, tenantID)
+			// #6 audit fix: per-cycle deadline. A hung PlanTenant or
+			// Execute would otherwise hold the lease forever (until
+			// TTL) and block every subsequent tick + HTTP /execute.
+			// 10 minutes is comfortably above the documented worst-
+			// case full-tenant cycle (~5min at 502 files) and well
+			// below the 15min default tick interval.
+			cycleCtx, cycleCancel := context.WithTimeout(ctx, 10*time.Minute)
+			defer cycleCancel()
 			planner := inventory.NewPlanner(adminAutoSyncDB{db: sqlDB}, inventory.PlannerConfig{Log: log})
 			executor := inventory.NewExecutor(adminAutoSyncDB{db: sqlDB}, ps.RunExport)
-			plans, err := planner.PlanTenant(ctx, tenantID)
+			plans, err := planner.PlanTenant(cycleCtx, tenantID)
 			if err != nil {
 				log.Warn("autosync retry: plan failed", "err", err.Error())
 				return
 			}
 			var totalFull, totalCheap, totalRetry, totalErr int
+			var totalQuarantined, totalSkipUnchanged, totalSections int
+			var workableFiles int // files with at least one non-skip section
 			for _, plan := range plans {
 				if plan.FileSkip != nil {
 					continue
 				}
+				hasWork := false
 				// Count retries (FullExports whose reason is the new
 				// retry_failed_pipeline) so the log line tells the
 				// operator "self-heal" vs "fresh export" volume.
 				for _, ps2 := range plan.Sections {
+					totalSections++
 					if ps2.Action == inventory.ActionFullExport && ps2.Reason == inventory.SkipRetryFailedPipeline {
 						totalRetry++
 					}
+					if ps2.Action != inventory.ActionSkipQuarantined && ps2.Action != inventory.ActionSkipUnchanged {
+						hasWork = true
+					}
 				}
-				res, err := executor.Execute(ctx, plan)
+				if hasWork {
+					workableFiles++
+				}
+				res, err := executor.Execute(cycleCtx, plan)
 				if err != nil {
 					log.Warn("autosync retry: execute failed", "file", plan.FileKey, "err", err.Error())
 					totalErr++
@@ -1955,6 +2096,8 @@ func startAutosyncRetryLoop(
 				}
 				totalFull += res.FullExported
 				totalCheap += res.CheapUpdated
+				totalQuarantined += res.SkippedQuar
+				totalSkipUnchanged += res.SkippedAlready
 				// F19 — surface each per-section error, not just the
 				// count. The cycle-complete summary's "errors=N" was
 				// useless for debugging — the messages were dropped on
@@ -1965,10 +2108,26 @@ func startAutosyncRetryLoop(
 				}
 				totalErr += len(res.Errors)
 			}
+			// #29 audit fix: surface the cycle's *health shape*, not
+			// just the totals. "healthy=true" means at least one file
+			// had real work and no errors fired; "everything_quarantined"
+			// means the cycle saw sections but ALL were stuck on the
+			// F4 freeze — silent feature death otherwise.
+			cycleHealthy := totalErr == 0 && (totalFull+totalCheap+totalSkipUnchanged > 0)
+			everythingQuarantined := totalSections > 0 && totalQuarantined == totalSections
 			log.Info("autosync retry cycle complete",
-				"files", len(plans), "full_export", totalFull,
-				"cheap_update", totalCheap, "retried_failed_pipeline", totalRetry,
-				"errors", totalErr)
+				"files", len(plans),
+				"workable_files", workableFiles,
+				"sections", totalSections,
+				"full_export", totalFull,
+				"cheap_update", totalCheap,
+				"skip_unchanged", totalSkipUnchanged,
+				"quarantined", totalQuarantined,
+				"retried_failed_pipeline", totalRetry,
+				"errors", totalErr,
+				"healthy", cycleHealthy,
+				"everything_quarantined", everythingQuarantined,
+			)
 		}
 		runOnce()
 		ticker := time.NewTicker(interval)

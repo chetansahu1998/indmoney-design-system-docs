@@ -101,17 +101,26 @@ func (e *Executor) Execute(ctx context.Context, plan FilePlan) (ExecuteResult, e
 			res.SkippedAlready++
 		case ActionSkipQuarantined:
 			res.SkippedQuar++
-			// Persist a state row so the admin dashboard sees the
-			// quarantine reason. Idempotent across retries.
-			_ = repo.UpsertAutoSyncState(ctx, projects.AutoSyncState{
-				FileKey:           plan.FileKey,
-				PageID:            ps.PageID,
-				SectionID:         ps.SectionID,
-				ContentHash:       ps.LiveContentHash,
-				PositionHash:      ps.LivePositionHash,
-				LastAttemptStatus: "quarantined",
-				SkipReason:        ps.SkipReason,
-			})
+			// #13 audit fix: only upsert when the planner saw
+			// SkipHashNotReady, where no prior row may exist yet and a
+			// placeholder is needed for the admin dashboard. For
+			// SkipMaxRetriesExceeded (the genuine F4 quarantine path)
+			// the row already says status='quarantined' with its
+			// content_hash frozen at the time of failure — re-upserting
+			// here would overwrite content_hash with the *current* live
+			// hash. That masked drift: after an operator cleared
+			// quarantine, the planner saw state.content_hash ==
+			// live.content_hash and emitted skip_unchanged, so the fix
+			// never got re-exported.
+			if ps.SkipReason == SkipHashNotReady {
+				_ = repo.UpsertAutoSyncState(ctx, projects.AutoSyncState{
+					FileKey:           plan.FileKey,
+					PageID:            ps.PageID,
+					SectionID:         ps.SectionID,
+					LastAttemptStatus: "quarantined",
+					SkipReason:        ps.SkipReason,
+				})
+			}
 		case ActionCheapUpdate:
 			if err := e.executeCheapUpdate(ctx, repo, plan, ps); err != nil {
 				res.Errors = append(res.Errors, fmt.Sprintf("%s/%s cheap_update: %v", ps.PageID, ps.SectionID, err))

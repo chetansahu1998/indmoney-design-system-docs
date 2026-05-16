@@ -139,6 +139,14 @@ type ServerDeps struct {
 	// silently skips the trigger.
 	InventoryPoller InventoryPoller
 
+	// ShutdownCtx is cancelled when the process receives SIGTERM/SIGINT
+	// (wired by cmd/server's lifecycle). RunExport derives detached
+	// pipeline goroutines from this so SIGTERM aborts in-flight Stage
+	// 1-9 work instead of letting it run past the 30s drain window
+	// (#3 audit fix). nil-tolerant — tests and standalone CLI mains
+	// fall back to context.Background.
+	ShutdownCtx context.Context
+
 	Log *slog.Logger
 }
 
@@ -190,6 +198,13 @@ func (s *Server) resolveTenantID(claims *auth.Claims) string {
 // docs/solutions/2026-05-01-003-phase-7-8-closure.md.
 func (s *Server) requireAdminTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
 	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	// HTTP semantics: 401 = no credentials, 403 = credentials present
+	// but insufficient role. Distinguish the two so client-side error UX
+	// can show "please log in" vs "you don't have admin access".
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return "", false
+	}
 	if !isAdmin(claims) {
 		writeJSONErr(w, http.StatusForbidden, "admin_required", "")
 		return "", false
@@ -200,6 +215,45 @@ func (s *Server) requireAdminTenant(w http.ResponseWriter, r *http.Request) (str
 		return "", false
 	}
 	return tenantID, true
+}
+
+// RequireAdminTenant is the exported wrapper around requireAdminTenant
+// for handlers that live outside this package (e.g. handleAutosyncExecute
+// in cmd/server). Same envelope: returns (tenantID, true) on success and
+// writes the JSON error itself on failure so the caller can early-return.
+func (s *Server) RequireAdminTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
+	return s.requireAdminTenant(w, r)
+}
+
+// requireTenant resolves the caller's tenant from claims WITHOUT requiring
+// admin role — for endpoints accessible to any authenticated tenant member
+// (e.g. plugin "Check selection against DS" lookup, "Mark as intentional
+// fork"). The route-level requireAuth already gates these; the helper just
+// surfaces the tenant for query scoping. Use requireAdminTenant when the
+// route is under /v1/admin/.
+func (s *Server) requireTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return "", false
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return "", false
+	}
+	return tenantID, true
+}
+
+// AuditedUserID returns the actor's user id (claims.Sub) for audit_log
+// rows. Empty string if no claims are bound — caller should still write
+// the row so the timeline is intact.
+func (s *Server) AuditedUserID(r *http.Request) string {
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		return ""
+	}
+	return claims.Sub
 }
 
 // enqueueGraphRebuild fires an EnqueueIncremental for both mobile + web
@@ -414,10 +468,16 @@ func (s *Server) RunExport(ctx context.Context, p RunExportParams) (RunExportRes
 		})
 	}
 
-	// Spawn pipeline goroutine — fresh context, callers do NOT block on it.
+	// Spawn pipeline goroutine — detached from the request ctx so the
+	// HTTP response returns immediately, BUT rooted at ShutdownCtx so
+	// SIGTERM aborts in-flight Stage 1-9 work (#3 audit fix). nil-
+	// tolerant fallback to Background for tests / CLI wiring.
 	if s.deps.PipelineFactory != nil {
 		go func(versionID, projectID, projectSlug, userID, fileID, idempotencyKey, traceID, ip, ua string, frames []PipelineFrame) {
-			pCtx := context.Background()
+			pCtx := s.deps.ShutdownCtx
+			if pCtx == nil {
+				pCtx = context.Background()
+			}
 			pipeline, err := s.deps.PipelineFactory(pCtx, tenantID, repo)
 			if err != nil {
 				s.deps.Log.Error("pipeline factory", "err", err)
@@ -438,6 +498,14 @@ func (s *Server) RunExport(ctx context.Context, p RunExportParams) (RunExportRes
 				Frames:         frames,
 			})
 		}(version.ID, project.ID, project.Slug, p.UserID, req.FileID, req.IdempotencyKey, traceID, p.ClientIP, p.UserAgent, pipelineFrames)
+	} else {
+		// #19 audit fix: PipelineFactory==nil leaves the version row in
+		// 'pending' forever (no goroutine ever runs to advance it). Mark
+		// failed at the data layer so recovery/cleanup workers see a
+		// terminal status and operator dashboards don't show silent stalls.
+		s.deps.Log.Error("RunExport: PipelineFactory is nil — marking version failed",
+			"version_id", version.ID, "tenant_id", tenantID)
+		_ = repo.RecordFailed(ctx, version.ID, "pipeline factory not configured")
 	}
 
 	return RunExportResult{
@@ -729,10 +797,23 @@ func (s *Server) HandleVersionRetry(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Spawn pipeline. Same shape as HandleExport's launch; uses the
-	// reconstructed frames + the persisted file_id.
-	if s.deps.PipelineFactory != nil {
+	// reconstructed frames + the persisted file_id. Rooted at
+	// ShutdownCtx (#3 audit fix) so SIGTERM aborts the retry.
+	if s.deps.PipelineFactory == nil {
+		// #19 audit fix: same guard as RunExport — refuse to leave a
+		// retry row stranded in 'pending' when no factory is wired.
+		s.deps.Log.Error("HandleVersionRetry: PipelineFactory is nil — marking version failed",
+			"version_id", versionID, "tenant_id", tenantID)
+		_ = repo.RecordFailed(r.Context(), versionID, "pipeline factory not configured")
+		writeJSONErr(w, http.StatusServiceUnavailable, "pipeline_unavailable", "pipeline factory not configured")
+		return
+	}
+	{
 		go func() {
-			ctx := context.Background()
+			ctx := s.deps.ShutdownCtx
+			if ctx == nil {
+				ctx = context.Background()
+			}
 			pipeline, err := s.deps.PipelineFactory(ctx, tenantID, repo)
 			if err != nil {
 				s.deps.Log.Error("retry pipeline factory", "err", err, "version_id", versionID)
@@ -3602,6 +3683,18 @@ func writeJSONErr(w http.ResponseWriter, status int, code, detail string) {
 	})
 }
 
+// WriteJSONErr is the exported wrapper for cross-package callers that
+// need to emit the same {error, detail} envelope as in-package handlers.
+// Same shape as writeJSONErr so dashboards can parse responses uniformly.
+func WriteJSONErr(w http.ResponseWriter, status int, code, detail string) {
+	writeJSONErr(w, status, code, detail)
+}
+
+// WriteJSON is the exported success-body writer matching writeJSON.
+func WriteJSON(w http.ResponseWriter, status int, body any) {
+	writeJSON(w, status, body)
+}
+
 // clientIP extracts the best-guess remote IP for audit_log purposes. Uses
 // X-Forwarded-For first (assumes the deployment runs behind a TLS proxy that
 // sets it correctly), falls back to RemoteAddr.
@@ -3633,14 +3726,8 @@ func (s *Server) HandleFigmaBlocklistList(w http.ResponseWriter, r *http.Request
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
 		return
 	}
-	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if claims == nil {
-		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
-		return
-	}
-	tenantID := s.resolveTenantID(claims)
-	if tenantID == "" {
-		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+	tenantID, ok := s.requireAdminTenant(w, r)
+	if !ok {
 		return
 	}
 	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
@@ -3691,23 +3778,26 @@ func (s *Server) HandleFigmaBlocklistList(w http.ResponseWriter, r *http.Request
 // section from scratch (content_hash drives new_section vs.
 // content_changed vs. already_synced).
 //
-// Idempotent: clearing a non-quarantined row is a harmless no-op (returns
-// 200 with cleared=true). A row that doesn't exist returns 404.
+// Returns 200 with cleared=true when a quarantined row is reset. Returns
+// 404 when no row matches the (file_key, page_id, section_id) tuple OR
+// the row exists but is not in 'quarantined' state — clearing a healthy
+// row is a no-op (#11 audit fix: prior implementation wiped state of any
+// matching row, which silently corrupted ok/error rows on operator
+// misclick).
 //
-// Auth: JWT-authed; tenant scoping via resolveTenantID.
+// Auth: requireAdminTenant — JWT + admin role + claims-resolved tenant.
+// Cross-tenant clears via a different tenant's file_key are impossible
+// because tenantID is sourced from claims, not the URL.
+//
+// Writes an audit_log row tagged `figma_autosync_clear_quarantine` so
+// the timeline shows which operator cleared what.
 func (s *Server) HandleFigmaAutosyncClearQuarantine(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "DELETE only")
 		return
 	}
-	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if claims == nil {
-		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
-		return
-	}
-	tenantID := s.resolveTenantID(claims)
-	if tenantID == "" {
-		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+	tenantID, ok := s.requireAdminTenant(w, r)
+	if !ok {
 		return
 	}
 	fileKey := r.PathValue("file_key")
@@ -3724,11 +3814,155 @@ func (s *Server) HandleFigmaAutosyncClearQuarantine(w http.ResponseWriter, r *ht
 		return
 	}
 	if !cleared {
-		writeJSONErr(w, http.StatusNotFound, "section_not_found",
-			"no figma_auto_sync_state row for (file_key, page_id, section_id)")
+		writeJSONErr(w, http.StatusNotFound, "not_quarantined",
+			"no quarantined figma_auto_sync_state row for (file_key, page_id, section_id)")
 		return
 	}
+	s.writeAutosyncClearAudit(r.Context(), tenantID, s.AuditedUserID(r), r, fileKey, pageID, sectionID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cleared": true})
+}
+
+// writeAutosyncClearAudit drops one row in audit_log so the timeline
+// shows which operator cleared what. Mirrors writePromoteAuditLog's
+// schema exactly so the dashboard queries can union both event types
+// without special-casing.
+func (s *Server) writeAutosyncClearAudit(ctx context.Context, tenantID, userID string, r *http.Request, fileKey, pageID, sectionID string) {
+	if s.deps.DB == nil {
+		return
+	}
+	details, _ := json.Marshal(map[string]string{
+		"file_key":   fileKey,
+		"page_id":    pageID,
+		"section_id": sectionID,
+	})
+	_, _ = s.deps.DB.DB.ExecContext(ctx, `
+		INSERT INTO audit_log (id, ts, event_type, tenant_id, user_id, method, endpoint,
+		                      status_code, duration_ms, ip_address, details)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		uuid.NewString(),
+		time.Now().UTC().Format(time.RFC3339Nano),
+		"figma_autosync_clear_quarantine",
+		tenantID, userID,
+		"DELETE",
+		fmt.Sprintf("/v1/admin/figma-autosync/state/%s/%s/%s/quarantine", fileKey, pageID, sectionID),
+		http.StatusOK, 0,
+		clientIP(r),
+		string(details),
+	)
+}
+
+// HandleFigmaAutosyncListState serves GET /v1/admin/figma-autosync/state.
+//
+// Query params (all optional):
+//   - file_key=<str>     scope to one file
+//   - status=<str>       'ok' | 'skipped' | 'error' | 'quarantined'
+//   - skip_reason=<str>  exact match on skip_reason
+//   - limit=<int>        default 100, max 500
+//   - offset=<int>       default 0
+//
+// Auth: requireAdminTenant — JWT + admin role + claims-resolved tenant.
+//
+// Returns a paginated JSON envelope:
+//
+//	{"rows": [...AutoSyncState], "count": N, "limit": N, "offset": N}
+//
+// #12 audit fix: prior to this endpoint the only way operators could
+// find quarantined sections was raw SQL against figma_auto_sync_state.
+// The repo method ListAutoSyncState already existed — this just wires
+// it to HTTP.
+func (s *Server) HandleFigmaAutosyncListState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	tenantID, ok := s.requireAdminTenant(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	rows, err := repo.ListAutoSyncState(r.Context(), AutoSyncStateFilter{
+		FileKey:    q.Get("file_key"),
+		Status:     q.Get("status"),
+		SkipReason: q.Get("skip_reason"),
+		Limit:      limit,
+		Offset:     offset,
+	})
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "list_state", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rows":   rows,
+		"count":  len(rows),
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
+// HandleFigmaProjectMappingUpsert serves POST /v1/admin/figma-project-mapping.
+//
+// Body:
+//
+//	{
+//	  "figma_project_id": "...",
+//	  "internal_project_id": "...",
+//	  "platform":            "mobile" | "web" | "unspecified",
+//	  "enabled_for_autosync": true
+//	}
+//
+// Auth: requireAdminTenant. Wraps the existing TenantRepo.UpsertFigmaProjectMapping
+// so operators don't have to run raw SQL per the runbook (#25 audit fix).
+func (s *Server) HandleFigmaProjectMappingUpsert(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	tenantID, ok := s.requireAdminTenant(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		ProjectID          string `json:"project_id"`
+		Domain             string `json:"domain"`
+		Product            string `json:"product"`
+		PlatformDefault    string `json:"platform_default"`
+		EnabledForAutosync bool   `json:"enabled_for_autosync"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "bad_json", err.Error())
+		return
+	}
+	if body.ProjectID == "" || body.Domain == "" || body.Product == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_params",
+			"project_id, domain, product required")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	if err := repo.UpsertFigmaProjectMapping(r.Context(), FigmaProjectMapping{
+		ProjectID:          body.ProjectID,
+		Domain:             body.Domain,
+		Product:            body.Product,
+		PlatformDefault:    body.PlatformDefault,
+		EnabledForAutosync: body.EnabledForAutosync,
+		MappedByUserID:     s.AuditedUserID(r),
+	}); err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "upsert_mapping", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // HandleFigmaBlocklistClear serves DELETE
@@ -3745,14 +3979,8 @@ func (s *Server) HandleFigmaBlocklistClear(w http.ResponseWriter, r *http.Reques
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "DELETE only")
 		return
 	}
-	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if claims == nil {
-		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
-		return
-	}
-	tenantID := s.resolveTenantID(claims)
-	if tenantID == "" {
-		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+	tenantID, ok := s.requireAdminTenant(w, r)
+	if !ok {
 		return
 	}
 	fileID := r.PathValue("file_id")

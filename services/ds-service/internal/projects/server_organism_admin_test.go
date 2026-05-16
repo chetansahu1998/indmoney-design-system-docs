@@ -50,7 +50,7 @@ func seedAdminFixture(t *testing.T) (*Server, *auth.Claims, orgTestFixture) {
 	}
 
 	srv := &Server{deps: ServerDeps{DB: fx.db}}
-	claims := &auth.Claims{Sub: fx.userID, Email: "t@x", Tenants: []string{fx.tenantA}}
+	claims := &auth.Claims{Sub: fx.userID, Email: "t@x", Role: auth.RoleSuperAdmin, Tenants: []string{fx.tenantA}}
 	return srv, claims, fx
 }
 
@@ -368,7 +368,7 @@ func TestOrganismVerdictLookup_MethodNotAllowed(t *testing.T) {
 func TestOrganismVerdictLookup_TenantIsolation(t *testing.T) {
 	srv, _, fx := seedAdminFixture(t)
 	// Tenant B asks about a frame_id seeded for tenant A → miss.
-	bClaims := &auth.Claims{Sub: "userB", Email: "b@x", Tenants: []string{fx.tenantB}}
+	bClaims := &auth.Claims{Sub: "userB", Email: "b@x", Role: auth.RoleSuperAdmin, Tenants: []string{fx.tenantB}}
 	w := callVerdictLookup(t, srv, bClaims, `{"node_id":"f1"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
@@ -486,7 +486,7 @@ func TestOrganismForkMark_TenantIsolation(t *testing.T) {
 	// Tenant B's verdict lookup for the same frame must NOT see fork-mark
 	// (and won't see a verdict either since rows are tenant-scoped — but
 	// we want the fork lookup specifically to also stay isolated).
-	bClaims := &auth.Claims{Sub: "userB", Email: "b@x", Tenants: []string{fx.tenantB}}
+	bClaims := &auth.Claims{Sub: "userB", Email: "b@x", Role: auth.RoleSuperAdmin, Tenants: []string{fx.tenantB}}
 	_, err := fx.otherRepo.LookupOrganismForkMark(context.Background(), "f1")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("tenant B leaked tenant A fork-mark; err=%v", err)
@@ -659,7 +659,7 @@ func TestLookupOrganismDeeplink_NoFile(t *testing.T) {
 
 func TestOrganismAdmin_TenantIsolation(t *testing.T) {
 	srv, _, fx := seedAdminFixture(t)
-	bClaims := &auth.Claims{Sub: "userB", Email: "b@x", Tenants: []string{fx.tenantB}}
+	bClaims := &auth.Claims{Sub: "userB", Email: "b@x", Role: auth.RoleSuperAdmin, Tenants: []string{fx.tenantB}}
 	w := callHandler(t, srv.HandleOrganismAdoption, http.MethodGet, "/v1/admin/organisms/adoption", bClaims)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)

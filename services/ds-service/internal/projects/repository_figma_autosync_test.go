@@ -191,9 +191,11 @@ func TestClearAutoSyncQuarantine_ResetsQuarantinedRow(t *testing.T) {
 	}
 }
 
-// Idempotency: clearing a never-quarantined row is a harmless no-op
-// (returns (true, nil) because the row exists and the UPDATE matches).
-func TestClearAutoSyncQuarantine_IdempotentOnNonQuarantinedRow(t *testing.T) {
+// #11 audit fix: clearing a non-quarantined row is a no-op and returns
+// (false, nil) so the handler 404s. Prior behavior unconditionally
+// wiped state of any matching row, which silently corrupted ok/error
+// rows on operator misclick.
+func TestClearAutoSyncQuarantine_NoOpOnHealthyRow(t *testing.T) {
 	d, tA, _, _ := newTestDB(t)
 	repo := NewTenantRepo(d.DB, tA)
 	ctx := context.Background()
@@ -205,8 +207,22 @@ func TestClearAutoSyncQuarantine_IdempotentOnNonQuarantinedRow(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	cleared, err := repo.ClearAutoSyncQuarantine(ctx, "fk", "p", "s")
-	if err != nil || !cleared {
-		t.Fatalf("clear: cleared=%v err=%v", cleared, err)
+	if err != nil {
+		t.Fatalf("clear err: %v", err)
+	}
+	if cleared {
+		t.Fatalf("cleared: got true, want false (row was ok, not quarantined)")
+	}
+	// Sanity: the row's content_hash + last_attempt_status survived intact.
+	got, err := repo.LookupAutoSyncState(ctx, "fk", "p", "s")
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if got.LastAttemptStatus != "ok" {
+		t.Errorf("status corrupted: got %q want ok", got.LastAttemptStatus)
+	}
+	if got.ContentHash != "h" {
+		t.Errorf("content_hash wiped: got %q want h", got.ContentHash)
 	}
 }
 

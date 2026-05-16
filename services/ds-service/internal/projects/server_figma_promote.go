@@ -40,7 +40,7 @@ func (s *Server) HandleFigmaInventoryPromote(w http.ResponseWriter, r *http.Requ
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
 		return
 	}
-	tenantID, ok := s.requireFigmaInventoryAdminTenant(w, r)
+	tenantID, ok := s.requireAdminTenant(w, r)
 	if !ok {
 		return
 	}

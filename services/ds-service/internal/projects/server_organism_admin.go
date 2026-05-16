@@ -41,7 +41,7 @@ func (s *Server) HandleOrganismAdoption(w http.ResponseWriter, r *http.Request) 
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
 		return
 	}
-	tenantID, ok := s.requireOrganismAdminTenant(w, r)
+	tenantID, ok := s.requireAdminTenant(w, r)
 	if !ok {
 		return
 	}
@@ -83,7 +83,7 @@ func (s *Server) HandleOrganismMatchesBySlug(w http.ResponseWriter, r *http.Requ
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
 		return
 	}
-	tenantID, ok := s.requireOrganismAdminTenant(w, r)
+	tenantID, ok := s.requireAdminTenant(w, r)
 	if !ok {
 		return
 	}
@@ -133,7 +133,7 @@ func (s *Server) HandlePromotionCandidatePatch(w http.ResponseWriter, r *http.Re
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "PATCH only")
 		return
 	}
-	tenantID, ok := s.requireOrganismAdminTenant(w, r)
+	tenantID, ok := s.requireAdminTenant(w, r)
 	if !ok {
 		return
 	}
@@ -182,7 +182,7 @@ func (s *Server) HandleOrganismDeeplink(w http.ResponseWriter, r *http.Request) 
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
 		return
 	}
-	if _, ok := s.requireOrganismAdminTenant(w, r); !ok {
+	if _, ok := s.requireAdminTenant(w, r); !ok {
 		return
 	}
 	slug := r.PathValue("slug")
@@ -250,7 +250,9 @@ func (s *Server) HandleOrganismVerdictLookup(w http.ResponseWriter, r *http.Requ
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
 		return
 	}
-	tenantID, ok := s.requireOrganismAdminTenant(w, r)
+	// Designer plugin endpoint — route is /v1/audit/organism-match, NOT
+	// under /v1/admin. No admin role required; just tenant resolution.
+	tenantID, ok := s.requireTenant(w, r)
 	if !ok {
 		return
 	}
@@ -362,7 +364,7 @@ func (s *Server) HandleOrganismPromotionCandidates(w http.ResponseWriter, r *htt
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
 		return
 	}
-	tenantID, ok := s.requireOrganismAdminTenant(w, r)
+	tenantID, ok := s.requireAdminTenant(w, r)
 	if !ok {
 		return
 	}
@@ -381,24 +383,6 @@ func (s *Server) HandleOrganismPromotionCandidates(w http.ResponseWriter, r *htt
 		"candidates": out,
 		"count":      len(out),
 	})
-}
-
-// requireOrganismAdminTenant is a small helper that consolidates the
-// claims-extraction + tenant-resolution dance every organism admin
-// handler does. Returns (tenantID, ok); on !ok the response has already
-// been written with the appropriate 401/403.
-func (s *Server) requireOrganismAdminTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
-	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if claims == nil {
-		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
-		return "", false
-	}
-	tenantID := s.resolveTenantID(claims)
-	if tenantID == "" {
-		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
-		return "", false
-	}
-	return tenantID, true
 }
 
 // ─── DTOs ────────────────────────────────────────────────────────────────────

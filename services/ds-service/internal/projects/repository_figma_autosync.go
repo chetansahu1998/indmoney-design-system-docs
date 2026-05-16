@@ -22,10 +22,19 @@ import (
 // AutoSyncMaxRetries is the consecutive-failure threshold beyond which
 // UpsertAutoSyncState auto-transitions a section from 'error' to
 // 'quarantined'. The planner treats quarantined the same as
-// skip_quarantined (no retry until cleared via admin endpoint). 5 was
-// chosen to absorb a full Figma maintenance window (~3 hours at 15min
-// cadence) before giving up on a section.
+// skip_quarantined (no retry until AutoQuarantineTTL elapses or an
+// admin clears the row). 5 was chosen to absorb a full Figma
+// maintenance window (~3 hours at 15min cadence) before giving up on a
+// section.
 const AutoSyncMaxRetries = 5
+
+// AutoQuarantineTTL is how long a quarantined section sits before the
+// planner auto-retries it (#5 audit fix). 24h gives ops one business
+// day to look at it; after that, the planner re-evaluates from
+// scratch, and if the underlying failure persists the section just
+// gets re-quarantined. Avoids the "permanent quarantine on long Figma
+// outage" failure mode where MaxRetries alone wasn't enough.
+const AutoQuarantineTTL = 24 * time.Hour
 
 // ─── figma_auto_sync_state ───────────────────────────────────────────────────
 
@@ -54,9 +63,9 @@ type AutoSyncState struct {
 	// F12 — folded LEFT JOIN. When LastSyncedVersionID points at a
 	// row in project_versions, PriorVersionStatus carries its status
 	// ('view_ready' | 'pending' | 'failed'). Empty string when the
-	// version row was pruned or never existed. Populated only by
-	// LookupAutoSyncState (the planner's hot path); ListAutoSyncState
-	// leaves it empty.
+	// version row was pruned or never existed. Populated by BOTH
+	// LookupAutoSyncState (planner hot path) and ListAutoSyncState
+	// (admin inspection — #21 audit fix made these symmetric).
 	PriorVersionStatus string
 }
 
@@ -237,9 +246,20 @@ func (t *TenantRepo) LookupAutoSyncState(ctx context.Context, fileKey, pageID, s
 
 // ClearAutoSyncQuarantine resets the retry-counter bookkeeping on one
 // section row so the planner stops short-circuiting it as
-// skip_quarantined. Unconditional UPDATE — idempotent against rows that
-// were already in good standing (no-op). Returns (true, nil) when the
-// row exists and was cleared, (false, nil) when no row matches.
+// skip_quarantined. Guarded UPDATE — only fires when the row is
+// currently in 'quarantined' state, so an operator misclick on a
+// healthy row (status='ok' or 'error') is a 404, NOT a silent wipe of
+// the row's content_hash / retry_count / error_message. Returns
+// (true, nil) when one quarantined row was cleared, (false, nil) when
+// no quarantined row matches.
+//
+// #23: race with concurrent executor upsert is bounded by
+// SetMaxOpenConns(1) (the pool serializes all writes on one SQLite
+// connection) plus #13 (executor no longer upserts on
+// ActionSkipQuarantined except for hash_not_ready). After clear,
+// worst case the next executor cycle re-attempts and either succeeds
+// (clear sticks) or re-quarantines (clear neutralized — but ops can
+// see retry_count=N+1 and a fresh quarantined_at). No data loss.
 //
 // Operator semantics: this is the manual escape hatch from F4's
 // auto-quarantine. After the next planner cycle the section runs as if
@@ -263,7 +283,11 @@ func (t *TenantRepo) ClearAutoSyncQuarantine(ctx context.Context, fileKey, pageI
 		       retry_count         = 0,
 		       quarantined_at      = NULL,
 		       error_message       = NULL
-		 WHERE tenant_id = ? AND file_key = ? AND page_id = ? AND section_id = ?
+		 WHERE tenant_id = ?
+		   AND file_key = ?
+		   AND page_id = ?
+		   AND section_id = ?
+		   AND last_attempt_status = 'quarantined'
 	`, t.tenantID, fileKey, pageID, sectionID)
 	if err != nil {
 		return false, fmt.Errorf("clear autosync quarantine: %w", err)
@@ -293,31 +317,39 @@ func (t *TenantRepo) ListAutoSyncState(ctx context.Context, f AutoSyncStateFilte
 		f.Limit = 100
 	}
 
+	// #21 audit fix: include the same LEFT JOIN to project_versions
+	// that LookupAutoSyncState uses, so PriorVersionStatus is
+	// populated for batch listing too (admin UI needs to see which
+	// rows are stuck on retry_failed_pipeline).
 	sqlStr := `
-		SELECT tenant_id, file_key, page_id, section_id,
-		       COALESCE(content_hash, ''), COALESCE(position_hash, ''),
-		       COALESCE(last_synced_flow_id, ''), COALESCE(last_synced_version_id, ''),
-		       COALESCE(last_synced_at, ''),
-		       COALESCE(last_attempt_at, ''), COALESCE(last_attempt_status, ''),
-		       COALESCE(skip_reason, ''), COALESCE(error_message, ''),
-		       first_seen_at,
-		       retry_count, COALESCE(quarantined_at, '')
-		  FROM figma_auto_sync_state
-		 WHERE tenant_id = ?`
+		SELECT s.tenant_id, s.file_key, s.page_id, s.section_id,
+		       COALESCE(s.content_hash, ''), COALESCE(s.position_hash, ''),
+		       COALESCE(s.last_synced_flow_id, ''), COALESCE(s.last_synced_version_id, ''),
+		       COALESCE(s.last_synced_at, ''),
+		       COALESCE(s.last_attempt_at, ''), COALESCE(s.last_attempt_status, ''),
+		       COALESCE(s.skip_reason, ''), COALESCE(s.error_message, ''),
+		       s.first_seen_at,
+		       s.retry_count, COALESCE(s.quarantined_at, ''),
+		       COALESCE(pv.status, '')
+		  FROM figma_auto_sync_state s
+		  LEFT JOIN project_versions pv
+		         ON pv.id = s.last_synced_version_id
+		        AND pv.tenant_id = s.tenant_id
+		 WHERE s.tenant_id = ?`
 	args := []any{t.tenantID}
 	if f.FileKey != "" {
-		sqlStr += ` AND file_key = ?`
+		sqlStr += ` AND s.file_key = ?`
 		args = append(args, f.FileKey)
 	}
 	if f.Status != "" {
-		sqlStr += ` AND last_attempt_status = ?`
+		sqlStr += ` AND s.last_attempt_status = ?`
 		args = append(args, f.Status)
 	}
 	if f.SkipReason != "" {
-		sqlStr += ` AND skip_reason = ?`
+		sqlStr += ` AND s.skip_reason = ?`
 		args = append(args, f.SkipReason)
 	}
-	sqlStr += ` ORDER BY last_attempt_at DESC LIMIT ? OFFSET ?`
+	sqlStr += ` ORDER BY s.last_attempt_at DESC LIMIT ? OFFSET ?`
 	args = append(args, f.Limit, f.Offset)
 
 	rows, err := t.r.db.QueryContext(ctx, sqlStr, args...)
@@ -338,6 +370,7 @@ func (t *TenantRepo) ListAutoSyncState(ctx context.Context, f AutoSyncStateFilte
 			&s.SkipReason, &s.ErrorMessage,
 			&firstSeen,
 			&s.RetryCount, &quarantinedAt,
+			&s.PriorVersionStatus,
 		); err != nil {
 			return nil, fmt.Errorf("scan figma_auto_sync_state: %w", err)
 		}
@@ -792,4 +825,67 @@ func (t *TenantRepo) LoadSectionSubtree(ctx context.Context, fileKey, sectionID 
 		nodes[i].FileKey = fileKey
 	}
 	return nodes, nil
+}
+
+// ─── autosync per-tenant advisory lease (#10) ────────────────────────────────
+
+// TryAcquireAutosyncLease attempts to claim the per-tenant autosync
+// lease for ttl. Returns true when the caller now holds the lease,
+// false when another holder owns an unexpired one. Replaces the
+// process-local sync.Mutex that didn't survive multi-replica
+// deployments (#10 audit fix — see migration 0033 header).
+//
+// holderID is opaque to this function but must be unique per replica
+// (e.g. hostname:pid:randomNonce). It's checked on release so a
+// replica can't accidentally free another replica's lease after its
+// own expired and got reclaimed.
+//
+// Uses a single UPSERT keyed on tenant_id with a WHERE predicate on
+// the UPDATE branch so SQLite reports RowsAffected=1 only when the
+// row was either newly inserted OR taken over from an expired holder.
+func TryAcquireAutosyncLease(ctx context.Context, db *sql.DB, tenantID, holderID string, ttl time.Duration) (bool, error) {
+	if db == nil {
+		return false, errors.New("projects: nil db")
+	}
+	if tenantID == "" || holderID == "" {
+		return false, errors.New("projects: tenant_id and holder_id required")
+	}
+	if ttl <= 0 {
+		return false, errors.New("projects: ttl must be positive")
+	}
+	now := time.Now().UTC()
+	acquiredAt := now.Format(time.RFC3339Nano)
+	expiresAt := now.Add(ttl).Format(time.RFC3339Nano)
+	res, err := db.ExecContext(ctx, `
+		INSERT INTO figma_autosync_lease (tenant_id, holder_id, acquired_at, expires_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(tenant_id) DO UPDATE
+		   SET holder_id   = excluded.holder_id,
+		       acquired_at = excluded.acquired_at,
+		       expires_at  = excluded.expires_at
+		 WHERE figma_autosync_lease.expires_at < excluded.acquired_at
+	`, tenantID, holderID, acquiredAt, expiresAt)
+	if err != nil {
+		return false, fmt.Errorf("acquire autosync lease: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// ReleaseAutosyncLease frees the lease iff the caller still owns it
+// (matched by holder_id). Idempotent: no-op when no row matches.
+func ReleaseAutosyncLease(ctx context.Context, db *sql.DB, tenantID, holderID string) error {
+	if db == nil {
+		return errors.New("projects: nil db")
+	}
+	if tenantID == "" || holderID == "" {
+		return errors.New("projects: tenant_id and holder_id required")
+	}
+	_, err := db.ExecContext(ctx, `
+		DELETE FROM figma_autosync_lease WHERE tenant_id = ? AND holder_id = ?
+	`, tenantID, holderID)
+	if err != nil {
+		return fmt.Errorf("release autosync lease: %w", err)
+	}
+	return nil
 }

@@ -38,8 +38,26 @@ const (
 	ActionSkipQuarantined PlanAction = "skip_quarantined"
 )
 
-// SkipReason — set on PlannedSync.SkipReason when Action ∈ {
-// skip_quarantined, skip_unchanged }.
+// Reason — planner action-reason codes (#18 audit fix). The `Skip` name
+// prefix is historical; these are used across ALL plan actions, not
+// just skip:
+//
+//   - SkipOutOfWindow / SkipProjectUnmapped / SkipMappingDisabled /
+//     SkipNoSourcePage  → PlannedSync.SkipReason on ActionSkipUnchanged
+//     and FilePlan.FileSkip
+//   - SkipHashNotReady / SkipAlreadySynced  → SkipReason on
+//     ActionSkipUnchanged / ActionSkipQuarantined
+//   - SkipMaxRetriesExceeded               → SkipReason on
+//     ActionSkipQuarantined
+//   - SkipNewSection / SkipContentChanged  → PlannedSync.Reason on
+//     ActionFullExport
+//   - SkipPositionOnly                     → Reason on ActionCheapUpdate
+//   - SkipRetryFailedPipeline              → Reason on ActionFullExport
+//   - SkipPlanError                        → FilePlan.FileSkip
+//
+// Renaming the symbols would force a touch of every reference in
+// callers + admin dashboards parsing these as wire values, so the
+// names stay; the comment is the source of truth on usage.
 const (
 	SkipOutOfWindow     = "out_of_window"     // file's last_modified older than 6 months
 	SkipProjectUnmapped = "project_unmapped"  // figma_project_mapping missing
@@ -59,7 +77,8 @@ const (
 	// consecutive failures. The UPSERT auto-promoted last_attempt_status
 	// from 'error' to 'quarantined' and stamped quarantined_at. The
 	// planner respects the freeze until an admin manually clears via
-	// POST /v1/admin/figma-autosync/state/clear-quarantine.
+	// DELETE /v1/admin/figma-autosync/state/{file_key}/{page_id}/{section_id}/quarantine
+	// (or auto-recovers after AutoQuarantineTTL — see #5 audit fix).
 	SkipMaxRetriesExceeded = "max_retries_exceeded"
 	// FILE-level skip used by PlanTenant when an individual file's
 	// Plan() call fails. PlanTenant used to return (nil, err) on the
@@ -340,20 +359,36 @@ func (p *Planner) Plan(ctx context.Context, tenantID, fileKey string) (FilePlan,
 
 			// F4 — quarantine: section exhausted AutoSyncMaxRetries
 			// consecutive failures. The planner respects the freeze and
-			// short-circuits to skip_quarantined; an admin must clear
-			// the row via POST /v1/admin/figma-autosync/state/clear-quarantine
-			// (or the next 'ok' status auto-resets retry_count). This is
-			// the only escape hatch from the otherwise-unbounded retry
-			// loop that finding F4 flagged.
+			// short-circuits to skip_quarantined; an admin clears the
+			// row via DELETE /v1/admin/figma-autosync/state/{file_key}/{page_id}/{section_id}/quarantine,
+			// the next 'ok' status auto-resets retry_count, or the TTL
+			// below auto-recovers a quarantined row after
+			// projects.AutoQuarantineTTL (#5 audit fix). A long Figma outage
+			// would otherwise leave every section permanently
+			// quarantined waiting on operator intervention.
 			if prior.LastAttemptStatus == "quarantined" {
-				ps.Action = ActionSkipQuarantined
-				if prior.SkipReason != "" {
-					ps.SkipReason = prior.SkipReason
+				if !prior.QuarantinedAt.IsZero() && p.now().Sub(prior.QuarantinedAt) > projects.AutoQuarantineTTL {
+					// Treat as if the operator had cleared the row: fall
+					// through to the normal new/changed/already-synced
+					// decision tree. retry_count stays elevated; the
+					// next 'ok' status zeroes it.
+					p.log.Info("autosync planner: quarantine TTL expired, auto-retrying",
+						"file_key", fileKey,
+						"page_id", cp.PageID,
+						"section_id", sec.SectionID,
+						"quarantined_at", prior.QuarantinedAt.Format(time.RFC3339),
+						"ttl", projects.AutoQuarantineTTL.String(),
+					)
 				} else {
-					ps.SkipReason = SkipMaxRetriesExceeded
+					ps.Action = ActionSkipQuarantined
+					if prior.SkipReason != "" {
+						ps.SkipReason = prior.SkipReason
+					} else {
+						ps.SkipReason = SkipMaxRetriesExceeded
+					}
+					fp.Sections = append(fp.Sections, ps)
+					continue
 				}
-				fp.Sections = append(fp.Sections, ps)
-				continue
 			}
 
 			// Idempotent skip: prior was 'ok' AND hashes match. EXCEPT —

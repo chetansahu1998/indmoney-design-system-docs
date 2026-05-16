@@ -1,4 +1,4 @@
--- 0030_figma_autosync_retry_count — bound the auto-retry loop.
+-- 0032_figma_autosync_retry_count — bound the auto-retry loop.
 --
 -- F4 from the post-merge audit: the planner's retry_failed_pipeline
 -- branch + the 15-min ticker form an unbounded retry cascade. A
@@ -12,7 +12,7 @@
 -- writes last_attempt_status='quarantined' with a synthetic skip
 -- reason 'max_retries_exceeded'; the planner treats quarantined the
 -- same as already_synced (skip) until an admin clears the row via
--- POST /v1/admin/figma-autosync/state/{section_id}/clear-quarantine
+-- DELETE /v1/admin/figma-autosync/state/{file_key}/{page_id}/{section_id}/quarantine
 -- (separate handler — schema only here).
 
 ALTER TABLE figma_auto_sync_state

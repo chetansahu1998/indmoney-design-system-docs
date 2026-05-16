@@ -214,6 +214,13 @@ func (p *Poller) loop(ctx context.Context) {
 // enumerate teams, projects, files, and selectively refresh pages.
 // Errors are accumulated, never thrown.
 func (p *Poller) runCycle(ctx context.Context) {
+	// REL-4 audit fix: signal Ready() as soon as a cycle attempt
+	// completes — succeeded, errored, or had zero tenants. Doc
+	// promises "first cycle attempted", not "first cycle succeeded".
+	// Without this defer, the zero-tenants early-return below would
+	// leave readyCh open forever, blocking startAutosyncRetryLoop.
+	defer p.readyOnce.Do(func() { close(p.readyCh) })
+
 	start := p.cfg.Now()
 	tenants := p.cfg.ListTenants(ctx)
 	if len(tenants) == 0 {
@@ -251,11 +258,6 @@ func (p *Poller) runCycle(ctx context.Context) {
 		"nodes", totalStats.NodesUpserted,
 		"errors", len(totalStats.Errors),
 	)
-
-	// F18 — signal Ready() exactly once. Subsequent cycles do nothing
-	// here; sync.Once ensures the channel close is idempotent under
-	// concurrent re-entry (impossible today but cheap insurance).
-	p.readyOnce.Do(func() { close(p.readyCh) })
 
 	if p.onCycleDone != nil {
 		p.onCycleDone(totalStats)
@@ -304,10 +306,11 @@ func (p *Poller) crawlTenant(ctx context.Context, tenantID string) RunStats {
 	seenAt := p.cfg.Now()
 
 	for _, seed := range seeds {
-		select {
-		case <-ctx.Done():
-			break
-		default:
+		// #12 audit fix: `break` inside `select` only exits the select,
+		// not the for-loop. Return on ctx-cancel so SIGTERM actually
+		// stops the crawl mid-iteration instead of finishing every seed.
+		if ctx.Err() != nil {
+			return stats
 		}
 		teamStats := p.crawlTeam(ctx, fc, repo, seed, seenAt, logger)
 		stats.TeamsCrawled++
@@ -324,10 +327,9 @@ func (p *Poller) crawlTenant(ctx context.Context, tenantID string) RunStats {
 		stats.Errors = append(stats.Errors, fmt.Sprintf("files_needing_sync: %s", err.Error()))
 	}
 	for _, f := range files {
-		select {
-		case <-ctx.Done():
-			break
-		default:
+		// #12 audit fix: same break-in-select issue as the seeds loop.
+		if ctx.Err() != nil {
+			return stats
 		}
 		pageCount, sectionCount, nodeCount, err := p.syncFileDeep(ctx, fc, repo, f, seenAt, logger)
 		if err != nil {

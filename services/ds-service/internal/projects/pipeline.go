@@ -214,9 +214,15 @@ type PipelineFrame struct {
 func (p *Pipeline) RunFastPreview(ctx context.Context, in PipelineInputs) error {
 	// Detach from the request context — the HTTP handler returned 202 already
 	// and we don't want a request cancel to abort an in-flight pipeline.
-	// Caller may pass context.Background() but we still derive a fresh one
-	// here to make the contract explicit.
-	pipelineCtx, cancel := context.WithCancel(context.Background())
+	// #14 audit fix: root in p.ShutdownCtx (not context.Background) so
+	// SIGTERM actually aborts Stage 2-9. The HTTP request ctx is dropped
+	// deliberately; the process-shutdown ctx is honored. Tests / CLI
+	// wiring that leave ShutdownCtx nil fall back to Background.
+	parent := p.ShutdownCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	pipelineCtx, cancel := context.WithCancel(parent)
 	defer cancel()
 
 	// Heartbeat goroutine — runs until pipeline returns.

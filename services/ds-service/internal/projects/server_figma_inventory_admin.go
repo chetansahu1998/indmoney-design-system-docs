@@ -40,7 +40,7 @@ func (s *Server) HandleFigmaInventoryListTeams(w http.ResponseWriter, r *http.Re
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
 		return
 	}
-	tenantID, ok := s.requireFigmaInventoryAdminTenant(w, r)
+	tenantID, ok := s.requireAdminTenant(w, r)
 	if !ok {
 		return
 	}
@@ -67,7 +67,7 @@ func (s *Server) HandleFigmaInventoryAddTeam(w http.ResponseWriter, r *http.Requ
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
 		return
 	}
-	tenantID, ok := s.requireFigmaInventoryAdminTenant(w, r)
+	tenantID, ok := s.requireAdminTenant(w, r)
 	if !ok {
 		return
 	}
@@ -120,7 +120,7 @@ func (s *Server) HandleFigmaInventoryRemoveTeam(w http.ResponseWriter, r *http.R
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "DELETE only")
 		return
 	}
-	tenantID, ok := s.requireFigmaInventoryAdminTenant(w, r)
+	tenantID, ok := s.requireAdminTenant(w, r)
 	if !ok {
 		return
 	}
@@ -148,7 +148,7 @@ func (s *Server) HandleFigmaInventoryTree(w http.ResponseWriter, r *http.Request
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
 		return
 	}
-	tenantID, ok := s.requireFigmaInventoryAdminTenant(w, r)
+	tenantID, ok := s.requireAdminTenant(w, r)
 	if !ok {
 		return
 	}
@@ -179,7 +179,7 @@ func (s *Server) HandleFigmaInventorySync(w http.ResponseWriter, r *http.Request
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
 		return
 	}
-	if _, ok := s.requireFigmaInventoryAdminTenant(w, r); !ok {
+	if _, ok := s.requireAdminTenant(w, r); !ok {
 		return
 	}
 	if s.deps.InventoryPoller == nil {
@@ -204,7 +204,7 @@ func (s *Server) HandleFigmaInventoryRuns(w http.ResponseWriter, r *http.Request
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
 		return
 	}
-	tenantID, ok := s.requireFigmaInventoryAdminTenant(w, r)
+	tenantID, ok := s.requireAdminTenant(w, r)
 	if !ok {
 		return
 	}
@@ -223,23 +223,6 @@ func (s *Server) HandleFigmaInventoryRuns(w http.ResponseWriter, r *http.Request
 		"runs":  out,
 		"count": len(out),
 	})
-}
-
-// requireFigmaInventoryAdminTenant is the auth+tenant resolution helper
-// shared by every inventory admin handler. Mirrors
-// requireOrganismAdminTenant exactly so the gate behavior stays consistent.
-func (s *Server) requireFigmaInventoryAdminTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
-	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
-	if claims == nil {
-		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
-		return "", false
-	}
-	tenantID := s.resolveTenantID(claims)
-	if tenantID == "" {
-		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
-		return "", false
-	}
-	return tenantID, true
 }
 
 // ─── DTOs ────────────────────────────────────────────────────────────────────
