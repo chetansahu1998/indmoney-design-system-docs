@@ -102,9 +102,25 @@ type Poller struct {
 	// per-cycle stats. Only used by tests; production passes nil.
 	onCycleDone func(stats RunStats)
 
+	// readyCh closes after runCycle returns for the first time. Lets
+	// downstream consumers (notably the autosync retry loop in
+	// cmd/server) block on first-cycle completion instead of guessing
+	// at a 90-second initial delay. Use Ready() to access — direct
+	// access keeps the type's zero value invalid.
+	readyCh   chan struct{}
+	readyOnce sync.Once
+
 	stoppedMu sync.Mutex
 	stopped   bool
 }
+
+// Ready returns a channel that is closed after the poller's first cycle
+// finishes (whether it succeeded or accumulated errors — the contract is
+// "deep_synced_at + content_hash columns are now safe to read", not "every
+// file succeeded"). Returns the same channel on every call; safe for
+// multiple receivers. Callers MUST also select on ctx.Done() to avoid
+// deadlock if the PAT is misconfigured and the cycle never runs.
+func (p *Poller) Ready() <-chan struct{} { return p.readyCh }
 
 // RunStats is the per-cycle counters surfaced to the figma_inventory_run row.
 type RunStats struct {
@@ -150,6 +166,7 @@ func New(cfg Config) (*Poller, error) {
 	return &Poller{
 		cfg:       cfg,
 		triggerCh: make(chan struct{}, 1),
+		readyCh:   make(chan struct{}),
 	}, nil
 }
 
@@ -234,6 +251,11 @@ func (p *Poller) runCycle(ctx context.Context) {
 		"nodes", totalStats.NodesUpserted,
 		"errors", len(totalStats.Errors),
 	)
+
+	// F18 — signal Ready() exactly once. Subsequent cycles do nothing
+	// here; sync.Once ensures the channel close is idempotent under
+	// concurrent re-entry (impossible today but cheap insurance).
+	p.readyOnce.Do(func() { close(p.readyCh) })
 
 	if p.onCycleDone != nil {
 		p.onCycleDone(totalStats)

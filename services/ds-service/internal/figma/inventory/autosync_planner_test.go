@@ -309,6 +309,219 @@ func TestPlanner_MappingDisabledQuarantines(t *testing.T) {
 	}
 }
 
+// seedAutosyncBaseline plants the minimal in-window mapped section row
+// + an AutoSyncState with last_attempt_status='ok' so the planner's
+// "prior ok + hashes match" branch fires. Tests then layer extra state
+// on top to exercise each fall-through case.
+func seedAutosyncBaseline(t *testing.T, d *db.DB, tenantID, userID string, now time.Time) (*projects.TenantRepo, string) {
+	t.Helper()
+	repo := projects.NewTenantRepo(d.DB, tenantID)
+	seedFile(t, repo,
+		projects.FigmaFileRow{FileKey: "fk-rp", Name: "F", TeamID: "t", ProjectID: "p1", LastModified: now.AddDate(0, -1, 0)},
+		projects.FigmaProjectMapping{ProjectID: "p1", Domain: "D", Product: "P", EnabledForAutosync: true, MappedByUserID: userID},
+		[]projects.FigmaPageRow{{FileKey: "fk-rp", PageID: "0:1", Name: "Final", OrderIndex: 0, ContentHash: "ph", Classification: projects.PageClassFinal, PersonaHint: "default"}},
+		[]projects.FigmaSectionRow{{FileKey: "fk-rp", PageID: "0:1", SectionID: "3:7", Name: "Hero", ContentHash: "sh", PositionHash: "sp"}},
+		now,
+	)
+	return repo, "ver-rp"
+}
+
+// F2 — the core retry path: prior is 'ok' + hashes match BUT the
+// resulting project_versions row reached 'failed'. Planner MUST return
+// ActionFullExport with reason SkipRetryFailedPipeline instead of
+// ActionSkipUnchanged.
+func TestPlanner_RetryWhenPipelineFailed(t *testing.T) {
+	d, tenantID, userID := newPlannerTestDB(t)
+	now := time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC)
+	repo, versionID := seedAutosyncBaseline(t, d, tenantID, userID, now)
+
+	// Create a real project + version with status='failed' so
+	// GetVersionStatus returns "failed".
+	project, err := repo.UpsertProject(context.Background(), projects.Project{
+		Name: "P", Platform: "mobile", Product: "P", Path: "x", FileID: "fk-rp", OwnerUserID: userID,
+	})
+	if err != nil {
+		t.Fatalf("upsert project: %v", err)
+	}
+	if _, err := d.DB.ExecContext(context.Background(), `
+		INSERT INTO project_versions (id, project_id, tenant_id, version_index, status, created_by_user_id, created_at, pipeline_started_at, pipeline_heartbeat_at, error)
+		VALUES (?, ?, ?, 1, 'failed', ?, ?, ?, ?, 'pipeline X')`,
+		versionID, project.ID, tenantID, userID,
+		now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("seed version: %v", err)
+	}
+	if err := repo.UpsertAutoSyncState(context.Background(), projects.AutoSyncState{
+		FileKey: "fk-rp", PageID: "0:1", SectionID: "3:7",
+		ContentHash: "sh", PositionHash: "sp",
+		LastSyncedFlowID: "flow-X", LastSyncedVersionID: versionID,
+		LastAttemptStatus: "ok",
+	}); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+
+	plan, err := newPlanner(d, now).Plan(context.Background(), tenantID, "fk-rp")
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(plan.Sections) != 1 {
+		t.Fatalf("want 1 section, got %d", len(plan.Sections))
+	}
+	got := plan.Sections[0]
+	if got.Action != ActionFullExport {
+		t.Errorf("Action: got %q want full_export", got.Action)
+	}
+	if got.Reason != SkipRetryFailedPipeline {
+		t.Errorf("Reason: got %q want retry_failed_pipeline", got.Reason)
+	}
+}
+
+// F14 — version row exists with status='view_ready'. Planner MUST NOT
+// retry; falls through to the normal already_synced branch.
+func TestPlanner_PipelineViewReadySkipsAsBefore(t *testing.T) {
+	d, tenantID, userID := newPlannerTestDB(t)
+	now := time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC)
+	repo, versionID := seedAutosyncBaseline(t, d, tenantID, userID, now)
+
+	project, _ := repo.UpsertProject(context.Background(), projects.Project{
+		Name: "P", Platform: "mobile", Product: "P", Path: "x", FileID: "fk-rp", OwnerUserID: userID,
+	})
+	if _, err := d.DB.ExecContext(context.Background(), `
+		INSERT INTO project_versions (id, project_id, tenant_id, version_index, status, created_by_user_id, created_at, pipeline_started_at, pipeline_heartbeat_at)
+		VALUES (?, ?, ?, 1, 'view_ready', ?, ?, ?, ?)`,
+		versionID, project.ID, tenantID, userID,
+		now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatalf("seed version: %v", err)
+	}
+	if err := repo.UpsertAutoSyncState(context.Background(), projects.AutoSyncState{
+		FileKey: "fk-rp", PageID: "0:1", SectionID: "3:7",
+		ContentHash: "sh", PositionHash: "sp",
+		LastSyncedVersionID: versionID, LastAttemptStatus: "ok",
+	}); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+
+	plan, _ := newPlanner(d, now).Plan(context.Background(), tenantID, "fk-rp")
+	if plan.Sections[0].Action != ActionSkipUnchanged {
+		t.Fatalf("expected skip_unchanged, got %q (reason=%q)",
+			plan.Sections[0].Action, plan.Sections[0].Reason)
+	}
+}
+
+// F14 — version was pruned (cleanup-versions ran). GetVersionStatus
+// returns ErrNotFound. Planner MUST fall through to the position/skip
+// branch, NOT force a retry off the missing-version evidence.
+func TestPlanner_PipelineVersionPrunedFallsThrough(t *testing.T) {
+	d, tenantID, userID := newPlannerTestDB(t)
+	now := time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC)
+	repo, _ := seedAutosyncBaseline(t, d, tenantID, userID, now)
+	if err := repo.UpsertAutoSyncState(context.Background(), projects.AutoSyncState{
+		FileKey: "fk-rp", PageID: "0:1", SectionID: "3:7",
+		ContentHash: "sh", PositionHash: "sp",
+		LastSyncedVersionID: "missing-id", LastAttemptStatus: "ok",
+	}); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	plan, _ := newPlanner(d, now).Plan(context.Background(), tenantID, "fk-rp")
+	if plan.Sections[0].Action != ActionSkipUnchanged {
+		t.Fatalf("expected skip_unchanged, got %q", plan.Sections[0].Action)
+	}
+}
+
+// F14 — empty LastSyncedVersionID (e.g. a 'skipped'/'quarantined' row
+// that never produced a version). Planner MUST fall through.
+func TestPlanner_PipelineEmptyVersionIDFallsThrough(t *testing.T) {
+	d, tenantID, userID := newPlannerTestDB(t)
+	now := time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC)
+	repo, _ := seedAutosyncBaseline(t, d, tenantID, userID, now)
+	if err := repo.UpsertAutoSyncState(context.Background(), projects.AutoSyncState{
+		FileKey: "fk-rp", PageID: "0:1", SectionID: "3:7",
+		ContentHash: "sh", PositionHash: "sp",
+		LastAttemptStatus: "ok", // no version id
+	}); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	plan, _ := newPlanner(d, now).Plan(context.Background(), tenantID, "fk-rp")
+	if plan.Sections[0].Action != ActionSkipUnchanged {
+		t.Fatalf("expected skip_unchanged, got %q", plan.Sections[0].Action)
+	}
+}
+
+// F4 — quarantine path: an AutoSyncState with last_attempt_status=
+// 'quarantined' MUST short-circuit to ActionSkipQuarantined with the
+// stored skip_reason, regardless of hashes or version status.
+func TestPlanner_QuarantinedShortCircuits(t *testing.T) {
+	d, tenantID, userID := newPlannerTestDB(t)
+	now := time.Date(2026, 5, 16, 0, 0, 0, 0, time.UTC)
+	repo, _ := seedAutosyncBaseline(t, d, tenantID, userID, now)
+	if err := repo.UpsertAutoSyncState(context.Background(), projects.AutoSyncState{
+		FileKey: "fk-rp", PageID: "0:1", SectionID: "3:7",
+		ContentHash:       "sh-OLD", // doesn't matter — quarantine wins
+		PositionHash:      "sp-OLD",
+		LastAttemptStatus: "quarantined",
+		SkipReason:        "max_retries_exceeded",
+	}); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	plan, _ := newPlanner(d, now).Plan(context.Background(), tenantID, "fk-rp")
+	got := plan.Sections[0]
+	if got.Action != ActionSkipQuarantined {
+		t.Errorf("Action: got %q want skip_quarantined", got.Action)
+	}
+	if got.SkipReason != SkipMaxRetriesExceeded {
+		t.Errorf("SkipReason: got %q want max_retries_exceeded", got.SkipReason)
+	}
+}
+
+// F4 — auto-quarantine threshold: the UPSERT itself flips
+// last_attempt_status from 'error' to 'quarantined' once
+// retry_count reaches AutoSyncMaxRetries.
+func TestUpsertAutoSyncState_AutoQuarantinesAfterMaxRetries(t *testing.T) {
+	d, tenantID, _ := newPlannerTestDB(t)
+	repo := projects.NewTenantRepo(d.DB, tenantID)
+	ctx := context.Background()
+	const fk, pg, sec = "fk-q", "p", "s"
+	for i := 0; i < projects.AutoSyncMaxRetries; i++ {
+		if err := repo.UpsertAutoSyncState(ctx, projects.AutoSyncState{
+			FileKey: fk, PageID: pg, SectionID: sec,
+			LastAttemptStatus: "error",
+			ErrorMessage:      "Figma 500",
+		}); err != nil {
+			t.Fatalf("upsert %d: %v", i, err)
+		}
+	}
+	got, err := repo.LookupAutoSyncState(ctx, fk, pg, sec)
+	if err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if got.LastAttemptStatus != "quarantined" {
+		t.Errorf("status: got %q want quarantined", got.LastAttemptStatus)
+	}
+	if got.SkipReason != "max_retries_exceeded" {
+		t.Errorf("skip_reason: got %q want max_retries_exceeded", got.SkipReason)
+	}
+	if got.QuarantinedAt.IsZero() {
+		t.Errorf("quarantined_at should be set")
+	}
+	if got.RetryCount < projects.AutoSyncMaxRetries {
+		t.Errorf("retry_count: got %d want >= %d", got.RetryCount, projects.AutoSyncMaxRetries)
+	}
+
+	// A subsequent 'ok' resets retry_count + clears quarantined_at.
+	if err := repo.UpsertAutoSyncState(ctx, projects.AutoSyncState{
+		FileKey: fk, PageID: pg, SectionID: sec,
+		ContentHash: "h", LastSyncedVersionID: "v", LastAttemptStatus: "ok",
+	}); err != nil {
+		t.Fatalf("ok upsert: %v", err)
+	}
+	got, _ = repo.LookupAutoSyncState(ctx, fk, pg, sec)
+	if got.LastAttemptStatus != "ok" || got.RetryCount != 0 || !got.QuarantinedAt.IsZero() {
+		t.Errorf("after ok: status=%q retry=%d quarantined_at=%v",
+			got.LastAttemptStatus, got.RetryCount, got.QuarantinedAt)
+	}
+}
+
 func TestJoinFlowPath_TrimsEmpty(t *testing.T) {
 	cases := []struct{ d, p, sp, sf, want string }{
 		{"Markets", "Indian Stocks", "Wallet", "Main Flow", "Markets/Indian Stocks/Wallet/Main Flow"},

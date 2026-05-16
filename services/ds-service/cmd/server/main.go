@@ -34,7 +34,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
+	stdsync "sync"
 	"strings"
 	"syscall"
 	"time"
@@ -363,7 +365,15 @@ func main() {
 	// can apply per-mode bindings). See loaders.go header comment.
 	compositeRunner := rules.NewTenantAwareRunner(dbConn.DB, auditCoreRunner, nil)
 	workerPoolSize := workerPoolSizeFromEnv(log)
-	workerCtx, workerCancel := context.WithCancel(context.Background())
+	// F6 — derive workerCtx from shutdownCtx so SIGTERM/SIGINT cancels
+	// every background goroutine (inventory poller, worker pool, graph
+	// rebuild, autosync retry loop, audit-pipeline goroutines) at the
+	// same time the HTTP server gets a shutdown signal. Pre-fix this
+	// was rooted at context.Background() and the defer workerCancel
+	// below never fired because http.ListenAndServe blocks until
+	// os.Exit, leaving every <-ctx.Done() branch dead code under
+	// signal-driven shutdown.
+	workerCtx, workerCancel := context.WithCancel(shutdownCtx)
 	defer workerCancel()
 
 	// Phase 6 — RebuildGraphIndex worker materialises the mind-graph
@@ -469,7 +479,7 @@ func main() {
 	// disable (useful for tests + when running cmd/figma-autosync-* CLIs
 	// against a server-managed DB).
 	if interval := autosyncIntervalFromEnv(); interval > 0 {
-		startAutosyncRetryLoop(workerCtx, log, projectsServer, dbConn.DB, interval)
+		startAutosyncRetryLoop(workerCtx, log, projectsServer, dbConn.DB, interval, inventoryPoller.Ready())
 	} else {
 		log.Info("autosync retry loop disabled (FIGMA_AUTOSYNC_INTERVAL=0)")
 	}
@@ -502,32 +512,55 @@ func main() {
 	// (curl scripts, sheets-sync internal calls, server-to-server) until
 	// every caller is migrated. Both listeners share the same handler so
 	// auth / CORS / routes / SSE behaviour are identical.
+	// F6 — *http.Server with explicit Shutdown so SIGTERM drains in-flight
+	// HTTP requests gracefully instead of getting SIGKILL'd 30s later.
+	// Both listeners (TLS + cleartext) share the same handler but get
+	// their own server struct so Shutdown can flip them independently.
+	cleartextSrv := &http.Server{Addr: addr, Handler: handler}
+	var tlsSrv *http.Server
 	if cfg.TLSCertPath != "" && cfg.TLSKeyPath != "" {
 		tlsAddr := cfg.TLSAddr
 		if tlsAddr == "" {
 			tlsAddr = ":8443"
 		}
+		tlsSrv = &http.Server{Addr: tlsAddr, Handler: handler}
 		log.Info("ds-service listening (TLS, HTTP/2)",
 			"addr", tlsAddr,
 			"cert", cfg.TLSCertPath,
 		)
 		go func() {
-			if err := http.ListenAndServeTLS(tlsAddr, cfg.TLSCertPath, cfg.TLSKeyPath, handler); err != nil {
+			if err := tlsSrv.ListenAndServeTLS(cfg.TLSCertPath, cfg.TLSKeyPath); err != nil && err != http.ErrServerClosed {
 				log.Error("tls server", "err", err)
 				os.Exit(1)
 			}
 		}()
 	}
 
+	// Shutdown goroutine. On SIGTERM/SIGINT it asks both servers to drain
+	// for 30s (matches Fly's default graceful-shutdown window). Any
+	// in-flight goroutines spawned with workerCtx have already started
+	// observing cancellation via the F6 derivation above.
+	go func() {
+		<-shutdownCtx.Done()
+		log.Info("shutdown signal received, draining HTTP server (30s grace)")
+		drainCtx, drainCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer drainCancel()
+		if tlsSrv != nil {
+			_ = tlsSrv.Shutdown(drainCtx)
+		}
+		_ = cleartextSrv.Shutdown(drainCtx)
+	}()
+
 	log.Info("ds-service listening",
 		"addr", addr,
 		"repo_dir", cfg.RepoDir,
 		"sync_git_push", cfg.SyncGitPush,
 	)
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	if err := cleartextSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Error("server", "err", err)
 		os.Exit(1)
 	}
+	log.Info("ds-service stopped cleanly")
 }
 
 // ─── Config / bootstrap ─────────────────────────────────────────────────────
@@ -838,7 +871,7 @@ func (s *server) routes(mux *http.ServeMux) {
 	// running after the response returns.
 	mux.HandleFunc("POST /v1/admin/figma-autosync/execute",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, func(w http.ResponseWriter, r *http.Request) {
-			handleAutosyncExecute(w, r, s.projectsServer, s.db.DB)
+			handleAutosyncExecute(w, r, s.projectsServer, s.db.DB, s.log)
 		})))
 	mux.HandleFunc("GET /v1/projects",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectList)))
@@ -1660,6 +1693,18 @@ func (a adminAutoSyncDB) NewTenantRepo(tenantID string) *projects.TenantRepo {
 	return projects.NewTenantRepo(a.db, tenantID)
 }
 
+// autosyncMu serialises the ticker + the HTTP /v1/admin/figma-autosync/execute
+// handler so two concurrent runs don't double-export the same section
+// (finding F11). TryLock semantics: the loser logs/returns "already
+// running" rather than waiting in line — a queued retry would just
+// repeat the same work, and the next ticker fires soon anyway.
+var autosyncMu stdsync.Mutex
+
+// tryAutosyncLock returns true and grabs the mutex when no one else
+// holds it; returns false otherwise. Caller MUST unlock via
+// autosyncMu.Unlock() when they win.
+func tryAutosyncLock() bool { return autosyncMu.TryLock() }
+
 // handleAutosyncExecute runs the autosync Planner + Executor in-process.
 // Body (optional): {"file_key": "..."} to scope to a single file.
 // Default: every in-window mapped file for the tenant.
@@ -1673,7 +1718,7 @@ func (a adminAutoSyncDB) NewTenantRepo(tenantID string) *projects.TenantRepo {
 //	                 "skip_unchanged":N, "quarantined":N, "errors":[...]}],
 //	  "totals":    {...}
 //	}
-func handleAutosyncExecute(w http.ResponseWriter, r *http.Request, ps *projects.Server, sqlDB *sql.DB) {
+func handleAutosyncExecute(w http.ResponseWriter, r *http.Request, ps *projects.Server, sqlDB *sql.DB, log *slog.Logger) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1694,7 +1739,16 @@ func handleAutosyncExecute(w http.ResponseWriter, r *http.Request, ps *projects.
 		return
 	}
 
-	planner := inventory.NewPlanner(adminAutoSyncDB{db: sqlDB}, inventory.PlannerConfig{})
+	// F11 — collapse concurrent runs (HTTP + ticker, or two HTTP calls).
+	// TryLock and bail with 409 if someone's already running — a queued
+	// retry would just repeat the same work.
+	if !tryAutosyncLock() {
+		http.Error(w, "autosync already running, retry shortly", http.StatusConflict)
+		return
+	}
+	defer autosyncMu.Unlock()
+
+	planner := inventory.NewPlanner(adminAutoSyncDB{db: sqlDB}, inventory.PlannerConfig{Log: log})
 	executor := inventory.NewExecutor(adminAutoSyncDB{db: sqlDB}, ps.RunExport)
 
 	var plans []inventory.FilePlan
@@ -1773,6 +1827,19 @@ func handleAutosyncExecute(w http.ResponseWriter, r *http.Request, ps *projects.
 // autosyncIntervalFromEnv parses FIGMA_AUTOSYNC_INTERVAL. Accepts a Go
 // duration ("15m", "30s") or seconds-as-int. 0 disables the loop.
 // Default: 15 min when the var is unset.
+// autosyncMinInterval is the floor for FIGMA_AUTOSYNC_INTERVAL. Set
+// below this and the loop would burn ~2500 SQLite reads per cycle (per
+// PlanTenant's doc comment) plus outbound Figma calls — operator typo
+// territory. Anything > 0 but < 1m gets clamped to 1m; 0 stays
+// special-cased as "disabled".
+const autosyncMinInterval = time.Minute
+
+// autosyncIntervalFromEnv parses FIGMA_AUTOSYNC_INTERVAL. Accepts:
+//   - ""              → 15m default
+//   - "0"             → 0 (disabled)
+//   - duration ("15m") → as-parsed, clamped to >= 1m
+//   - int seconds ("900") → seconds, clamped to >= 1m
+//   - garbage or negative → 15m default
 func autosyncIntervalFromEnv() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("FIGMA_AUTOSYNC_INTERVAL"))
 	if raw == "" {
@@ -1781,13 +1848,18 @@ func autosyncIntervalFromEnv() time.Duration {
 	if raw == "0" {
 		return 0
 	}
-	if d, err := time.ParseDuration(raw); err == nil {
-		return d
+	var parsed time.Duration
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		parsed = d
+	} else if secs, err := strconv.Atoi(raw); err == nil && secs > 0 {
+		parsed = time.Duration(secs) * time.Second
+	} else {
+		return 15 * time.Minute
 	}
-	if secs, err := strconv.Atoi(raw); err == nil && secs >= 0 {
-		return time.Duration(secs) * time.Second
+	if parsed < autosyncMinInterval {
+		return autosyncMinInterval
 	}
-	return 15 * time.Minute
+	return parsed
 }
 
 // startAutosyncRetryLoop kicks off a goroutine that calls the Planner +
@@ -1796,14 +1868,19 @@ func autosyncIntervalFromEnv() time.Duration {
 // populate hashes) before autosync inspects them. Subsequent runs fire
 // every `interval`.
 //
-// Bypass-tenant only for now: production multi-tenant rollout will key
-// off figma_team_seed (each seeded tenant gets its own retry cadence).
+// Bypass-tenant only as of 2026-05-16 (F22): production multi-tenant
+// rollout will iterate figma_team_seed and run one Planner+Executor
+// pair per seeded tenant. See plan
+// docs/plans/2026-05-14-001-feat-figma-db-autosync-bridge-plan.md
+// (Phase D — webhook trigger + tenant-wide rollout).
+// TODO(figma-autosync-multitenant): switch to figma_team_seed iteration.
 func startAutosyncRetryLoop(
 	ctx context.Context,
 	log *slog.Logger,
 	ps *projects.Server,
 	sqlDB *sql.DB,
 	interval time.Duration,
+	pollerReady <-chan struct{},
 ) {
 	tenantID := strings.TrimSpace(os.Getenv("DEV_AUTH_BYPASS_TENANT"))
 	if tenantID == "" {
@@ -1812,15 +1889,40 @@ func startAutosyncRetryLoop(
 	}
 	go func() {
 		log.Info("autosync retry loop started",
-			"tenant", tenantID, "interval", interval.String(), "first_run_in", "90s")
-		// Initial delay: let the inventory poller do its first cycle.
+			"tenant", tenantID, "interval", interval.String(),
+			"first_run", "after inventory poller's first cycle completes")
+		// F18 — wait for the poller's first cycle to finish so hashes
+		// + classifier columns are populated before the planner reads
+		// them. Replaces the previous fixed 90s sleep that coupled
+		// silently to internal poller timing. ctx.Done() still wins
+		// when the operator SIGTERMs before the poller readies (e.g.
+		// PAT misconfigured → poller errors but never readies).
 		select {
-		case <-time.After(90 * time.Second):
+		case <-pollerReady:
 		case <-ctx.Done():
 			return
 		}
 		runOnce := func() {
-			planner := inventory.NewPlanner(adminAutoSyncDB{db: sqlDB}, inventory.PlannerConfig{})
+			// F1: panic guard. The retry loop is the autosync subsystem's
+			// only self-heal mechanism; a single panic in PlanTenant /
+			// Execute / RunExport would silently kill it for the rest of
+			// the process lifetime. Recover, log, and let the next tick fire.
+			defer func() {
+				if r := recover(); r != nil {
+					log.Error("autosync retry: PANIC recovered",
+						"panic", fmt.Sprint(r),
+						"stack", string(debug.Stack()))
+				}
+			}()
+			// F11 — collapse with any in-flight HTTP /execute. TryLock
+			// rather than block: a queued cycle would repeat the same
+			// work, and the next tick fires in `interval` anyway.
+			if !tryAutosyncLock() {
+				log.Info("autosync retry: skipped (handler already running)")
+				return
+			}
+			defer autosyncMu.Unlock()
+			planner := inventory.NewPlanner(adminAutoSyncDB{db: sqlDB}, inventory.PlannerConfig{Log: log})
 			executor := inventory.NewExecutor(adminAutoSyncDB{db: sqlDB}, ps.RunExport)
 			plans, err := planner.PlanTenant(ctx, tenantID)
 			if err != nil {
@@ -1848,6 +1950,14 @@ func startAutosyncRetryLoop(
 				}
 				totalFull += res.FullExported
 				totalCheap += res.CheapUpdated
+				// F19 — surface each per-section error, not just the
+				// count. The cycle-complete summary's "errors=N" was
+				// useless for debugging — the messages were dropped on
+				// the floor. Now each one shows up with file context.
+				for _, errMsg := range res.Errors {
+					log.Warn("autosync retry: section error",
+						"file", plan.FileKey, "err", errMsg)
+				}
 				totalErr += len(res.Errors)
 			}
 			log.Info("autosync retry cycle complete",

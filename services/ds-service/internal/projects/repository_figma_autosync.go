@@ -19,6 +19,14 @@ import (
 // from TenantRepo and force-injected on every row; prepared-statement-
 // inside-tx for batch writes; ErrNotFound on row-miss.
 
+// AutoSyncMaxRetries is the consecutive-failure threshold beyond which
+// UpsertAutoSyncState auto-transitions a section from 'error' to
+// 'quarantined'. The planner treats quarantined the same as
+// skip_quarantined (no retry until cleared via admin endpoint). 5 was
+// chosen to absorb a full Figma maintenance window (~3 hours at 15min
+// cadence) before giving up on a section.
+const AutoSyncMaxRetries = 5
+
 // ─── figma_auto_sync_state ───────────────────────────────────────────────────
 
 // AutoSyncState mirrors one figma_auto_sync_state row.
@@ -37,6 +45,19 @@ type AutoSyncState struct {
 	SkipReason          string
 	ErrorMessage        string
 	FirstSeenAt         time.Time
+	// F4 — retry-count bookkeeping (migration 0032). RetryCount is the
+	// number of consecutive non-'ok' attempts since the last success;
+	// QuarantinedAt is non-zero once the planner stopped retrying. Both
+	// are managed by UpsertAutoSyncState (caller doesn't set them).
+	RetryCount    int
+	QuarantinedAt time.Time
+	// F12 — folded LEFT JOIN. When LastSyncedVersionID points at a
+	// row in project_versions, PriorVersionStatus carries its status
+	// ('view_ready' | 'pending' | 'failed'). Empty string when the
+	// version row was pruned or never existed. Populated only by
+	// LookupAutoSyncState (the planner's hot path); ListAutoSyncState
+	// leaves it empty.
+	PriorVersionStatus string
 }
 
 // UpsertAutoSyncState writes/refreshes one state row for a section.
@@ -76,14 +97,35 @@ func (t *TenantRepo) UpsertAutoSyncState(ctx context.Context, s AutoSyncState) e
 		versionID = s.LastSyncedVersionID
 	}
 
+	// F4 — retry_count + auto-quarantine bookkeeping.
+	//
+	// Semantics, computed inside the UPSERT so callers never read-modify-write:
+	//   - status='ok'                                  → retry_count := 0,
+	//                                                    quarantined_at := NULL
+	//   - status='error' AND (prior+1) < MaxRetries    → retry_count++,
+	//                                                    status persisted as 'error'
+	//   - status='error' AND (prior+1) >= MaxRetries   → retry_count++,
+	//                                                    status flipped to 'quarantined',
+	//                                                    quarantined_at := now,
+	//                                                    skip_reason := 'max_retries_exceeded'
+	//                                                    (unless caller passed a more
+	//                                                    specific reason)
+	//   - status='quarantined' (caller-driven)         → retry_count frozen,
+	//                                                    quarantined_at := now
+	//   - other statuses ('skipped' etc.)              → retry_count + quarantined_at unchanged
+	max := AutoSyncMaxRetries
 	_, err := t.handle().ExecContext(ctx, `
 		INSERT INTO figma_auto_sync_state (
 			tenant_id, file_key, page_id, section_id,
 			content_hash, position_hash,
 			last_synced_flow_id, last_synced_version_id, last_synced_at,
 			last_attempt_at, last_attempt_status, skip_reason, error_message,
-			first_seen_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			first_seen_at,
+			retry_count, quarantined_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			CASE WHEN ? = 'error' THEN 1 ELSE 0 END,
+			CASE WHEN ? = 'quarantined' THEN ? END
+		)
 		ON CONFLICT(tenant_id, file_key, page_id, section_id) DO UPDATE SET
 			content_hash           = excluded.content_hash,
 			position_hash          = excluded.position_hash,
@@ -94,9 +136,33 @@ func (t *TenantRepo) UpsertAutoSyncState(ctx context.Context, s AutoSyncState) e
 			    ELSE figma_auto_sync_state.last_synced_at
 			END,
 			last_attempt_at        = excluded.last_attempt_at,
-			last_attempt_status    = excluded.last_attempt_status,
-			skip_reason            = excluded.skip_reason,
-			error_message          = excluded.error_message
+			last_attempt_status    = CASE
+			    WHEN excluded.last_attempt_status = 'error'
+			         AND figma_auto_sync_state.retry_count + 1 >= ?
+			    THEN 'quarantined'
+			    ELSE excluded.last_attempt_status
+			END,
+			skip_reason            = CASE
+			    WHEN excluded.last_attempt_status = 'error'
+			         AND figma_auto_sync_state.retry_count + 1 >= ?
+			         AND (excluded.skip_reason IS NULL OR excluded.skip_reason = '')
+			    THEN 'max_retries_exceeded'
+			    ELSE excluded.skip_reason
+			END,
+			error_message          = excluded.error_message,
+			retry_count            = CASE
+			    WHEN excluded.last_attempt_status = 'ok'    THEN 0
+			    WHEN excluded.last_attempt_status = 'error' THEN figma_auto_sync_state.retry_count + 1
+			    ELSE figma_auto_sync_state.retry_count
+			END,
+			quarantined_at         = CASE
+			    WHEN excluded.last_attempt_status = 'quarantined'
+			      OR (excluded.last_attempt_status = 'error'
+			          AND figma_auto_sync_state.retry_count + 1 >= ?)
+			    THEN excluded.last_attempt_at
+			    WHEN excluded.last_attempt_status = 'ok'    THEN NULL
+			    ELSE figma_auto_sync_state.quarantined_at
+			END
 	`,
 		t.tenantID, s.FileKey, s.PageID, s.SectionID,
 		nullableStr(s.ContentHash), nullableStr(s.PositionHash),
@@ -104,6 +170,9 @@ func (t *TenantRepo) UpsertAutoSyncState(ctx context.Context, s AutoSyncState) e
 		now, nullableStr(s.LastAttemptStatus),
 		nullableStr(s.SkipReason), nullableStr(s.ErrorMessage),
 		firstSeen,
+		s.LastAttemptStatus,                   // retry_count insert CASE
+		s.LastAttemptStatus, now,              // quarantined_at insert CASE
+		max, max, max,                         // three CASE clauses on update
 	)
 	if err != nil {
 		return fmt.Errorf("upsert figma_auto_sync_state: %w", err)
@@ -118,20 +187,31 @@ func (t *TenantRepo) LookupAutoSyncState(ctx context.Context, fileKey, pageID, s
 	if t.tenantID == "" {
 		return AutoSyncState{}, errors.New("projects: tenant_id required")
 	}
+	// F12 — fold the planner's GetVersionStatus(state.last_synced_version_id)
+	// roundtrip into this read. LEFT JOIN preserves the state row when the
+	// version was pruned (cleanup-versions) — pv.status comes back NULL,
+	// which we COALESCE to empty string so the planner sees "no known
+	// status" the same as ErrNotFound. project_versions.id is PK so the
+	// join is index-backed and free.
 	row := t.r.db.QueryRowContext(ctx, `
-		SELECT tenant_id, file_key, page_id, section_id,
-		       COALESCE(content_hash, ''), COALESCE(position_hash, ''),
-		       COALESCE(last_synced_flow_id, ''), COALESCE(last_synced_version_id, ''),
-		       COALESCE(last_synced_at, ''),
-		       COALESCE(last_attempt_at, ''), COALESCE(last_attempt_status, ''),
-		       COALESCE(skip_reason, ''), COALESCE(error_message, ''),
-		       first_seen_at
-		  FROM figma_auto_sync_state
-		 WHERE tenant_id = ? AND file_key = ? AND page_id = ? AND section_id = ?
+		SELECT s.tenant_id, s.file_key, s.page_id, s.section_id,
+		       COALESCE(s.content_hash, ''), COALESCE(s.position_hash, ''),
+		       COALESCE(s.last_synced_flow_id, ''), COALESCE(s.last_synced_version_id, ''),
+		       COALESCE(s.last_synced_at, ''),
+		       COALESCE(s.last_attempt_at, ''), COALESCE(s.last_attempt_status, ''),
+		       COALESCE(s.skip_reason, ''), COALESCE(s.error_message, ''),
+		       s.first_seen_at,
+		       s.retry_count, COALESCE(s.quarantined_at, ''),
+		       COALESCE(pv.status, '')
+		  FROM figma_auto_sync_state s
+		  LEFT JOIN project_versions pv
+		         ON pv.id = s.last_synced_version_id
+		        AND pv.tenant_id = s.tenant_id
+		 WHERE s.tenant_id = ? AND s.file_key = ? AND s.page_id = ? AND s.section_id = ?
 	`, t.tenantID, fileKey, pageID, sectionID)
 
 	var s AutoSyncState
-	var lastSynced, lastAttempt, firstSeen string
+	var lastSynced, lastAttempt, firstSeen, quarantinedAt string
 	err := row.Scan(
 		&s.TenantID, &s.FileKey, &s.PageID, &s.SectionID,
 		&s.ContentHash, &s.PositionHash,
@@ -139,6 +219,8 @@ func (t *TenantRepo) LookupAutoSyncState(ctx context.Context, fileKey, pageID, s
 		&lastAttempt, &s.LastAttemptStatus,
 		&s.SkipReason, &s.ErrorMessage,
 		&firstSeen,
+		&s.RetryCount, &quarantinedAt,
+		&s.PriorVersionStatus,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AutoSyncState{}, ErrNotFound
@@ -149,6 +231,7 @@ func (t *TenantRepo) LookupAutoSyncState(ctx context.Context, fileKey, pageID, s
 	s.LastSyncedAt = parseTime(lastSynced)
 	s.LastAttemptAt = parseTime(lastAttempt)
 	s.FirstSeenAt = parseTime(firstSeen)
+	s.QuarantinedAt = parseTime(quarantinedAt)
 	return s, nil
 }
 
@@ -180,7 +263,8 @@ func (t *TenantRepo) ListAutoSyncState(ctx context.Context, f AutoSyncStateFilte
 		       COALESCE(last_synced_at, ''),
 		       COALESCE(last_attempt_at, ''), COALESCE(last_attempt_status, ''),
 		       COALESCE(skip_reason, ''), COALESCE(error_message, ''),
-		       first_seen_at
+		       first_seen_at,
+		       retry_count, COALESCE(quarantined_at, '')
 		  FROM figma_auto_sync_state
 		 WHERE tenant_id = ?`
 	args := []any{t.tenantID}
@@ -208,7 +292,7 @@ func (t *TenantRepo) ListAutoSyncState(ctx context.Context, f AutoSyncStateFilte
 	out := make([]AutoSyncState, 0)
 	for rows.Next() {
 		var s AutoSyncState
-		var lastSynced, lastAttempt, firstSeen string
+		var lastSynced, lastAttempt, firstSeen, quarantinedAt string
 		if err := rows.Scan(
 			&s.TenantID, &s.FileKey, &s.PageID, &s.SectionID,
 			&s.ContentHash, &s.PositionHash,
@@ -216,12 +300,14 @@ func (t *TenantRepo) ListAutoSyncState(ctx context.Context, f AutoSyncStateFilte
 			&lastAttempt, &s.LastAttemptStatus,
 			&s.SkipReason, &s.ErrorMessage,
 			&firstSeen,
+			&s.RetryCount, &quarantinedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan figma_auto_sync_state: %w", err)
 		}
 		s.LastSyncedAt = parseTime(lastSynced)
 		s.LastAttemptAt = parseTime(lastAttempt)
 		s.FirstSeenAt = parseTime(firstSeen)
+		s.QuarantinedAt = parseTime(quarantinedAt)
 		out = append(out, s)
 	}
 	return out, rows.Err()

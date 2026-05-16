@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -54,6 +55,17 @@ const (
 	// status='failed' afterwards (async pipeline error — Figma 5xx, PNG
 	// timeout, etc.). Planner re-queues the section for a fresh export.
 	SkipRetryFailedPipeline = "retry_failed_pipeline"
+	// Quarantine reason (F4): section accumulated AutoSyncMaxRetries
+	// consecutive failures. The UPSERT auto-promoted last_attempt_status
+	// from 'error' to 'quarantined' and stamped quarantined_at. The
+	// planner respects the freeze until an admin manually clears via
+	// POST /v1/admin/figma-autosync/state/clear-quarantine.
+	SkipMaxRetriesExceeded = "max_retries_exceeded"
+	// FILE-level skip used by PlanTenant when an individual file's
+	// Plan() call fails. PlanTenant used to return (nil, err) on the
+	// first failure (finding F5); now it records the error on
+	// FilePlan.FileSkip and continues with the rest of the corpus.
+	SkipPlanError = "plan_error"
 )
 
 // PlanReason carries the FILE-level skip reason (when no section-level plan
@@ -117,9 +129,10 @@ type FilePlan struct {
 
 // Planner is the read-only AutoSync planner. Construct via NewPlanner.
 type Planner struct {
-	db      AutoSyncDB
-	now     func() time.Time
-	window  time.Duration
+	db     AutoSyncDB
+	now    func() time.Time
+	window time.Duration
+	log    *slog.Logger
 }
 
 // AutoSyncDB is the slice of TenantRepo behavior the planner needs.
@@ -132,6 +145,10 @@ type AutoSyncDB interface {
 type PlannerConfig struct {
 	Now    func() time.Time
 	Window time.Duration // 6-month default
+	// Log is used for non-fatal anomalies (e.g. transient DB errors on
+	// optional lookups that the planner treats as "no known state").
+	// Falls back to slog.Default() when nil.
+	Log *slog.Logger
 }
 
 // NewPlanner constructs a Planner. The DB injector should return a
@@ -146,6 +163,10 @@ func NewPlanner(db AutoSyncDB, cfg PlannerConfig) *Planner {
 	p.window = cfg.Window
 	if p.window == 0 {
 		p.window = 6 * 30 * 24 * time.Hour // ~6 months
+	}
+	p.log = cfg.Log
+	if p.log == nil {
+		p.log = slog.Default()
 	}
 	return p
 }
@@ -317,6 +338,24 @@ func (p *Planner) Plan(ctx context.Context, tenantID, fileKey string) (FilePlan,
 				ps.PriorLastSyncedAt = prior.LastSyncedAt.Format(time.RFC3339)
 			}
 
+			// F4 — quarantine: section exhausted AutoSyncMaxRetries
+			// consecutive failures. The planner respects the freeze and
+			// short-circuits to skip_quarantined; an admin must clear
+			// the row via POST /v1/admin/figma-autosync/state/clear-quarantine
+			// (or the next 'ok' status auto-resets retry_count). This is
+			// the only escape hatch from the otherwise-unbounded retry
+			// loop that finding F4 flagged.
+			if prior.LastAttemptStatus == "quarantined" {
+				ps.Action = ActionSkipQuarantined
+				if prior.SkipReason != "" {
+					ps.SkipReason = prior.SkipReason
+				} else {
+					ps.SkipReason = SkipMaxRetriesExceeded
+				}
+				fp.Sections = append(fp.Sections, ps)
+				continue
+			}
+
 			// Idempotent skip: prior was 'ok' AND hashes match. EXCEPT —
 			// the synchronous RunExport recording 'ok' only tells us the
 			// flow + screens rows landed; the async pipeline goroutine
@@ -324,15 +363,14 @@ func (p *Planner) Plan(ctx context.Context, tenantID, fileKey string) (FilePlan,
 			// Re-check the resulting version's status; if 'failed', force
 			// a retry so PNG/canonical-tree gaps self-heal.
 			if prior.LastAttemptStatus == "ok" && prior.ContentHash == sec.ContentHash {
-				pipelineFailed := false
-				if prior.LastSyncedVersionID != "" {
-					status, vErr := repo.GetVersionStatus(ctx, prior.LastSyncedVersionID)
-					if vErr == nil && status == "failed" {
-						pipelineFailed = true
-					}
-					// Errors (incl. ErrNotFound — version was pruned)
-					// silently fall through to the position/skip branch.
-				}
+				// F12 — version status is folded into LookupAutoSyncState via
+				// a LEFT JOIN, so the planner avoids the per-section
+				// GetVersionStatus roundtrip. Empty PriorVersionStatus
+				// means either no version row (caller passed empty
+				// last_synced_version_id) or the version was pruned —
+				// either way, treat as "no known failure" and let the
+				// position/skip branch decide.
+				pipelineFailed := prior.LastSyncedVersionID != "" && prior.PriorVersionStatus == "failed"
 				if pipelineFailed {
 					ps.Action = ActionFullExport
 					ps.Reason = SkipRetryFailedPipeline
@@ -385,8 +423,27 @@ func (p *Planner) PlanTenant(ctx context.Context, tenantID string) ([]FilePlan, 
 	for _, f := range files {
 		fp, err := p.Plan(ctx, tenantID, f.FileKey)
 		if err != nil {
-			// Plumbing failure — propagate. (Logical skips become FileSkip.)
-			return nil, fmt.Errorf("plan %s: %w", f.FileKey, err)
+			// F5 — one corrupt file row (bad mapping, malformed page set,
+			// transient DB hiccup on a single section) used to abort the
+			// entire tenant scan. Record the failure on the file row and
+			// continue so every other file still gets planned. The retry
+			// ticker logs the error counter so the same broken file
+			// shows up cycle-after-cycle rather than silently masking
+			// every other file's drift.
+			p.log.Warn("autosync planner: per-file plan failed, continuing",
+				"file_key", f.FileKey, "err", err.Error())
+			out = append(out, FilePlan{
+				TenantID:    tenantID,
+				FileKey:     f.FileKey,
+				FileName:    f.Name,
+				ProjectID:   f.ProjectID,
+				ProjectName: "", // not loaded here; admin UI cross-references via project_id
+				FileSkip: &PlanReason{
+					Code:    SkipPlanError,
+					Message: err.Error(),
+				},
+			})
+			continue
 		}
 		out = append(out, fp)
 	}
