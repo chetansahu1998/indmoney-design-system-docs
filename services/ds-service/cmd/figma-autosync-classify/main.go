@@ -70,10 +70,15 @@ func main() {
 	ctx := context.Background()
 	repo := projects.NewTenantRepo(d.DB, *tenantID)
 
-	// Query: all eligible sections joined with mapping for product context.
+	// Drain the read fully into memory BEFORE issuing any writes — SQLite
+	// (single-writer + driver pool of 1) deadlocks when an UPDATE tries
+	// to grab the conn that the iterator is holding open.
+	type row struct {
+		fileKey, pageID, sectionID, name string
+		existingSrc, domain, product     string
+	}
 	rows, err := d.DB.QueryContext(ctx, `
 		SELECT s.file_key, s.page_id, s.section_id, s.name,
-		       COALESCE(s.sub_product_override,''), COALESCE(s.sub_flow_override,''),
 		       COALESCE(s.classified_source,''),
 		       m.domain, m.product
 		  FROM figma_section s
@@ -88,45 +93,46 @@ func main() {
 		fmt.Fprintln(os.Stderr, "list sections:", err)
 		os.Exit(1)
 	}
-	defer rows.Close()
-
-	var processed, classified, skipped, errs int
+	var all []row
 	for rows.Next() {
-		var fileKey, pageID, sectionID, name string
-		var existingSP, existingSF, existingSrc, domain, product string
-		if err := rows.Scan(&fileKey, &pageID, &sectionID, &name,
-			&existingSP, &existingSF, &existingSrc, &domain, &product,
+		var r row
+		if err := rows.Scan(&r.fileKey, &r.pageID, &r.sectionID, &r.name,
+			&r.existingSrc, &r.domain, &r.product,
 		); err != nil {
 			fmt.Fprintln(os.Stderr, "scan:", err)
-			errs++
 			continue
 		}
+		all = append(all, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil && err != sql.ErrNoRows {
+		fmt.Fprintln(os.Stderr, "rows err:", err)
+	}
+
+	var processed, classified, skipped, errs int
+	for _, r := range all {
 		processed++
 		if *limit > 0 && processed > *limit {
 			break
 		}
-
-		// Don't override admin_override — only fill in fresh classifications.
-		if existingSrc == "admin_override" {
+		if r.existingSrc == "admin_override" {
 			skipped++
 			continue
 		}
-
-		sp, sf, source := classify(name, product)
+		sp, sf, source := classify(r.name, r.product)
 		if sp == "" || sf == "" {
 			skipped++
 			continue
 		}
-
 		if *verbose || *dryRun {
-			fmt.Printf("  %s %q  →  %s / %s  [%s]\n", short(sectionID), name, sp, sf, source)
+			fmt.Printf("  %s %q  →  %s / %s  [%s]\n", short(r.sectionID), r.name, sp, sf, source)
 		}
 		if *dryRun {
 			classified++
 			continue
 		}
 		if err := repo.UpsertSectionClassification(ctx, projects.SectionClassification{
-			FileKey: fileKey, PageID: pageID, SectionID: sectionID,
+			FileKey: r.fileKey, PageID: r.pageID, SectionID: r.sectionID,
 			SubProduct: sp, SubFlow: sf, Source: source,
 		}); err != nil {
 			fmt.Fprintln(os.Stderr, "upsert:", err)
@@ -134,9 +140,6 @@ func main() {
 			continue
 		}
 		classified++
-	}
-	if err := rows.Err(); err != nil && err != sql.ErrNoRows {
-		fmt.Fprintln(os.Stderr, "rows err:", err)
 	}
 
 	fmt.Printf("\ndone — processed=%d classified=%d skipped=%d errors=%d dry_run=%v\n",
