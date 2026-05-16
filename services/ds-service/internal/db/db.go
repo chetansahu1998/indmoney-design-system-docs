@@ -3,6 +3,39 @@
 // Single-file local DB at services/ds-service/data/ds.db. Schema migrations
 // are bundled at compile time and run on every startup (idempotent).
 //
+// Connection pooling (plan 2026-05-16-001-fix-sqlite-pool-split-plan.md):
+//
+// The package exposes two connection pools backed by the same file:
+//
+//   - Write pool — single connection (MaxOpenConns=1). Preserves the
+//     single-writer invariant the codebase depends on (autosync
+//     idempotency, sync orchestrator's no-per-tenant-lock posture,
+//     worker lease semantics). Writes serialize through this conn.
+//     The embedded *sql.DB IS the write pool, so every existing
+//     *DB.ExecContext / *DB.QueryContext / *DB.BeginTx call routes
+//     through the write pool. Helper methods (CreateUser, WriteAudit,
+//     etc.) implicitly use the write pool.
+//
+//   - Read pool — multiple connections (MaxOpenConns=8) opened with
+//     mode=ro. Concurrent readers under WAL — the parallelism that
+//     SetMaxOpenConns(1) silently defeated for years. Access via
+//     d.Read() *sql.DB. mode=ro is a hard guard: accidental writes
+//     against d.Read() return "attempt to write a readonly database"
+//     rather than silently landing on the wrong handle.
+//
+// Read-before-tx convention: code that opens a write transaction must
+// finish all reads it needs BEFORE BeginTx. A write tx holds the only
+// write connection; issuing a fresh read inside the tx deadlocks the
+// process. See:
+//   - docs/solutions/2026-05-01-003-phase-7-8-closure.md
+//   - docs/solutions/2026-05-05-001-zeplin-canvas-learnings.md
+//   - docs/plans/2026-05-13-002-feat-figma-db-phase-2-plan.md
+//
+// Read-your-write paths: heartbeat → recovery, executor → planner, and
+// worker lease-renew MUST use the write pool (not d.Read()) so they
+// observe their own commits without ms-staleness. d.Read() is for
+// "best-effort fresh, ms-staleness acceptable" paths only.
+//
 // Tables:
 //   users            — operators with login credentials (bcrypt password_hash)
 //   tenants          — brand tenants (one per docs site brand)
@@ -22,28 +55,137 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// DB wraps a *sql.DB with a few app-specific helpers.
+// DB wraps the SQLite pools and exposes app-specific helpers.
+//
+// The embedded *sql.DB is the WRITE pool (single connection). Methods
+// inherited via the embed — ExecContext, QueryContext, QueryRowContext,
+// BeginTx, etc. — therefore route to the write pool. This is the safe
+// default: writes obviously belong on the write pool, and reads done
+// outside a deliberate read-only context don't risk read-your-write
+// staleness.
+//
+// To explicitly opt into the read pool for concurrent-read paths, call
+// d.Read() *sql.DB and issue queries through it. See the package-level
+// doc-comment for the read-before-tx and read-your-write conventions.
+//
+// Write() is an alias for the embedded *sql.DB exposed as a named
+// accessor; new code should prefer d.Write() over reaching d.DB for
+// intent-clarity.
 type DB struct {
-	*sql.DB
+	*sql.DB                 // write pool — single conn
+	read           *sql.DB  // read pool — multi conn, mode=ro
+	readPoolClosed bool     // set after Close() so accessors error cleanly
 }
 
 // Open creates / opens the SQLite database at path and runs migrations.
-// Use ":memory:" for tests.
+//
+// Two pools are constructed against the same file:
+//   - Write pool (the embedded *sql.DB): full RW DSN, MaxOpenConns=1.
+//   - Read pool (d.Read()): mode=ro DSN, MaxOpenConns=8.
+//
+// The write pool is opened first so migrations can create the file;
+// then the read pool opens against the now-existing file.
+//
+// Tests use a file under t.TempDir() — the same path works for both
+// pools (mode=ro requires the file to exist, which migrations ensure).
 func Open(path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", path)
-	conn, err := sql.Open("sqlite", dsn)
+	writeDSN := fmt.Sprintf(
+		"file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)",
+		path,
+	)
+	write, err := sql.Open("sqlite", writeDSN)
 	if err != nil {
-		return nil, fmt.Errorf("sqlite open: %w", err)
+		return nil, fmt.Errorf("sqlite open (write): %w", err)
 	}
-	conn.SetMaxOpenConns(1) // SQLite single-writer; WAL allows concurrent readers
-	if err := conn.PingContext(context.Background()); err != nil {
-		return nil, fmt.Errorf("sqlite ping: %w", err)
+	// Write pool: single connection, preserves the single-writer
+	// invariant. Do NOT raise this above 1 without a deliberate audit
+	// of every codebase pattern that assumes serial writes (autosync
+	// idempotency, sync orchestrator, worker leases, read-before-tx
+	// call sites). See plan 2026-05-16-001 Decision 2.
+	write.SetMaxOpenConns(1)
+	if err := write.PingContext(context.Background()); err != nil {
+		_ = write.Close()
+		return nil, fmt.Errorf("sqlite ping (write): %w", err)
 	}
-	d := &DB{conn}
+
+	d := &DB{DB: write}
 	if err := d.migrate(context.Background()); err != nil {
+		_ = write.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+
+	// Read pool: opens against the now-migrated file with mode=ro.
+	// mode=ro lets multiple connections proceed concurrently under
+	// WAL without contending for the write lock, AND fails fast when
+	// callers accidentally try to write through Read().
+	readDSN := fmt.Sprintf(
+		"file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&mode=ro",
+		path,
+	)
+	read, err := sql.Open("sqlite", readDSN)
+	if err != nil {
+		_ = write.Close()
+		return nil, fmt.Errorf("sqlite open (read): %w", err)
+	}
+	read.SetMaxOpenConns(8)
+	if err := read.PingContext(context.Background()); err != nil {
+		_ = read.Close()
+		_ = write.Close()
+		return nil, fmt.Errorf("sqlite ping (read): %w", err)
+	}
+	d.read = read
 	return d, nil
+}
+
+// Write returns the single-connection write pool. New code should
+// prefer this over reaching d.DB directly so the intent is explicit.
+//
+// Read-before-tx: code opening a write tx via d.Write().BeginTx (or
+// the embedded d.BeginTx) MUST complete all reads it needs BEFORE
+// the tx begins. The write conn is held by the tx; a fresh read
+// inside the tx deadlocks. See package doc-comment for case studies.
+func (d *DB) Write() *sql.DB { return d.DB }
+
+// Read returns the multi-connection read pool (mode=ro). Use for
+// concurrent-read paths where ms-staleness is acceptable: list/get
+// HTTP endpoints, dashboard queries, audit log queries, inventory
+// poller's per-file lookups, SSE subscription resolution.
+//
+// Do NOT use for read-your-write paths — those must use Write():
+//   - pipeline heartbeat → recovery sweeper
+//   - worker HeartbeatJob lease check
+//   - autosync executor → planner sequence
+//   - Stage 6 tx commit → audit worker
+//
+// Calling Read() after Close() returns nil. Calls against a nil
+// *sql.DB panic — that's a programming error, not a runtime
+// condition. Don't reach for Read() during shutdown.
+func (d *DB) Read() *sql.DB { return d.read }
+
+// Close shuts down both pools. Writes finish first (in-flight tx
+// either commits or rolls back via *sql.DB.Close semantics), then
+// reads close. Safe to call multiple times — second call is a no-op
+// because both *sql.DB handles return ErrConnDone after the first
+// close.
+func (d *DB) Close() error {
+	// Close write first so any in-flight write tx is allowed to finish
+	// (or be rolled back) before the read pool tears down. Either order
+	// is safe in practice — *sql.DB.Close() blocks until in-flight
+	// statements drain — but write-first matches "writes are
+	// authoritative, reads can be torn down freely" semantics.
+	var firstErr error
+	if d.DB != nil {
+		if err := d.DB.Close(); err != nil {
+			firstErr = fmt.Errorf("close write pool: %w", err)
+		}
+	}
+	if d.read != nil && !d.readPoolClosed {
+		if err := d.read.Close(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("close read pool: %w", err)
+		}
+		d.readPoolClosed = true
+	}
+	return firstErr
 }
 
 func (d *DB) migrate(ctx context.Context) error {
@@ -299,11 +441,14 @@ func (d *DB) WriteAudit(ctx context.Context, e AuditEntry) error {
 }
 
 // QueryAudit returns recent audit entries for a tenant, newest first.
+//
+// Read-only: routes through d.Read() (concurrent reads OK, ms-staleness
+// acceptable for an audit log view). Plan 2026-05-16-001 U3.
 func (d *DB) QueryAudit(ctx context.Context, tenantID string, limit int) ([]AuditEntry, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := d.QueryContext(ctx,
+	rows, err := d.read.QueryContext(ctx,
 		`SELECT id, ts, event_type, tenant_id, user_id, method, endpoint, status_code, duration_ms, ip_address, details
 		 FROM audit_log WHERE tenant_id = ? ORDER BY ts DESC LIMIT ?`,
 		tenantID, limit,
@@ -355,8 +500,13 @@ func (d *DB) UpsertFigmaToken(ctx context.Context, r FigmaTokenRecord) error {
 	return err
 }
 
+// GetFigmaToken returns the encrypted Figma PAT for a tenant.
+//
+// Read-only: routes through d.Read(). The login + Figma proxy flows
+// read this on every request; concurrent reads under WAL are the
+// parallelism win. Plan 2026-05-16-001 U3.
 func (d *DB) GetFigmaToken(ctx context.Context, tenantID string) (*FigmaTokenRecord, error) {
-	row := d.QueryRowContext(ctx,
+	row := d.read.QueryRowContext(ctx,
 		`SELECT tenant_id, encrypted_token, key_version, figma_user_email, figma_user_handle, last_validated_at, created_at
 		 FROM figma_tokens WHERE tenant_id = ?`,
 		tenantID,
@@ -408,8 +558,11 @@ func (d *DB) UpsertSyncState(ctx context.Context, s SyncStateRecord) error {
 	return err
 }
 
+// GetSyncState returns the per-tenant sync metadata.
+//
+// Read-only: routes through d.Read(). Plan 2026-05-16-001 U3.
 func (d *DB) GetSyncState(ctx context.Context, tenantID string) (*SyncStateRecord, error) {
-	row := d.QueryRowContext(ctx,
+	row := d.read.QueryRowContext(ctx,
 		`SELECT tenant_id, canonical_hash, last_synced_at, last_committed_sha, status, failure_message, modes, updated_at
 		 FROM sync_state WHERE tenant_id = ?`,
 		tenantID,
