@@ -873,6 +873,11 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, func(w http.ResponseWriter, r *http.Request) {
 			handleAutosyncExecute(w, r, s.projectsServer, s.db.DB, s.log)
 		})))
+	// F4 follow-up — manual escape hatch from auto-quarantine. Operators
+	// hit this after fixing whatever caused 5 consecutive failures (file
+	// renamed, frame removed, designer recreated a section, etc.).
+	mux.HandleFunc("DELETE /v1/admin/figma-autosync/state/{file_key}/{page_id}/{section_id}/quarantine",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaAutosyncClearQuarantine)))
 	mux.HandleFunc("GET /v1/projects",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleProjectList)))
 	mux.HandleFunc("GET /v1/projects/{slug}",

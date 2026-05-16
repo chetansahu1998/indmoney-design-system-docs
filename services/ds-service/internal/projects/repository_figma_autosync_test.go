@@ -146,6 +146,83 @@ func TestAutoSyncState_TenantIsolation(t *testing.T) {
 	}
 }
 
+func TestClearAutoSyncQuarantine_ResetsQuarantinedRow(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	// Drive a section into auto-quarantine via 5 consecutive 'error' upserts
+	// (matches the UPSERT's automatic threshold transition).
+	const fk, pg, sec = "fk-cq", "p", "s"
+	for i := 0; i < AutoSyncMaxRetries; i++ {
+		if err := repo.UpsertAutoSyncState(ctx, AutoSyncState{
+			FileKey: fk, PageID: pg, SectionID: sec,
+			LastAttemptStatus: "error", ErrorMessage: "Figma 500",
+		}); err != nil {
+			t.Fatalf("upsert %d: %v", i, err)
+		}
+	}
+	got, _ := repo.LookupAutoSyncState(ctx, fk, pg, sec)
+	if got.LastAttemptStatus != "quarantined" {
+		t.Fatalf("setup: row should be quarantined, got status=%q", got.LastAttemptStatus)
+	}
+
+	// Clear it.
+	cleared, err := repo.ClearAutoSyncQuarantine(ctx, fk, pg, sec)
+	if err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if !cleared {
+		t.Fatalf("cleared: got false, want true")
+	}
+
+	got, _ = repo.LookupAutoSyncState(ctx, fk, pg, sec)
+	if got.LastAttemptStatus != "" {
+		t.Errorf("last_attempt_status: got %q want empty", got.LastAttemptStatus)
+	}
+	if got.RetryCount != 0 {
+		t.Errorf("retry_count: got %d want 0", got.RetryCount)
+	}
+	if !got.QuarantinedAt.IsZero() {
+		t.Errorf("quarantined_at: got %v want zero", got.QuarantinedAt)
+	}
+	if got.SkipReason != "" {
+		t.Errorf("skip_reason: got %q want empty", got.SkipReason)
+	}
+}
+
+// Idempotency: clearing a never-quarantined row is a harmless no-op
+// (returns (true, nil) because the row exists and the UPDATE matches).
+func TestClearAutoSyncQuarantine_IdempotentOnNonQuarantinedRow(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	if err := repo.UpsertAutoSyncState(ctx, AutoSyncState{
+		FileKey: "fk", PageID: "p", SectionID: "s",
+		ContentHash: "h", LastSyncedVersionID: "v", LastAttemptStatus: "ok",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	cleared, err := repo.ClearAutoSyncQuarantine(ctx, "fk", "p", "s")
+	if err != nil || !cleared {
+		t.Fatalf("clear: cleared=%v err=%v", cleared, err)
+	}
+}
+
+// Missing-row case: returns (false, nil) so the handler can 404.
+func TestClearAutoSyncQuarantine_MissingRowReturnsFalse(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	cleared, err := repo.ClearAutoSyncQuarantine(context.Background(), "missing", "p", "s")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if cleared {
+		t.Errorf("expected cleared=false on missing row, got true")
+	}
+}
+
 func TestUpsertFigmaProjectMapping_Roundtrip(t *testing.T) {
 	d, tA, _, uA := newTestDB(t)
 	repo := NewTenantRepo(d.DB, tA)

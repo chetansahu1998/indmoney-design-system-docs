@@ -3681,6 +3681,56 @@ func (s *Server) HandleFigmaBlocklistList(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// HandleFigmaAutosyncClearQuarantine serves DELETE
+// /v1/admin/figma-autosync/state/{file_key}/{page_id}/{section_id}/quarantine.
+//
+// Manual escape hatch from F4's auto-quarantine. Once a section has
+// accumulated AutoSyncMaxRetries consecutive pipeline failures the
+// planner short-circuits to skip_quarantined; this endpoint resets the
+// retry-counter bookkeeping so the next planner cycle re-evaluates the
+// section from scratch (content_hash drives new_section vs.
+// content_changed vs. already_synced).
+//
+// Idempotent: clearing a non-quarantined row is a harmless no-op (returns
+// 200 with cleared=true). A row that doesn't exist returns 404.
+//
+// Auth: JWT-authed; tenant scoping via resolveTenantID.
+func (s *Server) HandleFigmaAutosyncClearQuarantine(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "DELETE only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	fileKey := r.PathValue("file_key")
+	pageID := r.PathValue("page_id")
+	sectionID := r.PathValue("section_id")
+	if fileKey == "" || pageID == "" || sectionID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_params", "file_key, page_id, section_id required")
+		return
+	}
+	repo := NewTenantRepo(s.deps.DB.DB, tenantID)
+	cleared, err := repo.ClearAutoSyncQuarantine(r.Context(), fileKey, pageID, sectionID)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "clear_quarantine", err.Error())
+		return
+	}
+	if !cleared {
+		writeJSONErr(w, http.StatusNotFound, "section_not_found",
+			"no figma_auto_sync_state row for (file_key, page_id, section_id)")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cleared": true})
+}
+
 // HandleFigmaBlocklistClear serves DELETE
 // /v1/admin/figma-render-blocklist/{file_id}/{node_id}.
 //

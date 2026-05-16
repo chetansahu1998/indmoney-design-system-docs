@@ -235,6 +235,43 @@ func (t *TenantRepo) LookupAutoSyncState(ctx context.Context, fileKey, pageID, s
 	return s, nil
 }
 
+// ClearAutoSyncQuarantine resets the retry-counter bookkeeping on one
+// section row so the planner stops short-circuiting it as
+// skip_quarantined. Unconditional UPDATE — idempotent against rows that
+// were already in good standing (no-op). Returns (true, nil) when the
+// row exists and was cleared, (false, nil) when no row matches.
+//
+// Operator semantics: this is the manual escape hatch from F4's
+// auto-quarantine. After the next planner cycle the section runs as if
+// it had never failed (retry_count=0, no quarantined_at, no
+// last_attempt_status), so the existing content_hash diff drives
+// new_section / content_changed / already_synced from there.
+func (t *TenantRepo) ClearAutoSyncQuarantine(ctx context.Context, fileKey, pageID, sectionID string) (bool, error) {
+	if t.tenantID == "" {
+		return false, errors.New("projects: tenant_id required")
+	}
+	if fileKey == "" || pageID == "" || sectionID == "" {
+		return false, errors.New("projects: file_key, page_id, section_id required")
+	}
+	// NULL (not empty string) because last_attempt_status carries a
+	// CHECK IN ('ok','skipped','error','quarantined') constraint —
+	// empty string would fail the check.
+	res, err := t.handle().ExecContext(ctx, `
+		UPDATE figma_auto_sync_state
+		   SET last_attempt_status = NULL,
+		       skip_reason         = NULL,
+		       retry_count         = 0,
+		       quarantined_at      = NULL,
+		       error_message       = NULL
+		 WHERE tenant_id = ? AND file_key = ? AND page_id = ? AND section_id = ?
+	`, t.tenantID, fileKey, pageID, sectionID)
+	if err != nil {
+		return false, fmt.Errorf("clear autosync quarantine: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
 // AutoSyncStateFilter narrows ListAutoSyncState results. Fields left zero
 // (empty string for strings, 0 for limit/offset) mean "no filter on this
 // dimension". Limit defaults to 100, offset defaults to 0.
