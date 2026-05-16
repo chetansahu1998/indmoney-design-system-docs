@@ -154,18 +154,30 @@ func main() {
 		// whole pipeline (audit finding B6). Falls back to FIGMA_PAT env
 		// var when set so cmd-line workflows keep working during recovery.
 		rec, err := dbConn.GetFigmaToken(ctx, tenantID)
+		var pat []byte
 		if err != nil {
-			return nil, fmt.Errorf("get figma token: %w", err)
-		}
-		pat, err := cfg.EncryptionKey.Decrypt(rec.EncryptedToken)
-		if err != nil {
+			// No per-tenant row (e.g. autosync runs before admin uploaded
+			// a token, or a fresh tenant). Fall back to FIGMA_PAT env var
+			// — mirrors the decrypt-failure branch below + the poller's
+			// figmaPATResolver fallback.
 			if envPAT := os.Getenv("FIGMA_PAT"); envPAT != "" {
-				log.Warn("figma token decrypt failed; falling back to FIGMA_PAT env var (please re-upload via admin UI to clear this)",
-					"tenant", tenantID, "key_version", rec.KeyVersion, "err", err.Error())
+				log.Warn("no figma_tokens row; falling back to FIGMA_PAT env var",
+					"tenant", tenantID, "err", err.Error())
 				pat = []byte(envPAT)
 			} else {
-				return nil, fmt.Errorf("decrypt figma token (tenant=%s key_version=%d — re-upload via admin UI): %w",
-					tenantID, rec.KeyVersion, err)
+				return nil, fmt.Errorf("get figma token: %w", err)
+			}
+		} else {
+			pat, err = cfg.EncryptionKey.Decrypt(rec.EncryptedToken)
+			if err != nil {
+				if envPAT := os.Getenv("FIGMA_PAT"); envPAT != "" {
+					log.Warn("figma token decrypt failed; falling back to FIGMA_PAT env var (please re-upload via admin UI to clear this)",
+						"tenant", tenantID, "key_version", rec.KeyVersion, "err", err.Error())
+					pat = []byte(envPAT)
+				} else {
+					return nil, fmt.Errorf("decrypt figma token (tenant=%s key_version=%d — re-upload via admin UI): %w",
+						tenantID, rec.KeyVersion, err)
+				}
 			}
 		}
 		fc := client.New(string(pat))

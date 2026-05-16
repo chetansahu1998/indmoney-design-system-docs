@@ -172,19 +172,24 @@ func (e *Executor) executeFullExport(
 		})
 	}
 
-	persona := ps.PersonaHint
+	persona := sanitizeForExport(ps.PersonaHint)
 	if persona == "default" {
 		persona = "" // pipeline treats empty persona as "no persona"
 	}
 
-	flowName := ps.SubFlow
+	flowName := sanitizeForExport(ps.SubFlow)
 	if flowName == "" {
-		flowName = ps.Section
+		flowName = sanitizeForExport(ps.Section)
+	}
+	if flowName == "" {
+		flowName = "Untitled"
 	}
 
-	// Path is "Domain/Product/SubProduct/SubFlow" — used as a stable slug
-	// fragment downstream. JoinFlowPath already trims empties.
-	path := JoinFlowPath(ps.Domain, ps.Product, ps.SubProduct, ps.SubFlow)
+	// Path is "Domain/Product/SubProduct/SubFlow" — sanitised so it passes
+	// projects.allowlistRegex (^[\w \-_/&·]+$). Strips emoji, parens,
+	// punctuation that designers casually include in section names.
+	path := sanitizeForExport(JoinFlowPath(ps.Domain, ps.Product, ps.SubProduct, ps.SubFlow))
+	product := sanitizeForExport(ps.Product)
 
 	sectionID := ps.SectionID
 	req := projects.ExportRequest{
@@ -197,7 +202,7 @@ func (e *Executor) executeFullExport(
 				FrameIDs:    frameIDs,
 				Frames:      framePayloads,
 				Platform:    derivePlatform(plan, ps),
-				Product:     ps.Product,
+				Product:     product,
 				Path:        path,
 				PersonaName: persona,
 				Name:        flowName,
@@ -299,6 +304,39 @@ func (e *Executor) executeCheapUpdate(
 // Future iteration could surface PlatformDefault on PlannedSync.
 func derivePlatform(_ FilePlan, _ PlannedSync) string {
 	return "mobile"
+}
+
+// sanitizeForExport collapses each input rune to either itself (when it
+// passes projects.allowlistRegex ^[\w \-_/&·]+$) or a single space.
+// Multiple spaces collapse to one. Result is trimmed. Used to scrub
+// designer-supplied section names + paths before they hit validateExport.
+func sanitizeForExport(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	lastSpace := false
+	for _, r := range s {
+		ok := r == ' ' ||
+			r == '-' || r == '_' || r == '/' || r == '&' || r == '·' ||
+			(r >= '0' && r <= '9') ||
+			(r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z')
+		if ok {
+			b.WriteRune(r)
+			lastSpace = r == ' '
+		} else if !lastSpace {
+			b.WriteByte(' ')
+			lastSpace = true
+		}
+	}
+	out := strings.TrimSpace(b.String())
+	// Collapse "  " just in case the loop introduced doubles around drops.
+	for strings.Contains(out, "  ") {
+		out = strings.ReplaceAll(out, "  ", " ")
+	}
+	return out
 }
 
 func truncate(s string, max int) string {
