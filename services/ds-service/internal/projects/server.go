@@ -2,6 +2,7 @@ package projects
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -2508,6 +2509,11 @@ func (s *Server) HandleDRDTicket(w http.ResponseWriter, r *http.Request) {
 // requireHocuspocusSecret is middleware-style: validates the
 // X-DS-Hocuspocus-Secret header matches the env value. Used by the
 // /internal/drd/* routes the sidecar calls.
+//
+// SEC-6 audit fix: constant-time compare via subtle.ConstantTimeCompare.
+// Plain != on string secrets leaks timing information about prefix
+// match length; subtle.ConstantTimeCompare runs in time proportional
+// to slice length regardless of where the mismatch is.
 func (s *Server) requireHocuspocusSecret(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		want := osGetenv(HocuspocusSharedSecretEnv)
@@ -2517,7 +2523,7 @@ func (s *Server) requireHocuspocusSecret(next http.HandlerFunc) http.HandlerFunc
 			return
 		}
 		got := r.Header.Get("X-DS-Hocuspocus-Secret")
-		if got != want {
+		if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
 			writeJSONErr(w, http.StatusUnauthorized, "bad_secret", "")
 			return
 		}

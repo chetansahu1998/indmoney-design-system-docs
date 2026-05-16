@@ -25,6 +25,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -333,7 +334,12 @@ func main() {
 	var projectsServer *projects.Server
 
 	// Recovery sweeper — startup sweep + 60s loop. Background goroutine.
-	recoveryCtx, recoveryCancel := context.WithCancel(context.Background())
+	// REL-B1 audit fix: derive from shutdownCtx (not context.Background)
+	// so SIGTERM/SIGINT actually cancels the sweep + blocklist loop. Pre-
+	// fix the recoveryCancel deferred below only fired if main() returned,
+	// which it didn't under signal-driven shutdown (http.ListenAndServe
+	// blocks). Same bug class as F6's workerCtx fix.
+	recoveryCtx, recoveryCancel := context.WithCancel(shutdownCtx)
 	defer recoveryCancel()
 	go projects.RunRecoveryLoop(recoveryCtx, dbConn.DB, log)
 	// figma_render_blocklist stale-row sweep (2026-05-12). Hourly GC of
@@ -1529,7 +1535,10 @@ func (s *server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "bootstrap disabled"})
 		return
 	}
-	if r.Header.Get("X-Bootstrap-Token") != s.cfg.BootstrapToken {
+	// SEC-6 audit fix: constant-time compare to avoid leaking timing
+	// information about prefix match length on the bootstrap token.
+	got := r.Header.Get("X-Bootstrap-Token")
+	if subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.BootstrapToken)) != 1 {
 		writeJSON(w, http.StatusForbidden, map[string]any{"error": "invalid bootstrap token"})
 		return
 	}
