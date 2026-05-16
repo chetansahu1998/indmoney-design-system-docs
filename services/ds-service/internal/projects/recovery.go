@@ -24,6 +24,15 @@ const RecoverySweepInterval = 60 * time.Second
 // operation), so it touches the *sql.DB directly rather than going through
 // TenantRepo.
 //
+// READ-YOUR-WRITE — pass the WRITE pool's handle (db.Write()), not Read().
+// The sweep's SELECT must see the heartbeat goroutine's UPDATE without
+// ms-staleness; under WAL a fresh read from a separate pool sees committed
+// writes (the SQLite docs guarantee this), but the conservative posture is
+// to keep heartbeat write + sweep read on the same pool so any future
+// pool-config change (e.g. read replica) can't quietly introduce staleness
+// here. Same invariant for the write-pool UPDATE that follows. Plan
+// 2026-05-16-001 R6 + U5.
+//
 // Returns the number of versions marked failed, plus the first error
 // encountered (best-effort — continues sweeping past per-row failures).
 func RecoverStuckVersions(ctx context.Context, db *sql.DB, log *slog.Logger) (int, error) {

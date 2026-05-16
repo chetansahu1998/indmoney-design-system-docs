@@ -189,6 +189,82 @@ func TestRead_RejectsWrites(t *testing.T) {
 	// contract.
 }
 
+// TestClose_ClosesBothPools asserts that *DB.Close() shuts down both
+// the write and read pools cleanly. After Close, both handles return
+// "database is closed" / sql.ErrConnDone on use. Catches a regression
+// where Close forgets one of the two pools and leaks goroutines /
+// connections on shutdown.
+func TestClose_ClosesBothPools(t *testing.T) {
+	dsnPath := t.TempDir() + "/test.db"
+	d, err := Open(dsnPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// Capture handles before close so we can probe them after.
+	writeHandle := d.Write()
+	readHandle := d.Read()
+
+	if err := d.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Write pool: any query must fail.
+	if err := writeHandle.PingContext(context.Background()); err == nil {
+		t.Error("write pool: PingContext after Close should error; got nil")
+	}
+
+	// Read pool: same contract.
+	if err := readHandle.PingContext(context.Background()); err == nil {
+		t.Error("read pool: PingContext after Close should error; got nil")
+	}
+
+	// Second Close should be safe (no panic, no double-close error).
+	if err := d.Close(); err != nil {
+		// A second close errors on the already-closed write pool
+		// (sql.ErrConnDone). That's acceptable — what's NOT acceptable
+		// is a panic from double-closing the read pool. The
+		// readPoolClosed sentinel protects against that.
+		_ = err
+	}
+}
+
+// TestReadPool_SeesPriorCommit asserts WAL's read-your-write guarantee
+// at the pool boundary: a read started AFTER a write commits sees the
+// committed state. This is the consistency property that makes it safe
+// to migrate non-read-your-write paths to d.Read() — the data isn't
+// "ms-stale" in WAL when the read starts post-commit.
+//
+// The five paths flagged READ-YOUR-WRITE in plan U5 stay on the write
+// pool not because WAL violates this guarantee, but because they tend
+// to interleave write + read in tight loops where pool-level isolation
+// could create surprising semantics if anyone ever migrates them.
+func TestReadPool_SeesPriorCommit(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	seedTenantUser(t, d, ctx)
+
+	// Write a distinct value through the write pool.
+	stamp := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := d.Write().ExecContext(ctx,
+		`UPDATE users SET last_login_at = ? WHERE id = 'user-1'`,
+		stamp,
+	); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Read from the read pool — must see the just-committed value.
+	var got string
+	if err := d.Read().QueryRowContext(ctx,
+		`SELECT last_login_at FROM users WHERE id = 'user-1'`,
+	).Scan(&got); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got != stamp {
+		t.Errorf("read pool saw stale value: got %q, want %q", got, stamp)
+	}
+}
+
 // TestForeignKeys_OnBothPools asserts the FK pragma is honoured on the
 // read pool as well as the write pool. The DSN sets foreign_keys(1);
 // both pools must preserve it so FK constraints in queries (e.g.,

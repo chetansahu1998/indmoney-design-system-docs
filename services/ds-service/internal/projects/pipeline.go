@@ -226,6 +226,13 @@ func (p *Pipeline) RunFastPreview(ctx context.Context, in PipelineInputs) error 
 	defer cancel()
 
 	// Heartbeat goroutine — runs until pipeline returns.
+	//
+	// READ-YOUR-WRITE — HeartbeatVersion UPDATEs project_versions; the
+	// recovery sweeper (recovery.go) SELECTs the same row to detect
+	// stuck pipelines. Both go through the WRITE pool so the sweeper
+	// never sees a stale heartbeat and steals a live pipeline's lease.
+	// Plan 2026-05-16-001 R6 + U5. Do NOT migrate either side to the
+	// read pool without revisiting the sweep's correctness contract.
 	hbCtx, hbCancel := context.WithCancel(pipelineCtx)
 	var hbWG sync.WaitGroup
 	hbWG.Add(1)

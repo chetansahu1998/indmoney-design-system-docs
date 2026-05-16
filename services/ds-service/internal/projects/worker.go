@@ -480,6 +480,14 @@ func (a *workerRepoAdapter) ClaimNextJob(ctx context.Context, workerID string) (
 // HeartbeatJob refreshes lease_expires_at on the row only if leased_by still
 // matches workerID. If the lease was stolen, RowsAffected is 0 and we return
 // ErrLeaseStolen.
+//
+// READ-YOUR-WRITE — the conditional UPDATE returns ErrLeaseStolen based on
+// reading its own prior write (this worker's earlier ClaimNextJob set
+// leased_by=workerID). a.db is the WRITE pool — do not migrate to a
+// separate read handle, or the lease-renew race collapses (cross-pool
+// staleness could make a stolen lease look still-mine). Same invariant
+// applies to ClaimNextJob and ResetStaleRunningJobs in this file.
+// Plan 2026-05-16-001 R6 + U5.
 func (a *workerRepoAdapter) HeartbeatJob(ctx context.Context, jobID, workerID string) error {
 	leaseExpires := a.now().UTC().Add(WorkerLeaseDuration).Unix()
 	res, err := a.db.ExecContext(ctx,

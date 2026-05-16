@@ -13,6 +13,17 @@
 // state row keyed on (tenant, file_key, page_id, section_id). On failure
 // the prior LastSyncedFlowID/VersionID are preserved by UpsertAutoSyncState
 // so the next attempt still knows which flow to update.
+//
+// READ-YOUR-WRITE (executor → planner) — the autosync retry loop runs
+// Planner.PlanTenant + Executor.Execute sequentially in one goroutine
+// per cycle. After Executor.Execute commits an UpsertAutoSyncState row,
+// the next cycle's PlanTenant must observe that commit so the planner
+// doesn't re-emit FullExport for an already-synced section. Under WAL
+// this is naturally consistent (reads started after a commit see it),
+// but the call-site contract: the planner reads run AFTER the executor's
+// commit returns, both through the same TenantRepo instance. Don't
+// reorder so reads start before the commit returns. Plan 2026-05-16-001
+// R6 + U5.
 package inventory
 
 import (
