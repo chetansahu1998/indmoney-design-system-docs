@@ -367,17 +367,35 @@ func (p *Planner) Plan(ctx context.Context, tenantID, fileKey string) (FilePlan,
 			// would otherwise leave every section permanently
 			// quarantined waiting on operator intervention.
 			if prior.LastAttemptStatus == "quarantined" {
-				if !prior.QuarantinedAt.IsZero() && p.now().Sub(prior.QuarantinedAt) > projects.AutoQuarantineTTL {
-					// Treat as if the operator had cleared the row: fall
-					// through to the normal new/changed/already-synced
+				// Recovery path 1 — time-based: AutoQuarantineTTL has
+				// elapsed since the row was quarantined. Treat as if
+				// the operator had cleared the row.
+				ttlExpired := !prior.QuarantinedAt.IsZero() &&
+					p.now().Sub(prior.QuarantinedAt) > projects.AutoQuarantineTTL
+				// Recovery path 2 — content-change (plan 2026-05-17-001,
+				// correctness-#13 fix completion): designer touched the
+				// section while it was quarantined. LiveContentHash (set
+				// on every executor pass, including quarantine bookkeeping)
+				// differs from ContentHash (the last SYNCED hash, frozen
+				// since the success preceding the failure run). Skip the
+				// TTL wait and re-attempt now.
+				contentChanged := prior.LiveContentHash != "" &&
+					prior.ContentHash != "" &&
+					prior.LiveContentHash != prior.ContentHash
+				if ttlExpired || contentChanged {
+					// Fall through to the normal new/changed/already-synced
 					// decision tree. retry_count stays elevated; the
 					// next 'ok' status zeroes it.
-					p.log.Info("autosync planner: quarantine TTL expired, auto-retrying",
+					reason := "ttl_expired"
+					if contentChanged {
+						reason = "content_changed"
+					}
+					p.log.Info("autosync planner: quarantine auto-recovery",
 						"file_key", fileKey,
 						"page_id", cp.PageID,
 						"section_id", sec.SectionID,
 						"quarantined_at", prior.QuarantinedAt.Format(time.RFC3339),
-						"ttl", projects.AutoQuarantineTTL.String(),
+						"reason", reason,
 					)
 				} else {
 					ps.Action = ActionSkipQuarantined

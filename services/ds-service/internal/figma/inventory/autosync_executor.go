@@ -239,14 +239,16 @@ func (e *Executor) executeFullExport(
 		Req:       req,
 	})
 	if runErr != nil {
-		// Persist error state — preserves prior flow/version ids so a
-		// retry still updates the existing flow rather than orphaning.
+		// Persist error state. Plan 2026-05-17-001 correctness-#13 fix:
+		// only update live_content_hash on error — content_hash stays
+		// at the last SYNCED value so the planner can detect designer
+		// fixes during quarantine via LiveContentHash divergence.
+		// Position is the same — only update position_hash on success.
 		_ = repo.UpsertAutoSyncState(ctx, projects.AutoSyncState{
 			FileKey:           plan.FileKey,
 			PageID:            ps.PageID,
 			SectionID:         ps.SectionID,
-			ContentHash:       ps.LiveContentHash,
-			PositionHash:      ps.LivePositionHash,
+			LiveContentHash:   ps.LiveContentHash,
 			LastAttemptStatus: "error",
 			ErrorMessage:      truncate(runErr.Error(), 400),
 		})
@@ -262,12 +264,17 @@ func (e *Executor) executeFullExport(
 	// only — the planner's idempotency cares about content_hash, not
 	// flow_id specifically.
 	flowID := "" // TODO: surface flow_id via RunExportResult.FlowIDs if we ever need it
+	// Success path: write both content_hash (the new synced state) and
+	// live_content_hash (same value — what we just observed). On the
+	// next cycle, the planner reads both and they match, so a designer
+	// fix is detectable as soon as it diverges.
 	if err := repo.UpsertAutoSyncState(ctx, projects.AutoSyncState{
 		FileKey:             plan.FileKey,
 		PageID:              ps.PageID,
 		SectionID:           ps.SectionID,
 		ContentHash:         ps.LiveContentHash,
 		PositionHash:        ps.LivePositionHash,
+		LiveContentHash:     ps.LiveContentHash,
 		LastSyncedFlowID:    flowID,
 		LastSyncedVersionID: result.VersionID,
 		LastAttemptStatus:   "ok",

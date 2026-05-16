@@ -44,6 +44,10 @@ type AutoSyncState struct {
 	FileKey             string
 	PageID              string
 	SectionID           string
+	// ContentHash — "what the SYNCED version contains". Written ONLY
+	// when UpsertAutoSyncState's caller sets LastAttemptStatus='ok'.
+	// Stable across error / quarantine cycles so the planner can detect
+	// designer-fixed sections via LiveContentHash divergence.
 	ContentHash         string
 	PositionHash        string
 	LastSyncedFlowID    string
@@ -60,6 +64,13 @@ type AutoSyncState struct {
 	// are managed by UpsertAutoSyncState (caller doesn't set them).
 	RetryCount    int
 	QuarantinedAt time.Time
+	// LiveContentHash — "what the LIVE source contained at the last
+	// attempt" (migration 0035, plan 2026-05-17-001). Updated on EVERY
+	// UpsertAutoSyncState (sync, error, skip, quarantine bookkeeping).
+	// The planner uses `prior.LiveContentHash != prior.ContentHash` to
+	// detect designer-fixed sections during quarantine, auto-recovering
+	// them without waiting for AutoQuarantineTTL or operator clear.
+	LiveContentHash string
 	// F12 — folded LEFT JOIN. When LastSyncedVersionID points at a
 	// row in project_versions, PriorVersionStatus carries its status
 	// ('view_ready' | 'pending' | 'failed'). Empty string when the
@@ -122,22 +133,40 @@ func (t *TenantRepo) UpsertAutoSyncState(ctx context.Context, s AutoSyncState) e
 	//   - status='quarantined' (caller-driven)         → retry_count frozen,
 	//                                                    quarantined_at := now
 	//   - other statuses ('skipped' etc.)              → retry_count + quarantined_at unchanged
+	//
+	// Hash semantics (plan 2026-05-17-001, correctness-#13 fix):
+	//   - content_hash    — what we SYNCED. Only updated when status='ok'.
+	//                       Preserved on error/skip/quarantine so the
+	//                       planner can detect designer fixes via
+	//                       live_content_hash divergence.
+	//   - live_content_hash — what the source contained at this attempt.
+	//                       Updated on EVERY upsert. Lets the planner
+	//                       auto-recover from quarantine when a designer
+	//                       changes the section before AutoQuarantineTTL
+	//                       expires.
 	max := AutoSyncMaxRetries
 	_, err := t.handle().ExecContext(ctx, `
 		INSERT INTO figma_auto_sync_state (
 			tenant_id, file_key, page_id, section_id,
-			content_hash, position_hash,
+			content_hash, position_hash, live_content_hash,
 			last_synced_flow_id, last_synced_version_id, last_synced_at,
 			last_attempt_at, last_attempt_status, skip_reason, error_message,
 			first_seen_at,
 			retry_count, quarantined_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			CASE WHEN ? = 'error' THEN 1 ELSE 0 END,
 			CASE WHEN ? = 'quarantined' THEN ? END
 		)
 		ON CONFLICT(tenant_id, file_key, page_id, section_id) DO UPDATE SET
-			content_hash           = excluded.content_hash,
-			position_hash          = excluded.position_hash,
+			content_hash           = CASE
+			    WHEN excluded.last_attempt_status = 'ok' THEN excluded.content_hash
+			    ELSE figma_auto_sync_state.content_hash
+			END,
+			position_hash          = CASE
+			    WHEN excluded.last_attempt_status = 'ok' THEN excluded.position_hash
+			    ELSE figma_auto_sync_state.position_hash
+			END,
+			live_content_hash      = COALESCE(excluded.live_content_hash, figma_auto_sync_state.live_content_hash),
 			last_synced_flow_id    = COALESCE(excluded.last_synced_flow_id,    figma_auto_sync_state.last_synced_flow_id),
 			last_synced_version_id = COALESCE(excluded.last_synced_version_id, figma_auto_sync_state.last_synced_version_id),
 			last_synced_at         = CASE
@@ -174,7 +203,7 @@ func (t *TenantRepo) UpsertAutoSyncState(ctx context.Context, s AutoSyncState) e
 			END
 	`,
 		t.tenantID, s.FileKey, s.PageID, s.SectionID,
-		nullableStr(s.ContentHash), nullableStr(s.PositionHash),
+		nullableStr(s.ContentHash), nullableStr(s.PositionHash), nullableStr(s.LiveContentHash),
 		flowID, versionID, lastSyncedAt,
 		now, nullableStr(s.LastAttemptStatus),
 		nullableStr(s.SkipReason), nullableStr(s.ErrorMessage),
@@ -205,6 +234,7 @@ func (t *TenantRepo) LookupAutoSyncState(ctx context.Context, fileKey, pageID, s
 	row := t.readHandle().QueryRowContext(ctx, `
 		SELECT s.tenant_id, s.file_key, s.page_id, s.section_id,
 		       COALESCE(s.content_hash, ''), COALESCE(s.position_hash, ''),
+		       COALESCE(s.live_content_hash, ''),
 		       COALESCE(s.last_synced_flow_id, ''), COALESCE(s.last_synced_version_id, ''),
 		       COALESCE(s.last_synced_at, ''),
 		       COALESCE(s.last_attempt_at, ''), COALESCE(s.last_attempt_status, ''),
@@ -224,6 +254,7 @@ func (t *TenantRepo) LookupAutoSyncState(ctx context.Context, fileKey, pageID, s
 	err := row.Scan(
 		&s.TenantID, &s.FileKey, &s.PageID, &s.SectionID,
 		&s.ContentHash, &s.PositionHash,
+		&s.LiveContentHash,
 		&s.LastSyncedFlowID, &s.LastSyncedVersionID, &lastSynced,
 		&lastAttempt, &s.LastAttemptStatus,
 		&s.SkipReason, &s.ErrorMessage,
@@ -324,6 +355,7 @@ func (t *TenantRepo) ListAutoSyncState(ctx context.Context, f AutoSyncStateFilte
 	sqlStr := `
 		SELECT s.tenant_id, s.file_key, s.page_id, s.section_id,
 		       COALESCE(s.content_hash, ''), COALESCE(s.position_hash, ''),
+		       COALESCE(s.live_content_hash, ''),
 		       COALESCE(s.last_synced_flow_id, ''), COALESCE(s.last_synced_version_id, ''),
 		       COALESCE(s.last_synced_at, ''),
 		       COALESCE(s.last_attempt_at, ''), COALESCE(s.last_attempt_status, ''),
@@ -365,6 +397,7 @@ func (t *TenantRepo) ListAutoSyncState(ctx context.Context, f AutoSyncStateFilte
 		if err := rows.Scan(
 			&s.TenantID, &s.FileKey, &s.PageID, &s.SectionID,
 			&s.ContentHash, &s.PositionHash,
+			&s.LiveContentHash,
 			&s.LastSyncedFlowID, &s.LastSyncedVersionID, &lastSynced,
 			&lastAttempt, &s.LastAttemptStatus,
 			&s.SkipReason, &s.ErrorMessage,
