@@ -1,36 +1,46 @@
 /**
- * camera-snap.ts — Phase 2 U7 camera animation helpers.
+ * camera-snap.ts — camera animation helpers.
  *
  * Three pure helpers + a module-level register/request pair so any
  * component can ask the active leaf canvas to scroll-and-zoom to a
  * target bbox without prop-drilling a callback.
  *
- * Design choices, sourced from the camera-snap research (tldraw +
- * Excalidraw + Figma plugin API):
+ * Design choices:
  *
- *   - **Easing**: easeInOutCubic, the tldraw default. Pure JS,
- *     no spring physics. Matches `cubic-bezier(0.645, 0.045,
- *     0.355, 1.000)` if you'd write it in CSS.
- *   - **Duration**: 320ms. tldraw's de-facto default for camera
- *     animations. Long enough to read as "smooth," short enough
- *     to avoid feeling sluggish.
+ *   - **Integrator** (U2 update): critically-damped spring physics
+ *     via `spring.ts`. Replaces the original easeInOutCubic lerp.
+ *     Stiffness=180, damping=26 (~1% overshoot, settles ~250-300ms
+ *     for typical motions). Tunable per side-by-side with Figma —
+ *     constants live in `spring.ts` `DEFAULT_SPRING`. The
+ *     easeInOutCubic helper remains exported for any future caller
+ *     that wants pure cubic, but is no longer used internally.
+ *   - **Duration param**: `animateCamera` still accepts `durationMs`
+ *     in its signature for back-compat with existing callers, but
+ *     spring physics decides termination via settling thresholds.
+ *     A durationMs=0 still snaps immediately (instant onTick + onDone)
+ *     to preserve that behavior.
  *   - **Padding**: 40px inset on each side (tldraw `inset` default).
  *   - **Zoom math**: `min((vp.w - 2*pad) / bbox.w, (vp.h - 2*pad) /
  *     bbox.h)` clamped to `[MIN_ZOOM, maxZoom]`. Excalidraw's
  *     `actionCanvas.tsx` formula.
  *   - **Max zoom**: cap at 1.0 (100%) so a tiny atomic doesn't fill
  *     the screen — Excalidraw's `fitToViewport: false` pattern.
- *   - **No spring overshoot**: pure cubic, no bounce. Spring would
- *     fit "playful" surfaces; inspect mode wants "precise."
  *   - **Interrupt on input**: any pointer/wheel event during the
  *     animation calls cancelToken.cancel() and the camera stays at
- *     the last lerped position. No snap-back.
+ *     the last spring-integrated position. No snap-back.
  *
  * The user-decision (2026-05-09) gates the trigger surface:
  * keyboard / inspector-button only, never on canvas click. Clicks
  * shouldn't auto-snap because adjacent atomics get clicked
  * frequently and the disorientation isn't worth it.
  */
+
+import {
+  cameraSpringSettled,
+  DEFAULT_SPRING,
+  springStep,
+  type SpringParams,
+} from "./spring";
 
 export interface SnapBBox {
   x: number;
@@ -126,16 +136,26 @@ export interface CancelToken {
 }
 
 /**
- * animateCamera — rAF-driven lerp from `from` to `to` over `durationMs`
- * via easeInOutCubic. On each frame, calls `onTick(state)` so the
- * caller can write the camera ref + flush the DOM transform. Calls
- * `onDone()` on natural completion (NOT on cancellation).
+ * animateCamera — rAF-driven spring integration from `from` to `to`.
+ * On each frame, advances three independent springs (x, y, z) toward
+ * the target via semi-implicit Euler (see spring.ts) and calls
+ * `onTick(state)` so the caller can write the camera ref + flush the
+ * DOM transform. Calls `onDone()` once all three axes settle (NOT on
+ * cancellation).
+ *
+ * The `durationMs` parameter is retained in the signature for
+ * back-compat with the original easeInOutCubic API. A value of 0
+ * preserves the original "snap instantly" semantic: onTick fires once
+ * with the target, then onDone fires immediately. Any positive value
+ * is treated as a hint — spring physics decides actual termination
+ * based on settling thresholds (see spring.ts `springSettled`).
  *
  * Returns a CancelToken; cancel() halts the animation at the next
- * frame boundary, leaving the camera at the last lerped position.
+ * frame boundary, leaving the camera at the last integrated position.
  *
- * Pure rAF — no spring physics, no overshoot. Time provider is
- * injectable for tests (defaults to performance.now + rAF).
+ * Time provider is injectable for tests (defaults to performance.now
+ * + rAF). Tests can drive the integrator deterministically by
+ * supplying their own now/raf pair.
  */
 export function animateCamera(
   from: CameraState,
@@ -147,6 +167,8 @@ export function animateCamera(
     now?: () => number;
     raf?: (cb: (ts: number) => void) => unknown;
     cancelRaf?: (handle: unknown) => void;
+    /** Override spring tuning (test-only — defaults to DEFAULT_SPRING). */
+    spring?: SpringParams;
   },
 ): CancelToken {
   const now = deps?.now ?? (() => performance.now());
@@ -160,23 +182,87 @@ export function animateCamera(
 
   let cancelled = false;
   let handle: unknown = null;
-  const start = now();
+
+  // durationMs=0 short-circuit preserves the original API contract:
+  // the test at camera-snap.vitest.ts pins this behavior, and callers
+  // (existing snap-to-fit, future U3 keymap actions) rely on it for
+  // "jump without animation" cases.
+  if (durationMs === 0) {
+    handle = raf(() => {
+      if (cancelled) return;
+      onTick({ x: to.x, y: to.y, z: to.z });
+      onDone?.();
+    });
+    return {
+      cancel: () => {
+        cancelled = true;
+        if (handle != null) cancelRaf(handle);
+      },
+      isCancelled: () => cancelled,
+    };
+  }
+
+  const springParams = deps?.spring ?? DEFAULT_SPRING;
+
+  // Three independent springs (no cross-coupling between axes).
+  // Initial velocity is 0 — callers pass start state via `from`, not
+  // an in-flight velocity. (If U4's selection-implies-camera ever
+  // needs hand-off-with-velocity, the deps interface can grow an
+  // `initialVelocity` field.)
+  let stateX = { value: from.x, velocity: 0 };
+  let stateY = { value: from.y, velocity: 0 };
+  let stateZ = { value: from.z, velocity: 0 };
+
+  // Track previous tick time to compute dt per frame. Initialize to
+  // `now()` so the first tick has dt=0 (no integration yet — just emit
+  // the start state). Subsequent ticks integrate against real elapsed.
+  let prevTime = now();
+  // Emit the starting position synchronously-ish on the first rAF
+  // so consumers see {value === from} before the spring takes over.
+  let isFirstTick = true;
 
   const tick = (): void => {
     if (cancelled) return;
-    const elapsed = now() - start;
-    const t = durationMs > 0 ? Math.min(1, elapsed / durationMs) : 1;
-    const e = easeInOutCubic(t);
-    const state: CameraState = {
-      x: from.x + (to.x - from.x) * e,
-      y: from.y + (to.y - from.y) * e,
-      z: from.z + (to.z - from.z) * e,
-    };
-    onTick(state);
-    if (t >= 1) {
+
+    const t = now();
+    const dtSec = Math.max(0, (t - prevTime) / 1000);
+    prevTime = t;
+
+    if (isFirstTick) {
+      // First tick: emit the start position, accumulate no integration
+      // step. Matches the prior lerp behavior where t=0 produced `from`.
+      isFirstTick = false;
+      onTick({ x: stateX.value, y: stateY.value, z: stateZ.value });
+      handle = raf(tick);
+      return;
+    }
+
+    // Integrate each axis independently.
+    stateX = springStep(stateX, to.x, springParams, dtSec);
+    stateY = springStep(stateY, to.y, springParams, dtSec);
+    stateZ = springStep(stateZ, to.z, springParams, dtSec);
+
+    onTick({ x: stateX.value, y: stateY.value, z: stateZ.value });
+
+    // Use a tighter precision for the zoom axis: z is a multiplier
+    // (typical range 0.18-2.0), not pixels, so a "0.5 unit" velocity
+    // threshold from the x/y defaults would mean the zoom can settle
+    // mid-flight at a visibly-wrong scale. 0.001 unit / 0.01 unit/s
+    // is the camera-state precision for z.
+    if (
+      cameraSpringSettled({ x: stateX, y: stateY, z: stateZ }, to, springParams, {
+        value: 0.001,
+        velocity: 0.01,
+      })
+    ) {
+      // Snap to exact target on settle so the final tick is precise
+      // (spring asymptotes; without this the camera stops at
+      // target ± precision rather than at target).
+      onTick({ x: to.x, y: to.y, z: to.z });
       onDone?.();
       return;
     }
+
     handle = raf(tick);
   };
 
