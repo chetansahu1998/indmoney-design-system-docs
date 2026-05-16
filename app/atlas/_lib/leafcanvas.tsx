@@ -35,6 +35,14 @@ import {
   type CancelToken,
   type SnapBBox,
 } from "./leafcanvas-v2/camera-snap";
+// U1 — chrome-layer foundation. setCamera mirrors camRef writes to a
+// module-level signal so the screen-space chrome layer can subscribe
+// and re-paint without prop-drilling. invalidateAll wipes any rects
+// the previous leaf's spatial-store accumulated; the new leaf
+// re-populates lazily from its canonical_trees (U4 work).
+import { setCamera } from "./leafcanvas-v2/camera-state";
+import { invalidateAll as invalidateSpatialStore } from "./leafcanvas-v2/spatial-store";
+import { ChromeLayer } from "./leafcanvas-v2/chrome-layer";
 
 // ─── Loose model types ──────────────────────────────────────────────────
 // These describe only the fields this file reads. The upstream brain /
@@ -176,6 +184,11 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
       stage.style.backgroundPosition = `calc(50% - ${c.x * c.z}px) calc(50% - ${c.y * c.z}px)`;
     }
     setLeafZoom(c.z);
+    // U1 — mirror camRef into the module-level camera-state signal so
+    // the chrome layer (mounted below as sibling of .lc-world) can
+    // project world-rects to screen-coords on its own rAF tick. Dedup
+    // happens inside setCamera; this call is cheap.
+    setCamera({ x: c.x, y: c.y, z: c.z });
     clog("camera", "apply", { x: c.x, y: c.y, z: c.z, hasWorld: !!world });
   }, []);
 
@@ -246,6 +259,20 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
     const off = registerSnapTarget(snapToBBox);
     return off;
   }, [snapToBBox]);
+
+  // U1 — spatial-store reset on leaf swap. The spatial-store accumulates
+  // nodeId→worldRect entries scoped by screenID; without an explicit
+  // reset, rects from a previously-open leaf would leak into the next
+  // leaf's rect lookups (different leaves often share figmaNodeIDs).
+  // Mount fires invalidateAll once so we start clean; unmount fires it
+  // again so the chrome layer of the next leaf doesn't paint against
+  // stale entries while its own canonical_trees are still hydrating.
+  useEffect(() => {
+    invalidateSpatialStore();
+    return () => {
+      invalidateSpatialStore();
+    };
+  }, [leaf?.id]);
 
   // Debounced React-state sync — fires when the gesture-tracker
   // reports settle (~150 ms after the last wheel/pan event). Updates
@@ -629,6 +656,13 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
             );
           })}
         </div>
+        {/* U1 — screen-space chrome layer. Sibling of .lc-world so it
+            stays outside the camera transform: selection rings, hover
+            outlines, padding/gap bands, distance lines, breadcrumb,
+            and dimension chips all render at fixed pixel size. Paint
+            logic lands in U4/U5/U6/U10; U1 mounts the SVG skeleton +
+            rAF loop driver. */}
+        <ChromeLayer leafID={leaf?.id ?? "unknown"} />
       </div>
 
       {/* Bottom-left zoom & nav */}

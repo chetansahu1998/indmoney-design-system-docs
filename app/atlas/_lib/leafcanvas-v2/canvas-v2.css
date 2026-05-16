@@ -136,6 +136,51 @@
     url("/fonts/basier-circle/BasierCircle-Bold.ttf") format("truetype");
 }
 
+/* ── U1: Figma Dev Mode color tokens ──────────────────────────
+   Selection / hover rings paint at #0d99ff (Figma's signature
+   selection blue). Padding bands use magenta (Figma renders them
+   as ~8% magenta fills over the inner padding region). Gap fills
+   reuse the selection blue. Distance lines (U6) use Figma's
+   vermillion. Hover ring opacity reduced so a selected-and-hovered
+   frame reads as "selected" first.
+
+   Scoped to :root so the chrome layer (which mounts inside .lc-stage,
+   sibling of .lc-world) and any future overlay can pull the same
+   value. Vars are prefixed --lcv2-* to namespace against the broader
+   app theme tokens. */
+:root {
+  --lcv2-selection: #0d99ff;
+  --lcv2-hover: #0d99ff;
+  --lcv2-hover-opacity: 0.6;
+  --lcv2-padding: #ff00ff;
+  --lcv2-gap: #0d99ff;
+  --lcv2-distance: #f24822;
+}
+
+/* ── U1: chrome layer (screen-space SVG sibling of .lc-world) ──
+   Hosts selection rings, hover outlines, padding bands, gap fills,
+   distance lines, marquee rect, breadcrumb chip, dimension chip.
+   Sits OUTSIDE the world transform so 2px outlines stay 2px at any
+   camera zoom; padding bands stay legible at 0.18× through 32×.
+
+   Z-index 50 places it ABOVE world content (no z-index, base layer)
+   and BELOW the lasso rect (90) and bulk-select panel (200).
+   pointer-events:none — never swallows clicks; the user clicks
+   through to the frame content underneath.
+
+   overflow:visible because the breadcrumb chip and dimension chip
+   may render at the viewport edge slightly outside the stage's
+   geometric bounds. */
+.leafcv2-chrome-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 50;
+  overflow: visible;
+}
+
 /* ── Frame wrapper (wraps each per-frame walker output) ───── */
 
 .leafcv2-frame {
