@@ -31,6 +31,9 @@ export interface SectionInspectSubFlow {
   // Kept optional here so a future server-side addition flows through.
   prototype_title?: string | null;
   has_figma_section: boolean;
+  // U1 (plan 2026-05-17-004): present when has_figma_section is true.
+  // Threaded down to <FrameThumbnail> for real-PNG rendering.
+  figma_file_key?: string;
 }
 
 export interface DRDSummary {

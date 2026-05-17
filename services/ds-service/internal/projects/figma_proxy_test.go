@@ -1,13 +1,17 @@
 package projects
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/auth"
 )
 
 // Phase 5.2 P4 — Figma proxy tests.
@@ -168,3 +172,202 @@ func TestFigmaCacheKey_StableAcrossInputs(t *testing.T) {
 // Note: the handler uses io.ReadAll on the request body which is fine
 // for GET (no body); the test crafts the request via requestWithClaims
 // which wires the claims context the handler reads via ctxKeyClaims.
+
+// ─── U1 (plan 2026-05-17-004) — HandleFigmaFramePNG tests ───────────────
+
+// fakeFigmaImageURLFetcher is a deterministic FigmaImageURLFetcher used in
+// HandleFigmaFramePNG tests. Tracks call count so the cache-hit test can
+// assert the second request didn't hit Figma.
+type fakeFigmaImageURLFetcher struct {
+	calls    int
+	response map[string]string
+	err      error
+}
+
+func (f *fakeFigmaImageURLFetcher) GetImages(ctx context.Context, fileKey string, nodeIDs []string, format string, scale int) (map[string]string, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.response, nil
+}
+
+// fakeFigmaByteFetcher returns canned bytes for the signed-URL fetch.
+type fakeFigmaByteFetcher struct {
+	calls int
+	bytes []byte
+	err   error
+}
+
+func (f *fakeFigmaByteFetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.bytes, nil
+}
+
+// newPNGServerWithStubs returns a *Server wired with the two stubbable
+// FigmaImage* deps + a real AssetTokenSigner for the asset-token paths.
+func newPNGServerWithStubs(t *testing.T) (*Server, *fakeFigmaImageURLFetcher, *fakeFigmaByteFetcher, string, string) {
+	t.Helper()
+	srv, tenantID, userID, _, _ := newTestServer(t)
+
+	// Reset the PNG cache so cross-test pollution doesn't fake a "hit".
+	figmaPNGProxy = &figmaPNGCache{ttl: 5 * time.Minute, m: map[string]figmaPNGCacheEntry{}}
+	figmaProxyLimiter = &figmaRateLimiter{buckets: map[string]*figmaBucket{}}
+
+	urls := &fakeFigmaImageURLFetcher{
+		response: map[string]string{"1:23": "https://figma.s3/png/abc"},
+	}
+	bytesFetcher := &fakeFigmaByteFetcher{bytes: []byte("\x89PNG\r\n\x1a\nFAKE")}
+	signer, err := auth.NewAssetTokenSigner(bytes32("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatalf("signer: %v", err)
+	}
+	srv.deps.FigmaImageURLs = urls
+	srv.deps.FigmaImageBytes = bytesFetcher
+	srv.deps.AssetSigner = signer
+	srv.deps.Log = slog.Default()
+	return srv, urls, bytesFetcher, tenantID, userID
+}
+
+func bytes32(s string) []byte {
+	b := make([]byte, 32)
+	copy(b, s)
+	return b
+}
+
+func TestHandleFigmaFramePNG_HappyPathWithAssetToken(t *testing.T) {
+	srv, urls, bytesFetcher, tenantID, _ := newPNGServerWithStubs(t)
+	tok := srv.deps.AssetSigner.Mint(tenantID, FigmaFramePNGAssetID("FILEKEY", "1:23", 1), time.Minute)
+	r := requestWithClaims(http.MethodGet,
+		"/v1/figma/frame-png?file_key=FILEKEY&node_id=1:23&scale=1&tenant="+tenantID+"&at="+tok,
+		nil, nil) // no claims — the asset-token path is browser-image-tag style
+	w := httptest.NewRecorder()
+	srv.HandleFigmaFramePNG(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("Content-Type") != "image/png" {
+		t.Errorf("content-type: %q", w.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(w.Body.String(), "FAKE") {
+		t.Errorf("body missing FAKE bytes: %q", w.Body.String())
+	}
+	if urls.calls != 1 || bytesFetcher.calls != 1 {
+		t.Errorf("expected 1 url + 1 bytes call, got urls=%d bytes=%d", urls.calls, bytesFetcher.calls)
+	}
+}
+
+func TestHandleFigmaFramePNG_CacheHitSecondRequest(t *testing.T) {
+	srv, urls, bytesFetcher, tenantID, _ := newPNGServerWithStubs(t)
+	tok := srv.deps.AssetSigner.Mint(tenantID, FigmaFramePNGAssetID("FILEKEY", "1:23", 1), time.Minute)
+	url := "/v1/figma/frame-png?file_key=FILEKEY&node_id=1:23&scale=1&tenant=" + tenantID + "&at=" + tok
+
+	// First request — cold path.
+	w1 := httptest.NewRecorder()
+	srv.HandleFigmaFramePNG(w1, requestWithClaims(http.MethodGet, url, nil, nil))
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first request: expected 200, got %d body=%s", w1.Code, w1.Body.String())
+	}
+
+	// Second request — should be a cache hit, no Figma call.
+	w2 := httptest.NewRecorder()
+	srv.HandleFigmaFramePNG(w2, requestWithClaims(http.MethodGet, url, nil, nil))
+	if w2.Code != http.StatusOK {
+		t.Fatalf("second request: expected 200, got %d body=%s", w2.Code, w2.Body.String())
+	}
+	if urls.calls != 1 {
+		t.Errorf("expected 1 url call after cache hit, got %d", urls.calls)
+	}
+	if bytesFetcher.calls != 1 {
+		t.Errorf("expected 1 bytes call after cache hit, got %d", bytesFetcher.calls)
+	}
+}
+
+func TestHandleFigmaFramePNG_InvalidNodeIDReturns400(t *testing.T) {
+	srv, _, _, tenantID, userID := newPNGServerWithStubs(t)
+	claims := &auth.Claims{Sub: userID, Tenants: []string{tenantID}}
+	r := requestWithClaims(http.MethodGet,
+		"/v1/figma/frame-png?file_key=FILEKEY&node_id=not-a-node&scale=1",
+		nil, claims)
+	w := httptest.NewRecorder()
+	srv.HandleFigmaFramePNG(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleFigmaFramePNG_MissingAuthReturns401(t *testing.T) {
+	srv, _, _, _, _ := newPNGServerWithStubs(t)
+	r := requestWithClaims(http.MethodGet,
+		"/v1/figma/frame-png?file_key=FILEKEY&node_id=1:23&scale=1",
+		nil, nil) // no claims, no ?at=
+	w := httptest.NewRecorder()
+	srv.HandleFigmaFramePNG(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleFigmaFramePNG_CrossTenantTokenReturns401(t *testing.T) {
+	srv, _, _, tenantID, _ := newPNGServerWithStubs(t)
+	// Mint a token for a DIFFERENT tenant, then submit it claiming the
+	// request tenant is `tenantID`. The MAC must fail verify.
+	otherTok := srv.deps.AssetSigner.Mint("OTHER_TENANT",
+		FigmaFramePNGAssetID("FILEKEY", "1:23", 1), time.Minute)
+	r := requestWithClaims(http.MethodGet,
+		"/v1/figma/frame-png?file_key=FILEKEY&node_id=1:23&scale=1&tenant="+tenantID+"&at="+otherTok,
+		nil, nil)
+	w := httptest.NewRecorder()
+	srv.HandleFigmaFramePNG(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleFigmaFramePNG_FigmaRateLimitMapsTo429(t *testing.T) {
+	srv, urls, _, tenantID, _ := newPNGServerWithStubs(t)
+	urls.err = errors.New("figma API /v1/images: 429 — Too Many Requests")
+	tok := srv.deps.AssetSigner.Mint(tenantID, FigmaFramePNGAssetID("FILEKEY", "1:23", 1), time.Minute)
+	r := requestWithClaims(http.MethodGet,
+		"/v1/figma/frame-png?file_key=FILEKEY&node_id=1:23&scale=1&tenant="+tenantID+"&at="+tok,
+		nil, nil)
+	w := httptest.NewRecorder()
+	srv.HandleFigmaFramePNG(w, r)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d body=%s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("Retry-After") == "" {
+		t.Errorf("expected Retry-After header")
+	}
+}
+
+func TestHandleFigmaFramePNG_FigmaErrorMapsToBadGateway(t *testing.T) {
+	srv, urls, _, tenantID, _ := newPNGServerWithStubs(t)
+	urls.err = errors.New("figma images api err: file_not_found")
+	tok := srv.deps.AssetSigner.Mint(tenantID, FigmaFramePNGAssetID("FILEKEY", "1:23", 1), time.Minute)
+	r := requestWithClaims(http.MethodGet,
+		"/v1/figma/frame-png?file_key=FILEKEY&node_id=1:23&scale=1&tenant="+tenantID+"&at="+tok,
+		nil, nil)
+	w := httptest.NewRecorder()
+	srv.HandleFigmaFramePNG(w, r)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleFigmaFramePNG_NoImageInResponseReturns404(t *testing.T) {
+	srv, urls, _, tenantID, _ := newPNGServerWithStubs(t)
+	urls.response = map[string]string{} // no entry for our node id
+	tok := srv.deps.AssetSigner.Mint(tenantID, FigmaFramePNGAssetID("FILEKEY", "1:23", 1), time.Minute)
+	r := requestWithClaims(http.MethodGet,
+		"/v1/figma/frame-png?file_key=FILEKEY&node_id=1:23&scale=1&tenant="+tenantID+"&at="+tok,
+		nil, nil)
+	w := httptest.NewRecorder()
+	srv.HandleFigmaFramePNG(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", w.Code, w.Body.String())
+	}
+}

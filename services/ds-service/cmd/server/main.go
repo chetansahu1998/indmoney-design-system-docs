@@ -440,6 +440,15 @@ func main() {
 		PipelineFactory:  pipelineFactory,
 		FigmaPATResolver: figmaPATResolver,
 		AssetSigner:      assetSigner,
+		// U1 (plan 2026-05-17-004) — frame-PNG proxy plumbing. Reuses
+		// AssetExporter's URL fetcher (which already encapsulates the
+		// per-tenant PAT resolution via ctx-stashed tenant id) and a
+		// dedicated HTTPAssetByteFetcher with a tighter timeout — frame
+		// thumbnails are 50-200 KB so a 30s timeout is generous.
+		FigmaImageURLs: assetExporter.URLs,
+		FigmaImageBytes: &projects.HTTPAssetByteFetcher{
+			Client: &http.Client{Timeout: 30 * time.Second},
+		},
 		AssetExporter:     assetExporter,
 		ImageFillResolver: imageFillResolver,
 		PreviewPyramid:    previewPyramid,
@@ -1239,6 +1248,15 @@ func (s *server) routes(mux *http.ServeMux) {
 	// scoped. Powers the DRD's figmaLink custom block thumbnails.
 	mux.HandleFunc("GET /v1/figma/frame-metadata",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaFrameMetadata)))
+
+	// U1 (plan 2026-05-17-004) — Figma frame-PNG proxy. The mint route is
+	// JWT-only; the bytes route accepts ?at= via the middleware's asset-
+	// token bypass (path suffix /frame-png is in pathAllowsTokenQueryParam
+	// below — keep that list and this registration in sync).
+	mux.HandleFunc("POST /v1/figma/frame-png-token",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleMintFigmaFramePNGToken)))
+	mux.HandleFunc("GET /v1/figma/frame-png",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFigmaFramePNG)))
 
 	// Phase 5 U1 — DRD collab. Public ticket endpoint (auth-gated)
 	// + the loopback-only auth/load/snapshot bridge endpoints the

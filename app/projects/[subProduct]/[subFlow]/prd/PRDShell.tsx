@@ -261,10 +261,15 @@ export function PRDShell({ subProduct, subFlow }: Props) {
                   (r) => r.binding_status !== "orphaned",
                 )}
                 slug={fullSlug}
+                fileKey={state.data.sub_flow.figma_file_key}
               />
               <div className="prd-shell__view">
                 {tab === "wall" ? (
-                  <Wall data={state.data.wall} slug={fullSlug} />
+                  <Wall
+                    data={state.data.wall}
+                    slug={fullSlug}
+                    fileKey={state.data.sub_flow.figma_file_key}
+                  />
                 ) : (
                   <DocumentView
                     subProduct={subProduct}

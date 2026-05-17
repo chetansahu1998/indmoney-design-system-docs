@@ -173,6 +173,100 @@ var errFigmaNotFound = errors.New("figma: file or node not found")
 // figma proxy calls share it so connection reuse + timeouts apply.
 var figmaHTTPClient = &http.Client{Timeout: 8 * time.Second}
 
+// ─── U1 — frame-PNG byte proxy ──────────────────────────────────────────────
+//
+// HandleFigmaFramePNG (registered in cmd/server/main.go) accepts
+// ?file_key=<k>&node_id=<id>&scale=1|2 and returns PNG bytes proxied from
+// Figma's /v1/images endpoint. Used by the PRD viewer's Wall + FrameGrid so
+// the corkboard renders real thumbnails instead of placeholder glyphs.
+//
+// We don't 302 to Figma's pre-signed S3 URL because (a) it would leak the
+// signed URL into the browser's network panel and CDN logs, and (b) it
+// would short-circuit our 5-min cache for repeat scrolls.
+//
+// Cache axes: (tenant_id, file_key, node_id, scale). Stored as raw bytes +
+// content-type so a re-serve is a single map read + Write.
+
+// figmaPNGCacheEntry holds the bytes for a single (file_key, node_id, scale)
+// thumbnail. Pinned to the tenant via the cache key.
+type figmaPNGCacheEntry struct {
+	body        []byte
+	contentType string
+	at          time.Time
+}
+
+// figmaPNGCache mirrors figmaProxyCache's shape but keys on the bytes form.
+// Same TTL; same simple flat-map + RWMutex layout. The two caches stay
+// separate because the value types are different — combining them would
+// force every read site through a type-switch for no gain.
+type figmaPNGCache struct {
+	mu  sync.RWMutex
+	ttl time.Duration
+	m   map[string]figmaPNGCacheEntry
+}
+
+func (c *figmaPNGCache) get(key string) (figmaPNGCacheEntry, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e, ok := c.m[key]
+	if !ok {
+		return figmaPNGCacheEntry{}, false
+	}
+	if time.Since(e.at) > c.ttl {
+		return figmaPNGCacheEntry{}, false
+	}
+	return e, true
+}
+
+func (c *figmaPNGCache) set(key string, e figmaPNGCacheEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m[key] = e
+}
+
+// figmaPNGProxy is the singleton cache for HandleFigmaFramePNG. 5-min TTL
+// matches the figmaProxy metadata cache + Figma's documented S3 URL lifetime
+// (~30 min, we stay well under).
+var figmaPNGProxy = &figmaPNGCache{
+	ttl: 5 * time.Minute,
+	m:   map[string]figmaPNGCacheEntry{},
+}
+
+// figmaNodeIDRe matches the canonical Figma node id form ("X:Y") with
+// reasonable upper bounds on each component. Figma node ids are always two
+// non-negative integers separated by a colon; we accept up to 12 digits per
+// side which exceeds any real ID by orders of magnitude. The query string
+// also accepts the "X-Y" wire form (Figma's URL shape) — handlers normalise
+// before this check.
+var figmaNodeIDRe = regexp.MustCompile(`^[0-9]{1,12}:[0-9]{1,12}$`)
+
+// figmaFileKeyRe matches the canonical Figma file key — alphanumeric only,
+// no slashes / dots / brackets / etc. Figma's keys are ~22 chars but we
+// accept up to 64 for headroom on future formats.
+var figmaFileKeyRe = regexp.MustCompile(`^[a-zA-Z0-9]{1,64}$`)
+
+// FigmaFramePNGAssetTokenTTL — short-lived token validity for the
+// PRD viewer's thumbnail <img> tags. Matches the existing PNG-asset token
+// TTL pattern (auth.AssetTokenTTL = 60s). The viewer re-mints when a page
+// reloads; in-flight image loads finish well within 60s.
+//
+// 10 minutes here instead of 60s because the PRD viewer can sit open for a
+// while and lazy-load thumbnails as the wall scrolls — a 60s window would
+// force re-mints just to scroll an unchanged corkboard. The cache+TTL on
+// the bytes side caps the actual Figma exposure at 5 minutes regardless.
+const FigmaFramePNGAssetTokenTTL = 10 * time.Minute
+
+// FigmaFramePNGAssetID returns the opaque resource id baked into the asset
+// token's MAC. Re-uses auth.AssetTokenSigner (which is keyed (tenant_id,
+// resource_id, expires)) without inventing a new signer type — the resource
+// id slot was historically named "screen_id" but is content-agnostic.
+//
+// Format: "figma:<file_key>:<node_id>:<scale>". The scale is part of the
+// MAC so a token minted for scale=1 can't be replayed against scale=2.
+func FigmaFramePNGAssetID(fileKey, nodeID string, scale int) string {
+	return fmt.Sprintf("figma:%s:%s:%d", fileKey, nodeID, scale)
+}
+
 // ─── Phase 5.3 P2 — per-tenant rate limit ───────────────────────────────────
 //
 // A malicious tab embedding lots of Figma URLs could otherwise drain a

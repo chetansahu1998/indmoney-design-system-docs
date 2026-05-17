@@ -40,6 +40,11 @@ type drdReadSubFlow struct {
 	CanvasLifecycle string  `json:"canvas_lifecycle"`
 	PrototypeURL    *string `json:"prototype_url,omitempty"`
 	HasFigmaSection bool    `json:"has_figma_section"`
+	// FigmaFileKey is the bound section's Figma file key, surfaced so the
+	// PRD viewer's Wall + FrameGrid can build /v1/figma/frame-png URLs
+	// without an extra lookup. Empty when no section is bound.
+	// Plan 2026-05-17-004 / U1.
+	FigmaFileKey string `json:"figma_file_key,omitempty"`
 }
 
 type drdReadDRD struct {
@@ -379,6 +384,10 @@ func (sectionInspectTool) Invoke(ctx context.Context, deps Deps, args json.RawMe
 	if sf.FigmaSectionID != nil && *sf.FigmaSectionID != "" {
 		fileKey, err := deps.Repo.LookupFigmaSectionFileKey(ctx, *sf.FigmaSectionID)
 		if err == nil {
+			// U1 (plan 2026-05-17-004): expose the file_key so the PRD
+			// viewer's Wall + FrameGrid can build frame-png URLs without
+			// an extra lookup. Same resolution the frames listing below uses.
+			out.SubFlow.FigmaFileKey = fileKey
 			frames, err := deps.Repo.ListSectionFrames(ctx, fileKey, *sf.FigmaSectionID)
 			if err != nil {
 				return Result{}, fmt.Errorf("section.inspect: frames: %w", err)

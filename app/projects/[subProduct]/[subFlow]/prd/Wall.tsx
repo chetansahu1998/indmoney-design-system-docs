@@ -24,13 +24,27 @@
  */
 
 import type { WallResult, WallRow, BindingStatus } from "./types";
+import { FrameThumbnail } from "./FrameThumbnail";
+import { useFrameThumbTokens } from "./useFrameThumbToken";
 
 interface Props {
   data: WallResult;
   slug: string;
+  /** Figma file key for the bound section. When set, the wall renders real
+   *  PNG thumbnails via /api/figma/frame-png; when absent (no section
+   *  bound) the placeholder glyphs from v1 remain. */
+  fileKey?: string;
 }
 
-export function Wall({ data, slug }: Props) {
+export function Wall({ data, slug, fileKey }: Props) {
+  // Mint one asset token per frame node id. The hook batches the request
+  // on first render and refreshes when the wall data changes (e.g. SSE-
+  // triggered refetch). Empty fileKey short-circuits the hook so we don't
+  // hit the mint endpoint for pre-binding sub_flows.
+  const nodeIDs = data.frames
+    .map((r) => r.figma_node_id)
+    .filter((id): id is string => !!id);
+  const { tokenQSFor } = useFrameThumbTokens(fileKey, nodeIDs);
   if (data.frames.length === 0) {
     return (
       <div className="wall-empty">
@@ -103,7 +117,13 @@ export function Wall({ data, slug }: Props) {
 
       <section className="wall__grid">
         {live.map((row) => (
-          <WallCard key={cardKey(row)} row={row} slug={slug} />
+          <WallCard
+            key={cardKey(row)}
+            row={row}
+            slug={slug}
+            fileKey={fileKey}
+            tokenQS={tokenQSFor(row.figma_node_id)}
+          />
         ))}
       </section>
 
@@ -116,7 +136,13 @@ export function Wall({ data, slug }: Props) {
           </p>
           <div className="wall__grid">
             {orphans.map((row) => (
-              <WallCard key={cardKey(row)} row={row} slug={slug} />
+              <WallCard
+                key={cardKey(row)}
+                row={row}
+                slug={slug}
+                fileKey={fileKey}
+                tokenQS={tokenQSFor(row.figma_node_id)}
+              />
             ))}
           </div>
         </section>
@@ -179,12 +205,39 @@ function cardKey(row: WallRow): string {
 
 // ─── WallCard ──────────────────────────────────────────────────────────────
 
-function WallCard({ row, slug }: { row: WallRow; slug: string }) {
+function WallCard({
+  row,
+  slug,
+  fileKey,
+  tokenQS,
+}: {
+  row: WallRow;
+  slug: string;
+  fileKey?: string;
+  tokenQS: string;
+}) {
   const tone: BindingStatus = row.binding_status;
+  // Real thumbnails are only attempted when we have all three: the bound
+  // file key, a Figma node id (orphans have ""), and a freshly-minted
+  // asset token. Otherwise we fall back to the v1 placeholder glyph so
+  // the wall always renders something.
+  const canRenderRealThumb =
+    !!fileKey && !!row.figma_node_id && !!tokenQS;
   return (
     <article className={`card card--${tone}`}>
       <div className="card__thumb">
-        <span aria-hidden>{row.has_render ? "▣" : "□"}</span>
+        {canRenderRealThumb ? (
+          <FrameThumbnail
+            fileKey={fileKey!}
+            figmaNodeID={row.figma_node_id}
+            alt={row.frame_name || "frame"}
+            assetTokenQS={tokenQS}
+            width="100%"
+            height="100%"
+          />
+        ) : (
+          <span aria-hidden>{row.has_render ? "▣" : "□"}</span>
+        )}
       </div>
       <div className="card__head">
         <div className="card__name" title={row.frame_name || "(no frame name)"}>

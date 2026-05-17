@@ -17,6 +17,8 @@
 
 import type { Lifecycle, WallRow } from "./types";
 import { PrototypeCanvas } from "./PrototypeCanvas";
+import { FrameThumbnail } from "./FrameThumbnail";
+import { useFrameThumbTokens } from "./useFrameThumbToken";
 
 interface Props {
   lifecycle: Lifecycle;
@@ -26,6 +28,9 @@ interface Props {
   // live frames. Caller filters; we just render.
   frames: WallRow[];
   slug: string;
+  /** Figma file key for the bound section (U1 of plan 2026-05-17-004).
+   *  Threaded through to <FrameGrid> for real-PNG rendering. */
+  fileKey?: string;
 }
 
 export function CanvasShell({
@@ -34,6 +39,7 @@ export function CanvasShell({
   prototypeTitle,
   frames,
   slug,
+  fileKey,
 }: Props) {
   switch (lifecycle) {
     case "empty":
@@ -91,7 +97,7 @@ export function CanvasShell({
         />
       );
     case "design-shipped":
-      return <FrameGrid frames={frames} />;
+      return <FrameGrid frames={frames} fileKey={fileKey} />;
     default:
       // Defensive — surface the unknown lifecycle so future enum additions
       // are loud rather than silently rendering nothing.
@@ -109,14 +115,23 @@ export function CanvasShell({
 // full wall (with counts + binding badges) lives in Wall.tsx; this is the
 // canvas-y view: just the frames, in Figma section order.
 //
-// V1 limitation: no PNG thumbnails. The existing /v1/projects/{slug}/screens/
-// {id}/png endpoint is keyed by project_slug + screen UUID, not by
-// (sub_flow_slug, figma_node_id), so plugging it in would require either a
-// new endpoint or a lookup that maps figma_node_id → screen_id. Deferred
-// to a follow-up; the WallRow.has_render flag is surfaced so a viewer who
-// cares can verify renders exist.
+// U1 (plan 2026-05-17-004): real PNG thumbnails via /api/figma/frame-png.
+// FrameGrid mints one asset token per (file_key, node_id, scale=1) via
+// useFrameThumbTokens; <FrameThumbnail> falls back to the v1 placeholder
+// glyph until its token resolves so the canvas never renders blank.
 
-function FrameGrid({ frames }: { frames: WallRow[] }) {
+function FrameGrid({
+  frames,
+  fileKey,
+}: {
+  frames: WallRow[];
+  fileKey?: string;
+}) {
+  const nodeIDs = frames
+    .map((f) => f.figma_node_id)
+    .filter((id): id is string => !!id);
+  const { tokenQSFor } = useFrameThumbTokens(fileKey, nodeIDs);
+
   if (frames.length === 0) {
     return (
       <div className="frame-grid frame-grid--empty">
@@ -136,22 +151,37 @@ function FrameGrid({ frames }: { frames: WallRow[] }) {
   }
   return (
     <div className="frame-grid">
-      {frames.map((f) => (
-        <article
-          key={`${f.figma_node_id || f.frame_name}`}
-          className={`frame-grid__card frame-grid__card--${f.binding_status}`}
-        >
-          <div className="frame-grid__thumb">
-            <span aria-hidden>{f.has_render ? "▣" : "□"}</span>
-          </div>
-          <div className="frame-grid__name" title={f.frame_name}>
-            {f.frame_name}
-          </div>
-          <div className="frame-grid__badge">
-            {f.binding_status === "bound" ? "bound" : "untagged"}
-          </div>
-        </article>
-      ))}
+      {frames.map((f) => {
+        const tokenQS = tokenQSFor(f.figma_node_id);
+        const canRenderRealThumb = !!fileKey && !!f.figma_node_id && !!tokenQS;
+        return (
+          <article
+            key={`${f.figma_node_id || f.frame_name}`}
+            className={`frame-grid__card frame-grid__card--${f.binding_status}`}
+          >
+            <div className="frame-grid__thumb">
+              {canRenderRealThumb ? (
+                <FrameThumbnail
+                  fileKey={fileKey!}
+                  figmaNodeID={f.figma_node_id}
+                  alt={f.frame_name || "frame"}
+                  assetTokenQS={tokenQS}
+                  width="100%"
+                  height="100%"
+                />
+              ) : (
+                <span aria-hidden>{f.has_render ? "▣" : "□"}</span>
+              )}
+            </div>
+            <div className="frame-grid__name" title={f.frame_name}>
+              {f.frame_name}
+            </div>
+            <div className="frame-grid__badge">
+              {f.binding_status === "bound" ? "bound" : "untagged"}
+            </div>
+          </article>
+        );
+      })}
       <style jsx>{`
         .frame-grid {
           display: grid;

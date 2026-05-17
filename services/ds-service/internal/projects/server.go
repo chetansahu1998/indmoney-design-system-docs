@@ -99,6 +99,20 @@ type ServerDeps struct {
 	// can substitute a closure returning a fake PAT.
 	FigmaPATResolver func(ctx context.Context, tenantID string) (string, error)
 
+	// U1 (plan 2026-05-17-004) — FigmaImageURLs is the abstract URL-fetch
+	// hook the new /v1/figma/frame-png proxy uses. Same interface
+	// AssetExporter consumes (asset_export.go's FigmaImageURLFetcher);
+	// production wires the closure-per-tenant variant that resolves the
+	// PAT, builds a client.Client, and calls GetImages. nil disables the
+	// thumbnail endpoint (returns 503).
+	FigmaImageURLs FigmaImageURLFetcher
+
+	// FigmaImageBytes downloads pre-signed Figma CDN URLs to bytes for the
+	// frame-PNG proxy. Reuses HTTPAssetByteFetcher in production; tests
+	// substitute a closure returning canned bytes without hitting S3.
+	// nil disables the thumbnail endpoint (returns 503).
+	FigmaImageBytes AssetByteFetcher
+
 	// AssetSigner mints + verifies short-lived URL tokens for the PNG /
 	// KTX2 routes (audit Pr8 / D1). nil disables the asset-token path —
 	// the legacy `?token=<jwt>` query-string fallback continues to work.
@@ -2772,6 +2786,292 @@ func (s *Server) HandleFigmaFrameMetadata(w http.ResponseWriter, r *http.Request
 	figmaProxy.set(cacheKey, parsed)
 	writeJSON(w, http.StatusOK, parsed)
 }
+
+// ─── U1 (plan 2026-05-17-004) — frame-PNG proxy ──────────────────────────
+//
+// Two endpoints work together so the PRD viewer's Wall + FrameGrid can
+// render real Figma frame thumbnails:
+//
+//   1. POST /v1/figma/frame-png-token (JWT auth) — mints a short-lived
+//      asset token bound to (tenant, file_key, node_id, scale). Returns the
+//      token + the full URL the <img> tag should hit.
+//
+//   2. GET /v1/figma/frame-png?file_key=…&node_id=…&scale=…&at=<token>
+//      (asset-token auth via middleware bypass + handler-side verify) —
+//      streams PNG bytes proxied through Figma's /v1/images endpoint, 5-min
+//      cached by (tenant, file_key, node_id, scale).
+//
+// The split mirrors HandleMintAssetToken + HandleScreenPNG: <img> tags
+// can't carry an Authorization header, so the mint endpoint is JWT-protected
+// and the PNG endpoint accepts the asset token via ?at=. The token's MAC
+// binds tenant + resource, so a token minted for one (file_key, node_id)
+// pair can't be replayed against another.
+
+// frameAssetIDFromToken reconstructs the asset-id form used by the signer
+// from request query params. Returns "" when any required param is missing
+// or invalid; the caller maps that to 400.
+func frameAssetIDFromQuery(fileKey, nodeID string, scale int) string {
+	if !figmaFileKeyRe.MatchString(fileKey) || !figmaNodeIDRe.MatchString(nodeID) {
+		return ""
+	}
+	if scale != 1 && scale != 2 {
+		return ""
+	}
+	return FigmaFramePNGAssetID(fileKey, nodeID, scale)
+}
+
+// HandleMintFigmaFramePNGToken serves POST /v1/figma/frame-png-token.
+// JWT-authed; mints a short-lived asset token bound to (tenant, file_key,
+// node_id, scale) and returns the full URL the viewer's <img> tag should
+// load. The viewer mints one token per Wall mount (or per refresh) and
+// reuses it across every thumbnail on the page.
+//
+// Request body (JSON):  { "file_key": "...", "node_id": "1:23", "scale": 1 }
+// Response:             { "url": "/v1/figma/frame-png?...&at=...", "expires_in": <secs> }
+func (s *Server) HandleMintFigmaFramePNGToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	if s.deps.AssetSigner == nil {
+		writeJSONErr(w, http.StatusServiceUnavailable, "asset_signer", "not configured")
+		return
+	}
+	var body struct {
+		FileKey string `json:"file_key"`
+		NodeID  string `json:"node_id"`
+		Scale   int    `json:"scale"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_body", err.Error())
+		return
+	}
+	// Default scale=1 so callers can omit the field.
+	if body.Scale == 0 {
+		body.Scale = 1
+	}
+	// Normalise "X-Y" → "X:Y" so callers passing the Figma URL form work.
+	body.NodeID = strings.ReplaceAll(body.NodeID, "-", ":")
+	assetID := frameAssetIDFromQuery(body.FileKey, body.NodeID, body.Scale)
+	if assetID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_params",
+			"file_key must be alphanumeric; node_id must match ^[0-9]+:[0-9]+$; scale must be 1 or 2")
+		return
+	}
+	token := s.deps.AssetSigner.Mint(tenantID, assetID, FigmaFramePNGAssetTokenTTL)
+	// The tenant_id is baked into the token's MAC, but Verify needs it as
+	// an input — we surface it via ?tenant= so the browser's <img> tag
+	// can carry the verifier. The MAC's constant-time check means a wrong
+	// ?tenant= value fails Verify; there is no oracle because the verify
+	// path returns the same 401 either way.
+	url := fmt.Sprintf(
+		"/v1/figma/frame-png?file_key=%s&node_id=%s&scale=%d&tenant=%s&at=%s",
+		body.FileKey, body.NodeID, body.Scale, tenantID, token,
+	)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"url":        url,
+		"expires_in": int(FigmaFramePNGAssetTokenTTL.Seconds()),
+	})
+}
+
+// HandleFigmaFramePNG serves GET /v1/figma/frame-png. Accepts EITHER an
+// Authorization Bearer JWT (for server-side renders / curl) OR a ?at=<token>
+// asset token (for inline <img src=> in the PRD viewer). On a cache miss,
+// resolves the tenant's Figma PAT, calls /v1/images, downloads the bytes,
+// caches them, and serves them as image/png. 5-min cache keyed by
+// (tenant, file_key, node_id, scale).
+func (s *Server) HandleFigmaFramePNG(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	if s.deps.FigmaImageURLs == nil || s.deps.FigmaImageBytes == nil {
+		writeJSONErr(w, http.StatusServiceUnavailable, "figma_proxy_unconfigured",
+			"FigmaImageURLs/FigmaImageBytes not wired")
+		return
+	}
+
+	q := r.URL.Query()
+	fileKey := q.Get("file_key")
+	nodeID := strings.ReplaceAll(q.Get("node_id"), "-", ":")
+	scale := 1
+	if s := q.Get("scale"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err == nil {
+			scale = n
+		}
+	}
+	assetID := frameAssetIDFromQuery(fileKey, nodeID, scale)
+	if assetID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "invalid_params",
+			"file_key must be alphanumeric; node_id must match ^[0-9]+:[0-9]+$; scale must be 1 or 2")
+		return
+	}
+
+	// Auth: prefer ?at=<asset_token> (browser <img> tag path). Fall back to
+	// JWT claims (the middleware already validated them when ?at= is empty).
+	// Cross-tenant tokens fail the MAC check below.
+	var tenantID string
+	at := q.Get("at")
+	if at != "" {
+		if s.deps.AssetSigner == nil {
+			writeJSONErr(w, http.StatusServiceUnavailable, "asset_signer", "not configured")
+			return
+		}
+		// The asset token's MAC binds (tenant, asset_id). Without a known
+		// tenant we'd have to brute-force across every tenant the resource
+		// might belong to — that's an existence oracle. Since the figma
+		// file_key isn't a per-tenant primary key in the DB (a single Figma
+		// file can be referenced by multiple sub_flows across tenants), we
+		// instead require the caller to pass `&tenant=` ONLY when the
+		// JWT path can't supply it. Practical compromise: when ?at= is
+		// present, the JWT middleware bypass kicked in (see
+		// pathAllowsTokenQueryParam + the ?at= branch in requireAuth), so
+		// we need an explicit tenant binding. Read it from the token's
+		// own MAC-tested binding by trying the request claims first; if
+		// claims are present (e.g. a curl client passed both Bearer + ?at=)
+		// we use that; otherwise we accept a ?tenant= hint and verify.
+		claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+		if claims != nil {
+			tenantID = s.resolveTenantID(claims)
+		}
+		if tenantID == "" {
+			// Browser-side <img> path: claims aren't present (middleware
+			// bypassed because ?at= was set). The mint endpoint baked the
+			// caller's tenant_id into the MAC, so we read it back from the
+			// ?tenant= query string and validate via Verify. Cross-tenant
+			// tokens fail the MAC check (Verify uses constant-time hmac).
+			tenantID = q.Get("tenant")
+		}
+		if tenantID == "" {
+			writeJSONErr(w, http.StatusUnauthorized, "missing_tenant",
+				"asset-token requests must carry ?tenant= or a JWT with tenant claim")
+			return
+		}
+		if err := s.deps.AssetSigner.Verify(at, tenantID, assetID); err != nil {
+			writeJSONErr(w, http.StatusUnauthorized, "asset_token", err.Error())
+			return
+		}
+	} else {
+		claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+		if claims == nil {
+			writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+			return
+		}
+		tenantID = s.resolveTenantID(claims)
+		if tenantID == "" {
+			writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+			return
+		}
+	}
+
+	cacheKey := figmaCacheKeyWithFormat(tenantID, fileKey, nodeID, "png", scale)
+	if cached, ok := figmaPNGProxy.get(cacheKey); ok {
+		serveFramePNGBytes(w, cached.body, cached.contentType)
+		return
+	}
+
+	// Per-tenant rate limit on the URL-fetch path. Shared bucket with the
+	// frame-metadata proxy + asset-export URL fetcher so an over-eager
+	// viewer can't drain the tenant's Figma budget.
+	if !figmaProxyLimiter.allow(tenantID, time.Now()) {
+		w.Header().Set("Retry-After", "1")
+		writeJSONErr(w, http.StatusTooManyRequests, "rate_limited",
+			"figma proxy: too many requests for this tenant")
+		return
+	}
+
+	// Fetch the signed CDN URL from Figma's /v1/images.
+	urlMap, err := s.deps.FigmaImageURLs.GetImages(
+		ctxWithTenant(r.Context(), tenantID),
+		fileKey, []string{nodeID}, "png", scale,
+	)
+	if err != nil {
+		if isFigmaRateLimit(err) {
+			w.Header().Set("Retry-After", retryAfterSecondsFor(err))
+			writeJSONErr(w, http.StatusTooManyRequests, "figma_rate_limited", err.Error())
+			return
+		}
+		s.deps.Log.Warn("figma frame-png url fetch failed",
+			"err", err, "tenant", tenantID, "file_key", fileKey, "node_id", nodeID)
+		writeJSONErr(w, http.StatusBadGateway, "figma_upstream", err.Error())
+		return
+	}
+	signedURL, ok := urlMap[nodeID]
+	if !ok || signedURL == "" {
+		writeJSONErr(w, http.StatusNotFound, "no_image", "figma returned no image for this node")
+		return
+	}
+
+	// Download the bytes.
+	body, err := s.deps.FigmaImageBytes.Fetch(r.Context(), signedURL)
+	if err != nil {
+		s.deps.Log.Warn("figma frame-png byte download failed",
+			"err", err, "tenant", tenantID, "file_key", fileKey, "node_id", nodeID)
+		writeJSONErr(w, http.StatusBadGateway, "figma_cdn", err.Error())
+		return
+	}
+	if len(body) == 0 {
+		writeJSONErr(w, http.StatusBadGateway, "figma_empty", "empty png body")
+		return
+	}
+
+	figmaPNGProxy.set(cacheKey, figmaPNGCacheEntry{
+		body:        body,
+		contentType: "image/png",
+		at:          time.Now(),
+	})
+	serveFramePNGBytes(w, body, "image/png")
+}
+
+func serveFramePNGBytes(w http.ResponseWriter, body []byte, contentType string) {
+	if contentType == "" {
+		contentType = "image/png"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", "inline")
+	_, _ = w.Write(body)
+}
+
+// ctxWithTenant stamps the tenant_id into ctx using the AssetExporter's
+// existing tenant-context key, so the production FigmaImageURLs closure
+// (which calls AssetExportTenantFromCtx) can find it. The fallback path
+// (tests with a stub fetcher) is unaffected — stubs don't read ctx.
+func ctxWithTenant(ctx context.Context, tenantID string) context.Context {
+	return WithAssetExportTenant(ctx, tenantID)
+}
+
+// isFigmaRateLimit reports whether err originated from Figma's /v1/images
+// 429 path. The client package's APIError surface exposes this via
+// IsRateLimit(); to avoid importing the client package here, we sniff the
+// error message — the same approach assetExport.fetchImagesWithRetry uses
+// in its non-strict back-off path.
+func isFigmaRateLimit(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "429") || strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "Too Many Requests")
+}
+
+// retryAfterSecondsFor returns the Retry-After value (seconds, ASCII) to
+// surface to the client when an upstream 429 fires. Defaults to "1" when
+// the underlying error doesn't carry an explicit hint.
+func retryAfterSecondsFor(_ error) string { return "1" }
 
 // ─── Phase 5 U12: activity rail ────────────────────────────────────────────
 
