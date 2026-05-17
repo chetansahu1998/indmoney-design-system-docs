@@ -100,8 +100,14 @@ export type ActionTable = Partial<Record<KeymapAction, ActionHandler>>;
  * Transient-mode keys that the leafcanvas pointer handlers consume.
  * These are not actions — they're modifier flags polled while a drag
  * is in flight.
+ *
+ * U6 — "alt" added for the Figma Alt-hover distance-line feature.
+ * Unlike z/space which gate pointer-drag modes, alt gates the chrome
+ * layer's distance-line paint: when alt is held AND a node is
+ * selected AND a different node is hovered, the chrome layer paints
+ * four red distance segments between their bounds.
  */
-export type HeldKey = "z" | "space";
+export type HeldKey = "z" | "space" | "alt";
 
 let actionTable: ActionTable = {};
 const heldKeys = new Set<HeldKey>();
@@ -152,7 +158,18 @@ function isEditableElement(el: Element): boolean {
 export function getHeldKey(): HeldKey | null {
   if (heldKeys.has("space")) return "space";
   if (heldKeys.has("z")) return "z";
+  if (heldKeys.has("alt")) return "alt";
   return null;
+}
+
+/**
+ * U6 — predicate variant for chrome-layer paint logic that wants to
+ * know "is alt held right now?" without disambiguating against z /
+ * space. Cheaper than getHeldKey() (no array iteration / priority
+ * walk).
+ */
+export function isAltHeld(): boolean {
+  return heldKeys.has("alt");
 }
 
 /** Subscribe to held-key transitions (for pointer-handlers that re-arm). */
@@ -231,6 +248,16 @@ export function installKeymap(): () => void {
         notifyHeld();
       }
     }
+    // U6 — track Alt (both AltLeft / AltRight) for the distance-line
+    // chrome paint. e.altKey is also true during this event, but we
+    // need a dedicated held-state that survives the up-event check
+    // (a fast Alt-tap shouldn't flicker the distance lines on).
+    if (e.code === "AltLeft" || e.code === "AltRight") {
+      if (!heldKeys.has("alt")) {
+        heldKeys.add("alt");
+        notifyHeld();
+      }
+    }
 
     if (!isCanvasKeymapEligible(e.target)) return;
 
@@ -262,6 +289,10 @@ export function installKeymap(): () => void {
     }
     if (e.code === "Space" && heldKeys.has("space")) {
       heldKeys.delete("space");
+      notifyHeld();
+    }
+    if ((e.code === "AltLeft" || e.code === "AltRight") && heldKeys.has("alt")) {
+      heldKeys.delete("alt");
       notifyHeld();
     }
   }

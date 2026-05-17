@@ -275,6 +275,8 @@
   --lcv2-hover-opacity: 0.6;
   --lcv2-padding: #ff00ff;
   --lcv2-gap: #0d99ff;
+  /* U6 — Figma Dev Mode's vermillion for Alt-hover distance lines.
+     Matches the canonical color community deep-dives reference. */
   --lcv2-distance: #f24822;
 }
 

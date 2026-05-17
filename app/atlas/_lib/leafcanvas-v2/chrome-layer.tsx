@@ -66,6 +66,7 @@ import {
   subscribeHoveredAtomic,
   type HoveredAtomicChild,
 } from "./hover-signal";
+import { isAltHeld, subscribeHeldKey } from "./keymap";
 import { useAtlas } from "../../../../lib/atlas/live-store";
 
 /**
@@ -151,6 +152,8 @@ export function ChromeLayer({ leafID }: ChromeLayerProps): React.ReactElement {
     // come from the Zustand store (subscribed via useAtlas below).
     const unsubHover = subscribeHoveredAtomic(schedulePaint);
     const unsubSelection = useAtlas.subscribe(schedulePaint);
+    // U6 — Alt-held state drives the distance-line paint.
+    const unsubHeld = subscribeHeldKey(schedulePaint);
 
     // Initial paint kick so the rAF loop primes immediately on mount.
     // Subsequent units can rely on at least one paint having occurred
@@ -163,6 +166,7 @@ export function ChromeLayer({ leafID }: ChromeLayerProps): React.ReactElement {
       unsubGesture();
       unsubHover();
       unsubSelection();
+      unsubHeld();
       if (rafPendingRef.current !== 0) {
         cancelAnimationFrame(rafPendingRef.current);
         rafPendingRef.current = 0;
@@ -239,7 +243,8 @@ function paintSelectionAndHover(
   if (!svg) return;
   const selectionGroup = groups["chrome-selection"];
   const hoverGroup = groups["chrome-hover"];
-  if (!selectionGroup || !hoverGroup) return;
+  const distanceGroup = groups["chrome-distance"];
+  if (!selectionGroup || !hoverGroup || !distanceGroup) return;
 
   // Anchor: chrome-layer's own bounding rect. getBoundingClientRect on
   // any target returns viewport coords; subtract this anchor to land
@@ -248,14 +253,16 @@ function paintSelectionAndHover(
 
   clearGroup(selectionGroup);
   clearGroup(hoverGroup);
+  clearGroup(distanceGroup);
 
   // Selection ring (single-select for now; bulk-select reuses the
   // same group when U10's inspector exposes it).
   const sel = readSelection();
+  let selRect: NodeRect | null = null;
   if (sel) {
-    const rect = lookupRectForNode(sel.screenID, sel.figmaNodeID);
-    if (rect) {
-      drawOutline(selectionGroup, rect, anchorRect, "selection");
+    selRect = lookupRectForNode(sel.screenID, sel.figmaNodeID);
+    if (selRect) {
+      drawOutline(selectionGroup, selRect, anchorRect, "selection");
     }
   }
 
@@ -264,11 +271,21 @@ function paintSelectionAndHover(
   // brainstorm Key Decision; the dedicated hover overlay would just
   // double-stroke at the same coords).
   const hov = getHoveredAtomicChild();
+  let hovRect: NodeRect | null = null;
   if (hov && (!sel || hov.figmaNodeID !== sel.figmaNodeID)) {
-    const rect = lookupRectForNode(hov.screenID, hov.figmaNodeID);
-    if (rect) {
-      drawOutline(hoverGroup, rect, anchorRect, "hover");
+    hovRect = lookupRectForNode(hov.screenID, hov.figmaNodeID);
+    if (hovRect) {
+      drawOutline(hoverGroup, hovRect, anchorRect, "hover");
     }
+  }
+
+  // U6 — Alt-hover distance lines. With a node selected AND a
+  // different node hovered AND the Alt key held, paint four red
+  // distance segments + px labels between the selection rect and
+  // the hover rect. Bounds-to-bounds semantics (top/right/bottom/
+  // left gap). Suppresses cleanly when any prerequisite is absent.
+  if (selRect && hovRect && isAltHeld()) {
+    drawDistanceLines(distanceGroup, selRect, hovRect, anchorRect);
   }
 }
 
@@ -346,4 +363,197 @@ function readSelection(): HoveredAtomicChild | null {
   const sel = useAtlas.getState().selection.selectedAtomicChild;
   if (!sel || !sel.screenID || !sel.figmaNodeID) return null;
   return { screenID: sel.screenID, figmaNodeID: sel.figmaNodeID };
+}
+
+// ─── U6 — Alt-hover distance lines ─────────────────────────────────────
+//
+// Paints four cardinal distance segments + px labels between the
+// selection bbox and the hover bbox. Bounds-to-bounds semantics
+// (top edge of one to bottom edge of the other, etc.) — matches
+// Figma Dev Mode's Alt-hover behavior. Color: vermillion #f24822
+// via --lcv2-distance CSS var (defined in canvas-v2.css). Stroke
+// stays 2px regardless of camera zoom (chrome layer is screen-space,
+// vector-effect non-scaling-stroke on the line).
+
+/**
+ * Compute the four cardinal gap distances between two rects. Each
+ * value is the screen-px distance from one rect's bounding edge to
+ * the other's, in the cardinal direction (top/right/bottom/left).
+ * Negative values mean the rects overlap on that axis (no gap to
+ * paint — distance line is suppressed for that direction).
+ *
+ * Exported for testing.
+ */
+export interface CardinalDistances {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+export function computeCardinalDistances(
+  selection: NodeRect,
+  target: NodeRect,
+): CardinalDistances {
+  // top: gap from selection's top edge to target's bottom edge when
+  // target is above selection. Otherwise 0 (no top gap).
+  const selBottom = selection.top + selection.height;
+  const tarBottom = target.top + target.height;
+  return {
+    top: selection.top - tarBottom,
+    right: target.left - (selection.left + selection.width),
+    bottom: target.top - selBottom,
+    left: selection.left - (target.left + target.width),
+  };
+}
+
+function drawDistanceLines(
+  group: SVGGElement,
+  selection: NodeRect,
+  target: NodeRect,
+  anchor: { left: number; top: number },
+): void {
+  const distances = computeCardinalDistances(selection, target);
+  // Center-axis of the selection rect (used as the line endpoint for
+  // top/bottom segments; right/left segments hang off the middle
+  // vertical / horizontal of the selection).
+  const selCx = selection.left + selection.width / 2 - anchor.left;
+  const selCy = selection.top + selection.height / 2 - anchor.top;
+  const selL = selection.left - anchor.left;
+  const selT = selection.top - anchor.top;
+  const selR = selL + selection.width;
+  const selB = selT + selection.height;
+  const tarCx = target.left + target.width / 2 - anchor.left;
+  const tarCy = target.top + target.height / 2 - anchor.top;
+  const tarL = target.left - anchor.left;
+  const tarT = target.top - anchor.top;
+  const tarR = tarL + target.width;
+  const tarB = tarT + target.height;
+
+  // Top gap: target sits above selection. Line goes from target's
+  // bottom edge to selection's top edge along the selection's
+  // horizontal-center axis.
+  if (distances.top > 0) {
+    drawDistanceSegment(
+      group,
+      selCx,
+      tarB,
+      selCx,
+      selT,
+      distances.top,
+      "vertical",
+    );
+  }
+  // Bottom gap: target sits below selection.
+  if (distances.bottom > 0) {
+    drawDistanceSegment(
+      group,
+      selCx,
+      selB,
+      selCx,
+      tarT,
+      distances.bottom,
+      "vertical",
+    );
+  }
+  // Right gap: target sits to the right of selection.
+  if (distances.right > 0) {
+    drawDistanceSegment(
+      group,
+      selR,
+      selCy,
+      tarL,
+      selCy,
+      distances.right,
+      "horizontal",
+    );
+  }
+  // Left gap: target sits to the left of selection.
+  if (distances.left > 0) {
+    drawDistanceSegment(
+      group,
+      tarR,
+      selCy,
+      selL,
+      selCy,
+      distances.left,
+      "horizontal",
+    );
+  }
+  // Suppress: rects overlap on the axis or no gap to display. Future
+  // U6b can add "inside" distance (when target is contained within
+  // selection) using padding-style chips, but Figma's default behavior
+  // is to show nothing in that case.
+
+  // Reference-rect outlines on both target and selection so the user
+  // sees what the distances measure between. Light, dashed, distance-
+  // color. Suppressed when target is the selection (caught by caller).
+  drawReferenceOutline(group, tarL, tarT, tarR - tarL, tarB - tarT);
+  void [selCx, selCy, selR, selB]; // referenced above; no-op silencer
+}
+
+function drawDistanceSegment(
+  group: SVGGElement,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  distancePx: number,
+  orientation: "vertical" | "horizontal",
+): void {
+  const ns = "http://www.w3.org/2000/svg";
+  const line = document.createElementNS(ns, "line");
+  line.setAttribute("x1", String(x1));
+  line.setAttribute("y1", String(y1));
+  line.setAttribute("x2", String(x2));
+  line.setAttribute("y2", String(y2));
+  line.setAttribute("stroke", "var(--lcv2-distance, #f24822)");
+  line.setAttribute("stroke-width", "1");
+  line.setAttribute("vector-effect", "non-scaling-stroke");
+  group.appendChild(line);
+
+  // px label at the segment midpoint. Small backing rect for
+  // readability against busy canvas content.
+  const midX = (x1 + x2) / 2;
+  const midY = (y1 + y2) / 2;
+  const label = `${Math.round(distancePx)}px`;
+  const text = document.createElementNS(ns, "text");
+  text.setAttribute("x", String(midX));
+  text.setAttribute("y", String(midY));
+  text.setAttribute("fill", "var(--lcv2-distance, #f24822)");
+  text.setAttribute("font-size", "11");
+  text.setAttribute("font-family", "Inter, system-ui, sans-serif");
+  text.setAttribute("text-anchor", "middle");
+  text.setAttribute("dominant-baseline", "central");
+  // Offset perpendicular to the segment so the label doesn't sit on
+  // top of the line itself.
+  if (orientation === "vertical") {
+    text.setAttribute("dx", "8");
+  } else {
+    text.setAttribute("dy", "-4");
+  }
+  text.textContent = label;
+  group.appendChild(text);
+}
+
+function drawReferenceOutline(
+  group: SVGGElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  const ns = "http://www.w3.org/2000/svg";
+  const r = document.createElementNS(ns, "rect");
+  r.setAttribute("x", String(x));
+  r.setAttribute("y", String(y));
+  r.setAttribute("width", String(w));
+  r.setAttribute("height", String(h));
+  r.setAttribute("fill", "none");
+  r.setAttribute("stroke", "var(--lcv2-distance, #f24822)");
+  r.setAttribute("stroke-width", "1");
+  r.setAttribute("stroke-dasharray", "4 2");
+  r.setAttribute("opacity", "0.6");
+  r.setAttribute("vector-effect", "non-scaling-stroke");
+  group.appendChild(r);
 }
