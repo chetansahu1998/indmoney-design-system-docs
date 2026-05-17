@@ -19,6 +19,16 @@
  * on unmount, so a fresh mount overwrites cleanly.
  */
 
+/**
+ * One entry returned by `listNamedFrames`. The id is the canvas-level
+ * frame id (the same value used by `onPickFrame` callbacks and the
+ * frame strip); label is the human-readable name shown in the palette.
+ */
+export interface NamedFrameEntry {
+  id: string;
+  label: string;
+}
+
 export interface CameraActions {
   /** Shift+1 — fit every frame in the leaf to the viewport. */
   fitAll: () => void;
@@ -32,13 +42,24 @@ export interface CameraActions {
   zoomOut: () => void;
   /**
    * N — fly camera to the next named frame in canvas-coordinate order.
-   * "Named" means a frame whose name matches the plan's recognized
-   * patterns (illustration/*, icon/*, section/*) — see keymap.ts for
-   * the canonical predicate. No-op when no named frames exist.
+   * "Named" means a top-level canvas frame (layout.frames item).
+   * No-op when no frames exist.
    */
   nextNamedFrame: () => void;
-  /** Shift+N — previous named frame in canvas-coordinate order. */
+  /** Shift+N — previous frame in canvas-coordinate order. */
   prevNamedFrame: () => void;
+  /**
+   * Snapshot of every named frame in canvas order. Consumed by the
+   * Cmd+F name-search palette (U3b). The result is a fresh array on
+   * every call — callers may not mutate the entries.
+   */
+  listNamedFrames: () => NamedFrameEntry[];
+  /**
+   * Fly the camera to a specific frame by id (the same id `onPickFrame`
+   * carries and `listNamedFrames` returns). No-op when the id isn't
+   * found in the current leaf.
+   */
+  jumpToFrame: (id: string) => void;
 }
 
 let registered: CameraActions | null = null;

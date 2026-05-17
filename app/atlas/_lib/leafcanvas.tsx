@@ -576,6 +576,19 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
         const f = layout.frames[prev];
         onPickFrame?.(f.id);
       },
+      // U3b — name-search palette feeds these.
+      listNamedFrames: () => {
+        if (!layout.frames) return [];
+        return layout.frames.map((f) => ({
+          id: f.id,
+          label: f.label ?? f.id,
+        }));
+      },
+      jumpToFrame: (id) => {
+        onPickFrame?.(id);
+        // onPickFrame triggers selectedFrameId effect → focusOnFrame
+        // already snaps the camera.
+      },
     });
     return off;
   }, [fitAll, zoomIn, zoomOut, writeCamera, layout, selectedFrameId, onPickFrame]);

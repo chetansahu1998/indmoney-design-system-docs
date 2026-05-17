@@ -13,7 +13,7 @@
  * Owns the SSE subscription for graph + project events. Tears down on unmount.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { subscribeProjectEvents } from "../../../lib/projects/client";
 import { subscribeGraphEvents } from "../../../lib/atlas/data-adapters";
@@ -28,8 +28,9 @@ import { getHoveredAtomicChild, setHoveredAtomicChild } from "./leafcanvas-v2/ho
 // rejects editable targets, so Cmd+A inside an InlineTextEditor still
 // behaves natively.
 import { installKeymap, registerKeymap, type ActionTable } from "./leafcanvas-v2/keymap";
-import { getCameraActions } from "./leafcanvas-v2/camera-actions";
+import { getCameraActions, type NamedFrameEntry } from "./leafcanvas-v2/camera-actions";
 import { toggleDevMode } from "./leafcanvas-v2/dev-mode-state";
+import { NameSearchPalette } from "./leafcanvas-v2/NameSearchPalette";
 
 // Side-effect imports — order matters; see AtlasShell for rationale.
 import "./tweaks-panel";
@@ -127,6 +128,31 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
     requestCameraSnap({ x: bb.x, y: bb.y, width: bb.width, height: bb.height });
   }, [selectedAtomicChild, atomicCanonicalTree]);
 
+  // U3b — Cmd+F name-search palette state. The palette is mounted as
+  // a sibling of LeafCanvas (outside .lc-stage) so its input focus
+  // disables canvas hotkeys via the keymap focus gate. paletteFrames
+  // is snapshotted at open-time so re-renders don't churn the
+  // filtered list with a new array reference.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteFrames, setPaletteFrames] = useState<NamedFrameEntry[]>([]);
+  // Ref mirror so the keymap action handlers can read the current
+  // palette state synchronously without forcing the keymap effect
+  // to re-register on every open/close.
+  const paletteOpenRef = useRef(false);
+  const openPalette = useCallback(() => {
+    const frames = getCameraActions()?.listNamedFrames() ?? [];
+    setPaletteFrames(frames);
+    paletteOpenRef.current = true;
+    setPaletteOpen(true);
+  }, []);
+  const closePalette = useCallback(() => {
+    paletteOpenRef.current = false;
+    setPaletteOpen(false);
+  }, []);
+  const paletteJumpToFrame = useCallback((id: string) => {
+    getCameraActions()?.jumpToFrame(id);
+  }, []);
+
   // U3 — Shift+2 is now dispatched through the keymap action table
   // below (`canvas.fit-selection`). The previous standalone effect
   // here is folded into the combined keymap registration further
@@ -195,8 +221,18 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
       // Mode flag (U9 paints the annotations; U3 just toggles).
       "mode.toggle-dev-mode": () => toggleDevMode(),
 
-      // Layered close (ported verbatim from the prior useEffect).
+      // Layered close (ported from the prior useEffect, with the U3b
+      // palette-close layer prepended). Esc layers, innermost first:
+      //   0. name-search palette open → close palette
+      //   1. hover state → clear
+      //   2. atomic-child selection → clear
+      //   3. selected frame → deselect
+      //   4. leaf open → close leaf
       "selection.escape-layered": () => {
+        if (paletteOpenRef.current) {
+          closePalette();
+          return;
+        }
         if (getHoveredAtomicChild() !== null) {
           setHoveredAtomicChild(null);
           return;
@@ -239,11 +275,10 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
         /* follow-up */
       },
 
-      // Cmd+F palette — U3b commit ships this in a separate change set
-      // so the palette UI lands without bloating this commit.
-      "search.open-palette": () => {
-        /* U3b */
-      },
+      // Cmd+F — open the name-search palette with a fresh frame
+      // snapshot. Idempotent: opening when already open re-snapshots
+      // (useful if the user navigated to a new frame between opens).
+      "search.open-palette": () => openPalette(),
     };
 
     const unregisterTable = registerKeymap(table);
@@ -259,6 +294,8 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
     selectedAtomicChild,
     closeLeaf,
     closeAtomicInspector,
+    openPalette,
+    closePalette,
   ]);
 
   // window globals for backward compat with the ported modules.
@@ -491,6 +528,17 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
               title="Drag to resize"
             />
           </div>
+          {/* U3b — Cmd+F name-search palette. Mounted as a sibling of
+              .lc-stage so its input focus correctly fails the canvas
+              keymap's focus gate (closest('.lc-stage') is null). The
+              palette is conditionally null when closed; opening
+              snapshots frames once so the filtered list is stable. */}
+          <NameSearchPalette
+            open={paletteOpen}
+            frames={paletteFrames}
+            onClose={closePalette}
+            onJumpToFrame={paletteJumpToFrame}
+          />
         </div>
       ) : null}
     </AtlasShellProvider>

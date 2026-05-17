@@ -28,6 +28,8 @@ function makeActions(): CameraActions {
     zoomOut: vi.fn(),
     nextNamedFrame: vi.fn(),
     prevNamedFrame: vi.fn(),
+    listNamedFrames: vi.fn(() => []),
+    jumpToFrame: vi.fn(),
   };
 }
 
