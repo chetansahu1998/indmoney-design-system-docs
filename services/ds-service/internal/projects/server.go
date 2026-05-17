@@ -2468,6 +2468,11 @@ func (s *Server) HandleRecentDecisions(w http.ResponseWriter, r *http.Request) {
 // Auth-gated; mints a single-use 60s ticket bound to (user, tenant, flow)
 // for Hocuspocus' WebSocket handshake. Tenant + flow visibility checks
 // happen here so the sidecar can trust the ticket without re-checking.
+//
+// This is the legacy flow_id-keyed path used by AtlasDRDEditor. The U3
+// follow-up adds HandleSubFlowDRDTicket as a parallel slug-keyed entry
+// point that resolves to a flow_id via sub_flow → flow_drd, then funnels
+// into the same issueDRDTicket core so both endpoints share semantics.
 func (s *Server) HandleDRDTicket(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
@@ -2504,20 +2509,85 @@ func (s *Server) HandleDRDTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The DRD ticket's traceID is `drd:<flow_id>` so the existing
-	// ticket store can scope it; the sidecar uses the same channel
-	// when redeeming.
+	s.issueDRDTicket(w, tenantID, claims.Sub, claims.Role, flowID)
+}
+
+// issueDRDTicket mints a single-use 60s ticket bound to (user, tenant, flow)
+// and writes the JSON response. Caller must have already validated that
+// the user can edit the flow (tenant + visibility check upstream).
+//
+// Extracted from HandleDRDTicket so HandleSubFlowDRDTicket can share the
+// exact same response shape + ticket store call. The trace_id format
+// `drd:<flow_id>` is part of the contract with the Hocuspocus sidecar's
+// /internal/drd/auth endpoint, which expects to find the flow_id encoded
+// in the redeemed ticket's traceID.
+func (s *Server) issueDRDTicket(w http.ResponseWriter, tenantID, userID, role, flowID string) {
 	traceID := "drd:" + flowID
-	ticket := s.deps.Tickets.IssueTicket(claims.Sub, tenantID, traceID, sse.DefaultTicketTTL)
+	ticket := s.deps.Tickets.IssueTicket(userID, tenantID, traceID, sse.DefaultTicketTTL)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ticket":     ticket,
 		"trace_id":   traceID,
 		"flow_id":    flowID,
 		"tenant_id":  tenantID,
-		"user_id":    claims.Sub,
-		"role":       claims.Role,
+		"user_id":    userID,
+		"role":       role,
 		"expires_in": int(sse.DefaultTicketTTL.Seconds()),
 	})
+}
+
+// HandleSubFlowDRDTicket serves POST /v1/projects/{sub_product_slug}/{sub_flow_slug}/drd/ticket.
+// Resolves (sub_product_slug, sub_flow_slug) → sub_flow_id → flow_id via
+// ResolveFlowIDForSubFlow (which bootstraps the synthetic project/flow/
+// flow_drd chain on first open), then mints a ticket using the same
+// issueDRDTicket core HandleDRDTicket uses.
+//
+// PM-facing endpoint: the PRD viewer's DRDPane mounts a BlockNote editor
+// against the resolved flow_id, but the PM never sees flow_id at the
+// URL level — it's all sub_flow_slug at the user-facing seam.
+func (s *Server) HandleSubFlowDRDTicket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST only")
+		return
+	}
+	if s.deps.Tickets == nil {
+		writeJSONErr(w, http.StatusInternalServerError, "tickets_not_configured", "")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	subProductSlug := r.PathValue("sub_product_slug")
+	subFlowSlug := r.PathValue("sub_flow_slug")
+	if subProductSlug == "" || subFlowSlug == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
+		return
+	}
+
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
+	sf, err := repo.GetSubFlowBySlug(r.Context(), subProductSlug+"/"+subFlowSlug)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup_sub_flow", err.Error())
+		return
+	}
+
+	flowID, err := repo.ResolveFlowIDForSubFlow(r.Context(), sf.ID, claims.Sub)
+	if err != nil {
+		writeJSONErr(w, http.StatusInternalServerError, "resolve_flow_id", err.Error())
+		return
+	}
+
+	s.issueDRDTicket(w, tenantID, claims.Sub, claims.Role, flowID)
 }
 
 // requireHocuspocusSecret is middleware-style: validates the

@@ -394,14 +394,37 @@ func (t *TenantRepo) BootstrapDRDForSubFlow(
 	subFlowID, userID string,
 	payload []byte,
 ) (string, int64, error) {
+	flowID, err := t.ensureDRDChainForSubFlow(ctx, subFlowID, userID)
+	if err != nil {
+		return "", 0, err
+	}
+
+	// Persist the snapshot (revision bump).
+	rev, err := t.PersistYDocSnapshotBySubFlow(ctx, subFlowID, userID, payload)
+	if err != nil {
+		return "", 0, fmt.Errorf("bootstrap drd: persist: %w", err)
+	}
+	return flowID, rev, nil
+}
+
+// ensureDRDChainForSubFlow ensures the synthetic project → flow → flow_drd
+// chain exists for the given sub_flow_id within the tenant. Idempotent.
+// Returns the underlying flow_id without touching the YDoc snapshot.
+//
+// Used by ResolveFlowIDForSubFlow (no-write path — viewer / ticket mint)
+// and BootstrapDRDForSubFlow (which then persists a snapshot on top).
+func (t *TenantRepo) ensureDRDChainForSubFlow(
+	ctx context.Context,
+	subFlowID, userID string,
+) (string, error) {
 	if t.tenantID == "" {
-		return "", 0, errors.New("drd: tenant_id required")
+		return "", errors.New("drd: tenant_id required")
 	}
 	if subFlowID == "" {
-		return "", 0, ErrNotFound
+		return "", ErrNotFound
 	}
 	if userID == "" {
-		return "", 0, errors.New("drd: user_id required")
+		return "", errors.New("drd: user_id required")
 	}
 
 	// Step 1 — synthetic project (one per tenant for MCP-authored DRDs).
@@ -414,7 +437,7 @@ func (t *TenantRepo) BootstrapDRDForSubFlow(
 		OwnerUserID: userID,
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("bootstrap drd: upsert project: %w", err)
+		return "", fmt.Errorf("bootstrap drd: upsert project: %w", err)
 	}
 
 	// Step 2 — per-sub_flow flow row. file_id is keyed by sub_flow_id so
@@ -425,19 +448,57 @@ func (t *TenantRepo) BootstrapDRDForSubFlow(
 		Name:      "DRD: " + subFlowID,
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("bootstrap drd: upsert flow: %w", err)
+		return "", fmt.Errorf("bootstrap drd: upsert flow: %w", err)
 	}
 
 	// Step 3 — ensure flow_drd row exists.
 	flowID, err := t.CreateDRDForSubFlow(ctx, subFlowID, flow.ID, userID)
 	if err != nil {
-		return "", 0, fmt.Errorf("bootstrap drd: create drd: %w", err)
+		return "", fmt.Errorf("bootstrap drd: create drd: %w", err)
+	}
+	return flowID, nil
+}
+
+// ResolveFlowIDForSubFlow returns the flow_id bound to a sub_flow_id within
+// the tenant. Looks up flow_drd by sub_flow_id; if no row exists, calls
+// ensureDRDChainForSubFlow to create the synthetic-project → flow → flow_drd
+// chain and returns the new flow_id.
+//
+// Idempotent. Used by the slug-keyed DRD ticket endpoint so the viewer can
+// open an editable DRD pane without the PM ever needing to know what
+// flow_id backs their sub_flow.
+//
+// Unlike BootstrapDRDForSubFlow, this does NOT write a YDoc snapshot —
+// the seed row's y_doc_state stays NULL until the BlockNote editor's first
+// debounced snapshot lands via Hocuspocus.
+func (t *TenantRepo) ResolveFlowIDForSubFlow(
+	ctx context.Context,
+	subFlowID, userID string,
+) (string, error) {
+	if t.tenantID == "" {
+		return "", errors.New("drd: tenant_id required")
+	}
+	if subFlowID == "" {
+		return "", ErrNotFound
 	}
 
-	// Step 4 — persist the snapshot (revision bump).
-	rev, err := t.PersistYDocSnapshotBySubFlow(ctx, subFlowID, userID, payload)
-	if err != nil {
-		return "", 0, fmt.Errorf("bootstrap drd: persist: %w", err)
+	// Fast path — row already exists.
+	var existing string
+	err := t.readHandle().QueryRowContext(ctx,
+		`SELECT flow_id FROM flow_drd WHERE tenant_id = ? AND sub_flow_id = ?`,
+		t.tenantID, subFlowID,
+	).Scan(&existing)
+	if err == nil {
+		return existing, nil
 	}
-	return flowID, rev, nil
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("resolve flow_id for sub_flow: %w", err)
+	}
+
+	// No row yet — bootstrap the chain. ensureDRDChainForSubFlow validates
+	// userID; the caller passes the requesting PM's user_id.
+	if userID == "" {
+		return "", errors.New("drd: user_id required to bootstrap chain")
+	}
+	return t.ensureDRDChainForSubFlow(ctx, subFlowID, userID)
 }

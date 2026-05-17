@@ -535,6 +535,118 @@ func TestLegacyFlowIDPath_StillWorks(t *testing.T) {
 	}
 }
 
+// ─── ResolveFlowIDForSubFlow (U3 follow-up) ────────────────────────────────
+
+// TestResolveFlowIDForSubFlow_Existing returns the bound flow_id without
+// touching the DRD chain when a flow_drd row already exists.
+func TestResolveFlowIDForSubFlow_Existing(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	versionID, _ := seedFlowAndScreens(t, repo, uA)
+	flowID := flowIDFromSeed(t, d.DB, versionID)
+	sf := seedSubFlowForDRD(t, repo, "Wallet", "Activation")
+	ctx := context.Background()
+
+	if _, err := repo.CreateDRDForSubFlow(ctx, sf.ID, flowID, uA); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := repo.ResolveFlowIDForSubFlow(ctx, sf.ID, uA)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got != flowID {
+		t.Errorf("expected existing flow_id=%s, got %s", flowID, got)
+	}
+}
+
+// TestResolveFlowIDForSubFlow_BootstrapsOnFirstCall creates the synthetic
+// chain when no flow_drd row exists yet for the sub_flow.
+func TestResolveFlowIDForSubFlow_BootstrapsOnFirstCall(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	sf := seedSubFlowForDRD(t, repo, "Plutus", "Cold State")
+	ctx := context.Background()
+
+	// No flow_drd row yet — bootstrap path.
+	flowID, err := repo.ResolveFlowIDForSubFlow(ctx, sf.ID, uA)
+	if err != nil {
+		t.Fatalf("resolve (bootstrap): %v", err)
+	}
+	if flowID == "" {
+		t.Fatal("expected non-empty flow_id from bootstrap path")
+	}
+
+	// Confirm a flow_drd row now exists bound to this sub_flow.
+	var (
+		gotFlowID   string
+		gotSubFlow  sql.NullString
+		gotRevision int64
+	)
+	if err := d.DB.QueryRow(
+		`SELECT flow_id, sub_flow_id, revision FROM flow_drd WHERE tenant_id = ? AND sub_flow_id = ?`,
+		tA, sf.ID,
+	).Scan(&gotFlowID, &gotSubFlow, &gotRevision); err != nil {
+		t.Fatalf("readback flow_drd: %v", err)
+	}
+	if gotFlowID != flowID {
+		t.Errorf("flow_id mismatch: row=%s resolver=%s", gotFlowID, flowID)
+	}
+	if !gotSubFlow.Valid || gotSubFlow.String != sf.ID {
+		t.Errorf("sub_flow_id mismatch: %v", gotSubFlow)
+	}
+	if gotRevision != 0 {
+		t.Errorf("expected revision=0 (no snapshot yet), got %d", gotRevision)
+	}
+}
+
+// TestResolveFlowIDForSubFlow_Idempotent calling twice produces the same
+// flow_id and does NOT create duplicate flow_drd rows.
+func TestResolveFlowIDForSubFlow_Idempotent(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	sf := seedSubFlowForDRD(t, repo, "Mutual Funds", "SIP")
+	ctx := context.Background()
+
+	flowID1, err := repo.ResolveFlowIDForSubFlow(ctx, sf.ID, uA)
+	if err != nil {
+		t.Fatalf("resolve 1: %v", err)
+	}
+	flowID2, err := repo.ResolveFlowIDForSubFlow(ctx, sf.ID, uA)
+	if err != nil {
+		t.Fatalf("resolve 2: %v", err)
+	}
+	if flowID1 != flowID2 {
+		t.Errorf("not idempotent: first=%s second=%s", flowID1, flowID2)
+	}
+
+	var rowCount int
+	if err := d.DB.QueryRow(
+		`SELECT COUNT(*) FROM flow_drd WHERE tenant_id = ? AND sub_flow_id = ?`,
+		tA, sf.ID,
+	).Scan(&rowCount); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if rowCount != 1 {
+		t.Errorf("expected exactly 1 flow_drd row, got %d", rowCount)
+	}
+}
+
+// TestResolveFlowIDForSubFlow_UnknownSubFlowID returns the bootstrap-path
+// outcome (a new chain) — but only when userID is supplied. With empty
+// userID and no existing row, surfaces a clear error rather than silently
+// creating a chain with empty ownership.
+func TestResolveFlowIDForSubFlow_RequiresUserIDOnBootstrap(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	_, err := repo.ResolveFlowIDForSubFlow(ctx, "nonexistent-sub-flow-id", "")
+	if err == nil {
+		t.Error("expected error when bootstrapping with empty user_id")
+	}
+}
+
 func TestTenantIsolation_BySubFlow(t *testing.T) {
 	d, tA, tB, uA := newTestDB(t)
 	repoA := NewTenantRepo(d.DB, tA)

@@ -79,6 +79,56 @@ export async function mintDRDTicket(
 }
 
 /**
+ * mintDRDTicketForSubFlow calls POST /api/projects/{sub_product}/{sub_flow}/drd/ticket
+ * (which proxies to ds-service POST /v1/projects/{sub_product_slug}/{sub_flow_slug}/drd/ticket)
+ * to receive a 60s single-use ticket. Same response shape as mintDRDTicket
+ * — including the resolved `flow_id` the server picked from the
+ * sub_flow → flow_drd binding — so callers can hand it straight to
+ * createDRDProvider({flowID, ticket}).
+ *
+ * Why we hit the Next.js proxy instead of ds-service directly: keeps the
+ * docs-site Bearer token cookie story consistent with every other
+ * /api/projects/... route (see app/api/projects/[slug]/figma-image-refs/route.ts).
+ */
+export async function mintDRDTicketForSubFlow(
+  subProductSlug: string,
+  subFlowSlug: string,
+): Promise<{ ok: true; data: DRDTicketResponse } | { ok: false; error: string; status: number }> {
+  try {
+    const token = getToken();
+    if (!token) return { ok: false, status: 401, error: "no auth token" };
+    const res = await fetch(
+      `/api/projects/${encodeURIComponent(subProductSlug)}/${encodeURIComponent(subFlowSlug)}/drd/ticket`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: "{}",
+      },
+    );
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try {
+        const body = (await res.json()) as { error?: string; detail?: string };
+        msg = body.detail ?? body.error ?? msg;
+      } catch {}
+      return { ok: false, status: res.status, error: msg };
+    }
+    const data = (await res.json()) as DRDTicketResponse;
+    return { ok: true, data };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
  * createDRDProvider opens a Hocuspocus WebSocket bound to a flow. The
  * returned bundle exposes the underlying Y.Doc so BlockNote can be
  * configured with the collaboration extension. Caller must invoke

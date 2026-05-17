@@ -34,6 +34,7 @@ import { useAuth } from "@/lib/auth-client";
 
 import { CanvasShell } from "./CanvasShell";
 import { DocumentView } from "./DocumentView";
+import { DRDPane } from "./DRDPane";
 import { Wall } from "./Wall";
 import type { SectionInspect } from "./types";
 
@@ -283,11 +284,7 @@ export function PRDShell({ subProduct, subFlow }: Props) {
         </main>
 
         <aside className="prd-shell__drd">
-          <DRDPane
-            slug={fullSlug}
-            drdExists={state.kind === "ok" ? state.data.drd_summary.exists : false}
-            drdBytes={state.kind === "ok" ? state.data.drd_summary.bytes ?? 0 : 0}
-          />
+          <DRDPane subProductSlug={subProduct} subFlowSlug={subFlow} />
         </aside>
       </div>
 
@@ -426,129 +423,3 @@ function lifecycleLabel(l: string): string {
   }
 }
 
-// ─── DRDPane (read-only v1) ───────────────────────────────────────────────
-//
-// V1 deviation: the existing AtlasDRDEditor at app/atlas/_lib/AtlasDRDEditor.tsx
-// is keyed by (project slug, flow_id). DRDs are now keyed by sub_flow_id (U3),
-// and the Hocuspocus collab endpoint mints tickets via /v1/projects/{slug}/
-// flows/{flow_id}/drd-collab/ticket — the sub_flow-side equivalent (per
-// U3's plan) lives at a different URL we haven't surfaced to the docs-site
-// client yet. Mounting the full editor here would require either (a) a new
-// /api/projects/{sub_flow_slug}/drd-collab/* proxy + lib/drd/collab helper
-// variant, or (b) resolving the sub_flow's underlying flow_id and reusing
-// the legacy editor. Both add scope beyond U9.
-//
-// Read-only placeholder for v1: surfaces presence + bytes count + a link to
-// /atlas (where the DRD editor still lives behind the project shell). Once
-// U10 lands the remote MCP transport and the sub_flow-keyed DRD HTTP API,
-// this slot upgrades to the full AtlasDRDEditor wired with sub_flow_id.
-
-function DRDPane({
-  slug,
-  drdExists,
-  drdBytes,
-}: {
-  slug: string;
-  drdExists: boolean;
-  drdBytes: number;
-}) {
-  return (
-    <div className="drd-pane">
-      <header className="drd-pane__header">
-        <h2>Design Requirements</h2>
-        <span className="drd-pane__chip">
-          {drdExists ? `${drdBytes.toLocaleString()} bytes` : "No DRD yet"}
-        </span>
-      </header>
-      {drdExists ? (
-        <div className="drd-pane__body">
-          <p>
-            DRD content is authored collaboratively in the Atlas leaf
-            inspector. Open this sub_flow in Atlas to edit.
-          </p>
-          <p className="drd-pane__hint">
-            Once U10 ships the sub_flow-keyed DRD HTTP surface, this pane
-            will host the full BlockNote editor side-by-side with the
-            canvas. For now it is read-only metadata.
-          </p>
-          <Link
-            href={`/atlas?project=${encodeURIComponent(slug.split("/")[0] ?? slug)}`}
-            className="drd-pane__link"
-          >
-            Open in Atlas →
-          </Link>
-        </div>
-      ) : (
-        <div className="drd-pane__body">
-          <p>
-            No DRD has been authored for this sub_flow yet. Use the{" "}
-            <code>/ind-drd</code> skill in Claude Code to seed one, or open
-            Atlas and start typing in the DRD pane.
-          </p>
-        </div>
-      )}
-      <style jsx>{`
-        .drd-pane {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          height: 100%;
-        }
-        .drd-pane__header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-        }
-        .drd-pane__header h2 {
-          margin: 0;
-          font-size: 14px;
-          font-weight: 600;
-          letter-spacing: 0.02em;
-          text-transform: uppercase;
-          color: var(--text-2);
-        }
-        .drd-pane__chip {
-          font-size: 11px;
-          padding: 3px 8px;
-          background: var(--surface-1, rgba(255, 255, 255, 0.04));
-          border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
-          border-radius: 999px;
-          color: var(--text-3);
-          font-variant-numeric: tabular-nums;
-        }
-        .drd-pane__body {
-          font-size: 13px;
-          color: var(--text-2);
-          line-height: 1.55;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-        .drd-pane__body p {
-          margin: 0;
-        }
-        .drd-pane__hint {
-          color: var(--text-3);
-          font-size: 12px;
-        }
-        .drd-pane__link {
-          align-self: flex-start;
-          font-size: 13px;
-          color: var(--accent);
-          text-decoration: none;
-        }
-        .drd-pane__link:hover {
-          text-decoration: underline;
-        }
-        code {
-          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-          background: var(--surface-1, rgba(255, 255, 255, 0.04));
-          padding: 1px 5px;
-          border-radius: 4px;
-          font-size: 12px;
-        }
-      `}</style>
-    </div>
-  );
-}

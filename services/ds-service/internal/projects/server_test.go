@@ -508,6 +508,273 @@ func TestHandleProjectEvents_RejectsTokenInQuery(t *testing.T) {
 	}
 }
 
+// ─── DRD ticket endpoints (U3 follow-up) ──────────────────────────────────
+
+// seedDRDFlowForServer prepares a project + flow inside the server's DB so
+// HandleDRDTicket / HandleSubFlowDRDTicket tests can refer to real
+// (slug, flow_id) and (sub_product_slug, sub_flow_slug) tuples.
+func seedDRDFlowForServer(t *testing.T, srv *Server, tenantID, userID string) (slug, flowID string) {
+	t.Helper()
+	repo := NewTenantRepo(srv.deps.DB.DB, tenantID)
+	versionID, _ := seedFlowAndScreens(t, repo, userID)
+	var fid string
+	if err := srv.deps.DB.DB.QueryRow(
+		`SELECT flow_id FROM screens WHERE version_id = ? LIMIT 1`, versionID,
+	).Scan(&fid); err != nil {
+		t.Fatalf("flow_id: %v", err)
+	}
+	var s string
+	if err := srv.deps.DB.DB.QueryRow(
+		`SELECT p.slug FROM flows f JOIN projects p ON p.id = f.project_id WHERE f.id = ?`,
+		fid,
+	).Scan(&s); err != nil {
+		t.Fatalf("project slug: %v", err)
+	}
+	return s, fid
+}
+
+// TestHandleDRDTicket_Characterization locks in the current contract for
+// the legacy flow_id-keyed endpoint before the U3 refactor extracts
+// issueDRDTicket. The post-refactor handler MUST produce the same JSON
+// shape and the same single-use / cross-tenant behaviour.
+//
+// Recorded contract:
+//   - 200 with { ticket, trace_id="drd:<flow_id>", flow_id, tenant_id,
+//     user_id, role, expires_in=60 } on the happy path.
+//   - 404 when (slug, flow_id) doesn't resolve under the tenant.
+//   - 403 when claims have no tenant.
+//   - Tickets are single-use: redeem succeeds once, then fails.
+func TestHandleDRDTicket_Characterization(t *testing.T) {
+	srv, tA, uA, _, _ := newTestServer(t)
+	slug, flowID := seedDRDFlowForServer(t, srv, tA, uA)
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
+
+	// 1. Happy path.
+	r := requestWithClaims(http.MethodPost,
+		"/v1/projects/"+slug+"/flows/"+flowID+"/drd/ticket", nil, claims)
+	r.SetPathValue("slug", slug)
+	r.SetPathValue("flow_id", flowID)
+	w := httptest.NewRecorder()
+	srv.HandleDRDTicket(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("happy path expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Ticket    string `json:"ticket"`
+		TraceID   string `json:"trace_id"`
+		FlowID    string `json:"flow_id"`
+		TenantID  string `json:"tenant_id"`
+		UserID    string `json:"user_id"`
+		Role      string `json:"role"`
+		ExpiresIn int    `json:"expires_in"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Ticket == "" {
+		t.Error("expected non-empty ticket")
+	}
+	if want := "drd:" + flowID; resp.TraceID != want {
+		t.Errorf("trace_id=%q want %q", resp.TraceID, want)
+	}
+	if resp.FlowID != flowID {
+		t.Errorf("flow_id=%q want %q", resp.FlowID, flowID)
+	}
+	if resp.TenantID != tA {
+		t.Errorf("tenant_id=%q want %q", resp.TenantID, tA)
+	}
+	if resp.UserID != uA {
+		t.Errorf("user_id=%q want %q", resp.UserID, uA)
+	}
+	if resp.Role != "editor" {
+		t.Errorf("role=%q want editor", resp.Role)
+	}
+	if resp.ExpiresIn != 60 {
+		t.Errorf("expires_in=%d want 60", resp.ExpiresIn)
+	}
+
+	// 2. Single-use: redeem once succeeds, second fails.
+	uid, tid, traceID, ok := srv.deps.Tickets.RedeemTicket(resp.Ticket)
+	if !ok || uid != uA || tid != tA || traceID != "drd:"+flowID {
+		t.Fatalf("first redeem mismatch: %s/%s/%s ok=%v", uid, tid, traceID, ok)
+	}
+	if _, _, _, ok := srv.deps.Tickets.RedeemTicket(resp.Ticket); ok {
+		t.Fatal("expected single-use ticket to fail second redeem")
+	}
+
+	// 3. Unknown flow_id → 404.
+	r2 := requestWithClaims(http.MethodPost,
+		"/v1/projects/"+slug+"/flows/nope/drd/ticket", nil, claims)
+	r2.SetPathValue("slug", slug)
+	r2.SetPathValue("flow_id", "nope")
+	w2 := httptest.NewRecorder()
+	srv.HandleDRDTicket(w2, r2)
+	if w2.Code != http.StatusNotFound {
+		t.Errorf("unknown flow_id: expected 404, got %d", w2.Code)
+	}
+
+	// 4. Cross-tenant — different tenant in claims, same flow_id → 404
+	//    (no existence oracle).
+	otherTenant := uuid.NewString()
+	otherClaims := &auth.Claims{Sub: uA, Tenants: []string{otherTenant}, Role: "editor"}
+	r3 := requestWithClaims(http.MethodPost,
+		"/v1/projects/"+slug+"/flows/"+flowID+"/drd/ticket", nil, otherClaims)
+	r3.SetPathValue("slug", slug)
+	r3.SetPathValue("flow_id", flowID)
+	w3 := httptest.NewRecorder()
+	srv.HandleDRDTicket(w3, r3)
+	if w3.Code != http.StatusNotFound {
+		t.Errorf("cross-tenant: expected 404, got %d body=%s", w3.Code, w3.Body.String())
+	}
+
+	// 5. No claims at all → 401.
+	r4 := httptest.NewRequest(http.MethodPost,
+		"/v1/projects/"+slug+"/flows/"+flowID+"/drd/ticket", nil)
+	r4.SetPathValue("slug", slug)
+	r4.SetPathValue("flow_id", flowID)
+	w4 := httptest.NewRecorder()
+	srv.HandleDRDTicket(w4, r4)
+	if w4.Code != http.StatusUnauthorized {
+		t.Errorf("no claims: expected 401, got %d", w4.Code)
+	}
+}
+
+// seedSubFlowForServer creates a sub_product + sub_flow on the server's DB.
+func seedSubFlowForServer(t *testing.T, srv *Server, tenantID, productName, flowName string) (subProductSlug, subFlowSlug, subFlowID string) {
+	t.Helper()
+	repo := NewTenantRepo(srv.deps.DB.DB, tenantID)
+	ctx := context.Background()
+	sp, err := repo.UpsertSubProduct(ctx, productName)
+	if err != nil {
+		t.Fatalf("upsert sub_product: %v", err)
+	}
+	sf, err := repo.UpsertSubFlow(ctx, sp.ID, flowName)
+	if err != nil {
+		t.Fatalf("upsert sub_flow: %v", err)
+	}
+	return sp.Slug, sf.Slug, sf.ID
+}
+
+func TestHandleSubFlowDRDTicket_FirstTimeBootstraps(t *testing.T) {
+	srv, tA, uA, _, _ := newTestServer(t)
+	spSlug, sfSlug, sfID := seedSubFlowForServer(t, srv, tA, "Wallet", "M2M Settlement")
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
+
+	r := requestWithClaims(http.MethodPost,
+		"/v1/projects/"+spSlug+"/"+sfSlug+"/drd/ticket", nil, claims)
+	r.SetPathValue("sub_product_slug", spSlug)
+	r.SetPathValue("sub_flow_slug", sfSlug)
+	w := httptest.NewRecorder()
+	srv.HandleSubFlowDRDTicket(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Ticket   string `json:"ticket"`
+		TraceID  string `json:"trace_id"`
+		FlowID   string `json:"flow_id"`
+		TenantID string `json:"tenant_id"`
+		UserID   string `json:"user_id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Ticket == "" || resp.FlowID == "" {
+		t.Fatal("expected non-empty ticket + flow_id")
+	}
+	if resp.TraceID != "drd:"+resp.FlowID {
+		t.Errorf("trace_id=%q want drd:%s", resp.TraceID, resp.FlowID)
+	}
+	if resp.TenantID != tA || resp.UserID != uA {
+		t.Errorf("identity mismatch: tenant=%s user=%s", resp.TenantID, resp.UserID)
+	}
+
+	// flow_drd row now bound to this sub_flow.
+	var n int
+	if err := srv.deps.DB.DB.QueryRow(
+		`SELECT COUNT(*) FROM flow_drd WHERE tenant_id = ? AND sub_flow_id = ?`,
+		tA, sfID,
+	).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 flow_drd row after first-time bootstrap, got %d", n)
+	}
+}
+
+func TestHandleSubFlowDRDTicket_HappyPathReusesExistingChain(t *testing.T) {
+	srv, tA, uA, _, _ := newTestServer(t)
+	spSlug, sfSlug, sfID := seedSubFlowForServer(t, srv, tA, "INDstocks", "Watchlist")
+	repo := NewTenantRepo(srv.deps.DB.DB, tA)
+
+	// Pre-populate the chain so this call hits the fast path.
+	preFlowID, err := repo.ResolveFlowIDForSubFlow(context.Background(), sfID, uA)
+	if err != nil {
+		t.Fatalf("pre-resolve: %v", err)
+	}
+
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
+	r := requestWithClaims(http.MethodPost,
+		"/v1/projects/"+spSlug+"/"+sfSlug+"/drd/ticket", nil, claims)
+	r.SetPathValue("sub_product_slug", spSlug)
+	r.SetPathValue("sub_flow_slug", sfSlug)
+	w := httptest.NewRecorder()
+	srv.HandleSubFlowDRDTicket(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp struct {
+		Ticket  string `json:"ticket"`
+		FlowID  string `json:"flow_id"`
+		TraceID string `json:"trace_id"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.FlowID != preFlowID {
+		t.Errorf("flow_id drift: response=%s pre-bootstrapped=%s", resp.FlowID, preFlowID)
+	}
+
+	// Ticket redeems cleanly with the trace_id we expect.
+	uid, tid, trace, ok := srv.deps.Tickets.RedeemTicket(resp.Ticket)
+	if !ok || uid != uA || tid != tA || trace != "drd:"+preFlowID {
+		t.Errorf("redeem mismatch: %s/%s/%s ok=%v", uid, tid, trace, ok)
+	}
+}
+
+func TestHandleSubFlowDRDTicket_UnknownSlug(t *testing.T) {
+	srv, tA, uA, _, _ := newTestServer(t)
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
+
+	r := requestWithClaims(http.MethodPost,
+		"/v1/projects/no-such-product/no-such-flow/drd/ticket", nil, claims)
+	r.SetPathValue("sub_product_slug", "no-such-product")
+	r.SetPathValue("sub_flow_slug", "no-such-flow")
+	w := httptest.NewRecorder()
+	srv.HandleSubFlowDRDTicket(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleSubFlowDRDTicket_CrossTenant(t *testing.T) {
+	srv, tA, uA, _, _ := newTestServer(t)
+	spSlug, sfSlug, _ := seedSubFlowForServer(t, srv, tA, "Wallet", "Activation")
+
+	// Tenant B claims hitting tenant A's slug → 404 (no existence oracle).
+	tenantB := uuid.NewString()
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tenantB}, Role: "editor"}
+	r := requestWithClaims(http.MethodPost,
+		"/v1/projects/"+spSlug+"/"+sfSlug+"/drd/ticket", nil, claims)
+	r.SetPathValue("sub_product_slug", spSlug)
+	r.SetPathValue("sub_flow_slug", sfSlug)
+	w := httptest.NewRecorder()
+	srv.HandleSubFlowDRDTicket(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("cross-tenant: expected 404, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestHandleProjectEvents_RejectsInvalidTicket(t *testing.T) {
 	srv, _, _, _, _ := newTestServer(t)
 	r := httptest.NewRequest(http.MethodGet, "/v1/projects/x/events?ticket=nope", nil)

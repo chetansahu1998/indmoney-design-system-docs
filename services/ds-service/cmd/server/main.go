@@ -1265,6 +1265,11 @@ func (s *server) routes(mux *http.ServeMux) {
 	// the X-DS-Hocuspocus-Secret header for the /internal/* routes.
 	mux.HandleFunc("POST /v1/projects/{slug}/flows/{flow_id}/drd/ticket",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleDRDTicket)))
+	// U3 follow-up: slug-keyed parallel endpoint for the PRD viewer's
+	// DRDPane. Resolves sub_flow → flow_id then mints the same ticket
+	// shape the flow_id-keyed endpoint above returns.
+	mux.HandleFunc("POST /v1/projects/{sub_product_slug}/{sub_flow_slug}/drd/ticket",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleSubFlowDRDTicket)))
 	mux.HandleFunc("POST /internal/drd/auth",
 		s.projectsServer.HandleDRDInternalAuthGated())
 	mux.HandleFunc("GET /internal/drd/load",
