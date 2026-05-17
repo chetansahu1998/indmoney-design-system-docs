@@ -314,6 +314,20 @@ func walkClustersWithSVGFlag(node any, acc *[]ClusterCandidate, depth int) {
 		// re-parsing JSON.
 		res := SVGEligibility{OK: true}
 		walkSVGEligible(node, &res, 0)
+		// U8 — name-aware short-circuit. When the designer named the
+		// frame `illustration/...` or `icon/...` (iconNamePattern), they
+		// are explicitly asserting "this is a vector group." Override
+		// the structural eligibility blocklist and force SVGEligible=
+		// true. Mirrors the doctrine threaded through node-classifier.ts
+		// on the client and the MCP plan's KTD-4 ("designer naming is
+		// canonical, server does not filter, infer, or guess"). The
+		// SVG export at Stage 9.1 may still fail (the frame might
+		// genuinely have an IMAGE fill), in which case U7's renderer
+		// silently falls back to PNG via R5.
+		if name != "" && iconNamePattern.MatchString(name) {
+			res.OK = true
+			res.Reasons = nil
+		}
 		*acc = append(*acc, ClusterCandidate{
 			ID:          id,
 			SVGEligible: res.OK,

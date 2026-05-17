@@ -493,7 +493,7 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 			if gctx.Err() != nil {
 				return
 			}
-			raw, err := p.Renderer.DownloadPNG(gctx, url)
+			raw, err := p.downloadPNGWithRetry(gctx, url)
 			if err != nil {
 				errCh <- fmt.Errorf("download png %s: %w", frame.FigmaFrameID, err)
 				gcancel()
@@ -807,6 +807,40 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 							)
 						}
 					}
+					// U8 — Stage 9 post-pass: splice the SVG bytes
+					// renderSVGClustersForVersion just wrote into
+					// asset_cache into the canonical_tree as
+					// `svg_markup` fields. The client renderer
+					// (nodeToHTML.renderClusterPlaceholder, U7)
+					// branches on svg_markup to emit inline <svg>
+					// instead of <img src=PNG>. Without this pass
+					// U7's branch is dead code.
+					//
+					// Failures are screen-local: one bad SVG doesn't
+					// poison other screens, and a screen that fails
+					// to inline falls through to the PNG path on the
+					// client (R5 silent fallback).
+					if p.Repo != nil && p.Repo.r != nil && p.Repo.r.db != nil {
+						inlineDeps := SVGInlineDeps{
+							DB:      p.Repo.r.db,
+							DataDir: p.DataDir,
+							Log:     p.Log,
+						}
+						inlined, ierr := InlineSVGMarkup(bgCtx, inlineDeps, in, svgs)
+						if p.Log != nil {
+							if ierr != nil {
+								p.Log.Warn("stage 9: svg inline pass failed",
+									"version_id", versionID,
+									"err", ierr.Error(),
+								)
+							} else {
+								p.Log.Info("stage 9: svg inline pass done",
+									"version_id", versionID,
+									"screens_updated", inlined,
+								)
+							}
+						}
+					}
 				}
 
 				rendered, perr := PrerenderClusters(bgCtx, p.Log, deps, in, ids, DefaultClusterPrerenderConfig)
@@ -972,24 +1006,33 @@ var MinRateLimitWait = 500 * time.Millisecond
 // Stage 9 budget. Exposed as a var so retry-helper tests can lower it.
 var MaxRateLimitWait = 60 * time.Second
 
-// fetchNodesWithRetry calls /v1/files/{key}/nodes with 3-attempt backoff on 429.
-// When the response carries a Retry-After header (typed-error path via
-// client.APIError), we honor it within [MinRateLimitWait, MaxRateLimitWait];
-// otherwise we fall back to 500ms→1s→2s exponential. Other non-2xx errors
-// fail fast.
+// PipelineRetryAttempts is the per-stage retry budget for transient Figma
+// failures (429 rate limits + network blips). Five attempts at 5s/10s/20s/
+// 40s/80s spans ~75s of waiting — long enough to ride out a full Figma
+// per-minute rate-limit window when many pipeline goroutines run concurrently.
+const PipelineRetryAttempts = 5
+
+// PipelineRetryBaseBackoff is the initial backoff when no Retry-After
+// header is present. Doubles each attempt.
+var PipelineRetryBaseBackoff = 5 * time.Second
+
+// fetchNodesWithRetry calls /v1/files/{key}/nodes with PipelineRetryAttempts
+// backoff on 429 + transient network errors. Honors Retry-After when present,
+// otherwise uses an exponential schedule starting at PipelineRetryBaseBackoff.
+// Non-retryable errors fail fast.
 func (p *Pipeline) fetchNodesWithRetry(ctx context.Context, fileKey string, ids []string) (map[string]any, error) {
 	var lastErr error
-	fallback := 500 * time.Millisecond
-	for attempt := 0; attempt < 3; attempt++ {
+	fallback := PipelineRetryBaseBackoff
+	for attempt := 0; attempt < PipelineRetryAttempts; attempt++ {
 		out, err := p.NodeFetcher.GetFileNodes(ctx, fileKey, ids, CanonicalTreeFetchDepth)
 		if err == nil {
 			return out, nil
 		}
 		lastErr = err
-		if !isRateLimitErr(err) {
+		if !isRateLimitErr(err) && !isTransientNetErr(err) {
 			return nil, err
 		}
-		if attempt < 2 {
+		if attempt < PipelineRetryAttempts-1 {
 			delay := nextRateLimitDelay(err, fallback)
 			select {
 			case <-ctx.Done():
@@ -999,24 +1042,25 @@ func (p *Pipeline) fetchNodesWithRetry(ctx context.Context, fileKey string, ids 
 			fallback *= 2
 		}
 	}
-	return nil, fmt.Errorf("figma nodes after 3 attempts: %w", lastErr)
+	return nil, fmt.Errorf("figma nodes after %d attempts: %w", PipelineRetryAttempts, lastErr)
 }
 
-// renderPNGsWithRetry calls the renderer with 3-attempt 429 backoff. Same
-// Retry-After handling as fetchNodesWithRetry.
+// renderPNGsWithRetry calls the renderer with PipelineRetryAttempts
+// backoff covering both 429 rate limits and transient network errors.
+// Same Retry-After handling as fetchNodesWithRetry.
 func (p *Pipeline) renderPNGsWithRetry(ctx context.Context, fileKey string, ids []string) (map[string]string, error) {
 	var lastErr error
-	fallback := 500 * time.Millisecond
-	for attempt := 0; attempt < 3; attempt++ {
+	fallback := PipelineRetryBaseBackoff
+	for attempt := 0; attempt < PipelineRetryAttempts; attempt++ {
 		out, err := p.Renderer.RenderPNGs(ctx, fileKey, ids)
 		if err == nil {
 			return out, nil
 		}
 		lastErr = err
-		if !isRateLimitErr(err) {
+		if !isRateLimitErr(err) && !isTransientNetErr(err) {
 			return nil, err
 		}
-		if attempt < 2 {
+		if attempt < PipelineRetryAttempts-1 {
 			delay := nextRateLimitDelay(err, fallback)
 			select {
 			case <-ctx.Done():
@@ -1026,7 +1070,7 @@ func (p *Pipeline) renderPNGsWithRetry(ctx context.Context, fileKey string, ids 
 			fallback *= 2
 		}
 	}
-	return nil, fmt.Errorf("figma images after 3 attempts: %w", lastErr)
+	return nil, fmt.Errorf("figma images after %d attempts: %w", PipelineRetryAttempts, lastErr)
 }
 
 // isRateLimitErr detects 429s. Primary path: errors.As to extract the
@@ -1045,6 +1089,57 @@ func isRateLimitErr(err error) bool {
 	}
 	s := err.Error()
 	return strings.Contains(s, "rate limit") || strings.Contains(s, "429")
+}
+
+// isTransientNetErr identifies network-layer transients that warrant a
+// retry. Figma's API + S3 image-render hosts intermittently return TCP
+// resets, EOFs, and truncated JSON bodies under sustained concurrency,
+// and our 30s client timeout occasionally trips on slow connections.
+// None of these indicate a permanent failure; a fresh attempt usually
+// succeeds.
+func isTransientNetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "connection reset by peer") ||
+		strings.Contains(s, "context deadline exceeded") ||
+		strings.Contains(s, "EOF") ||
+		strings.Contains(s, "i/o timeout") ||
+		strings.Contains(s, "no such host") ||
+		strings.Contains(s, "broken pipe") ||
+		strings.Contains(s, "connection refused") ||
+		strings.Contains(s, "unexpected end of JSON input") ||
+		strings.Contains(s, "decode:")
+}
+
+// downloadPNGWithRetry wraps Renderer.DownloadPNG with PipelineRetryAttempts
+// covering both 429 rate limits AND transient network errors (TCP reset,
+// context deadline, EOF). Figma's S3 image-render hosts fail intermittently
+// under sustained concurrency.
+func (p *Pipeline) downloadPNGWithRetry(ctx context.Context, url string) ([]byte, error) {
+	var lastErr error
+	fallback := PipelineRetryBaseBackoff
+	for attempt := 0; attempt < PipelineRetryAttempts; attempt++ {
+		out, err := p.Renderer.DownloadPNG(ctx, url)
+		if err == nil {
+			return out, nil
+		}
+		lastErr = err
+		if !isRateLimitErr(err) && !isTransientNetErr(err) {
+			return nil, err
+		}
+		if attempt < PipelineRetryAttempts-1 {
+			delay := nextRateLimitDelay(err, fallback)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+			fallback *= 2
+		}
+	}
+	return nil, fmt.Errorf("download png after %d attempts: %w", PipelineRetryAttempts, lastErr)
 }
 
 // nextRateLimitDelay extracts a Retry-After-derived wait from the error
