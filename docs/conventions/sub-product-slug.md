@@ -125,7 +125,7 @@ Response shape (truncated):
     "storybook_paths": [],
     "jira_components": [],
     "links": {
-      "prd_viewer_url": "/prd/wallet/m2m-settlement",
+      "prd_viewer_url": "/atlas?subFlow=wallet%2Fm2m-settlement",
       "figma_url": "https://www.figma.com/file/.../?node-id=...",
       "conventions_doc_url": "/docs/conventions/sub-product-slug"
     }

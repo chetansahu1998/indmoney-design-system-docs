@@ -115,7 +115,10 @@ func TestResolve_TwoSegmentSlug_HappyPath(t *testing.T) {
 	if out.Links.ConventionsDocURL == "" {
 		t.Errorf("ConventionsDocURL should be populated")
 	}
-	if out.Links.PRDViewerURL != "/prd/wallet/m2m-settlement" {
+	// Plan 005 U8 — PM viewer is now Atlas's right rail + center pane;
+	// the standalone /prd/<sp>/<sf> page redirects here. Slash inside the
+	// slug is URL-encoded so it round-trips as a single query value.
+	if out.Links.PRDViewerURL != "/atlas?subFlow=wallet%2Fm2m-settlement" {
 		t.Errorf("PRDViewerURL: got %q", out.Links.PRDViewerURL)
 	}
 	if len(res.NextActions) == 0 {

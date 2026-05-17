@@ -1,24 +1,23 @@
 /**
- * /prd/{subProduct}/{subFlow} — PM-facing PRD viewer (U9).
+ * /prd/{subProduct}/{subFlow} — DEPRECATED. Plan 005 U8.
  *
- * Server component, but the bulk of work happens in the client shell
- * (PRDShell.tsx). Reason: the auth token lives in zustand-persist +
- * localStorage and only resolves on the client (see app/projects/layout.tsx
- * gate). Server-side fetching would require a cookie session we don't have
- * in Phase 1. So this file is a thin route-level entrypoint that:
+ * The PM-authoring surfaces (PRD doc, prototype canvas, coverage wall,
+ * activity feed, comments) now live inside Atlas's existing right rail
+ * and center pane. This route used to mount its own PRDShell — that
+ * shell has been deleted; the matching client components were either
+ * relocated under app/atlas/_lib/ (Wall, PrototypeCanvas, FrameThumbnail)
+ * or folded into LeafInspector tabs (DocumentView → PRDTab,
+ * StateCard → PRDStateCard, DRDPane → AtlasDRDEditor).
  *
- *   - Receives the {subProduct, subFlow} segments
- *   - Validates segment shape (lowercase-kebab) before dispatching
- *   - Renders the client shell, which mounts the API fetch + SSE
+ * This file stays only to keep any external link / MCP-resolved URL /
+ * historical bookmark from 404-ing. It server-redirects to the Atlas
+ * URL that surfaces the same sub_flow. One HTTP hop, no client bundle.
  *
- * Lives under `[subProduct]/[subFlow]/prd/` (two dynamic segments + literal)
- * to mirror the universal slug shape committed by U9b: `{sub_product}/{sub_flow}`.
- * The plan prompt called for `[slug]/prd/` but a single Next dynamic segment
- * can't host a forward slash; this two-segment layout is the canonical
- * Next.js shape for the same identifier and is consistent with /api/resolve/[...slug].
+ * Segment validation is preserved so a malformed slug renders the same
+ * 4xx-style page instead of bouncing into Atlas with garbage params.
  */
 
-import { PRDShell } from "./PRDShell";
+import { redirect } from "next/navigation";
 
 const SEGMENT_RE = /^[a-z0-9][a-z0-9-]*$/;
 const MAX_SEGMENT_LEN = 80;
@@ -27,10 +26,8 @@ interface Props {
   params: Promise<{ subProduct: string; subFlow: string }>;
 }
 
-export default async function PRDPage({ params }: Props) {
+export default async function PRDRedirectPage({ params }: Props) {
   const { subProduct, subFlow } = await params;
-  // Same segment guard the API route enforces — fail fast on garbage URLs
-  // without spinning up the client bundle just to render an error.
   const segOK = (s: string) =>
     typeof s === "string" &&
     s.length > 0 &&
@@ -46,5 +43,9 @@ export default async function PRDPage({ params }: Props) {
       </div>
     );
   }
-  return <PRDShell subProduct={subProduct} subFlow={subFlow} />;
+  // Atlas's `?subFlow=<sp>/<sf>` URL state (plan 005 U1) is what AtlasShell
+  // resolves on mount to derive the leaf binding. We don't carry the
+  // `project` param here because Atlas's brain hydration already picks
+  // the right leaf from the sub_flow.
+  redirect(`/atlas?subFlow=${encodeURIComponent(`${subProduct}/${subFlow}`)}`);
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -291,7 +292,13 @@ func (resolveTool) Invoke(ctx context.Context, deps Deps, args json.RawMessage) 
 		JIRAComponents:   []string{},
 
 		Links: ResolveLinks{
-			PRDViewerURL:      "/prd/" + fullSlug,
+			// Plan 005 U8 — the standalone /prd viewer was deprecated;
+			// PM-authoring surfaces now live inside Atlas (see
+			// docs/plans/2026-05-18-001-feat-atlas-pm-authoring-integration-plan.md).
+			// `?subFlow=` is the URL state AtlasShell resolves on mount
+			// (plan 005 U1). The slash inside fullSlug needs to be
+			// percent-encoded so it lands as a single query param value.
+			PRDViewerURL:      "/atlas?subFlow=" + url.QueryEscape(fullSlug),
 			FigmaURL:          figmaURL,
 			ConventionsDocURL: conventionsDocURL,
 		},
