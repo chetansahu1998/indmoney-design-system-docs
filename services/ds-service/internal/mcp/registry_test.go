@@ -497,14 +497,9 @@ func TestSectionFrames_NoSectionBound_EmptyArrayWithNote(t *testing.T) {
 	}
 }
 
-func TestSectionOutlineStates_StubReturnsErrNotImplemented(t *testing.T) {
-	h := newTestHarness(t)
-	h.seedSubFlow("Wallet", "M2M")
-	_, err := h.invoke("section.outline_states", map[string]any{"sub_flow_slug": "wallet/m2m"})
-	if !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("expected ErrNotImplemented (U6b stub), got %v", err)
-	}
-}
+// U6b replaced the stub with the real wall implementation; the U6 stub
+// assertion was deleted. Wall-shape coverage lives in
+// internal/projects/prd_outline_test.go.
 
 func TestSectionInspect_HappyPath_ReturnsSummary(t *testing.T) {
 	h := newTestHarness(t)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects"
 )
 
 // tools_section.go — section-shape tools. Two deep tools live here:
@@ -109,7 +111,7 @@ func (sectionFramesTool) Invoke(ctx context.Context, deps Deps, args json.RawMes
 	return Result{Data: out}, nil
 }
 
-// ─── section.outline_states (U6b stub) ─────────────────────────────────────
+// ─── section.outline_states (U6b) ──────────────────────────────────────────
 
 type sectionOutlineStatesTool struct{}
 
@@ -117,24 +119,131 @@ type sectionOutlineStatesArgs struct {
 	SubFlowSlug string `json:"sub_flow_slug"`
 }
 
+// sectionOutlineStatesResult wraps projects.WallResult with the resolved
+// sub_flow + section ids so a Wall caller doesn't need a second round-trip
+// to know what was inspected.
+type sectionOutlineStatesResult struct {
+	SubFlowID      string              `json:"sub_flow_id"`
+	FigmaSectionID *string             `json:"figma_section_id,omitempty"`
+	Wall           projects.WallResult `json:"wall"`
+	Note           string              `json:"note,omitempty"`
+}
+
 func (sectionOutlineStatesTool) Name() string               { return "section.outline_states" }
 func (sectionOutlineStatesTool) Visibility() ToolVisibility { return Deep }
 func (sectionOutlineStatesTool) Description() string {
-	return "Coverage wall: every frame in the section with its binding + PRD coverage status. (Stub — implemented in U6b.)"
+	return "Coverage wall: every frame in the section + every PRD state, joined with binding status, per-stem counts, total word count, and last-touched metadata. The PM's resume-where-I-was view."
 }
 func (sectionOutlineStatesTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
-		"properties": {"sub_flow_slug": {"type": "string"}},
+		"properties": {"sub_flow_slug": {"type": "string", "description": "{sub_product_slug}/{sub_flow_slug}"}},
 		"required": ["sub_flow_slug"],
 		"additionalProperties": false
 	}`)
 }
 func (sectionOutlineStatesTool) Invoke(ctx context.Context, deps Deps, args json.RawMessage) (Result, error) {
-	// U6b will replace this body. Keeping the registration here means the
-	// meta-verb next_actions can reference section.outline_states from day
-	// one without a "tool not found" surprise once U6b ships.
-	return Result{}, fmt.Errorf("%w: section.outline_states is U6b territory", ErrNotImplemented)
+	var in sectionOutlineStatesArgs
+	if err := decodeArgs(args, &in); err != nil {
+		return Result{}, err
+	}
+	sf, _, err := resolveSlug(ctx, deps, in.SubFlowSlug)
+	if err != nil {
+		return Result{}, fmt.Errorf("section.outline_states: %w", err)
+	}
+	wall, err := deps.Repo.LoadSectionOutline(ctx, sf)
+	if err != nil {
+		return Result{}, fmt.Errorf("section.outline_states: %w", err)
+	}
+	out := sectionOutlineStatesResult{
+		SubFlowID:      sf.ID,
+		FigmaSectionID: sf.FigmaSectionID,
+		Wall:           wall,
+	}
+	if sf.FigmaSectionID == nil || *sf.FigmaSectionID == "" {
+		out.Note = "no figma section bound yet — wall shows orphans (if any) until autosync links the section"
+	}
+
+	// Next-action hint — point at the first untagged frame's add_state
+	// call so resumption is one click away.
+	hints := nextActionsForWall(wall, in.SubFlowSlug)
+	return Result{Data: out, NextActions: hints}, nil
+}
+
+// nextActionsForWall emits the "where should I go next?" hint based on
+// the current coverage. Priority order:
+//  1. First untagged frame → suggest prd.author op=add_state with the
+//     frame's name pre-filled as label.
+//  2. Else, first orphaned state → suggest reviewing it.
+//  3. Else (everything bound + authored) → suggest prd.author op=export.
+func nextActionsForWall(wall projects.WallResult, slug string) []NextAction {
+	for _, r := range wall.Frames {
+		if r.BindingStatus == projects.BindingStatusUntagged {
+			hint := rawJSON(`{"op": "add_state", "args": {"sub_flow_slug": "` + slug +
+				`", "tab_name": "default", "label": "` + jsonEscape(r.FrameName) + `"}}`)
+			return []NextAction{{
+				Tool:      "prd.author",
+				Op:        "add_state",
+				When:      "first untagged frame — author this state next",
+				InputHint: hint,
+			}}
+		}
+	}
+	for _, r := range wall.Frames {
+		if r.BindingStatus == projects.BindingStatusOrphaned && r.PRDStateLabel != nil {
+			return []NextAction{{
+				Tool: "prd.author",
+				Op:   "get",
+				When: "orphaned state — read PRD to decide restore vs purge",
+				InputHint: rawJSON(`{"op": "get", "args": {"sub_flow_slug": "` +
+					slug + `"}}`),
+			}}
+		}
+	}
+	if wall.Counts.Bound > 0 {
+		return []NextAction{{
+			Tool: "prd.author",
+			Op:   "export",
+			When: "coverage complete — render PRD as markdown",
+			InputHint: rawJSON(`{"op": "export", "args": {"sub_flow_slug": "` +
+				slug + `"}}`),
+		}}
+	}
+	return nil
+}
+
+// jsonEscape is the smallest viable escaper for the InputHint string
+// fragments. Frame names rarely carry quotes / backslashes / control
+// chars, but we still escape defensively so a stray `"` or `\` in a
+// designer name doesn't break the next-action hint JSON.
+//
+// We do NOT use json.Marshal here because the surrounding template
+// already embeds the value inside a larger JSON object — a full
+// Marshal would add the surrounding quotes we don't want.
+func jsonEscape(s string) string {
+	var b []byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '"':
+			b = append(b, '\\', '"')
+		case '\\':
+			b = append(b, '\\', '\\')
+		case '\n':
+			b = append(b, '\\', 'n')
+		case '\r':
+			b = append(b, '\\', 'r')
+		case '\t':
+			b = append(b, '\\', 't')
+		default:
+			if c < 0x20 {
+				b = append(b, ' ')
+			} else {
+				b = append(b, c)
+			}
+		}
+	}
+	return string(b)
 }
 
 // ─── helpers ───────────────────────────────────────────────────────────────

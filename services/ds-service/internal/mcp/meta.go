@@ -295,6 +295,12 @@ type sectionInspectResult struct {
 	PRDSummary sectionPRDSummary   `json:"prd_summary"`
 	Frames     []sectionFrameRow   `json:"frames"`
 	FramesNote string              `json:"frames_note,omitempty"`
+	// Wall is the U6b coverage view: every frame + every PRD state
+	// joined with binding status, per-stem counts, and last-touched
+	// metadata. Populated whenever a Figma section is bound; for
+	// pre-binding sub_flows it carries any orphan rows but Frames is
+	// the empty slice (mirrors LoadSectionOutline's pre-binding shape).
+	Wall projects.WallResult `json:"wall"`
 }
 
 type sectionDRDSummary struct {
@@ -399,7 +405,21 @@ func (sectionInspectTool) Invoke(ctx context.Context, deps Deps, args json.RawMe
 		out.FramesNote = "no figma section bound yet — use the prototype or wait for design"
 	}
 
-	// Next-action hints — point at the most useful next call.
+	// Wall — U6b coverage view. Always populated (even with no Figma
+	// section bound: empty Frames + any orphan states surface as
+	// orphans). Skipping it when the section is unbound would force the
+	// viewer into a special-case "no wall" branch for what is just an
+	// edge of the same data shape.
+	wall, err := deps.Repo.LoadSectionOutline(ctx, sf)
+	if err != nil {
+		return Result{}, fmt.Errorf("section.inspect: wall: %w", err)
+	}
+	out.Wall = wall
+
+	// Next-action hints — point at the most useful next call. With the
+	// wall in hand, prefer the first untagged frame's add_state as the
+	// "where to go next" hint (matches the U6b plan: "open with the
+	// wall, never a blank cursor").
 	hints := []NextAction{
 		{Tool: "drd.read",
 			When: "to read the DRD content",
@@ -409,10 +429,30 @@ func (sectionInspectTool) Invoke(ctx context.Context, deps Deps, args json.RawMe
 			When: "to read the current PRD with auto-skeleton states",
 			InputHint: rawJSON(`{"op": "get", "args": {"sub_flow_slug": "` + out.SubFlow.FullSlug + `"}}`),
 		},
-		{Tool: "prd.author", Op: "add_state",
+	}
+	// First-untagged hint (the "resume here" affordance). Falls back
+	// to a generic add_state hint when nothing is bound yet so the
+	// catalog stays stable.
+	firstUntaggedLabel := ""
+	for _, r := range wall.Frames {
+		if r.BindingStatus == projects.BindingStatusUntagged {
+			firstUntaggedLabel = r.FrameName
+			break
+		}
+	}
+	if firstUntaggedLabel != "" {
+		hints = append(hints, NextAction{
+			Tool: "prd.author", Op: "add_state",
+			When: "first untagged frame — author this state next",
+			InputHint: rawJSON(`{"op": "add_state", "args": {"sub_flow_slug": "` + out.SubFlow.FullSlug +
+				`", "tab_name": "default", "label": "` + jsonEscape(firstUntaggedLabel) + `"}}`),
+		})
+	} else {
+		hints = append(hints, NextAction{
+			Tool: "prd.author", Op: "add_state",
 			When: "to add a state to the PRD (or refine an auto-skeleton row)",
 			InputHint: rawJSON(`{"op": "add_state", "args": {"sub_flow_slug": "` + out.SubFlow.FullSlug + `", "tab_name": "default", "label": "<State label>"}}`),
-		},
+		})
 	}
 	return Result{Data: out, NextActions: hints}, nil
 }
