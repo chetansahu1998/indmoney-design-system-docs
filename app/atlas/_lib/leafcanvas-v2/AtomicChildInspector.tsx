@@ -36,6 +36,9 @@ import { lookupTokenByHex } from "../../../../lib/tokens/hex-to-token";
 
 import { requestCameraSnap } from "./camera-snap";
 import { setHoveredBandHint, type HoveredBandHint } from "./hover-signal";
+// U10 — Figma-Dev-Mode-style property summary sections rendered above
+// the existing Layer/Type/Tokens/Export tab row.
+import { FillsGroup, LayoutGroup, TypographyGroup } from "./inspector-property-groups";
 import type { AnnotatedNode, BoundingBox, CanonicalNode, Paint } from "./types";
 import {
   type ScreenTextOverride,
@@ -157,6 +160,18 @@ export function AtomicChildInspector(props: AtomicChildInspectorProps) {
             </button>
           )}
         </div>
+      </div>
+
+      {/* U10 — Figma-Dev-Mode-style always-visible property summary.
+          Layout / Typography / Fills sit ABOVE the existing tab row
+          so the user sees the key dimensions + typography + fills at
+          a glance without picking a tab. The original tabs (Layer /
+          Type / Tokens / Export) continue below for the deep dive +
+          DRD / token / export affordances. */}
+      <div className="lcv2-pg-section">
+        <LayoutGroup node={node} />
+        <TypographyGroup node={node} />
+        <FillsGroup node={node} />
       </div>
 
       <div className="lc-ins-tabs">

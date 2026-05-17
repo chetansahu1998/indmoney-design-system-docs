@@ -136,6 +136,88 @@
     url("/fonts/basier-circle/BasierCircle-Bold.ttf") format("truetype");
 }
 
+/* ── U10: inspector property-group summary ─────────────────────
+   Compact always-visible Layout / Typography / Fills sections that
+   sit above the existing Layer / Type / Tokens / Export tab row in
+   AtomicChildInspector. Visual rhythm matches the surrounding
+   `.lcv2-ins-*` chrome but uses a tighter row height so all three
+   groups fit before scroll. */
+
+.lcv2-pg-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 14px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.lcv2-pg-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.lcv2-pg-block-h {
+  font: 600 10px/1 Inter, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: rgba(0, 0, 0, 0.5);
+  margin-bottom: 2px;
+}
+
+.lcv2-pg-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font: 500 12px/1.4 Inter, system-ui, sans-serif;
+  padding: 2px 0;
+}
+
+.lcv2-pg-row-l {
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.lcv2-pg-row-v {
+  color: rgba(0, 0, 0, 0.85);
+  text-align: right;
+}
+
+.lcv2-pg-mono {
+  font-feature-settings: "tnum";
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.lcv2-pg-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.lcv2-pg-color-sw {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  flex: 0 0 auto;
+}
+
+.lcv2-pg-color-hex {
+  font: 500 11px/1 "JetBrains Mono", ui-monospace, monospace;
+  color: rgba(0, 0, 0, 0.8);
+}
+
+.lcv2-pg-empty {
+  font: 500 11px/1.4 Inter, system-ui, sans-serif;
+  color: rgba(0, 0, 0, 0.4);
+  padding: 2px 0;
+}
+
 /* ── U3b: Cmd+F name-search palette ──────────────────────────
    Centered modal-like overlay anchored to the leaf shell. Backdrop
    covers the canvas + inspector but lets the surrounding chrome
