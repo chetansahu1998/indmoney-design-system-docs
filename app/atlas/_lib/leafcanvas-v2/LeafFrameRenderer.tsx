@@ -73,6 +73,24 @@ const ATOMIC_TYPES: ReadonlySet<string> = new Set([
   "LINE",
 ]);
 
+/**
+ * U4 — node types that count as a "frame" for click selection. Plain
+ * click resolves to the nearest of these (frame-first selection per
+ * Figma Dev Mode); Cmd/Ctrl+click bypasses to ATOMIC_TYPES below
+ * (deep-pick). The set covers every Figma container type a designer
+ * would name + click as a unit: FRAME (screen-level + autolayout
+ * containers), COMPONENT (master), INSTANCE (component use site),
+ * and GROUP (legacy structural wrapper). Per the brainstorm Key
+ * Decision: "click selects the deepest FRAME, not Figma's strict
+ * outermost-frame-on-page" — this is what we resolve against.
+ */
+const FRAME_TYPES: ReadonlySet<string> = new Set([
+  "FRAME",
+  "COMPONENT",
+  "INSTANCE",
+  "GROUP",
+]);
+
 export interface LeafFrameRendererProps {
   /** ds-service project slug — leaf id post brain-products migration. */
   slug: string;
@@ -152,7 +170,18 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
     (e: ReactMouseEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement | null;
       if (!target) return;
-      const figmaID = findAtomicTarget(target, wrapperRef.current);
+      // U4 — modifier-aware click resolution. Plain click resolves to
+      // the deepest FRAME/COMPONENT/INSTANCE/GROUP (or cluster
+      // wrapper) under the cursor — what a docs-reader actually wants
+      // when they click on a button, an illustration, or a card.
+      // Cmd/Ctrl+click bypasses to the original atomic walker for
+      // deep-pick into vector paths, text glyphs, or shapes inside an
+      // inlined SVG illustration. (Per brainstorm Key Decision +
+      // doc-review P1 #3 / P1 #4 resolution.)
+      const wantsDeepPick = e.metaKey || e.ctrlKey;
+      const figmaID = wantsDeepPick
+        ? findAtomicTarget(target, wrapperRef.current)
+        : findFrameTarget(target, wrapperRef.current);
       if (!figmaID) return;
       // Stop propagation so the outer canvas pan/zoom layer doesn't also
       // interpret this as a frame focus event.
@@ -703,20 +732,25 @@ export function LeafFrameRenderer(props: LeafFrameRendererProps) {
       right: lasso.left + lasso.width + wrapperRect.left,
       bottom: lasso.top + lasso.height + wrapperRect.top,
     };
-    // Walk every atomic-tagged DOM node under the wrapper. We rely on
-    // `data-figma-type` markup that nodeToHTML emits for atomic types, plus
-    // `data-cluster="true"` for icon clusters. FRAMEs are excluded by
-    // construction — they don't get selected even if they're inside the
-    // lasso.
+    // U4 — marquee widened to include FRAME-class types and inlined
+    // SVG cluster wrappers so the selection unit matches what plain
+    // click resolves to (frame-first). Previously the marquee only
+    // selected atomic types, which silently disagreed with click
+    // semantics — selecting a row of "stat tiles" with marquee
+    // missed the tiles and grabbed only their internal labels.
     const candidates = wrapper.querySelectorAll<HTMLElement>(
-      `[data-figma-type="TEXT"],` +
+      `[data-figma-type="FRAME"],` +
+        `[data-figma-type="COMPONENT"],` +
+        `[data-figma-type="INSTANCE"],` +
+        `[data-figma-type="GROUP"],` +
+        `[data-figma-type="TEXT"],` +
         `[data-figma-type="RECTANGLE"],` +
         `[data-figma-type="ELLIPSE"],` +
         `[data-figma-type="VECTOR"],` +
         `[data-figma-type="STAR"],` +
         `[data-figma-type="POLYGON"],` +
         `[data-figma-type="LINE"],` +
-        `[data-cluster="true"],[data-cluster-pending="true"]`,
+        `[data-cluster="true"],[data-cluster-pending="true"],[data-cluster-svg="true"]`,
     );
     for (const el of Array.from(candidates)) {
       const figmaID = el.getAttribute("data-figma-id");
@@ -1171,6 +1205,46 @@ function findAtomicTarget(
     }
     const type = cur.getAttribute("data-figma-type");
     if (type && ATOMIC_TYPES.has(type)) {
+      const id = cur.getAttribute("data-figma-id");
+      if (id) return id;
+    }
+    cur = cur.parentElement;
+  }
+  return null;
+}
+
+/**
+ * U4 — frame-first click walker. Mirror of findAtomicTarget but
+ * accepts FRAME_TYPES (FRAME/COMPONENT/INSTANCE/GROUP) instead of
+ * ATOMIC_TYPES. Also accepts cluster nodes (data-cluster="true"
+ * marks the wrapper of an icon/illustration; treating these as
+ * "frames" is the right call because they're the user-meaningful
+ * unit — the brainstorm Key Decision says clicking an inlined SVG
+ * illustration should select "the illustration", not the deepest
+ * <path> inside it).
+ *
+ * Used by handleClick when no modifier is held. Cmd/Ctrl+click
+ * falls back to findAtomicTarget for atom-level deep-pick.
+ */
+function findFrameTarget(
+  el: HTMLElement,
+  wrapper: HTMLDivElement | null,
+): string | null {
+  let cur: HTMLElement | null = el;
+  while (cur && cur !== wrapper) {
+    const cluster = cur.getAttribute("data-cluster");
+    const clusterSvg = cur.getAttribute("data-cluster-svg");
+    const clusterPending = cur.getAttribute("data-cluster-pending");
+    if (
+      cluster === "true" ||
+      clusterSvg === "true" ||
+      clusterPending === "true"
+    ) {
+      const id = cur.getAttribute("data-figma-id");
+      if (id) return id;
+    }
+    const type = cur.getAttribute("data-figma-type");
+    if (type && FRAME_TYPES.has(type)) {
       const id = cur.getAttribute("data-figma-id");
       if (id) return id;
     }

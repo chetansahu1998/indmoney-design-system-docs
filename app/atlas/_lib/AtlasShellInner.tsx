@@ -31,6 +31,16 @@ import { installKeymap, registerKeymap, type ActionTable } from "./leafcanvas-v2
 import { getCameraActions, type NamedFrameEntry } from "./leafcanvas-v2/camera-actions";
 import { toggleDevMode } from "./leafcanvas-v2/dev-mode-state";
 import { NameSearchPalette } from "./leafcanvas-v2/NameSearchPalette";
+// U4 — selection cycle helpers. Used by the Enter / Shift+Enter / Tab /
+// Cmd+A keymap actions to walk the current canonical_tree relative to
+// the active selection.
+import {
+  collectIdsByType,
+  findFirstChildId,
+  findNextSiblingId,
+  findParentId,
+  findPrevSiblingId,
+} from "./leafcanvas-v2/selection-cycle";
 
 // Side-effect imports — order matters; see AtlasShell for rationale.
 import "./tweaks-panel";
@@ -87,6 +97,8 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
   // on the floor — the inspector component existed but was never imported.
   const selectedAtomicChild = useAtlas((s) => s.selection.selectedAtomicChild);
   const selectAtomicChild = useAtlas((s) => s.selectAtomicChild);
+  // U4 — Cmd+A bulk-add. Wired through the keymap action below.
+  const addToBulkSelection = useAtlas((s) => s.addToBulkSelection);
   const removeOverride = useAtlas((s) => s.removeOverride);
   const atomicCanonicalTree = useAtlas((s) => {
     const sel = s.selection.selectedAtomicChild;
@@ -248,24 +260,63 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
         closeLeaf();
       },
 
-      // Selection-dependent (U4 fills these in). Registered as no-ops
-      // for now so the keymap dispatches without throwing; the
-      // matchAction wiring is in place so muscle memory works the
-      // moment U4 lands.
-      "selection.next-sibling": () => {
-        /* U4 */
-      },
-      "selection.prev-sibling": () => {
-        /* U4 */
-      },
-      "selection.select-all": () => {
-        /* U4 */
-      },
+      // U4 — selection navigation via the active canonical_tree.
+      // All five actions read `selectedAtomicChild` and walk the
+      // currently-loaded `atomicCanonicalTree`. When no selection is
+      // active or the helper returns no candidate, the action is a
+      // no-op (consistent with the brainstorm AE for "Enter with no
+      // selection" — no-op).
       "selection.descend": () => {
-        /* U4 */
+        if (!selectedAtomicChild || !atomicCanonicalTree) return;
+        const child = findFirstChildId(
+          atomicCanonicalTree,
+          selectedAtomicChild.figmaNodeID,
+        );
+        if (!child) return;
+        selectAtomicChild(selectedAtomicChild.screenID, child);
       },
       "selection.ascend": () => {
-        /* U4 */
+        if (!selectedAtomicChild || !atomicCanonicalTree) return;
+        const parent = findParentId(
+          atomicCanonicalTree,
+          selectedAtomicChild.figmaNodeID,
+        );
+        if (!parent) return;
+        selectAtomicChild(selectedAtomicChild.screenID, parent);
+      },
+      "selection.next-sibling": () => {
+        if (!selectedAtomicChild || !atomicCanonicalTree) return;
+        const next = findNextSiblingId(
+          atomicCanonicalTree,
+          selectedAtomicChild.figmaNodeID,
+        );
+        if (!next) return;
+        selectAtomicChild(selectedAtomicChild.screenID, next);
+      },
+      "selection.prev-sibling": () => {
+        if (!selectedAtomicChild || !atomicCanonicalTree) return;
+        const prev = findPrevSiblingId(
+          atomicCanonicalTree,
+          selectedAtomicChild.figmaNodeID,
+        );
+        if (!prev) return;
+        selectAtomicChild(selectedAtomicChild.screenID, prev);
+      },
+      "selection.select-all": () => {
+        // Selects every FRAME-class node in the current screen.
+        // Falls back gracefully when no atomicCanonicalTree is loaded
+        // (e.g., user hits Cmd+A before picking anything).
+        if (!selectedAtomicChild || !atomicCanonicalTree) return;
+        const FRAME_TYPES_SET = new Set([
+          "FRAME",
+          "COMPONENT",
+          "INSTANCE",
+          "GROUP",
+        ]);
+        const ids = collectIdsByType(atomicCanonicalTree, FRAME_TYPES_SET);
+        for (const id of ids) {
+          addToBulkSelection(selectedAtomicChild.screenID, id);
+        }
       },
 
       // Hand tool toggle — defers to follow-up; canvas already pans
@@ -296,6 +347,9 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
     closeAtomicInspector,
     openPalette,
     closePalette,
+    atomicCanonicalTree,
+    selectAtomicChild,
+    addToBulkSelection,
   ]);
 
   // window globals for backward compat with the ported modules.
