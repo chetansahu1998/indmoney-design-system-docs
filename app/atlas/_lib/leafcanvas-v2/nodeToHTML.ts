@@ -260,9 +260,51 @@ function renderClusterPlaceholder(
   ctx: NodeToHTMLContext,
   keyHint: string,
 ): ReactElement {
-  const url = node.id ? ctx.clusterURLs.get(node.id) ?? null : null;
   const positioning = positionStyle(node, parentBBox, parentLayoutMode);
   const sizing = sizeStyle(node, parentLayoutMode);
+
+  // U7 — inline-SVG fast path. When the server-side pipeline has
+  // populated `svg_markup` on this node (U8 ships the producer), bypass
+  // the cluster-URL Map lookup, the SSE asset-stream subscription, and
+  // the retry-on-425 loop entirely. The SVG renders as live DOM:
+  //   - crisp at any camera zoom (vector, not raster pyramid)
+  //   - per-stroke hoverable / selectable via standard DOM events
+  //   - themeable via CSS (currentColor, dark-mode tokens)
+  //   - accessibility-addressable (role="img", aria-label)
+  //
+  // Falls through to the existing PNG path when svg_markup is absent
+  // (R5 silent fallback per the brainstorm Key Decision — visibly
+  // broken icons cost more trust than the saved render budget gains).
+  //
+  // The server is the trust boundary for SVG sanitization (U8 strips
+  // event handlers / javascript: URLs / <foreignObject> per the
+  // doc-review P1 Security finding). The client trusts the bytes.
+  if (typeof node.svg_markup === "string" && node.svg_markup.length > 0) {
+    return createElement("div", {
+      key: keyHint,
+      "data-cluster-svg": "true",
+      "data-figma-id": node.id,
+      "aria-label": node.name ?? "illustration",
+      role: "img",
+      style: {
+        ...positioning,
+        ...sizing,
+        display: "block",
+        // The inlined SVG carries its own viewBox + width/height
+        // attributes from Figma's export. Letting it fill the
+        // wrapper at 100/100 ensures it scales with the wrapper's
+        // bbox-driven sizing rather than rendering at its intrinsic
+        // pixel dimensions.
+        lineHeight: 0,
+      },
+      // svg_markup is server-sanitized at write time. See U8 for the
+      // golang.org/x/net/html allowlist pass that strips <script>,
+      // <foreignObject>, event handlers, and javascript: URLs.
+      dangerouslySetInnerHTML: { __html: node.svg_markup },
+    });
+  }
+
+  const url = node.id ? ctx.clusterURLs.get(node.id) ?? null : null;
 
   if (url) {
     // Cluster export resolved — render the rasterized icon. onError

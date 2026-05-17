@@ -180,6 +180,22 @@ export interface CanonicalNode {
    */
   fillGeometry?: Array<{ path: string; windingRule?: "EVENODD" | "NONZERO" }>;
   strokeGeometry?: Array<{ path: string; windingRule?: "EVENODD" | "NONZERO" }>;
+  /**
+   * Pre-rendered SVG markup populated by the server pipeline for
+   * named vector groups (`illustration/...`, `icon/.../.../...`). When
+   * present, the renderer (`nodeToHTML.renderClusterPlaceholder`)
+   * inlines the markup directly via `dangerouslySetInnerHTML` instead
+   * of routing to the cluster-URL → `<img>` path. The asset-stream
+   * subscriber (`useIconClusterURLs.collectClusterIDsWithBBox`) also
+   * skips these nodes — no URL mint, no SSE wait, no render-retry
+   * loop. See plan U7 (client) + U8 (server inlining pass).
+   *
+   * Origin: Figma `/v1/images/<key>?format=svg` bytes spliced into the
+   * canonical_tree post-Stage 9 by ds-service's `svg_inliner.go`. The
+   * markup is server-sanitized; the client trusts the bytes. The
+   * U8 commit lands the producer side.
+   */
+  svg_markup?: string;
   /** Figma blend mode applied to this node's painting. CSS mix-blend-mode equivalent. */
   blendMode?: string;
   /**

@@ -127,6 +127,20 @@ export function collectClusterIDsWithBBox(
 }
 
 function walkWithBBox(node: CanonicalNode, acc: ClusterIDWithBBox[]): void {
+  // U7 — skip nodes the server-side pipeline already inlined as SVG
+  // markup. These render via `<svg>...</svg>` in nodeToHTML (no URL
+  // mint, no SSE wait, no <img> retry). Without this skip we'd mint
+  // PNG URLs that the renderer never consumes — wasted Figma API
+  // budget and asset_cache rows.
+  //
+  // shouldRasterize still returns true for these nodes (the
+  // classification is name-driven, not rendering-driven). The skip
+  // happens at collection time so the asset-stream subscriber and
+  // residual mint pass never see them. Children are NOT descended —
+  // svg_markup is the entire flattened subtree from Figma's exporter.
+  if (typeof node.svg_markup === "string" && node.svg_markup.length > 0) {
+    return;
+  }
   // Single classification source — node-classifier.ts combines name
   // patterns (Icons/.../, Illustrations/, Yes/No/24px variants) with the
   // structural heuristic. shouldRasterize returns true for icons,
