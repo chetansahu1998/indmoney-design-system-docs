@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -156,6 +157,204 @@ func (t *TenantRepo) PersistYDocSnapshot(ctx context.Context, flowID, userID str
 
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit ydoc: %w", err)
+	}
+	return rev, nil
+}
+
+// ─── U3 — sub_flow_id–keyed DRD access ─────────────────────────────────────
+//
+// New code paths (MCP tools, PM authoring viewer) address DRDs by
+// sub_flow_id rather than the legacy free-form slug + flow_id pair.
+// flow_drd.sub_flow_id is a nullable secondary key added by mig 0038;
+// every existing row keeps sub_flow_id = NULL and stays reachable via
+// the original LoadYDocState / PersistYDocSnapshot path.
+//
+// Three new methods mirror the legacy shape exactly:
+//   CreateDRDForSubFlow         — idempotent bind of (sub_flow_id → flow_id)
+//   LoadYDocStateBySubFlow      — same semantics as LoadYDocState
+//   PersistYDocSnapshotBySubFlow — same semantics as PersistYDocSnapshot
+//
+// All three are tenant-scoped (WHERE tenant_id = ?). The caller is
+// responsible for resolving sub_flow_id from a slug or from autosync's
+// own UpsertSubFlow output before reaching these methods.
+
+// CreateDRDForSubFlow ensures a flow_drd row exists for the given sub_flow,
+// returning the underlying flow_id. Idempotent: if a row already exists
+// for this sub_flow_id within the tenant, returns its flow_id without
+// modification. Otherwise INSERTs a fresh row keyed by both flow_id (PK)
+// and sub_flow_id (secondary).
+//
+// The caller supplies flow_id — it must reference an existing flows.id
+// row (FK to flows is enforced by the schema) that isn't already taken
+// by another flow_drd row. A flow_id collision against an existing row
+// surfaces as a wrapped SQL error.
+//
+// Read-before-tx: read pool lookup first; only INSERT if not present.
+func (t *TenantRepo) CreateDRDForSubFlow(ctx context.Context, subFlowID, flowID, userID string) (string, error) {
+	if t.tenantID == "" {
+		return "", errors.New("drd: tenant_id required")
+	}
+	if subFlowID == "" {
+		return "", errors.New("drd: sub_flow_id required")
+	}
+	if flowID == "" {
+		return "", errors.New("drd: flow_id required")
+	}
+
+	// Idempotent fast path — does a flow_drd already exist for this sub_flow?
+	var existing string
+	err := t.readHandle().QueryRowContext(ctx,
+		`SELECT flow_id FROM flow_drd WHERE tenant_id = ? AND sub_flow_id = ?`,
+		t.tenantID, subFlowID,
+	).Scan(&existing)
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("lookup drd by sub_flow: %w", err)
+	}
+
+	// No row yet — verify the flow is visible inside this tenant before
+	// inserting (matches PersistYDocSnapshot's pre-tx gate).
+	if err := t.assertFlowVisibleByID(ctx, flowID); err != nil {
+		return "", err
+	}
+
+	now := t.now().UTC()
+	// Seed a minimal row: empty BlockNote content_json (NOT NULL in schema),
+	// revision 0 — the first PersistYDocSnapshotBySubFlow call will bump
+	// it to 1 just like the legacy path's INSERT path does on a fresh row.
+	_, ierr := t.handle().ExecContext(ctx,
+		`INSERT INTO flow_drd
+		   (flow_id, tenant_id, content_json, revision, schema_version,
+		    updated_at, updated_by_user_id, sub_flow_id)
+		 VALUES (?, ?, ?, 0, 'phase-mcp-u3', ?, ?, ?)`,
+		flowID, t.tenantID, []byte(`{}`), rfc3339(now), userID, subFlowID,
+	)
+	if ierr != nil {
+		// Re-read on UNIQUE collision — a concurrent writer may have
+		// raced us on the sub_flow_id partial unique index. The flow_id
+		// PK collision case falls through here too; the caller sees the
+		// raw error and can react.
+		if strings.Contains(ierr.Error(), "UNIQUE") &&
+			strings.Contains(ierr.Error(), "sub_flow_id") {
+			var raceExisting string
+			if rerr := t.handle().QueryRowContext(ctx,
+				`SELECT flow_id FROM flow_drd WHERE tenant_id = ? AND sub_flow_id = ?`,
+				t.tenantID, subFlowID,
+			).Scan(&raceExisting); rerr == nil {
+				return raceExisting, nil
+			}
+		}
+		return "", fmt.Errorf("create drd for sub_flow: %w", ierr)
+	}
+	return flowID, nil
+}
+
+// LoadYDocStateBySubFlow returns the persisted binary Y.Doc for the
+// flow_drd row bound to the given sub_flow_id within the tenant. Returns
+// ErrNotFound when no row exists for this sub_flow_id; returns (nil, nil)
+// when the row exists but has never been snapshotted (mirrors the
+// first-edit semantics of LoadYDocState).
+//
+// Read-only — uses the read pool.
+func (t *TenantRepo) LoadYDocStateBySubFlow(ctx context.Context, subFlowID string) ([]byte, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("drd: tenant_id required")
+	}
+	if subFlowID == "" {
+		return nil, ErrNotFound
+	}
+	var state []byte
+	err := t.readHandle().QueryRowContext(ctx,
+		`SELECT y_doc_state FROM flow_drd WHERE tenant_id = ? AND sub_flow_id = ?`,
+		t.tenantID, subFlowID,
+	).Scan(&state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load ydoc by sub_flow: %w", err)
+	}
+	return state, nil
+}
+
+// PersistYDocSnapshotBySubFlow writes a new binary Y.Doc state to the
+// flow_drd row bound to sub_flow_id, bumping revision + updated_at +
+// last_snapshot_at exactly like PersistYDocSnapshot does for the legacy
+// flow_id path. Errors with ErrNotFound when no row exists for this
+// sub_flow_id — the caller must have run CreateDRDForSubFlow first.
+//
+// Same 5MB cap (MaxYDocBytes), same content_json semantics (untouched —
+// Hocuspocus owns the live state; programmatic readers see the
+// pre-collab content_json until a REST PUT replaces it).
+func (t *TenantRepo) PersistYDocSnapshotBySubFlow(ctx context.Context, subFlowID, userID string, state []byte) (revision int64, err error) {
+	if t.tenantID == "" {
+		return 0, errors.New("drd: tenant_id required")
+	}
+	if subFlowID == "" {
+		return 0, ErrNotFound
+	}
+	if len(state) > MaxYDocBytes {
+		return 0, fmt.Errorf("ydoc state %d bytes exceeds %d cap", len(state), MaxYDocBytes)
+	}
+
+	// Read-before-tx — confirm the row exists in this tenant and capture
+	// flow_id so post-commit audit + visibility checks have it.
+	var flowID string
+	if err := t.readHandle().QueryRowContext(ctx,
+		`SELECT flow_id FROM flow_drd WHERE tenant_id = ? AND sub_flow_id = ?`,
+		t.tenantID, subFlowID,
+	).Scan(&flowID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("resolve drd by sub_flow: %w", err)
+	}
+
+	now := t.now().UTC()
+	tx, err := t.r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Snapshot semantics identical to PersistYDocSnapshot but keyed on
+	// sub_flow_id. We UPDATE (no upsert): if the row vanished between the
+	// read above and this write (rare — DELETE is unusual for flow_drd),
+	// the RowsAffected==0 branch surfaces ErrNotFound.
+	res, err := tx.ExecContext(ctx,
+		`UPDATE flow_drd
+		    SET y_doc_state        = ?,
+		        last_snapshot_at   = ?,
+		        revision           = revision + 1,
+		        updated_at         = ?,
+		        updated_by_user_id = ?
+		  WHERE tenant_id = ? AND sub_flow_id = ?`,
+		state, rfc3339(now), rfc3339(now), userID,
+		t.tenantID, subFlowID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("persist ydoc by sub_flow: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("persist ydoc rows affected: %w", err)
+	}
+	if n == 0 {
+		return 0, ErrNotFound
+	}
+
+	var rev int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT revision FROM flow_drd WHERE tenant_id = ? AND sub_flow_id = ?`,
+		t.tenantID, subFlowID,
+	).Scan(&rev); err != nil {
+		return 0, fmt.Errorf("read rev by sub_flow: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit ydoc by sub_flow: %w", err)
 	}
 	return rev, nil
 }
