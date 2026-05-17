@@ -1015,6 +1015,19 @@ function LeafTopBar({ leaf, onClose, onPickLeaf, violations }) {
 // ============================================================
 window.LeafInspector = function LeafInspector({ leaf, frameId, onClose, onPickFrame }) {
   const [tab, setTab] = useState("drd");
+  // Plan 005 U3 — defensive fallback. If the leaf transitions legacy →
+  // sub_flow mid-session (autosync binds a section, derivation kicks in),
+  // the previously active tab might be one we no longer render
+  // (violations / decisions / copy). Snap to "drd" — always valid for
+  // both legacy and sub_flow leaves. Same for the reverse transition.
+  useEffect(() => {
+    const visibleTabs = leaf.subFlow
+      ? ["drd", "prd", "activity", "comments"]
+      : ["drd", "violations", "decisions", "copy", "activity", "comments"];
+    if (!visibleTabs.includes(tab)) {
+      setTab("drd");
+    }
+  }, [leaf.subFlow, tab]);
   const violations = useMemo(() => window.buildViolations(leaf), [leaf.id]);
   const decisions = useMemo(() => window.buildDecisions(leaf), [leaf.id]);
   const activity = useMemo(() => window.buildActivity(leaf), [leaf.id]);
@@ -1045,12 +1058,20 @@ window.LeafInspector = function LeafInspector({ leaf, frameId, onClose, onPickFr
       <div className="lc-ins-tabs">
         {/*
           Plan 005 U2 — render the PRD tab button when the leaf is bound to
-          a sub_flow. The full 4-vs-6 tab gating moves into U3; for U2 we
-          inject "prd" alongside the legacy tab list so PMs already see the
-          new surface and U3 can refactor the conditional cleanly.
+          a sub_flow. U3 finalises the gating: sub_flow-bound leaves get
+          the focused 4-tab PM-authoring rail [DRD, PRD, Activity,
+          Comments]; legacy leaves keep the original 6 (Decisions /
+          Violations / Copy stay available for the design-system audit
+          use cases that don't have a sub_flow binding).
+
+          The data layer for Decisions / Violations / Copy is untouched —
+          if a leaf gains a sub_flow mid-session the tabs hide, but the
+          underlying drd_comments, decisions, audit_log, screen_overrides
+          rows remain queryable via Atlas's existing endpoints. No data
+          loss; the tabs just stop rendering for that leaf.
         */}
         {(leaf.subFlow
-          ? ["drd", "prd", "violations", "decisions", "copy", "activity", "comments"]
+          ? ["drd", "prd", "activity", "comments"]
           : ["drd", "violations", "decisions", "copy", "activity", "comments"]
         ).map(t => (
           <button
