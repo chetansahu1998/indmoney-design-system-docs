@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -607,11 +608,27 @@ func (p *Poller) syncFileDeep(
 	// and LinkSubFlowToFigmaSection is a no-op when the binding is
 	// already in place. Logged at WARN — a single bad section name must
 	// not abort the rest of the file's autosync.
+	//
+	// Plan 2026-05-17-002 U2b — after each successful sub_flow bind, seed
+	// the PRD skeleton from the section's direct-child frames. We read
+	// frames straight out of `subtreesBySection` (in-memory) rather than
+	// calling LoadSectionSubtree — the read pool can't see the writes that
+	// just landed via UpsertFigmaPagesAndSections (split-pool architecture,
+	// commit ab286d0), and the in-memory map is the canonical source for
+	// this cycle anyway. Same WARN-and-continue discipline as U2.
 	for _, sec := range sectionRows {
-		if _, sfErr := repo.UpsertSubFlowFromSection(ctx, f.FileKey, sec.PageID, sec.SectionID, sec.Name); sfErr != nil {
+		subFlow, sfErr := repo.UpsertSubFlowFromSection(ctx, f.FileKey, sec.PageID, sec.SectionID, sec.Name)
+		if sfErr != nil {
 			logger.Warn("figma_inventory: sub_flow upsert failed",
 				"file", f.FileKey, "page", sec.PageID, "section", sec.SectionID,
 				"name", sec.Name, "err", sfErr.Error())
+			continue
+		}
+		frames := filterSectionFrames(sec.SectionID, subtreesBySection[sec.SectionID])
+		if skelErr := repo.AutoSkeletonPRDStates(ctx, subFlow.ID, frames); skelErr != nil {
+			logger.Warn("figma_inventory: prd skeleton failed",
+				"file", f.FileKey, "page", sec.PageID, "section", sec.SectionID,
+				"sub_flow_id", subFlow.ID, "err", skelErr.Error())
 		}
 	}
 
@@ -644,6 +661,78 @@ func (p *Poller) syncFileDeep(
 		return pageCount, sectionCount, nodeCount, fmt.Errorf("mark deep-synced: %w", err)
 	}
 	return pageCount, sectionCount, nodeCount, nil
+}
+
+// frameContainerTypesForSkeleton mirrors the closed set on
+// projects.ListSectionFrames — direct-child FRAME / INSTANCE / COMPONENT
+// nodes become PRD-state candidates. TEXT / VECTOR / RECTANGLE / GROUP
+// are intentionally excluded; they are not state-level containers.
+// Duplicated here (instead of imported) because the set is small and
+// keeping it package-local avoids exporting another reusable map from
+// the projects package.
+var frameContainerTypesForSkeleton = map[string]struct{}{
+	"FRAME":     {},
+	"INSTANCE":  {},
+	"COMPONENT": {},
+}
+
+// filterSectionFrames lifts the same filter logic that
+// projects.ListSectionFrames runs (depth == sectionDepth+1, type ∈
+// {FRAME,INSTANCE,COMPONENT}, sort by AbsY then AbsX) out of the DB
+// read-pool path. Called directly on the in-memory subtree slice the
+// poller built in syncFileDeep — the read pool can't see those writes
+// yet (split-pool architecture, ab286d0), and the in-memory data is
+// guaranteed consistent with what just committed.
+//
+// Returns []projects.FrameRow so the autosync skeleton method receives
+// the same shape it would have got from ListSectionFrames.
+//
+// Empty inputs (no subtree blob for the section, or section row absent
+// from its own subtree) return an empty slice, never an error — same
+// contract as ListSectionFrames.
+func filterSectionFrames(sectionID string, nodes []projects.FigmaNodeRow) []projects.FrameRow {
+	if sectionID == "" || len(nodes) == 0 {
+		return []projects.FrameRow{}
+	}
+	sectionDepth := -1
+	for _, n := range nodes {
+		if n.NodeID == sectionID {
+			sectionDepth = n.Depth
+			break
+		}
+	}
+	if sectionDepth < 0 {
+		return []projects.FrameRow{}
+	}
+	childDepth := sectionDepth + 1
+
+	out := make([]projects.FrameRow, 0, 16)
+	for _, n := range nodes {
+		if n.Depth != childDepth {
+			continue
+		}
+		if _, ok := frameContainerTypesForSkeleton[n.NodeType]; !ok {
+			continue
+		}
+		out = append(out, projects.FrameRow{
+			NodeID:       n.NodeID,
+			Name:         n.Name,
+			ParentNodeID: n.ParentID,
+			Depth:        n.Depth,
+			AbsX:         n.X,
+			AbsY:         n.Y,
+			Width:        n.Width,
+			Height:       n.Height,
+			HasRender:    false,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].AbsY != out[j].AbsY {
+			return out[i].AbsY < out[j].AbsY
+		}
+		return out[i].AbsX < out[j].AbsX
+	})
+	return out
 }
 
 // parseAPITime accepts the Figma API's lastModified format. The API uses
