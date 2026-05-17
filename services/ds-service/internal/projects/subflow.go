@@ -287,6 +287,58 @@ func (t *TenantRepo) GetSubProductByName(ctx context.Context, name string) (SubP
 	return t.getSubProductByLowerName(ctx, normalizeName(name), t.readHandle())
 }
 
+// GetSubProductByID returns the row by primary key. Returns ErrNotFound
+// on miss. Used by MCP tools (U6) that have a sub_product_id in hand
+// (e.g. from a SubFlow row) and need the slug + name for response shaping.
+func (t *TenantRepo) GetSubProductByID(ctx context.Context, id string) (SubProduct, error) {
+	if t.tenantID == "" {
+		return SubProduct{}, errors.New("sub_product: tenant_id required")
+	}
+	if id == "" {
+		return SubProduct{}, ErrNotFound
+	}
+	row := t.readHandle().QueryRowContext(ctx,
+		`SELECT id, name, slug, created_at
+		   FROM sub_product
+		  WHERE tenant_id = ? AND id = ?`,
+		t.tenantID, id,
+	)
+	sp, err := scanSubProduct(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SubProduct{}, ErrNotFound
+	}
+	if err != nil {
+		return SubProduct{}, fmt.Errorf("lookup sub_product by id: %w", err)
+	}
+	return sp, nil
+}
+
+// GetSubProductBySlug resolves a sub_product by its slug.
+// Returns ErrNotFound on miss.
+func (t *TenantRepo) GetSubProductBySlug(ctx context.Context, slug string) (SubProduct, error) {
+	if t.tenantID == "" {
+		return SubProduct{}, errors.New("sub_product: tenant_id required")
+	}
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return SubProduct{}, ErrNotFound
+	}
+	row := t.readHandle().QueryRowContext(ctx,
+		`SELECT id, name, slug, created_at
+		   FROM sub_product
+		  WHERE tenant_id = ? AND slug = ?`,
+		t.tenantID, slug,
+	)
+	sp, err := scanSubProduct(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SubProduct{}, ErrNotFound
+	}
+	if err != nil {
+		return SubProduct{}, fmt.Errorf("lookup sub_product by slug: %w", err)
+	}
+	return sp, nil
+}
+
 func (t *TenantRepo) getSubProductByLowerName(ctx context.Context, lowerName string, h dbtx) (SubProduct, error) {
 	row := h.QueryRowContext(ctx,
 		`SELECT id, name, slug, created_at

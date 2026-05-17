@@ -374,3 +374,70 @@ type DRDAuditEntry struct {
 func MakeDRDAuditEvent(action string) string {
 	return "drd." + action
 }
+
+// ─── MCP orchestration helper (U6 plan 002) ────────────────────────────────
+
+// BootstrapDRDForSubFlow is the orchestrated write path the MCP `drd.append`
+// tool calls. It ensures the chain `project → flow → flow_drd` exists for
+// the given sub_flow, then persists the YDoc snapshot.
+//
+// Idempotency: subsequent calls reuse the synthetic project + flow rows;
+// only the YDoc snapshot revision bumps.
+//
+// Synthetic project: one MCP-DRD project per tenant (slug-derived), owned
+// by the supplied userID. The flow is per-sub_flow, keyed by a synthetic
+// file_id `mcp-drd:<sub_flow_id>` so each sub_flow gets its own flow row.
+//
+// Returns (flow_id, revision_after_write) on success.
+func (t *TenantRepo) BootstrapDRDForSubFlow(
+	ctx context.Context,
+	subFlowID, userID string,
+	payload []byte,
+) (string, int64, error) {
+	if t.tenantID == "" {
+		return "", 0, errors.New("drd: tenant_id required")
+	}
+	if subFlowID == "" {
+		return "", 0, ErrNotFound
+	}
+	if userID == "" {
+		return "", 0, errors.New("drd: user_id required")
+	}
+
+	// Step 1 — synthetic project (one per tenant for MCP-authored DRDs).
+	proj, err := t.UpsertProject(ctx, Project{
+		Name:        "MCP DRDs",
+		Platform:    "docs",
+		Product:     "MCP",
+		Path:        "mcp/drds",
+		FileID:      "mcp-drd-system",
+		OwnerUserID: userID,
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("bootstrap drd: upsert project: %w", err)
+	}
+
+	// Step 2 — per-sub_flow flow row. file_id is keyed by sub_flow_id so
+	// each sub_flow's DRD has a stable, dedicated flow.
+	flow, err := t.UpsertFlow(ctx, Flow{
+		ProjectID: proj.ID,
+		FileID:    "mcp-drd:" + subFlowID,
+		Name:      "DRD: " + subFlowID,
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("bootstrap drd: upsert flow: %w", err)
+	}
+
+	// Step 3 — ensure flow_drd row exists.
+	flowID, err := t.CreateDRDForSubFlow(ctx, subFlowID, flow.ID, userID)
+	if err != nil {
+		return "", 0, fmt.Errorf("bootstrap drd: create drd: %w", err)
+	}
+
+	// Step 4 — persist the snapshot (revision bump).
+	rev, err := t.PersistYDocSnapshotBySubFlow(ctx, subFlowID, userID, payload)
+	if err != nil {
+		return "", 0, fmt.Errorf("bootstrap drd: persist: %w", err)
+	}
+	return flowID, rev, nil
+}

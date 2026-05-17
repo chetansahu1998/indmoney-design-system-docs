@@ -2,6 +2,7 @@ package projects
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -256,4 +257,40 @@ func (t *TenantRepo) ListSectionFrames(ctx context.Context, fileKey, sectionID s
 		return out[i].AbsX < out[j].AbsX
 	})
 	return out, nil
+}
+
+// LookupFigmaSectionFileKey returns the file_key for one figma_section_id
+// scoped to the caller's tenant. Used by U6 MCP tools (section.frames) that
+// receive a sub_flow_slug, resolve to sub_flow.figma_section_id, and need
+// the file_key to drive ListSectionFrames.
+//
+// Returns ErrNotFound when no figma_section row matches.
+// Returns the file_key of the first match if multiple rows somehow share
+// the section_id within a tenant (the figma_section PK is
+// (tenant_id, file_key, page_id, section_id), so duplicates across files
+// are theoretically possible — we deterministically pick the lowest
+// (file_key, page_id) for stability).
+func (t *TenantRepo) LookupFigmaSectionFileKey(ctx context.Context, sectionID string) (string, error) {
+	if t.tenantID == "" {
+		return "", errors.New("figma_section: tenant_id required")
+	}
+	if sectionID == "" {
+		return "", ErrNotFound
+	}
+	var fileKey string
+	err := t.readHandle().QueryRowContext(ctx,
+		`SELECT file_key
+		   FROM figma_section
+		  WHERE tenant_id = ? AND section_id = ? AND deleted_at IS NULL
+		  ORDER BY file_key ASC, page_id ASC
+		  LIMIT 1`,
+		t.tenantID, sectionID,
+	).Scan(&fileKey)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return fileKey, nil
 }
