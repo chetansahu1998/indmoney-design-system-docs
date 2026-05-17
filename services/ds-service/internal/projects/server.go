@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -3237,6 +3238,57 @@ func (s *Server) HandleFlowActivity(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, e)
 	}
+
+	// Plan 005 U4 — merge prd_audit rows for the flow's sub_flow (if any).
+	// PRD authorship events (op:add_event, upsert_state, …) live in their
+	// own table because they're keyed on prd_state_id, not on audit_log's
+	// flow_id JSON detail. Joining at the SQL layer would force a UNION
+	// against a different schema; we instead fetch prd_audit rows
+	// separately and merge sorted in Go.
+	//
+	// A missing or unbound sub_flow is the legacy-leaf case — the merge
+	// is a no-op and the response shape matches what callers already saw.
+	if sf, sfErr := repo.GetSubFlowByFlowID(r.Context(), flowID); sfErr == nil {
+		prdRows, prdErr := repo.ListPRDAuditForSubFlow(r.Context(), sf.ID, limit)
+		if prdErr != nil {
+			writeJSONErr(w, http.StatusInternalServerError, "prd_activity", prdErr.Error())
+			return
+		}
+		for _, a := range prdRows {
+			out = append(out, FlowActivityEntry{
+				ID:        a.ID,
+				TS:        rfc3339(a.At),
+				EventType: "prd." + string(a.Op),
+				UserID:    a.UserID,
+				Endpoint:  "/v1/sub-flows/prd",
+				// status_code 0 — these are append-only audit writes from
+				// MCP tools, not HTTP transactions with a status to surface.
+				StatusCode: 0,
+				// `details.prd_state_id` lets a future inspector deep-link
+				// the activity entry to the exact state card.
+				Details: `{"sub_flow_id":"` + sf.ID + `","prd_state_id":"` + a.PRDStateID + `"}`,
+			})
+		}
+		// Merge-sort the two newest-first streams in place. audit_log rows
+		// arrived sorted DESC; prdRows arrived sorted DESC. A full sort is
+		// fine here — `limit` caps each input at ≤500 so worst-case is 1k
+		// entries.
+		sort.SliceStable(out, func(i, j int) bool {
+			if out[i].TS != out[j].TS {
+				return out[i].TS > out[j].TS
+			}
+			return out[i].ID > out[j].ID
+		})
+		// Re-clamp to the requested limit so a sub_flow with a heavy
+		// authorship history doesn't double the response size.
+		if len(out) > limit {
+			out = out[:limit]
+		}
+	} else if !errors.Is(sfErr, ErrNotFound) {
+		writeJSONErr(w, http.StatusInternalServerError, "sub_flow_lookup", sfErr.Error())
+		return
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"activity": out,
 		"count":    len(out),

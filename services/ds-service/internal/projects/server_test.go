@@ -978,6 +978,129 @@ func TestHandleSubFlowForLeaf_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// ─── Plan 005 U4: HandleFlowActivity merges prd_audit ────────────────────────
+//
+// The endpoint previously returned only `audit_log` rows whose JSON
+// `$.flow_id` matched. After U4, when the flow has a sub_flow binding,
+// the handler also surfaces `prd_audit` rows for every state under that
+// sub_flow, tagged with event_type `prd.<op>`. Legacy unbound flows are
+// unaffected.
+
+func TestHandleFlowActivity_MergesPRDAuditForSubFlow(t *testing.T) {
+	srv, tA, uA, _, _ := newTestServer(t)
+	slug, flowID, sfID := seedFlowWithSubFlowBinding(t, srv, tA, uA, "Wallet", "M2M Settlement")
+	ctx := context.Background()
+	repo := NewTenantRepo(srv.deps.DB.DB, tA)
+
+	// Build a PRD under the sub_flow, then drop one prd_audit row.
+	prd, err := repo.UpsertPRD(ctx, PRDInput{SubFlowID: sfID, Title: "wallet/m2m"})
+	if err != nil {
+		t.Fatalf("UpsertPRD: %v", err)
+	}
+	tab, err := repo.UpsertPRDTab(ctx, PRDTabInput{PRDID: prd.ID, Name: "Possible States"})
+	if err != nil {
+		t.Fatalf("UpsertPRDTab: %v", err)
+	}
+	state, err := repo.UpsertPRDState(ctx, PRDStateInput{PRDTabID: tab.ID, Label: "Empty"})
+	if err != nil {
+		t.Fatalf("UpsertPRDState: %v", err)
+	}
+	if err := repo.RecordPRDAudit(ctx, state.ID, uA, OpAddEvent); err != nil {
+		t.Fatalf("RecordPRDAudit: %v", err)
+	}
+
+	// Drop a vanilla audit_log row keyed on the same flow.
+	writeAuditWithFlow(t, srv.deps.DB, tA, uA, flowID, "decision.created")
+
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
+	r := requestWithClaims(http.MethodGet,
+		"/v1/projects/"+slug+"/flows/"+flowID+"/activity", nil, claims)
+	r.SetPathValue("slug", slug)
+	r.SetPathValue("flow_id", flowID)
+	w := httptest.NewRecorder()
+	srv.HandleFlowActivity(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Activity []FlowActivityEntry `json:"activity"`
+		Count    int                 `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Count != 2 {
+		t.Fatalf("expected count=2 (1 audit_log + 1 prd_audit), got %d body=%s", resp.Count, w.Body.String())
+	}
+	var seenPRD, seenDecision bool
+	for _, a := range resp.Activity {
+		switch a.EventType {
+		case "prd.add_event":
+			seenPRD = true
+			if a.UserID != uA {
+				t.Errorf("prd row user_id=%s want %s", a.UserID, uA)
+			}
+			if !strings.Contains(a.Details, sfID) || !strings.Contains(a.Details, state.ID) {
+				t.Errorf("prd row details missing sub_flow_id or prd_state_id: %s", a.Details)
+			}
+		case "decision.created":
+			seenDecision = true
+		}
+	}
+	if !seenPRD {
+		t.Errorf("expected a prd.add_event row in merged activity")
+	}
+	if !seenDecision {
+		t.Errorf("expected the legacy decision.created row")
+	}
+}
+
+func TestHandleFlowActivity_NoSubFlowBinding(t *testing.T) {
+	// Legacy flow (no sub_flow) — handler must return only audit_log rows.
+	srv, tA, uA, _, _ := newTestServer(t)
+	repo := NewTenantRepo(srv.deps.DB.DB, tA)
+	ctx := context.Background()
+
+	p, err := repo.UpsertProject(ctx, Project{
+		Name: "Legacy", Platform: "mobile", Product: "Plutus",
+		Path: "L", OwnerUserID: uA,
+	})
+	if err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	f, err := repo.UpsertFlow(ctx, Flow{
+		ProjectID: p.ID, FileID: "F-legacy", Name: "Legacy",
+	})
+	if err != nil {
+		t.Fatalf("flow: %v", err)
+	}
+	writeAuditWithFlow(t, srv.deps.DB, tA, uA, f.ID, "drd.edit")
+
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
+	r := requestWithClaims(http.MethodGet,
+		"/v1/projects/"+p.Slug+"/flows/"+f.ID+"/activity", nil, claims)
+	r.SetPathValue("slug", p.Slug)
+	r.SetPathValue("flow_id", f.ID)
+	w := httptest.NewRecorder()
+	srv.HandleFlowActivity(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Activity []FlowActivityEntry `json:"activity"`
+		Count    int                 `json:"count"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Count != 1 || resp.Activity[0].EventType != "drd.edit" {
+		t.Errorf("legacy flow leaked prd rows or wrong shape: count=%d acts=%+v",
+			resp.Count, resp.Activity)
+	}
+}
+
 func TestHandleProjectEvents_RejectsInvalidTicket(t *testing.T) {
 	srv, _, _, _, _ := newTestServer(t)
 	r := httptest.NewRequest(http.MethodGet, "/v1/projects/x/events?ticket=nope", nil)

@@ -148,6 +148,62 @@ func (t *TenantRepo) LatestPRDAuditByState(ctx context.Context, stateIDs []strin
 	return out, nil
 }
 
+// ListPRDAuditForSubFlow returns prd_audit rows for every state under
+// the supplied sub_flow_id, newest-first. Used by HandleFlowActivity
+// (plan 005 U4) to merge PRD authorship events into the leaf-level
+// activity feed.
+//
+// Walks the typed-stem hierarchy: prd_audit → prd_state → prd_tab → prd
+// → sub_flow. Tenant-scoped at every join so a misrouted sub_flow_id
+// from another tenant cannot leak rows.
+//
+// `limit` caps the row count. Pass 0 (or a non-positive value) for the
+// default of 500 — large enough to cover a heavily-authored sub_flow
+// without forcing pagination, small enough to keep the merged response
+// bounded.
+func (t *TenantRepo) ListPRDAuditForSubFlow(ctx context.Context, subFlowID string, limit int) ([]PRDAudit, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("prd_audit: tenant_id required")
+	}
+	subFlowID = strings.TrimSpace(subFlowID)
+	if subFlowID == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := t.readHandle().QueryContext(ctx,
+		`SELECT pa.id, pa.tenant_id, pa.prd_state_id, pa.user_id, pa.op, pa.at
+		   FROM prd_audit pa
+		   JOIN prd_state ps  ON ps.tenant_id = pa.tenant_id AND ps.id  = pa.prd_state_id
+		   JOIN prd_tab   pt  ON pt.tenant_id = pa.tenant_id AND pt.id  = ps.prd_tab_id
+		   JOIN prd       p   ON p.tenant_id  = pa.tenant_id AND p.id   = pt.prd_id
+		  WHERE pa.tenant_id = ? AND p.sub_flow_id = ?
+		  ORDER BY pa.at DESC, pa.id DESC
+		  LIMIT ?`,
+		t.tenantID, subFlowID, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load prd_audit for sub_flow: %w", err)
+	}
+	defer rows.Close()
+	out := make([]PRDAudit, 0, 64)
+	for rows.Next() {
+		var a PRDAudit
+		var op, at string
+		if err := rows.Scan(&a.ID, &a.TenantID, &a.PRDStateID, &a.UserID, &op, &at); err != nil {
+			return nil, err
+		}
+		a.Op = PRDAuditOp(op)
+		a.At = parseTime(at)
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate prd_audit for sub_flow: %w", err)
+	}
+	return out, nil
+}
+
 // listPRDAuditForState is a small helper used by tests to read back the
 // audit history of one state. Returned newest-first.
 //

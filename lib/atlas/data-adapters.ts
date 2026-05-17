@@ -745,6 +745,12 @@ function activityKindOf(eventType: string): ActivityKind {
   if (eventType === "override.text.orphaned") return "audit";
   if (eventType === "override.text.reset") return "sync";
   if (eventType.startsWith("override.")) return "edit";
+  // Plan 005 U4 — prd.* events come from the prd_audit merge in
+  // HandleFlowActivity (sub_flow-bound leaves only). They're authorship
+  // edits to the PRD doc, so they share the "edit" glyph palette with
+  // DRD edits rather than getting their own kind — keeps the Activity
+  // tab visually coherent.
+  if (eventType.startsWith("prd.")) return "edit";
   return "edit";
 }
 
@@ -801,7 +807,28 @@ function activitySentenceOf(row: FlowActivityRow): string {
       const newText = parseDetailString(row.details, "new") ?? "";
       return newText ? `bulk-edited copy → "${newText}"` : "bulk-edited copy";
     }
+    // Plan 005 U4 — prd_audit merge. Sentences mirror the MCP op names so
+    // PMs recognise their own authoring actions in the feed. The op set is
+    // closed; the catch-all "edited the PRD" covers a future op string that
+    // hasn't been threaded through this switch yet.
+    case "prd.upsert_state":
+      return "authored a PRD state";
+    case "prd.add_acceptance_criterion":
+      return "added an acceptance criterion";
+    case "prd.add_edge_case":
+      return "added an edge case";
+    case "prd.upsert_copy_string":
+      return "edited PRD copy";
+    case "prd.add_event":
+      return "added a tracking event";
+    case "prd.add_a11y_note":
+      return "added an a11y note";
+    case "prd.attach_frame":
+      return "attached a Figma frame to a state";
+    case "prd.detach_frame":
+      return "detached a Figma frame from a state";
     default:
+      if (row.event_type.startsWith("prd.")) return "edited the PRD";
       return row.event_type.replace(/[._]/g, " ");
   }
 }

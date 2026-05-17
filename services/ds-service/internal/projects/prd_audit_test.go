@@ -275,3 +275,156 @@ func TestRecordPRDAudit_TenantIsolation(t *testing.T) {
 		t.Errorf("tenant B list leaked %d rows", len(rowsB))
 	}
 }
+
+// ─── Plan 005 U4: ListPRDAuditForSubFlow ─────────────────────────────────────
+//
+// HandleFlowActivity merges prd_audit rows into the leaf-level activity feed
+// for sub_flow-bound flows. The resolver walks
+// prd_audit → prd_state → prd_tab → prd → sub_flow_id, so the tests below
+// pin the join shape, the limit semantics, and tenant isolation.
+
+func TestListPRDAuditForSubFlow_HappyPath(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	sf, _, tab := seedPRDWithTab(t, repo)
+	stA, err := repo.UpsertPRDState(ctx, PRDStateInput{PRDTabID: tab.ID, Label: "A"})
+	if err != nil {
+		t.Fatalf("state A: %v", err)
+	}
+	stB, err := repo.UpsertPRDState(ctx, PRDStateInput{PRDTabID: tab.ID, Label: "B"})
+	if err != nil {
+		t.Fatalf("state B: %v", err)
+	}
+	// Three audit rows across two states under the same sub_flow.
+	for _, op := range []PRDAuditOp{OpUpsertState, OpAddEvent} {
+		if err := repo.RecordPRDAudit(ctx, stA.ID, uA, op); err != nil {
+			t.Fatalf("record A %s: %v", op, err)
+		}
+	}
+	if err := repo.RecordPRDAudit(ctx, stB.ID, uA, OpUpsertCopyString); err != nil {
+		t.Fatalf("record B: %v", err)
+	}
+
+	got, err := repo.ListPRDAuditForSubFlow(ctx, sf.ID, 0)
+	if err != nil {
+		t.Fatalf("ListPRDAuditForSubFlow: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 rows under the sub_flow, got %d", len(got))
+	}
+	// All rows belong to this sub_flow's two states.
+	wantStates := map[string]bool{stA.ID: true, stB.ID: true}
+	for _, a := range got {
+		if !wantStates[a.PRDStateID] {
+			t.Errorf("row keyed on unknown state %q", a.PRDStateID)
+		}
+	}
+	// Newest-first ordering — TS strings are RFC3339 nano so lexicographic
+	// comparison is monotonic. Same-instant rows tie-break on id DESC.
+	for i := 1; i < len(got); i++ {
+		prev := got[i-1]
+		cur := got[i]
+		prevKey := rfc3339(prev.At) + "|" + prev.ID
+		curKey := rfc3339(cur.At) + "|" + cur.ID
+		if prevKey < curKey {
+			t.Errorf("rows not newest-first: %s before %s", prevKey, curKey)
+		}
+	}
+}
+
+func TestListPRDAuditForSubFlow_EmptySubFlowID(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	got, err := repo.ListPRDAuditForSubFlow(context.Background(), "   ", 0)
+	if err != nil {
+		t.Fatalf("empty sub_flow_id should be a no-op, got %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil result for empty sub_flow_id, got %d rows", len(got))
+	}
+}
+
+func TestListPRDAuditForSubFlow_NoAuditRows(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	sf, _, _ := seedPRDWithTab(t, repo)
+	got, err := repo.ListPRDAuditForSubFlow(ctx, sf.ID, 0)
+	if err != nil {
+		t.Fatalf("sub_flow with no audits: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected zero rows for empty audit history, got %d", len(got))
+	}
+}
+
+func TestListPRDAuditForSubFlow_LimitClamps(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	_, _, tab := seedPRDWithTab(t, repo)
+	state, err := repo.UpsertPRDState(ctx, PRDStateInput{PRDTabID: tab.ID, Label: "S"})
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	// Record 5 audits; sub_flow_id is the one tied to the seeded PRD.
+	for i := 0; i < 5; i++ {
+		if err := repo.RecordPRDAudit(ctx, state.ID, uA, OpUpsertState); err != nil {
+			t.Fatalf("record %d: %v", i, err)
+		}
+	}
+	sfID := lookupSubFlowIDForTab(t, repo, tab.ID)
+
+	got, err := repo.ListPRDAuditForSubFlow(ctx, sfID, 3)
+	if err != nil {
+		t.Fatalf("ListPRDAuditForSubFlow: %v", err)
+	}
+	if len(got) != 3 {
+		t.Errorf("limit=3 should yield 3 rows, got %d", len(got))
+	}
+}
+
+func TestListPRDAuditForSubFlow_TenantIsolation(t *testing.T) {
+	d, tA, tB, uA := newTestDB(t)
+	repoA := NewTenantRepo(d.DB, tA)
+	repoB := NewTenantRepo(d.DB, tB)
+	ctx := context.Background()
+
+	sf, _, tab := seedPRDWithTab(t, repoA)
+	state, err := repoA.UpsertPRDState(ctx, PRDStateInput{PRDTabID: tab.ID, Label: "iso"})
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	if err := repoA.RecordPRDAudit(ctx, state.ID, uA, OpUpsertState); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	gotB, err := repoB.ListPRDAuditForSubFlow(ctx, sf.ID, 0)
+	if err != nil {
+		t.Fatalf("repoB: %v", err)
+	}
+	if len(gotB) != 0 {
+		t.Errorf("tenant B leaked %d rows from tenant A", len(gotB))
+	}
+}
+
+// lookupSubFlowIDForTab walks prd_tab → prd → sub_flow_id via SQL so a test
+// that already has a PRDTab in hand can name the sub_flow without re-seeding.
+func lookupSubFlowIDForTab(t *testing.T, repo *TenantRepo, tabID string) string {
+	t.Helper()
+	var sfID string
+	err := repo.readHandle().QueryRowContext(context.Background(),
+		`SELECT p.sub_flow_id
+		   FROM prd_tab pt
+		   JOIN prd p ON p.tenant_id = pt.tenant_id AND p.id = pt.prd_id
+		  WHERE pt.tenant_id = ? AND pt.id = ?`,
+		repo.tenantID, tabID,
+	).Scan(&sfID)
+	if err != nil {
+		t.Fatalf("lookup sub_flow_id for tab %s: %v", tabID, err)
+	}
+	return sfID
+}
