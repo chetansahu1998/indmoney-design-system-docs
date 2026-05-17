@@ -106,6 +106,17 @@ function subscribeAtomic(cb: () => void): () => void {
     atomicListeners.delete(cb);
   };
 }
+
+/**
+ * U5 — public imperative subscribe for non-React consumers (chrome
+ * layer rAF loop). The hook `useHoveredAtomicChild` already wraps
+ * this for React consumers; exposing the raw subscribe lets the
+ * chrome layer wire its subscription without paying the
+ * useSyncExternalStore re-render overhead.
+ */
+export function subscribeHoveredAtomic(cb: () => void): () => void {
+  return subscribeAtomic(cb);
+}
 function subscribeBand(cb: () => void): () => void {
   bandListeners.add(cb);
   return () => {

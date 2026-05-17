@@ -1,5 +1,8 @@
 "use client";
 
+/* eslint-disable react-hooks/exhaustive-deps -- rAF callback closures are
+   intentionally created once on mount; deps are mutated via refs. */
+
 /**
  * chrome-layer.tsx — screen-space SVG overlay mounted as a sibling of
  * `.lc-world` in `leafcanvas.tsx`. Hosts every non-content visual that
@@ -58,6 +61,12 @@ import { useEffect, useRef } from "react";
 import { canvasGestureTracker } from "./gesture-tracker";
 import { subscribeCamera } from "./camera-state";
 import { subscribeSpatialStore } from "./spatial-store";
+import {
+  getHoveredAtomicChild,
+  subscribeHoveredAtomic,
+  type HoveredAtomicChild,
+} from "./hover-signal";
+import { useAtlas } from "../../../../lib/atlas/live-store";
 
 /**
  * Pre-allocated SVG group IDs the chrome layer paints into. Each
@@ -124,15 +133,12 @@ export function ChromeLayer({ leafID }: ChromeLayerProps): React.ReactElement {
       rafPendingRef.current = 0;
       if (!needsPaintRef.current) return;
       needsPaintRef.current = false;
-      // U4/U5/U6/U10 wire actual paint logic here. U1 keeps the loop
-      // alive but writes nothing — the goal of the foundation unit is
-      // to prove the subscription + rAF plumbing works, not to paint.
-      //
-      // Subsequent units read:
-      //   const cam = getCamera();
-      //   const rect = getNodeRect(screenID, nodeID);
-      //   const sx = (rect.x - cam.x) * cam.z;
-      //   ... mutate group children via groupRefs.current[<id>] ...
+      // U5 — pragmatic DOM-driven paint: read getBoundingClientRect
+      // of the selected + hovered element via querySelector. Avoids
+      // the spatial-store population work U1 deferred; the chrome
+      // layer pays one layout read per state change, not per node.
+      // For a leaf with ≤200 frames the cost is bounded.
+      paintSelectionAndHover(svgRef.current, groupRefs.current);
     }
 
     const unsubCamera = subscribeCamera(schedulePaint);
@@ -141,6 +147,10 @@ export function ChromeLayer({ leafID }: ChromeLayerProps): React.ReactElement {
     // a paint so any stale chrome from the start of the gesture (e.g.,
     // a marquee mid-drag) updates to the final position.
     const unsubGesture = canvasGestureTracker.subscribe(schedulePaint);
+    // U5 — hover signal drives the hover outline; selection changes
+    // come from the Zustand store (subscribed via useAtlas below).
+    const unsubHover = subscribeHoveredAtomic(schedulePaint);
+    const unsubSelection = useAtlas.subscribe(schedulePaint);
 
     // Initial paint kick so the rAF loop primes immediately on mount.
     // Subsequent units can rely on at least one paint having occurred
@@ -151,6 +161,8 @@ export function ChromeLayer({ leafID }: ChromeLayerProps): React.ReactElement {
       unsubCamera();
       unsubSpatial();
       unsubGesture();
+      unsubHover();
+      unsubSelection();
       if (rafPendingRef.current !== 0) {
         cancelAnimationFrame(rafPendingRef.current);
         rafPendingRef.current = 0;
@@ -198,4 +210,140 @@ export function __setActiveChromeLayerForTesting(el: SVGSVGElement | null): void
 }
 export function getActiveChromeLayer(): SVGSVGElement | null {
   return activeSvgRef;
+}
+
+// ─── U5 paint logic ────────────────────────────────────────────────────
+//
+// Reads the current selection + hover state and writes screen-space
+// rects into the chrome-selection / chrome-hover groups. Pure-DOM
+// queries avoid the spatial-store population U1 deferred; the cost
+// is one getBoundingClientRect per selected + per hovered node, which
+// is fine at our current scale (≤200 frames per leaf, ≤1 selected,
+// ≤1 hovered at a time).
+//
+// Selection ring: 2px Figma blue (#0d99ff via --lcv2-selection).
+// Hover outline: 2px Figma blue at reduced opacity (0.6) so a
+// selected-and-hovered frame reads as "selected" first.
+//
+// When the chrome layer paints a frame's rect, the rect coords are
+// already screen-space (getBoundingClientRect returns viewport-
+// relative coords). Since the chrome layer is itself a screen-space
+// sibling of .lc-world with `position: absolute; inset: 0`, we need
+// to subtract the chrome layer's own bounding-rect origin to get
+// chrome-local coords.
+
+function paintSelectionAndHover(
+  svg: SVGSVGElement | null,
+  groups: Partial<Record<string, SVGGElement | null>>,
+): void {
+  if (!svg) return;
+  const selectionGroup = groups["chrome-selection"];
+  const hoverGroup = groups["chrome-hover"];
+  if (!selectionGroup || !hoverGroup) return;
+
+  // Anchor: chrome-layer's own bounding rect. getBoundingClientRect on
+  // any target returns viewport coords; subtract this anchor to land
+  // in chrome-local coords (which is also the SVG's coordinate space).
+  const anchorRect = svg.getBoundingClientRect();
+
+  clearGroup(selectionGroup);
+  clearGroup(hoverGroup);
+
+  // Selection ring (single-select for now; bulk-select reuses the
+  // same group when U10's inspector exposes it).
+  const sel = readSelection();
+  if (sel) {
+    const rect = lookupRectForNode(sel.screenID, sel.figmaNodeID);
+    if (rect) {
+      drawOutline(selectionGroup, rect, anchorRect, "selection");
+    }
+  }
+
+  // Hover outline. Suppress when hover target equals selection (a
+  // selected-and-hovered frame reads as "selected" first per the
+  // brainstorm Key Decision; the dedicated hover overlay would just
+  // double-stroke at the same coords).
+  const hov = getHoveredAtomicChild();
+  if (hov && (!sel || hov.figmaNodeID !== sel.figmaNodeID)) {
+    const rect = lookupRectForNode(hov.screenID, hov.figmaNodeID);
+    if (rect) {
+      drawOutline(hoverGroup, rect, anchorRect, "hover");
+    }
+  }
+}
+
+function clearGroup(g: SVGGElement): void {
+  while (g.firstChild) g.removeChild(g.firstChild);
+}
+
+interface NodeRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Look up the screen-rect of a figma node by querying the DOM. The
+ * canonical_tree renderer tags every node with `data-figma-id`;
+ * `document.querySelector` finds it in O(tree depth). We could cache
+ * this in spatial-store but at our current scale (≤1 selection,
+ * ≤1 hover) it's not load-bearing.
+ *
+ * Returns null when the node isn't currently rendered (off-screen,
+ * skeleton state, or the canonical_tree hasn't hydrated). The chrome
+ * layer simply paints nothing for that frame in that case — correct
+ * fallback (no stale ring on a frame that's not visible).
+ */
+function lookupRectForNode(_screenID: string, figmaNodeID: string): NodeRect | null {
+  if (typeof document === "undefined") return null;
+  // Escape CSS attr values that contain ':' (Figma node ids use it).
+  const escaped = cssEscape(figmaNodeID);
+  const el = document.querySelector<HTMLElement>(`[data-figma-id="${escaped}"]`);
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  return { left: r.left, top: r.top, width: r.width, height: r.height };
+}
+
+function cssEscape(s: string): string {
+  // Minimal CSS attribute-value escape: prepend backslash to ':' and
+  // backslash. Sufficient for Figma node ids ('I12:34', '12:34').
+  return s.replace(/([\\:])/g, "\\$1");
+}
+
+function drawOutline(
+  group: SVGGElement,
+  rect: NodeRect,
+  anchor: { left: number; top: number },
+  kind: "selection" | "hover",
+): void {
+  const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  r.setAttribute("x", String(rect.left - anchor.left));
+  r.setAttribute("y", String(rect.top - anchor.top));
+  r.setAttribute("width", String(rect.width));
+  r.setAttribute("height", String(rect.height));
+  r.setAttribute("fill", "none");
+  r.setAttribute(
+    "stroke",
+    kind === "selection" ? "var(--lcv2-selection, #0d99ff)" : "var(--lcv2-hover, #0d99ff)",
+  );
+  r.setAttribute("stroke-width", "2");
+  r.setAttribute("vector-effect", "non-scaling-stroke");
+  if (kind === "hover") {
+    r.setAttribute("opacity", "0.6");
+  }
+  // pointer-events:none on the wrapping SVG already; per-rect not needed.
+  group.appendChild(r);
+}
+
+/**
+ * Read the active single-select from the Zustand store. Done
+ * imperatively so the chrome-layer paint loop avoids forcing React
+ * re-renders for selection changes — useAtlas.getState() pulls the
+ * latest snapshot without subscribing the component.
+ */
+function readSelection(): HoveredAtomicChild | null {
+  const sel = useAtlas.getState().selection.selectedAtomicChild;
+  if (!sel || !sel.screenID || !sel.figmaNodeID) return null;
+  return { screenID: sel.screenID, figmaNodeID: sel.figmaNodeID };
 }
