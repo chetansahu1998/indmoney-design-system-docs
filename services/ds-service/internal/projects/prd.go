@@ -1153,16 +1153,55 @@ func (t *TenantRepo) LoadPRD(ctx context.Context, subFlowID string) (PRDFull, er
 	return full, nil
 }
 
+// PRDExport is the result of an export — markdown for human reading,
+// sidecar for downstream tools (Storybook / Playwright / Mixpanel /
+// JIRA generators) that want structured data without re-parsing
+// markdown.
+//
+// The sidecar IS PRDFull serialized — no separate type, no
+// transformation. The snake_case JSON tags on PRDFull (and the typed
+// stems it embeds) are the canonical wire shape. Schema changes to
+// PRDFull flow through to the sidecar automatically (plan KTD-4).
+type PRDExport struct {
+	Markdown string  `json:"markdown"`
+	Sidecar  PRDFull `json:"sidecar"`
+}
+
+// RenderPRDExport returns the rendered PRD as both markdown and a
+// typed sidecar. Loads the PRD once via LoadPRD, then renders markdown
+// from the loaded tree — no second query, no schema drift between the
+// two outputs.
+func (t *TenantRepo) RenderPRDExport(ctx context.Context, subFlowID string) (PRDExport, error) {
+	full, err := t.LoadPRD(ctx, subFlowID)
+	if err != nil {
+		return PRDExport{}, err
+	}
+	return PRDExport{
+		Markdown: renderPRDFullToMarkdown(full),
+		Sidecar:  full,
+	}, nil
+}
+
 // RenderPRDMarkdown produces a deterministic markdown rendering of the PRD.
 // Pure function over the LoadPRD result; no I/O beyond the single LoadPRD
 // call. Walk order is (tab.position, state.position, stem.position) so
 // the same PRD round-trips to the same string twice in a row.
+//
+// Thin wrapper around RenderPRDExport for callers that don't need the
+// sidecar (kept for backward compatibility — prefer RenderPRDExport in
+// new code).
 func (t *TenantRepo) RenderPRDMarkdown(ctx context.Context, subFlowID string) (string, error) {
-	full, err := t.LoadPRD(ctx, subFlowID)
+	export, err := t.RenderPRDExport(ctx, subFlowID)
 	if err != nil {
 		return "", err
 	}
+	return export.Markdown, nil
+}
 
+// renderPRDFullToMarkdown walks a loaded PRDFull and produces the
+// deterministic markdown rendering. Shared by RenderPRDExport and (via
+// it) RenderPRDMarkdown so both surfaces stay byte-identical.
+func renderPRDFullToMarkdown(full PRDFull) string {
 	var b strings.Builder
 	if full.Title != "" {
 		fmt.Fprintf(&b, "# %s\n\n", full.Title)
@@ -1250,7 +1289,7 @@ func (t *TenantRepo) RenderPRDMarkdown(ctx context.Context, subFlowID string) (s
 		fmt.Fprintf(&b, "## Design notes\n\n%s\n", strings.TrimRight(full.DesignNotesMD, "\n"))
 	}
 
-	return b.String(), nil
+	return b.String()
 }
 
 // ─── Internal scanners + lookup helpers ─────────────────────────────────────

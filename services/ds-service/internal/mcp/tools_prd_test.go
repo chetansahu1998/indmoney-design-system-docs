@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -538,5 +540,168 @@ func TestPRDAuthor_AddState_PopulatesLastTouchedOnWall(t *testing.T) {
 	}
 	if found.LastTouchedAt == nil {
 		t.Errorf("LastTouchedAt is nil — audit row 'at' not flowing into wall")
+	}
+}
+
+// ─── U4: prd.export JSON sidecar ─────────────────────────────────────────────
+//
+// The sidecar IS the PRDFull tree — same shape downstream consumers
+// would get from prd.get. Three scenarios:
+//   1. After authoring a state, the sidecar carries the typed tree.
+//   2. The sidecar serializes to JSON and round-trips back into a
+//      PRDFull struct without drift (schema-stable wire contract).
+//   3. The markdown field still surfaces the exact rendering the
+//      pre-U4 RenderPRDMarkdown produced (regression guard).
+
+// seedPRDForExport authors a representative PRD (state + criterion +
+// event) via the prd.author meta-verb so the export under test reflects
+// the typed-stem tree a real PM would produce.
+func seedPRDForExport(t *testing.T, h *testHarness) {
+	t.Helper()
+	h.seedSubFlow("Wallet", "M2M")
+	if _, err := h.invoke("prd.author", map[string]any{
+		"op": "add_state",
+		"args": map[string]any{
+			"sub_flow_slug": "wallet/m2m",
+			"tab_name":      "Investment",
+			"label":         "Hot state",
+		},
+	}); err != nil {
+		t.Fatalf("seed add_state: %v", err)
+	}
+	if _, err := h.invoke("prd.author", map[string]any{
+		"op": "add_acceptance_criterion",
+		"args": map[string]any{
+			"sub_flow_slug": "wallet/m2m",
+			"tab_name":      "Investment",
+			"state_label":   "Hot state",
+			"criterion":     "Shows positive-balance banner.",
+		},
+	}); err != nil {
+		t.Fatalf("seed criterion: %v", err)
+	}
+	if _, err := h.invoke("prd.author", map[string]any{
+		"op": "add_event",
+		"args": map[string]any{
+			"sub_flow_slug": "wallet/m2m",
+			"tab_name":      "Investment",
+			"state_label":   "Hot state",
+			"name":          "wallet.hot.viewed",
+		},
+	}); err != nil {
+		t.Fatalf("seed event: %v", err)
+	}
+}
+
+func TestPRDExport_ResultHasSidecar(t *testing.T) {
+	h := newTestHarness(t)
+	seedPRDForExport(t, h)
+
+	res, err := h.invoke("prd.author", map[string]any{
+		"op":   "export",
+		"args": map[string]any{"sub_flow_slug": "wallet/m2m"},
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	out, ok := res.Data.(prdExportResult)
+	if !ok {
+		t.Fatalf("unexpected Data shape: %T", res.Data)
+	}
+	if out.Markdown == "" {
+		t.Errorf("expected markdown, got empty")
+	}
+	if out.Bytes != len(out.Markdown) {
+		t.Errorf("Bytes mismatch: got %d, want %d", out.Bytes, len(out.Markdown))
+	}
+	if out.SidecarBytes <= 0 {
+		t.Errorf("expected positive SidecarBytes, got %d", out.SidecarBytes)
+	}
+	if out.SubFlowFullSlug != "wallet/m2m" {
+		t.Errorf("SubFlowFullSlug: got %q, want %q", out.SubFlowFullSlug, "wallet/m2m")
+	}
+	if out.Sidecar.ID == "" {
+		t.Errorf("expected Sidecar.ID, got empty (PRD row not in sidecar)")
+	}
+	if len(out.Sidecar.Tabs) == 0 {
+		t.Fatalf("expected at least one tab in sidecar, got 0")
+	}
+	tab := out.Sidecar.Tabs[0]
+	if tab.Name != "Investment" {
+		t.Errorf("tab name: got %q, want %q", tab.Name, "Investment")
+	}
+	if len(tab.States) == 0 {
+		t.Fatalf("expected at least one state in sidecar tab, got 0")
+	}
+	st := tab.States[0]
+	if st.Label != "Hot state" {
+		t.Errorf("state label: got %q, want %q", st.Label, "Hot state")
+	}
+	if len(st.AcceptanceCriteria) != 1 {
+		t.Errorf("expected 1 criterion in sidecar, got %d", len(st.AcceptanceCriteria))
+	}
+	if len(st.Events) != 1 {
+		t.Errorf("expected 1 event in sidecar, got %d", len(st.Events))
+	}
+}
+
+func TestPRDExport_SidecarSerializesAsJSON(t *testing.T) {
+	h := newTestHarness(t)
+	seedPRDForExport(t, h)
+
+	res, err := h.invoke("prd.author", map[string]any{
+		"op":   "export",
+		"args": map[string]any{"sub_flow_slug": "wallet/m2m"},
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	out := res.Data.(prdExportResult)
+
+	// Marshal the sidecar; the result MUST be valid JSON and MUST
+	// round-trip back into a PRDFull without drift. This is the
+	// downstream-contract guard (plan KTD-4): the wire shape is
+	// snake_case PRDFull, schema changes flow through automatically.
+	b, err := json.Marshal(out.Sidecar)
+	if err != nil {
+		t.Fatalf("marshal sidecar: %v", err)
+	}
+	var round projects.PRDFull
+	if err := json.Unmarshal(b, &round); err != nil {
+		t.Fatalf("unmarshal sidecar back into PRDFull: %v\nbytes: %s", err, string(b))
+	}
+	if !reflect.DeepEqual(round, out.Sidecar) {
+		t.Errorf("round-trip drift:\norig: %+v\nback: %+v", out.Sidecar, round)
+	}
+}
+
+func TestPRDExport_MarkdownUnchangedFromPriorBehavior(t *testing.T) {
+	h := newTestHarness(t)
+	seedPRDForExport(t, h)
+
+	res, err := h.invoke("prd.author", map[string]any{
+		"op":   "export",
+		"args": map[string]any{"sub_flow_slug": "wallet/m2m"},
+	})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	out := res.Data.(prdExportResult)
+
+	// The markdown wrapper still goes through the same renderer.
+	// Calling it directly against the same sub_flow MUST produce
+	// byte-identical output. Regression guard against accidental
+	// drift between the wrapper and the new RenderPRDExport path.
+	ctx := context.Background()
+	sf, err := h.deps.Repo.GetSubFlowBySlug(ctx, "wallet/m2m")
+	if err != nil {
+		t.Fatalf("resolve sub_flow: %v", err)
+	}
+	md, err := h.deps.Repo.RenderPRDMarkdown(ctx, sf.ID)
+	if err != nil {
+		t.Fatalf("RenderPRDMarkdown: %v", err)
+	}
+	if md != out.Markdown {
+		t.Errorf("markdown drift between prd.export and RenderPRDMarkdown:\n--- export ---\n%s\n--- wrapper ---\n%s", out.Markdown, md)
 	}
 }

@@ -574,16 +574,36 @@ type prdExportArgs struct {
 	SubFlowSlug string `json:"sub_flow_slug"`
 }
 
+// prdExportResult is the wire shape returned by prd.export.
+//
+//   - Markdown: deterministic markdown for human reading (unchanged
+//     from pre-U4).
+//   - Sidecar:  the typed PRDFull tree — same shape as prd.get returns.
+//     Downstream consumers (Storybook story generator, Playwright
+//     stub generator, Mixpanel tracking-plan importer, JIRA story
+//     creator) read the sidecar instead of re-parsing markdown.
+//   - SubFlowFullSlug: `{sub_product_slug}/{sub_flow_slug}` join key
+//     so the bridge can write `<sub_flow>.md` + `<sub_flow>.json`
+//     under `~/INDmoney/<LOB>/Documents/` without re-resolving.
+//   - Bytes:        markdown byte length (size budgeting; semantics
+//     unchanged from pre-U4).
+//   - SidecarBytes: serialized JSON byte length of the sidecar.
+//
+// Plan 2026-05-17-004 / U4. The sidecar IS PRDFull serialized — no
+// separate type lives in this package.
 type prdExportResult struct {
-	SubFlowID string `json:"sub_flow_id"`
-	Markdown  string `json:"markdown"`
-	Bytes     int    `json:"bytes"`
+	SubFlowID       string            `json:"sub_flow_id"`
+	SubFlowFullSlug string            `json:"sub_flow_full_slug"`
+	Markdown        string            `json:"markdown"`
+	Sidecar         projects.PRDFull  `json:"sidecar"`
+	Bytes           int               `json:"bytes"`
+	SidecarBytes    int               `json:"sidecar_bytes"`
 }
 
 func (prdExportTool) Name() string               { return "prd.export" }
 func (prdExportTool) Visibility() ToolVisibility { return Deep }
 func (prdExportTool) Description() string {
-	return "Render the PRD as deterministic markdown (no filesystem write — the caller decides where to put it)."
+	return "Render the PRD as deterministic markdown and a typed JSON sidecar (PRDFull shape). No filesystem write — the caller (bridge / skill) decides where the bytes land."
 }
 func (prdExportTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
@@ -598,18 +618,29 @@ func (prdExportTool) Invoke(ctx context.Context, deps Deps, args json.RawMessage
 	if err := decodeArgs(args, &in); err != nil {
 		return Result{}, err
 	}
-	sf, _, err := resolveSlug(ctx, deps, in.SubFlowSlug)
+	sf, sp, err := resolveSlug(ctx, deps, in.SubFlowSlug)
 	if err != nil {
 		return Result{}, fmt.Errorf("prd.export: %w", err)
 	}
-	md, err := deps.Repo.RenderPRDMarkdown(ctx, sf.ID)
+	export, err := deps.Repo.RenderPRDExport(ctx, sf.ID)
 	if err != nil {
 		return Result{}, fmt.Errorf("prd.export: %w", err)
+	}
+	// Best-effort sidecar byte count — used by callers for size
+	// budgeting. JSON marshal failures here should not block the
+	// export; downstream callers receive sidecar_bytes=0 and can
+	// recompute from Sidecar themselves.
+	sidecarBytes := 0
+	if b, mErr := json.Marshal(export.Sidecar); mErr == nil {
+		sidecarBytes = len(b)
 	}
 	return Result{Data: prdExportResult{
-		SubFlowID: sf.ID,
-		Markdown:  md,
-		Bytes:     len(md),
+		SubFlowID:       sf.ID,
+		SubFlowFullSlug: sf.FullSlug(sp),
+		Markdown:        export.Markdown,
+		Sidecar:         export.Sidecar,
+		Bytes:           len(export.Markdown),
+		SidecarBytes:    sidecarBytes,
 	}}, nil
 }
 

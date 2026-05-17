@@ -3,6 +3,7 @@ package projects
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -674,5 +675,191 @@ func TestFrameTag_Detach(t *testing.T) {
 	}
 	if err := repo.DetachFrameTag(ctx, tag.ID); !errors.Is(err, ErrPRDFrameTagNotFound) {
 		t.Errorf("expected ErrPRDFrameTagNotFound on second detach, got %v", err)
+	}
+}
+
+// ─── U4: RenderPRDExport — markdown + typed sidecar ─────────────────────────
+//
+// Sidecar IS PRDFull serialized — same shape LoadPRD returns. Tests
+// pin the wire contract: markdown identical to RenderPRDMarkdown,
+// sidecar tree-equal to LoadPRD's result. Soft-deleted states stay
+// out of both surfaces (matches LoadPRD's existing behavior).
+
+func TestRenderPRDExport_FullShape(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	sf, _, tab := seedPRDWithTab(t, repo)
+	st, err := repo.UpsertPRDState(ctx, PRDStateInput{
+		PRDTabID: tab.ID, Label: "Cold", Position: 0,
+		ConditionMD: "User has no balance",
+	})
+	if err != nil {
+		t.Fatalf("UpsertPRDState: %v", err)
+	}
+	if _, err := repo.AddAcceptanceCriterion(ctx, AcceptanceCriterionInput{
+		PRDStateID: st.ID, Position: 0, Criterion: "Show empty illustration",
+	}); err != nil {
+		t.Fatalf("crit: %v", err)
+	}
+	if _, err := repo.AddEdgeCase(ctx, EdgeCaseInput{
+		PRDStateID: st.ID, Position: 0, EdgeCase: "User toggles tab mid-load",
+	}); err != nil {
+		t.Fatalf("edge: %v", err)
+	}
+	if _, err := repo.UpsertCopyString(ctx, CopyStringInput{
+		PRDStateID: st.ID, Key: "title", Value: "Welcome", Locale: "en",
+	}); err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	if _, err := repo.AddEvent(ctx, EventInput{
+		PRDStateID: st.ID, Name: "wallet.cold.viewed", FiresOn: "screen_viewed",
+	}); err != nil {
+		t.Fatalf("event: %v", err)
+	}
+	if _, err := repo.AddA11yNote(ctx, A11yNoteInput{
+		PRDStateID: st.ID, Position: 0, Note: "Announce empty state to AT",
+	}); err != nil {
+		t.Fatalf("a11y: %v", err)
+	}
+	if _, err := repo.AttachFrameTag(ctx, FrameTagInput{
+		PRDStateID: st.ID, FigmaNodeID: "1:42",
+	}); err != nil {
+		t.Fatalf("frame: %v", err)
+	}
+
+	export, err := repo.RenderPRDExport(ctx, sf.ID)
+	if err != nil {
+		t.Fatalf("RenderPRDExport: %v", err)
+	}
+
+	// Markdown surface should match RenderPRDMarkdown exactly — same
+	// renderer, same input.
+	md, err := repo.RenderPRDMarkdown(ctx, sf.ID)
+	if err != nil {
+		t.Fatalf("RenderPRDMarkdown: %v", err)
+	}
+	if export.Markdown != md {
+		t.Errorf("markdown drift:\n--- export ---\n%s\n--- wrapper ---\n%s", export.Markdown, md)
+	}
+
+	// Sidecar surface should match LoadPRD exactly — same loader.
+	full, err := repo.LoadPRD(ctx, sf.ID)
+	if err != nil {
+		t.Fatalf("LoadPRD: %v", err)
+	}
+	if !reflect.DeepEqual(export.Sidecar, full) {
+		t.Errorf("sidecar drift from LoadPRD\nsidecar: %+v\nfull:    %+v", export.Sidecar, full)
+	}
+
+	// Sanity: every stem type is present in the sidecar tree.
+	if len(export.Sidecar.Tabs) != 1 {
+		t.Fatalf("expected 1 tab, got %d", len(export.Sidecar.Tabs))
+	}
+	states := export.Sidecar.Tabs[0].States
+	if len(states) != 1 {
+		t.Fatalf("expected 1 state, got %d", len(states))
+	}
+	s := states[0]
+	if len(s.AcceptanceCriteria) != 1 {
+		t.Errorf("AcceptanceCriteria: got %d, want 1", len(s.AcceptanceCriteria))
+	}
+	if len(s.EdgeCases) != 1 {
+		t.Errorf("EdgeCases: got %d, want 1", len(s.EdgeCases))
+	}
+	if len(s.CopyStrings) != 1 {
+		t.Errorf("CopyStrings: got %d, want 1", len(s.CopyStrings))
+	}
+	if len(s.Events) != 1 {
+		t.Errorf("Events: got %d, want 1", len(s.Events))
+	}
+	if len(s.A11yNotes) != 1 {
+		t.Errorf("A11yNotes: got %d, want 1", len(s.A11yNotes))
+	}
+	if len(s.FrameTags) != 1 {
+		t.Errorf("FrameTags: got %d, want 1", len(s.FrameTags))
+	}
+}
+
+func TestRenderPRDExport_EmptyPRD(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	// seedPRDWithTab gives us an empty tab (no states).
+	sf, _, _ := seedPRDWithTab(t, repo)
+
+	export, err := repo.RenderPRDExport(ctx, sf.ID)
+	if err != nil {
+		t.Fatalf("RenderPRDExport: %v", err)
+	}
+	if len(export.Sidecar.Tabs) != 1 {
+		t.Fatalf("expected 1 tab (empty), got %d", len(export.Sidecar.Tabs))
+	}
+	if len(export.Sidecar.Tabs[0].States) != 0 {
+		t.Errorf("expected 0 states in empty PRD sidecar, got %d", len(export.Sidecar.Tabs[0].States))
+	}
+	// Markdown still renders the title + summary scaffolding.
+	if !strings.Contains(export.Markdown, "# Wallet — M2M Settlement") {
+		t.Errorf("empty PRD missing title in markdown:\n%s", export.Markdown)
+	}
+}
+
+func TestRenderPRDExport_SoftDeletedStateNotInSidecar(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	sf, _, tab := seedPRDWithTab(t, repo)
+	st, err := repo.UpsertPRDState(ctx, PRDStateInput{
+		PRDTabID: tab.ID, Label: "Doomed", Position: 0,
+	})
+	if err != nil {
+		t.Fatalf("UpsertPRDState: %v", err)
+	}
+	if err := repo.SoftDeletePRDState(ctx, st.ID); err != nil {
+		t.Fatalf("SoftDeletePRDState: %v", err)
+	}
+
+	export, err := repo.RenderPRDExport(ctx, sf.ID)
+	if err != nil {
+		t.Fatalf("RenderPRDExport: %v", err)
+	}
+	if len(export.Sidecar.Tabs) != 1 {
+		t.Fatalf("expected 1 tab, got %d", len(export.Sidecar.Tabs))
+	}
+	for _, s := range export.Sidecar.Tabs[0].States {
+		if s.Label == "Doomed" {
+			t.Errorf("soft-deleted state surfaced in sidecar: %+v", s)
+		}
+	}
+	if strings.Contains(export.Markdown, "Doomed") {
+		t.Errorf("soft-deleted state leaked into markdown:\n%s", export.Markdown)
+	}
+}
+
+func TestRenderPRDMarkdown_BackwardCompat(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	sf, _, tab := seedPRDWithTab(t, repo)
+	if _, err := repo.UpsertPRDState(ctx, PRDStateInput{
+		PRDTabID: tab.ID, Label: "Hot", Position: 0,
+	}); err != nil {
+		t.Fatalf("UpsertPRDState: %v", err)
+	}
+
+	md, err := repo.RenderPRDMarkdown(ctx, sf.ID)
+	if err != nil {
+		t.Fatalf("RenderPRDMarkdown: %v", err)
+	}
+	export, err := repo.RenderPRDExport(ctx, sf.ID)
+	if err != nil {
+		t.Fatalf("RenderPRDExport: %v", err)
+	}
+	if md != export.Markdown {
+		t.Errorf("backward-compat wrapper drifted from export.Markdown\n--- wrapper ---\n%s\n--- export ---\n%s", md, export.Markdown)
 	}
 }
