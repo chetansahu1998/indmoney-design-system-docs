@@ -1350,3 +1350,110 @@
   text-decoration: none;
 }
 .lc-proto-error-link:hover { text-decoration: underline; }
+
+/* ─── Plan 005 U5 ─ Comments target chip + per-state inline comment form ─ */
+
+.lc-com-target {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.lc-com-target-prd_state {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: transparent;
+}
+.lc-com-target-screen {
+  color: #9bd1ff;
+  border-color: #9bd1ff44;
+}
+.lc-com-target-decision {
+  color: #ffd28a;
+  border-color: #ffd28a44;
+}
+.lc-com-target-violation {
+  color: #ff9b9b;
+  border-color: #ff9b9b44;
+}
+
+.lc-prd-comment-trigger {
+  display: block;
+  margin-top: 12px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.lc-prd-comment-trigger:hover {
+  color: var(--text-1);
+  border-color: var(--line-strong);
+}
+
+.lc-prd-comment-form {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.lc-prd-comment-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 56px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-1);
+  background: var(--bg-0);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.lc-prd-comment-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.lc-prd-comment-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.lc-prd-comment-cancel,
+.lc-prd-comment-post {
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-2);
+}
+.lc-prd-comment-post {
+  color: #0a0d12;
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.lc-prd-comment-post:disabled,
+.lc-prd-comment-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.lc-prd-comment-err {
+  font-size: 11px;
+  color: #ff9b9b;
+}

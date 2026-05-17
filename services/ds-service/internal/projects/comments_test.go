@@ -345,3 +345,91 @@ func TestRepo_NotificationsMarkRead_FiltersOtherUsers(t *testing.T) {
 		t.Errorf("expected 0 (cross-recipient filter), got %d", n2)
 	}
 }
+
+// ─── Plan 005 U5: prd_state target kind + ListCommentsForFlow ───────────────
+
+func TestValidateCommentInput_AcceptsPRDStateKind(t *testing.T) {
+	in, err := ValidateCommentInput(CommentInput{
+		TargetKind: CommentTargetPRDState,
+		TargetID:   "state-abc",
+		FlowID:     "flow-1",
+		Body:       "cold-state copy reads weird",
+	})
+	if err != nil {
+		t.Fatalf("prd_state target should validate: %v", err)
+	}
+	if in.TargetKind != CommentTargetPRDState {
+		t.Errorf("target_kind round-trip: %q", in.TargetKind)
+	}
+}
+
+func TestRepo_ListCommentsForFlow_MergesEveryTargetKind(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	versionID, _ := seedFlowAndScreens(t, repo, uA)
+	var flowID string
+	if err := d.DB.QueryRow(`SELECT flow_id FROM screens WHERE version_id = ? LIMIT 1`, versionID).Scan(&flowID); err != nil {
+		t.Fatalf("flow_id: %v", err)
+	}
+	ctx := context.Background()
+
+	// 1 drd_block + 1 screen + 1 prd_state comment, all under the same flow.
+	for _, c := range []CommentInput{
+		{TargetKind: CommentTargetDRDBlock, TargetID: "blk", FlowID: flowID, Body: "drd comment"},
+		{TargetKind: CommentTargetScreen, TargetID: "scr", FlowID: flowID, Body: "screen comment"},
+		{TargetKind: CommentTargetPRDState, TargetID: "st", FlowID: flowID, Body: "state comment"},
+	} {
+		in, err := ValidateCommentInput(c)
+		if err != nil {
+			t.Fatalf("validate %s: %v", c.TargetKind, err)
+		}
+		if _, _, err := repo.CreateComment(ctx, uA, in); err != nil {
+			t.Fatalf("create %s: %v", c.TargetKind, err)
+		}
+	}
+
+	got, err := repo.ListCommentsForFlow(ctx, flowID)
+	if err != nil {
+		t.Fatalf("ListCommentsForFlow: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 comments across kinds, got %d", len(got))
+	}
+	kinds := map[string]bool{}
+	for _, r := range got {
+		kinds[r.TargetKind] = true
+	}
+	for _, want := range []string{"drd_block", "screen", "prd_state"} {
+		if !kinds[want] {
+			t.Errorf("merged stream missing target_kind=%s", want)
+		}
+	}
+}
+
+func TestRepo_ListCommentsForFlow_TenantIsolation(t *testing.T) {
+	d, tA, tB, uA := newTestDB(t)
+	repoA := NewTenantRepo(d.DB, tA)
+	repoB := NewTenantRepo(d.DB, tB)
+	versionID, _ := seedFlowAndScreens(t, repoA, uA)
+	var flowID string
+	if err := d.DB.QueryRow(`SELECT flow_id FROM screens WHERE version_id = ? LIMIT 1`, versionID).Scan(&flowID); err != nil {
+		t.Fatalf("flow_id: %v", err)
+	}
+	ctx := context.Background()
+
+	in, _ := ValidateCommentInput(CommentInput{
+		TargetKind: CommentTargetPRDState, TargetID: "st", FlowID: flowID,
+		Body: "A's comment",
+	})
+	if _, _, err := repoA.CreateComment(ctx, uA, in); err != nil {
+		t.Fatalf("repoA create: %v", err)
+	}
+
+	got, err := repoB.ListCommentsForFlow(ctx, flowID)
+	if err != nil {
+		t.Fatalf("repoB: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("tenant B leaked %d rows from tenant A", len(got))
+	}
+}

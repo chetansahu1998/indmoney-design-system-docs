@@ -276,6 +276,16 @@ export interface DisplayComment {
   /** Number of reactions across all emojis. */
   reactions: number;
   pending?: boolean;
+  /**
+   * Plan 005 U5 — target_kind on the underlying drd_comments row. The
+   * inspector renders a chip when this is non-empty AND not "drd_block"
+   * (the default scope), so PMs can tell a state-anchored comment apart
+   * from a generic DRD comment in the merged thread.
+   */
+  targetKind?: string;
+  /** Raw target_id — currently surfaced for "prd_state" chips so a future
+   * deep-link can route to the PRD tab's specific state. */
+  targetID?: string;
 }
 
 export interface DRDDocument {

@@ -159,7 +159,10 @@ function bridgeBuildComments(leaf: any) {
     const slot = leaf ? snapshot().leafSlots[leaf.id] : null;
     if (slot && slot.loadedAt > 0) {
       return slot.overlays.comments.map((c) => ({
-        who: c.who, body: c.body, ago: c.ago, reactions: c.reactions,
+        // Plan 005 U5 — thread `targetKind` and `targetID` so CommentsTab
+        // can render a chip ("→ Cold state") for non-drd_block rows.
+        id: c.id, who: c.who, body: c.body, ago: c.ago, reactions: c.reactions,
+        targetKind: c.targetKind, targetID: c.targetID,
       }));
     }
     return [];

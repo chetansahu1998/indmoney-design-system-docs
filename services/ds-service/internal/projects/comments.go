@@ -35,7 +35,12 @@ const (
 	CommentTargetDecision  CommentTargetKind = "decision"
 	CommentTargetViolation CommentTargetKind = "violation"
 	CommentTargetScreen    CommentTargetKind = "screen"
-	CommentTargetComment   CommentTargetKind = "comment" // reply target (depth-N polish; v1 ignores)
+	CommentTargetComment   CommentTargetKind = "comment"   // reply target (depth-N polish; v1 ignores)
+	// Plan 005 U5 — comments anchored to a typed-stem PRD state row.
+	// target_id = prd_state.id. Surfaced in Atlas's right-rail Comments
+	// tab when the leaf has a sub_flow binding, and authorable from
+	// inside the PRD tab's per-state card.
+	CommentTargetPRDState CommentTargetKind = "prd_state"
 )
 
 // Sentinel errors mapped to HTTP statuses by the handler layer.
@@ -73,7 +78,7 @@ func ValidateCommentInput(in CommentInput) (CommentInput, error) {
 	}
 
 	switch out.TargetKind {
-	case CommentTargetDRDBlock, CommentTargetDecision, CommentTargetViolation, CommentTargetScreen, CommentTargetComment:
+	case CommentTargetDRDBlock, CommentTargetDecision, CommentTargetViolation, CommentTargetScreen, CommentTargetComment, CommentTargetPRDState:
 		// ok
 	default:
 		return CommentInput{}, fmt.Errorf("%w: %q", ErrCommentTargetUnknown, in.TargetKind)

@@ -1488,7 +1488,102 @@ function PRDStateCard({ state, leaf }) {
           criteria, events, and copy.
         </div>
       )}
+
+      <PRDStateCommentAffordance state={state} leaf={leaf} />
     </article>
+  );
+}
+
+// PRDStateCommentAffordance — small, inline "💬 Comment on this state"
+// trigger that expands to a textarea + Post button. POSTs to the existing
+// /v1/projects/{slug}/comments endpoint with target_kind=prd_state. After
+// a successful post, the leaf's overlays are invalidated so CommentsTab
+// re-fetches and the new row surfaces with a "→ <state label>" chip.
+//
+// Slug resolution: leaf.id is the project slug post brain-products migration
+// (see real-data-bridge.ts). If the leaf has no sub_flow context, the
+// affordance hides — there's no useful target.
+function PRDStateCommentAffordance({ state, leaf }: { state: any; leaf: any }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const sub = leaf?.subFlow;
+  if (!sub) return null;
+  const slug: string | undefined = leaf?.id;
+  if (!slug) return null;
+
+  async function post() {
+    const body = text.trim();
+    if (!body) return;
+    setPosting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/v1/projects/${encodeURIComponent(slug!)}/comments`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target_kind: "prd_state",
+          target_id: state.id,
+          flow_id: sub.flowID ?? undefined,
+          body,
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(txt || `HTTP ${res.status}`);
+      }
+      setText("");
+      setOpen(false);
+      // Invalidate this leaf's overlays so the Comments tab refetches.
+      const store = (typeof window !== "undefined" ? (window as any).__atlasStore : null);
+      if (store?.invalidateLeafOverlays) {
+        store.invalidateLeafOverlays(leaf.id);
+      } else {
+        // Fall back to a soft reload signal — the SSE refetch on next
+        // selection change picks up the row, but a same-tab refresh is
+        // the user-visible guarantee.
+        window.dispatchEvent(new CustomEvent("atlas:invalidate-comments", { detail: { leafID: leaf.id } }));
+      }
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to post");
+    } finally {
+      setPosting(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="lc-prd-comment-trigger"
+        onClick={() => setOpen(true)}
+      >
+        💬 Comment on this state
+      </button>
+    );
+  }
+  return (
+    <div className="lc-prd-comment-form">
+      <textarea
+        className="lc-prd-comment-input"
+        placeholder={`Comment on "${state.label}"…`}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={3}
+        disabled={posting}
+      />
+      <div className="lc-prd-comment-actions">
+        <button type="button" className="lc-prd-comment-cancel" onClick={() => { setOpen(false); setText(""); setError(null); }} disabled={posting}>
+          Cancel
+        </button>
+        <button type="button" className="lc-prd-comment-post" onClick={post} disabled={posting || !text.trim()}>
+          {posting ? "Posting…" : "Post"}
+        </button>
+      </div>
+      {error && <div className="lc-prd-comment-err">{error}</div>}
+    </div>
   );
 }
 
@@ -1517,10 +1612,22 @@ function CommentsTab({ comments }) {
   return (
     <div className="lc-com">
       {comments.map((c, i) => (
-        <div key={i} className="lc-com-row">
+        <div key={c.id ?? i} className="lc-com-row">
           <div className="lc-com-avatar" style={{ background: `hsl(${(i + 1) * 73}, 30%, 60%)` }}>{c.who[0]}</div>
           <div className="lc-com-body">
-            <div className="lc-com-head"><b>{c.who}</b><span className="lc-com-ago">{c.ago}</span></div>
+            <div className="lc-com-head">
+              <b>{c.who}</b>
+              {/* Plan 005 U5 — target chip for non-default kinds. drd_block
+                  is the default scope (DRD prose comments) so it stays
+                  unlabelled to avoid noise; everything else gets a chip so
+                  PMs can tell apart screen / prd_state / decision threads. */}
+              {c.targetKind && c.targetKind !== "drd_block" && (
+                <span className={`lc-com-target lc-com-target-${c.targetKind}`}>
+                  → {targetChipLabel(c.targetKind)}
+                </span>
+              )}
+              <span className="lc-com-ago">{c.ago}</span>
+            </div>
             <div className="lc-com-text">{c.body}</div>
             {c.reactions > 0 && <div className="lc-com-react">👍 {c.reactions}</div>}
           </div>
@@ -1531,4 +1638,23 @@ function CommentsTab({ comments }) {
       </div>
     </div>
   );
+}
+
+// targetChipLabel maps a CommentTargetKind to a short label rendered in
+// CommentsTab's per-row chip. State-level chips drop the target_id and
+// show just the kind word so the chip stays terse; future polish can swap
+// in the PRD state's label by joining against prdByLeaf.
+function targetChipLabel(kind: string): string {
+  switch (kind) {
+    case "prd_state":
+      return "PRD state";
+    case "screen":
+      return "Screen";
+    case "decision":
+      return "Decision";
+    case "violation":
+      return "Violation";
+    default:
+      return kind;
+  }
 }

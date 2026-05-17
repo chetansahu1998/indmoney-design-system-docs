@@ -163,7 +163,11 @@ interface CommentRow {
   id: string;
   target_kind: string;
   target_id: string;
-  text: string;
+  // Backend's CommentRecord uses `body`. `text` is kept as a legacy alias
+  // so any earlier callers continue to compile; commentToDisplay prefers
+  // body when present.
+  body?: string;
+  text?: string;
   author_user_id: string;
   author_email?: string;
   reaction_count?: number;
@@ -862,10 +866,14 @@ export function commentToDisplay(
   return {
     id: c.id,
     who: displayNameFor(c.author_user_id, c.author_email, userDirectory),
-    body: c.text,
+    // Prefer `body` (current backend wire field). `text` remains as a
+    // legacy fallback so historical fixtures keep rendering.
+    body: c.body ?? c.text ?? "",
     ago: formatRelative(c.created_at),
     createdAt: c.created_at,
     reactions: c.reaction_count ?? 0,
+    targetKind: c.target_kind,
+    targetID: c.target_id,
   };
 }
 

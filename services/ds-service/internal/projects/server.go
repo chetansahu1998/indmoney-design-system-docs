@@ -3568,7 +3568,20 @@ func (s *Server) HandleCommentList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
-	out, err := repo.ListCommentsForTarget(r.Context(), CommentTargetKind(kind), target)
+	// Plan 005 U5 — the right-rail Comments tab calls this endpoint with
+	// `target_kind=flow` to fetch a unified thread for the leaf. There's
+	// no row in drd_comments with target_kind='flow' — that pseudo-kind
+	// is the caller's way of saying "every comment scoped to this flow,
+	// regardless of which DRD block / screen / prd_state it pins to".
+	// Route to ListCommentsForFlow so a sub_flow-bound leaf sees every
+	// drd_block + screen + prd_state row at once.
+	var out []CommentRecord
+	var err error
+	if kind == "flow" {
+		out, err = repo.ListCommentsForFlow(r.Context(), target)
+	} else {
+		out, err = repo.ListCommentsForTarget(r.Context(), CommentTargetKind(kind), target)
+	}
 	if err != nil {
 		writeJSONErr(w, http.StatusInternalServerError, "list_comments", err.Error())
 		return

@@ -2482,6 +2482,54 @@ func (t *TenantRepo) GetComment(ctx context.Context, commentID string) (*Comment
 	return rec, nil
 }
 
+// ListCommentsForFlow returns every (non-deleted) comment whose flow_id
+// matches, regardless of target_kind. Used by Atlas's right-rail Comments
+// tab (plan 005 U5) so a single fetch surfaces drd_block + screen +
+// prd_state + decision + violation rows together rather than forcing the
+// UI to fan out one query per target kind.
+//
+// Ordering: created_at ASC (oldest-first) to match ListCommentsForTarget's
+// reply-thread expectation. Tenant-scoped at the query.
+func (t *TenantRepo) ListCommentsForFlow(ctx context.Context, flowID string) ([]CommentRecord, error) {
+	rows, err := t.r.db.QueryContext(ctx,
+		`SELECT id, tenant_id, target_kind, target_id, flow_id, author_user_id,
+		        body, parent_comment_id, COALESCE(mentions_user_ids, ''),
+		        COALESCE(resolved_at, ''), COALESCE(resolved_by, ''),
+		        created_at, updated_at
+		   FROM drd_comments
+		  WHERE tenant_id = ? AND flow_id = ?
+		    AND deleted_at IS NULL
+		  ORDER BY created_at ASC`,
+		t.tenantID, flowID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list comments for flow: %w", err)
+	}
+	defer rows.Close()
+	var out []CommentRecord
+	for rows.Next() {
+		var rec CommentRecord
+		var parent sql.NullString
+		var mentions string
+		if err := rows.Scan(
+			&rec.ID, &rec.TenantID, &rec.TargetKind, &rec.TargetID, &rec.FlowID,
+			&rec.AuthorUserID, &rec.Body, &parent, &mentions,
+			&rec.ResolvedAt, &rec.ResolvedBy, &rec.CreatedAt, &rec.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		if parent.Valid {
+			s := parent.String
+			rec.ParentCommentID = &s
+		}
+		if mentions != "" {
+			_ = json.Unmarshal([]byte(mentions), &rec.MentionsUserIDs)
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
 // ListCommentsForTarget returns every (non-deleted) comment for a target,
 // oldest first, with linear depth=1 thread structure (replies are siblings
 // of the root comment ordered by created_at ASC).
