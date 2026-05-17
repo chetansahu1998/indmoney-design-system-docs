@@ -109,6 +109,7 @@ func main() {
 		totalInlined     int
 		totalScreens     int
 		totalSVGClusters int
+		totalOversize    int
 		totalErrors      int
 	)
 
@@ -153,13 +154,17 @@ func main() {
 				if v.Status != "view_ready" && v.Status != "ready" {
 					continue
 				}
-				if v.PrunedAt != nil {
-					// Pruned versions have no on-disk SVG bytes —
-					// readSVGBytes would 404 every node.
-					continue
-				}
+				// Pruned versions are still inlineable: cleanup.go:54 only
+				// removes `<dataDir>/screens/<tenant>/<version>` (the PNG
+				// cache), NOT `<dataDir>/assets/<tenant>/<file>/v<vi>`
+				// (where Stage 9.1 wrote the SVG bytes). The CLI used to
+				// skip pruned versions defensively, but that masked
+				// legitimate work — re-inlining a pruned version still
+				// makes the canvas serve inline SVG instead of falling
+				// through to an absent PNG.
+				_ = v.PrunedAt
 				totalVersions++
-				inlined, screens, svgCount, err := runVersion(rootCtx, log, conn, repo, tid, pr, v, dataRoot, *perVersionTimeout, *dryRun)
+				inlined, screens, svgCount, oversize, err := runVersion(rootCtx, log, conn, repo, tid, pr, v, dataRoot, *perVersionTimeout, *dryRun)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "tenant %s project %s version %s: %v\n",
 						tid, pr.ID, v.ID, err)
@@ -169,16 +174,22 @@ func main() {
 				totalInlined += inlined
 				totalScreens += screens
 				totalSVGClusters += svgCount
+				totalOversize += oversize
 			}
 		}
 	}
 
-	fmt.Printf("ok versions=%d screens=%d svg_clusters=%d inlined_screens=%d errors=%d dry_run=%v\n",
-		totalVersions, totalScreens, totalSVGClusters, totalInlined, totalErrors, *dryRun)
+	fmt.Printf("ok versions=%d screens=%d svg_clusters=%d inlined_screens=%d oversize_skipped=%d errors=%d dry_run=%v\n",
+		totalVersions, totalScreens, totalSVGClusters, totalInlined, totalOversize, totalErrors, *dryRun)
+	// Reflect failures in the exit code so `fly ssh console -C` and CI
+	// invocations don't silently swallow operator-visible problems.
+	if totalErrors > 0 {
+		os.Exit(1)
+	}
 }
 
 // runVersion handles one (tenant, project, version) tuple. Returns
-// (inlinedScreens, totalScreens, svgClusterCount, error).
+// (inlinedScreens, totalScreens, svgClusterCount, oversizeScreens, error).
 func runVersion(
 	parentCtx context.Context,
 	log *slog.Logger,
@@ -190,16 +201,16 @@ func runVersion(
 	dataDir string,
 	timeout time.Duration,
 	dryRun bool,
-) (int, int, int, error) {
+) (int, int, int, int, error) {
 	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()
 
 	screens, err := repo.ListScreensByVersion(ctx, version.ID)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("list screens: %w", err)
+		return 0, 0, 0, 0, fmt.Errorf("list screens: %w", err)
 	}
 	if len(screens) == 0 {
-		return 0, 0, 0, nil
+		return 0, 0, 0, 0, nil
 	}
 
 	// Discover SVG cluster IDs by walking each screen's canonical_tree
@@ -232,7 +243,7 @@ func runVersion(
 		log.Info("no svg clusters",
 			"tenant_id", tenantID, "version_id", version.ID,
 			"screens", len(screens))
-		return 0, len(screens), 0, nil
+		return 0, len(screens), 0, 0, nil
 	}
 	svgIDs := make([]string, 0, len(svgSet))
 	for id := range svgSet {
@@ -244,7 +255,7 @@ func runVersion(
 			"tenant_id", tenantID, "file_id", project.FileID,
 			"version_id", version.ID, "version_index", version.VersionIndex,
 			"screens", len(screens), "svg_clusters", len(svgIDs))
-		return 0, len(screens), len(svgIDs), nil
+		return 0, len(screens), len(svgIDs), 0, nil
 	}
 
 	in := projects.PipelineInputs{
@@ -254,21 +265,23 @@ func runVersion(
 		FileID:    project.FileID,
 		Frames:    frames,
 	}
+	var oversize int
 	deps := projects.SVGInlineDeps{
-		DB:      conn.DB,
-		DataDir: dataDir,
-		Log:     log,
+		DB:              conn.DB,
+		DataDir:         dataDir,
+		Log:             log,
+		OversizeScreens: &oversize,
 	}
 	inlined, err := projects.InlineSVGMarkup(ctx, deps, in, svgIDs)
 	if err != nil {
-		return 0, len(screens), len(svgIDs), err
+		return 0, len(screens), len(svgIDs), oversize, err
 	}
 	log.Info("inlined",
 		"tenant_id", tenantID, "file_id", project.FileID,
 		"version_id", version.ID, "version_index", version.VersionIndex,
 		"screens", len(screens), "svg_clusters", len(svgIDs),
-		"updated_screens", inlined)
-	return inlined, len(screens), len(svgIDs), nil
+		"updated_screens", inlined, "oversize_skipped", oversize)
+	return inlined, len(screens), len(svgIDs), oversize, nil
 }
 
 // ─── DB helpers ─────────────────────────────────────────────────────

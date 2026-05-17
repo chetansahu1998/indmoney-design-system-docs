@@ -412,6 +412,13 @@ func persistAssetBytes(dataDir, tenantID, fileID string, versionIndex int, nodeI
 // node-id ("X:Y" canonical form) with safe ones. We use ':' → '_' so the
 // reverse mapping isn't necessary (the cache row preserves the canonical
 // form; the storage_key is opaque to consumers).
+// `;` (allowlisted in isValidFigmaNodeID for instance-override chains)
+// is intentionally NOT replaced here — every SVG file currently on disk
+// encodes it literally (e.g. `I9644_185666;376_8996.svg`). The latent
+// ambiguity is theoretical: Figma never emits the `I1:2_3:4` form (`_`
+// is not in Figma's id alphabet), so `I1:2;3:4` and `I1:2_3:4` cannot
+// collide in practice. If a future renderer ever emits literal `_`,
+// migrate on-disk filenames before adding `;` to this list.
 func sanitizeNodeIDForFS(nodeID string) string {
 	s := strings.ReplaceAll(nodeID, ":", "_")
 	s = strings.ReplaceAll(s, "/", "_")

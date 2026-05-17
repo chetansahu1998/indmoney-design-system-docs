@@ -82,6 +82,26 @@ These are not application bugs. They are limitations of the Chrome-DevTools-MCP-
 - Bug 8 — investigation only; documented above; flagged as a separate initiative
 - Bugs 10–12 — recorded in this runbook; no code changes
 
+## Post-ship system audit (2026-05-17 evening)
+
+A three-agent audit of commits `44522ef`, `f03bd88`, `9ad5b15` ran after the round-2 QA closed. Findings split into shipped here vs deferred.
+
+### Shipped in commit `<next>`
+
+- **Audit #4 — 32MB cap silent skip** (`svg_inliner.go`): screens whose tree exceeded `maxScreenInlinedBytesUncompressed` returned `(false, nil)` indistinguishable from "no matching nodes." Now `SVGInlineDeps.OversizeScreens *int` is an optional out-counter; the CLI summary prints `oversize_skipped=N` so operators can spot screens needing manual review.
+- **Audit #5 — CLI exit code** (`cmd/backfill-svg-markup/main.go`): the command exited 0 even with per-version errors. Now `os.Exit(1)` when `totalErrors > 0`, so `fly ssh console -C` / CI invocations surface failures.
+- **Audit #6 — over-conservative pruned skip** (`cmd/backfill-svg-markup/main.go`): `cleanup.go:54` only removes `<dataDir>/screens/<tenant>/<version>` (the PNG cache); SVG bytes under `<dataDir>/assets/<tenant>/<file>/v<vi>/` are not swept. The CLI used to skip pruned versions defensively, masking legitimate inlineable work. The skip is removed.
+- **Audit #7 — UPDATE missing tenant predicate** (`svg_inliner.go`): the `UPDATE screen_canonical_trees` filter was `WHERE screen_id = ?` only. Even though the CLI + Stage 9 caller pre-scope by tenant, a future caller (new HTTP handler, fix script) could cross-tenant by accident. The UPDATE now joins through `screens WHERE tenant_id = ?` as defense in depth.
+- **General-purpose audit flag — `collectClusterIDs` non-bbox symmetry** (`useIconClusterURLs.ts`): `walkWithBBox` skips nodes with `svg_markup`; `walk` (the non-bbox variant used by tests + some legacy paths) did not. Added matching skip so callers that mint URLs never request assets for already-inlined nodes.
+- **Audit #3 — sanitize symmetry** (`asset_export.go`): the relaxed `;`-allowing validator combined with no `;`-to-`_` sanitizer in `sanitizeNodeIDForFS` is a latent ambiguity, but Figma never emits the `I1:2_3:4` form (`_` is not in Figma's id alphabet), so `I1:2;3:4` and `I1:2_3:4` cannot collide in practice. The function gained an explanatory comment instead of a behaviour change — flipping it would break every existing SVG file on disk (`I9644_185666;376_8996.svg`).
+
+### Deferred follow-ups
+
+- **Audit #1 — concurrency race between CLI and live Stage 9** (HIGH, file separately): when the operator runs `backfill-svg-markup` while a designer hits Re-import on the same tenant/version, both processes can race the read-modify-write on `screen_canonical_trees`. The CLI bypasses `AcquirePrerenderSlot` (which is in-process anyway). The reviewer's suggested fix is optimistic locking via `AND updated_at = ?` in the UPDATE — non-trivial because `loadCanonicalTreeRaw` needs to return `updated_at` and the call sites need to handle "row changed, retry." For now: **operators should pause ingestion (or run when traffic is low) before invoking the CLI**. This bullet point is the contract until a follow-up PR adds the row-version check.
+- **Audit #2 — `svg_markup` skip vs re-exported Figma SVG bytes** (MEDIUM): the inliner's "skip nodes that already have non-empty `svg_markup`" guard means a Figma re-export that emits FRESH SVG bytes for the same node id is NOT picked up by either the live re-run path or the CLI. The header comment at `svg_inliner.go:38-40` says the opposite ("re-reads … overwriting any prior svg_markup") — the two are contradictory. The right fix is one of: (a) drop the skip and always re-sanitize (cheap), (b) hash-compare on-disk bytes against a fingerprint stored alongside markup, (c) expose a `--force` CLI flag. Recorded so a future contributor can resolve.
+- **Architectural envelope-walker audit**: the Explore agent verified all canonical_tree walkers in the repo (`pipeline_organism_match.go:WalkOrganismCandidatesWithIndex`, `svg_eligibility.go:IsSVGEligible`, `screen_image_fills.go:walkForImageRefs`, `screen_overrides_reattach.go:indexCanonicalTree`, `graph_sources.go:walkInstancesForComponentRefs`, `LeafFrameRenderer.tsx:unwrapCanonicalTree`, `useIconClusterURLs.ts`, etc.) handle the Figma envelope correctly. No 4th instance of the bug class found.
+- **`svg_markup` end-to-end plumbing audit**: server write → API pass-through → TypeScript type → renderer branch → URL-skip → idempotency. All paths verified correct. One transient window noted (Stage 6 commit → Stage 9 inline completion serves PNG-only trees for ~1-2 minutes; graceful R5 fallback so not user-broken).
+
 ## How to verify the backfill (Bug 7)
 
 Local:

@@ -64,6 +64,12 @@ type SVGInlineDeps struct {
 	DB      *sql.DB
 	DataDir string
 	Log     *slog.Logger
+	// OversizeScreens (optional out-counter): when non-nil, InlineSVGMarkup
+	// increments it once per screen that exceeded the 32MB post-splice cap
+	// (`maxScreenInlinedBytesUncompressed`). Distinguishes "skipped — too
+	// big" from "skipped — no matching nodes" so operator-facing summaries
+	// can flag screens needing attention. Audit reviewer #4.
+	OversizeScreens *int
 }
 
 // maxSingleSVGBytes caps the size of any one SVG markup payload before
@@ -262,6 +268,9 @@ func inlineForScreen(
 			deps.Log.Warn("svg inline: screen exceeds 32MB cap — skipping UPDATE",
 				"screen_id", screenID, "bytes", len(mutated))
 		}
+		if deps.OversizeScreens != nil {
+			*deps.OversizeScreens++
+		}
 		return false, nil
 	}
 
@@ -270,14 +279,20 @@ func inlineForScreen(
 		return false, fmt.Errorf("compress: %w", err)
 	}
 
+	// Tenant predicate is defense-in-depth (audit reviewer #7). The CLI
+	// + Stage 9 caller already pre-scope screen IDs by tenant via the
+	// outer iteration, but joining through `screens` here means any
+	// future caller (a new HTTP handler, a one-shot fix script) can't
+	// accidentally cross-tenant UPDATE.
 	_, err = deps.DB.ExecContext(ctx,
 		`UPDATE screen_canonical_trees
 		    SET canonical_tree      = '',
 		        canonical_tree_gz   = NULL,
 		        canonical_tree_zstd = ?,
 		        updated_at          = ?
-		  WHERE screen_id = ?`,
-		zstdBlob, rfc3339(time.Now().UTC()), screenID,
+		  WHERE screen_id = ?
+		    AND screen_id IN (SELECT id FROM screens WHERE tenant_id = ?)`,
+		zstdBlob, rfc3339(time.Now().UTC()), screenID, in.TenantID,
 	)
 	if err != nil {
 		return false, fmt.Errorf("UPDATE screen_canonical_trees: %w", err)

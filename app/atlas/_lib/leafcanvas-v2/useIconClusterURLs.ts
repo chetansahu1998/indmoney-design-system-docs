@@ -92,6 +92,15 @@ function walk(node: CanonicalNode, acc: string[]): void {
   if (typeof visibleField === "boolean" && !visibleField) return;
   const removedField = (node as unknown as { removed?: unknown }).removed;
   if (typeof removedField === "boolean" && removedField) return;
+  // Mirror the svg_markup skip from walkWithBBox (line ~141): once the
+  // server-side inliner has spliced inline SVG into the node, the
+  // client renders the markup directly and never needs a `<img>` URL.
+  // Walking past it would mint an unused signed URL and (worse) keep
+  // the SSE asset-stream subscription waiting on a render that the
+  // server already completed.
+  if (typeof node.svg_markup === "string" && node.svg_markup.length > 0) {
+    return;
+  }
   if (shouldRasterize(node) && typeof node.id === "string") {
     acc.push(node.id);
     return;
