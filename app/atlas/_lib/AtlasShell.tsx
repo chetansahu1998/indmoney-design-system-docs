@@ -24,6 +24,7 @@ import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { fetchSubFlowBySlug } from "../../../lib/atlas/data-adapters";
 import { selectFlows, selectSelection, useAtlas } from "../../../lib/atlas/live-store";
 import { ATLAS_DOMAINS } from "../../../lib/atlas/taxonomy";
 import { track } from "../../../lib/telemetry";
@@ -57,6 +58,7 @@ export default function AtlasShell({ initialURL }: AtlasShellProps = {}) {
   const refreshBrain = useAtlas((s) => s.refreshBrain);
   const openLeaf = useAtlas((s) => s.openLeaf);
   const loadLeavesForFlow = useAtlas((s) => s.loadLeavesForFlow);
+  const attachSubFlowToLeaf = useAtlas((s) => s.attachSubFlowToLeaf);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -80,6 +82,27 @@ export default function AtlasShell({ initialURL }: AtlasShellProps = {}) {
     });
   }, [hydrated, url.project, url.leaf, flows, loadLeavesForFlow, openLeaf]);
 
+  // Plan 005 U1 — `?subFlow=<full_slug>` URL override. When the user lands
+  // with an explicit sub_flow, resolve it via the MCP proxy and patch the
+  // open leaf's subFlow context. Precedence: URL override > leaf-derivation.
+  // The override fires AFTER openLeaf has had a chance to attach the
+  // derived value, so we overwrite cleanly even when both paths run.
+  useEffect(() => {
+    if (!hydrated) return;
+    if (!url.subFlow) return;
+    if (!selection.leafID) return;
+    let cancelled = false;
+    void fetchSubFlowBySlug(url.subFlow).then((sf) => {
+      if (cancelled) return;
+      if (!sf) return;
+      if (!selection.leafID) return;
+      attachSubFlowToLeaf(selection.leafID, sf);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, url.subFlow, selection.leafID, attachSubFlowToLeaf]);
+
   // Push selection changes back into the URL.
   useEffect(() => {
     if (!hydrated) return;
@@ -93,13 +116,17 @@ export default function AtlasShell({ initialURL }: AtlasShellProps = {}) {
       traceID: url.traceID,
       persona: url.persona,
       from: url.from,
+      // Preserve the inbound subFlow override so deep-links stay shareable
+      // across selection changes inside the same sub_flow context.
+      subFlow: url.subFlow,
     };
     const prev = previousURLRef.current;
     if (
       prev.platform === next.platform &&
       prev.project === next.project &&
       prev.leaf === next.leaf &&
-      prev.frame === next.frame
+      prev.frame === next.frame &&
+      prev.subFlow === next.subFlow
     ) {
       return;
     }
@@ -119,6 +146,7 @@ export default function AtlasShell({ initialURL }: AtlasShellProps = {}) {
     url.traceID,
     url.persona,
     url.from,
+    url.subFlow,
   ]);
 
   // Force-remount key. Bumps every time the brain slice changes

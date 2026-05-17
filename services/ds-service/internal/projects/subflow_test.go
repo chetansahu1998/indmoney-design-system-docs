@@ -416,6 +416,151 @@ func TestSubFlow_GetSubFlowByName(t *testing.T) {
 	}
 }
 
+// ─── GetSubFlowByFlowID (plan 005 U1) ────────────────────────────────────────
+
+// seedFlowWithSection creates a project + flow with a given section_id under
+// the caller's tenant. Returns the flow row's id. Used by the
+// GetSubFlowByFlowID / HandleSubFlowForLeaf tests so they can exercise the
+// flows.section_id → sub_flow.figma_section_id binding without re-implementing
+// the autosync pipeline.
+func seedFlowWithSection(t *testing.T, repo *TenantRepo, userID, sectionID string) string {
+	t.Helper()
+	ctx := context.Background()
+	p, err := repo.UpsertProject(ctx, Project{
+		Name: "P", Platform: "mobile", Product: "Plutus",
+		Path: "X-" + sectionID, OwnerUserID: userID,
+	})
+	if err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	f, err := repo.UpsertFlow(ctx, Flow{
+		ProjectID: p.ID, FileID: "F-" + sectionID, SectionID: &sectionID,
+		Name: "FlowA",
+	})
+	if err != nil {
+		t.Fatalf("flow: %v", err)
+	}
+	return f.ID
+}
+
+func TestGetSubFlowByFlowID_HappyPath(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	wallet, _ := repo.UpsertSubProduct(ctx, "Wallet")
+	sf, err := repo.UpsertSubFlow(ctx, wallet.ID, "M2M Settlement")
+	if err != nil {
+		t.Fatalf("upsert sf: %v", err)
+	}
+	const sectionID = "sec:1"
+	if err := repo.LinkSubFlowToFigmaSection(ctx, sf.ID, sectionID); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	flowID := seedFlowWithSection(t, repo, uA, sectionID)
+
+	got, err := repo.GetSubFlowByFlowID(ctx, flowID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ID != sf.ID {
+		t.Errorf("sub_flow.id = %s, want %s", got.ID, sf.ID)
+	}
+	if got.Name != "M2M Settlement" {
+		t.Errorf("sub_flow.name = %s, want M2M Settlement", got.Name)
+	}
+	if got.FigmaSectionID == nil || *got.FigmaSectionID != sectionID {
+		t.Errorf("figma_section_id = %v, want %s", got.FigmaSectionID, sectionID)
+	}
+}
+
+func TestGetSubFlowByFlowID_NoSectionOnFlow(t *testing.T) {
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	// Flow without a section_id at all → freeform flow, no binding possible.
+	p, err := repo.UpsertProject(ctx, Project{
+		Name: "P", Platform: "mobile", Product: "Plutus", Path: "Free", OwnerUserID: uA,
+	})
+	if err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	f, err := repo.UpsertFlow(ctx, Flow{
+		ProjectID: p.ID, FileID: "F-free", Name: "Freeform",
+	})
+	if err != nil {
+		t.Fatalf("flow: %v", err)
+	}
+
+	_, err = repo.GetSubFlowByFlowID(ctx, f.ID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for freeform flow; got %v", err)
+	}
+}
+
+func TestGetSubFlowByFlowID_SectionExistsButNoSubFlow(t *testing.T) {
+	// Autosync race: a flow's section_id is stamped during extract, but
+	// either no sub_flow row was upserted yet (PM hasn't authored a DRD),
+	// or it was upserted without being LinkedToFigmaSection.
+	d, tA, _, uA := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	flowID := seedFlowWithSection(t, repo, uA, "sec:orphan")
+
+	_, err := repo.GetSubFlowByFlowID(ctx, flowID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound when no sub_flow bound to section; got %v", err)
+	}
+
+	// Now upsert a sub_flow but DO NOT call LinkSubFlowToFigmaSection —
+	// the join should still miss because sub_flow.figma_section_id is NULL.
+	wallet, _ := repo.UpsertSubProduct(ctx, "Wallet")
+	if _, err := repo.UpsertSubFlow(ctx, wallet.ID, "Unbound"); err != nil {
+		t.Fatalf("upsert sf: %v", err)
+	}
+	_, err = repo.GetSubFlowByFlowID(ctx, flowID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound when sub_flow unlinked; got %v", err)
+	}
+}
+
+func TestGetSubFlowByFlowID_CrossTenant(t *testing.T) {
+	d, tA, tB, uA := newTestDB(t)
+	repoA := NewTenantRepo(d.DB, tA)
+	repoB := NewTenantRepo(d.DB, tB)
+	ctx := context.Background()
+
+	wallet, _ := repoA.UpsertSubProduct(ctx, "Wallet")
+	sf, _ := repoA.UpsertSubFlow(ctx, wallet.ID, "M2M Settlement")
+	const sectionID = "sec:cross"
+	if err := repoA.LinkSubFlowToFigmaSection(ctx, sf.ID, sectionID); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	flowID := seedFlowWithSection(t, repoA, uA, sectionID)
+
+	// Tenant A sees it.
+	if _, err := repoA.GetSubFlowByFlowID(ctx, flowID); err != nil {
+		t.Fatalf("tenant A should resolve: %v", err)
+	}
+	// Tenant B does not (no oracle).
+	if _, err := repoB.GetSubFlowByFlowID(ctx, flowID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("tenant B should not see tenant A's flow: %v", err)
+	}
+}
+
+func TestGetSubFlowByFlowID_UnknownFlowID(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	if _, err := repo.GetSubFlowByFlowID(context.Background(), "nope-flow-id"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for unknown flow_id; got %v", err)
+	}
+	if _, err := repo.GetSubFlowByFlowID(context.Background(), ""); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound for empty flow_id; got %v", err)
+	}
+}
+
 func TestSubFlow_TenantIsolation(t *testing.T) {
 	d, tA, tB, _ := newTestDB(t)
 	repoA := NewTenantRepo(d.DB, tA)

@@ -775,6 +775,188 @@ func TestHandleSubFlowDRDTicket_CrossTenant(t *testing.T) {
 	}
 }
 
+// ─── HandleSubFlowForLeaf (plan 005 U1) ──────────────────────────────────────
+
+// seedFlowWithSubFlowBinding glues together a project + flow + sub_flow
+// triple so HandleSubFlowForLeaf can resolve the binding. Returns the
+// project's slug, the flow_id, and the sub_flow_id.
+func seedFlowWithSubFlowBinding(
+	t *testing.T,
+	srv *Server,
+	tenantID, userID, productName, flowName string,
+) (slug, flowID, subFlowID string) {
+	t.Helper()
+	repo := NewTenantRepo(srv.deps.DB.DB, tenantID)
+	ctx := context.Background()
+
+	sp, err := repo.UpsertSubProduct(ctx, productName)
+	if err != nil {
+		t.Fatalf("sub_product: %v", err)
+	}
+	sf, err := repo.UpsertSubFlow(ctx, sp.ID, flowName)
+	if err != nil {
+		t.Fatalf("sub_flow: %v", err)
+	}
+	sectionID := "sec:" + sf.ID
+	if err := repo.LinkSubFlowToFigmaSection(ctx, sf.ID, sectionID); err != nil {
+		t.Fatalf("link section: %v", err)
+	}
+
+	p, err := repo.UpsertProject(ctx, Project{
+		Name: productName + "-" + flowName, Platform: "mobile",
+		Product: productName, Path: flowName, OwnerUserID: userID,
+	})
+	if err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	f, err := repo.UpsertFlow(ctx, Flow{
+		ProjectID: p.ID, FileID: "F-" + sf.ID, SectionID: &sectionID, Name: "FlowA",
+	})
+	if err != nil {
+		t.Fatalf("flow: %v", err)
+	}
+	return p.Slug, f.ID, sf.ID
+}
+
+func TestHandleSubFlowForLeaf_HappyPath(t *testing.T) {
+	srv, tA, uA, _, _ := newTestServer(t)
+	slug, flowID, sfID := seedFlowWithSubFlowBinding(t, srv, tA, uA, "Wallet", "M2M Settlement")
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
+
+	r := requestWithClaims(http.MethodGet,
+		"/v1/projects/"+slug+"/flows/"+flowID+"/sub-flow", nil, claims)
+	r.SetPathValue("slug", slug)
+	r.SetPathValue("flow_id", flowID)
+	w := httptest.NewRecorder()
+	srv.HandleSubFlowForLeaf(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ID               string  `json:"id"`
+		FullSlug         string  `json:"full_slug"`
+		Name             string  `json:"name"`
+		CanvasLifecycle  string  `json:"canvas_lifecycle"`
+		PrototypeURL     *string `json:"prototype_url,omitempty"`
+		FigmaSectionID   *string `json:"figma_section_id,omitempty"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.ID != sfID {
+		t.Errorf("id=%s want %s", resp.ID, sfID)
+	}
+	if resp.FullSlug != "wallet/m2m-settlement" {
+		t.Errorf("full_slug=%s want wallet/m2m-settlement", resp.FullSlug)
+	}
+	if resp.Name != "M2M Settlement" {
+		t.Errorf("name=%s want M2M Settlement", resp.Name)
+	}
+	// No prototype + section linked → design-shipped lifecycle.
+	if resp.CanvasLifecycle != "design-shipped" {
+		t.Errorf("canvas_lifecycle=%s want design-shipped", resp.CanvasLifecycle)
+	}
+	if resp.PrototypeURL != nil {
+		t.Errorf("prototype_url should be nil, got %v", *resp.PrototypeURL)
+	}
+	if resp.FigmaSectionID == nil || *resp.FigmaSectionID != "sec:"+sfID {
+		t.Errorf("figma_section_id mismatch: %v", resp.FigmaSectionID)
+	}
+}
+
+func TestHandleSubFlowForLeaf_NoBinding(t *testing.T) {
+	// Flow exists, has no sub_flow bound → 404 cleanly (legacy flow).
+	srv, tA, uA, _, _ := newTestServer(t)
+	repo := NewTenantRepo(srv.deps.DB.DB, tA)
+	ctx := context.Background()
+
+	p, err := repo.UpsertProject(ctx, Project{
+		Name: "Legacy", Platform: "mobile", Product: "Plutus",
+		Path: "L", OwnerUserID: uA,
+	})
+	if err != nil {
+		t.Fatalf("project: %v", err)
+	}
+	// Flow without a section_id (legacy / freeform).
+	f, err := repo.UpsertFlow(ctx, Flow{
+		ProjectID: p.ID, FileID: "F-legacy", Name: "Legacy",
+	})
+	if err != nil {
+		t.Fatalf("flow: %v", err)
+	}
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
+
+	r := requestWithClaims(http.MethodGet,
+		"/v1/projects/"+p.Slug+"/flows/"+f.ID+"/sub-flow", nil, claims)
+	r.SetPathValue("slug", p.Slug)
+	r.SetPathValue("flow_id", f.ID)
+	w := httptest.NewRecorder()
+	srv.HandleSubFlowForLeaf(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for no-binding, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleSubFlowForLeaf_UnknownFlow(t *testing.T) {
+	srv, tA, uA, _, _ := newTestServer(t)
+	slug, _, _ := seedFlowWithSubFlowBinding(t, srv, tA, uA, "Wallet", "Activation")
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
+
+	r := requestWithClaims(http.MethodGet,
+		"/v1/projects/"+slug+"/flows/nope/sub-flow", nil, claims)
+	r.SetPathValue("slug", slug)
+	r.SetPathValue("flow_id", "nope")
+	w := httptest.NewRecorder()
+	srv.HandleSubFlowForLeaf(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for unknown flow, got %d", w.Code)
+	}
+}
+
+func TestHandleSubFlowForLeaf_CrossTenant(t *testing.T) {
+	srv, tA, uA, _, _ := newTestServer(t)
+	slug, flowID, _ := seedFlowWithSubFlowBinding(t, srv, tA, uA, "Wallet", "Periodic")
+
+	tenantB := uuid.NewString()
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tenantB}, Role: "editor"}
+
+	r := requestWithClaims(http.MethodGet,
+		"/v1/projects/"+slug+"/flows/"+flowID+"/sub-flow", nil, claims)
+	r.SetPathValue("slug", slug)
+	r.SetPathValue("flow_id", flowID)
+	w := httptest.NewRecorder()
+	srv.HandleSubFlowForLeaf(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 cross-tenant, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleSubFlowForLeaf_NoClaims(t *testing.T) {
+	srv, _, _, _, _ := newTestServer(t)
+	r := httptest.NewRequest(http.MethodGet, "/v1/projects/x/flows/y/sub-flow", nil)
+	r.SetPathValue("slug", "x")
+	r.SetPathValue("flow_id", "y")
+	w := httptest.NewRecorder()
+	srv.HandleSubFlowForLeaf(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestHandleSubFlowForLeaf_MethodNotAllowed(t *testing.T) {
+	srv, tA, uA, _, _ := newTestServer(t)
+	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
+	r := requestWithClaims(http.MethodPost, "/v1/projects/x/flows/y/sub-flow", nil, claims)
+	r.SetPathValue("slug", "x")
+	r.SetPathValue("flow_id", "y")
+	w := httptest.NewRecorder()
+	srv.HandleSubFlowForLeaf(w, r)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
 func TestHandleProjectEvents_RejectsInvalidTicket(t *testing.T) {
 	srv, _, _, _, _ := newTestServer(t)
 	r := httptest.NewRequest(http.MethodGet, "/v1/projects/x/events?ticket=nope", nil)

@@ -72,6 +72,52 @@ export type Synapse = [string, string] | [string, string, number];
 // ─── Leaf canvas ─────────────────────────────────────────────────────────────
 
 /**
+ * SubFlow lifecycle states (plan 005 KTD-4 / plan 002 KTD-8). Drives the
+ * Atlas center-pane render branch:
+ *   - empty / proto-only / proto-wip → render PrototypeCanvas iframe (U6).
+ *   - design-shipped → render leafcanvas as today (U6).
+ *
+ * Mirror of the server-side computeCanvasLifecycle() switch in
+ * services/ds-service/internal/projects/server.go.
+ */
+export type SubFlowCanvasLifecycle =
+  | "empty"
+  | "proto-only"
+  | "proto-wip"
+  | "design-shipped";
+
+/**
+ * SubFlowSummary — the PM-authoring context attached to a Leaf when its
+ * underlying flow has been bound to a sub_flow row (via the
+ * flows.section_id → sub_flow.figma_section_id binding written by autosync).
+ *
+ * Populated by:
+ *   1. Derivation: data-adapters.fetchSubFlowForLeaf() calls
+ *      GET /v1/projects/{slug}/flows/{flow_id}/sub-flow during cold load.
+ *   2. URL override: AtlasShell reads ?subFlow=<full_slug> and calls the
+ *      MCP `resolve(slug)` proxy at /api/resolve/<sub_product>/<sub_flow>.
+ *
+ * Absent on legacy leaves that pre-date the sub_flow taxonomy or whose
+ * Figma section hasn't been authored yet. Every downstream consumer
+ * (U2 PRD tab, U3 tab list, U6 prototype canvas, U7 coverage wall)
+ * tolerates `leaf.subFlow === undefined` by falling back to legacy behaviour.
+ */
+export interface SubFlowSummary {
+  /** sub_flow.id (UUID). */
+  id: string;
+  /** Universal join key — "{sub_product.slug}/{sub_flow.slug}". */
+  fullSlug: string;
+  /** Display name preserving first-writer casing (e.g. "M2M Settlement"). */
+  name: string;
+  canvasLifecycle: SubFlowCanvasLifecycle;
+  /** HTML prototype URL when a PM has attached one (proto-* lifecycle). */
+  prototypeURL?: string;
+  prototypeTitle?: string;
+  /** Bound Figma section id; null until autosync links the section. */
+  figmaSectionID?: string;
+}
+
+/**
  * Leaf — one of our `flows` table rows, scoped to a parent project (Flow).
  * Reference UI calls this a "leaf" because each one is a sub-area off a
  * brain node.
@@ -87,6 +133,14 @@ export interface Leaf {
   /** Active violation count. */
   violations: number;
   appearedAt?: number;
+  /**
+   * Sub_flow context populated when the leaf's underlying flow is bound
+   * to a sub_flow taxonomy row. Drives the PM-authoring tabs (PRD,
+   * Activity, Comments) and the center-pane prototype/canvas swap.
+   *
+   * Optional by design — legacy leaves render the 6-tab inspector as today.
+   */
+  subFlow?: SubFlowSummary;
 }
 
 /**
@@ -224,6 +278,21 @@ export interface DRDDocument {
   revision: number;
   updatedAt: string;
   updatedBy: string;
+}
+
+/**
+ * PRDFull — typed PRD document returned by the MCP `prd.author op:get` tool.
+ * Placeholder shape for U2; the leaf-PRD slice is declared on the store now
+ * so U2 doesn't need to re-touch live-store.ts. The concrete inner shape
+ * (states / criteria / events / copy / a11y) gets fleshed out in U2.
+ */
+export interface PRDFull {
+  /** sub_flow.id this PRD hangs off. */
+  subFlowID: string;
+  /** Opaque payload; U2 replaces with typed-stem schema. */
+  tabs?: unknown;
+  /** When the server last serialised this document. */
+  updatedAt?: string;
 }
 
 /** Per-leaf bundle pre-fetched together for the inspector. */

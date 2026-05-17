@@ -3243,6 +3243,137 @@ func (s *Server) HandleFlowActivity(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// subFlowForLeafResponse is the JSON shape returned by HandleSubFlowForLeaf.
+// The field names mirror the frontend `SubFlowSummary` type in
+// lib/atlas/types.ts; downstream units (U2/U6/U7) consume this verbatim.
+type subFlowForLeafResponse struct {
+	ID               string  `json:"id"`
+	FullSlug         string  `json:"full_slug"`
+	Name             string  `json:"name"`
+	CanvasLifecycle  string  `json:"canvas_lifecycle"`
+	PrototypeURL     *string `json:"prototype_url,omitempty"`
+	PrototypeTitle   *string `json:"prototype_title,omitempty"`
+	FigmaSectionID   *string `json:"figma_section_id,omitempty"`
+}
+
+// computeCanvasLifecycle derives the four-state lifecycle string from a
+// SubFlow row. The mapping mirrors KTD-8 of plan 002:
+//
+//	empty         — no prototype attached, no Figma section linked
+//	proto-only    — prototype attached, not yet superseded by a final section
+//	proto-wip     — same as proto-only but with figma_section_id present
+//	                (designer started; autosync hasn't superseded the prototype)
+//	design-shipped — prototype_superseded_at set OR figma_section_id set with no
+//	                prototype (design landed via direct autosync)
+//
+// The MCP `resolve(slug)` tool computes the same lifecycle (tools_resolve.go);
+// we re-compute here so the leaf-overlay path doesn't need to invoke the
+// resolver internally.
+func computeCanvasLifecycle(sf SubFlow) string {
+	hasPrototype := sf.PrototypeURL != nil && *sf.PrototypeURL != ""
+	hasSection := sf.FigmaSectionID != nil && *sf.FigmaSectionID != ""
+	superseded := sf.PrototypeSupersededAt != nil
+	switch {
+	case superseded:
+		return "design-shipped"
+	case hasPrototype && hasSection:
+		return "proto-wip"
+	case hasPrototype:
+		return "proto-only"
+	case hasSection:
+		return "design-shipped"
+	default:
+		return "empty"
+	}
+}
+
+// HandleSubFlowForLeaf serves GET /v1/projects/{slug}/flows/{flow_id}/sub-flow.
+//
+// Resolves {slug, flow_id} → sub_flow via the flows.section_id binding and
+// returns a JSON summary the Atlas leaf-overlay path attaches to
+// `Leaf.subFlow`. Returns 404 when no sub_flow is bound (legacy flow, or
+// autosync race window where the section is parsed but the sub_flow row
+// hasn't been upserted/linked yet).
+//
+// Tenant-scoped: cross-tenant queries return 404 (no existence oracle).
+// Mirrors HandleFlowActivity's auth + slug/flow_id verification shape.
+func (s *Server) HandleSubFlowForLeaf(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "GET only")
+		return
+	}
+	claims, _ := r.Context().Value(ctxKeyClaims).(*auth.Claims)
+	if claims == nil {
+		writeJSONErr(w, http.StatusUnauthorized, "unauthorized", "missing claims")
+		return
+	}
+	tenantID := s.resolveTenantID(claims)
+	if tenantID == "" {
+		writeJSONErr(w, http.StatusForbidden, "no_tenant", "")
+		return
+	}
+	slug := r.PathValue("slug")
+	flowID := r.PathValue("flow_id")
+	if slug == "" || flowID == "" {
+		writeJSONErr(w, http.StatusBadRequest, "missing_path_params", "")
+		return
+	}
+
+	// Defense in depth: confirm the slug exists in the caller's tenant +
+	// the flow lives inside that project. Mirrors HandleFlowActivity.
+	// Wrong slug or cross-tenant → 404 (no oracle).
+	repo := NewTenantRepoFromPool(s.deps.DB, tenantID)
+	if _, err := repo.GetProjectBySlug(r.Context(), slug); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "lookup", err.Error())
+		return
+	}
+	if err := repo.assertFlowVisibleByID(r.Context(), flowID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeJSONErr(w, http.StatusNotFound, "not_found", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "flow_lookup", err.Error())
+		return
+	}
+
+	sf, err := repo.GetSubFlowByFlowID(r.Context(), flowID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			// Legacy flow with no sub_flow binding, OR autosync hasn't
+			// run yet. Both surface as 404 so the client can fall back
+			// to legacy behavior cleanly.
+			writeJSONErr(w, http.StatusNotFound, "no_sub_flow", "")
+			return
+		}
+		writeJSONErr(w, http.StatusInternalServerError, "sub_flow_lookup", err.Error())
+		return
+	}
+
+	// Need the sub_product slug for full_slug ("{sub_product}/{sub_flow}").
+	sp, err := repo.GetSubProductByID(r.Context(), sf.SubProductID)
+	if err != nil {
+		// Should never happen — sub_flow.sub_product_id has an FK — but
+		// surface a 500 cleanly instead of a panic.
+		writeJSONErr(w, http.StatusInternalServerError, "sub_product_lookup", err.Error())
+		return
+	}
+
+	resp := subFlowForLeafResponse{
+		ID:              sf.ID,
+		FullSlug:        sf.FullSlug(sp),
+		Name:            sf.Name,
+		CanvasLifecycle: computeCanvasLifecycle(sf),
+		PrototypeURL:    sf.PrototypeURL,
+		PrototypeTitle:  sf.PrototypeTitle,
+		FigmaSectionID:  sf.FigmaSectionID,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // ─── Phase 5 U6+U7: comments + notifications ─────────────────────────────────
 
 // createCommentRequest mirrors the JSON body for

@@ -1,11 +1,16 @@
 /**
  * lib/atlas/url-state.ts — round-trip the atlas shell state through the URL.
  *
- * The shell has three pieces of openable state:
+ * The shell has these pieces of openable state:
  *   ?platform=mobile|web   — which brain to render
  *   ?project=<slug>        — the brain "flow" (project) the inspector is on
  *   ?leaf=<flow_id>        — when set, the leaf canvas is open
  *   ?frame=<screen_id>     — when set + leaf open, this frame is selected
+ *   ?subFlow=<full_slug>   — PM-authoring deeplink override (plan 005 U1).
+ *                            Full slug = "{sub_product}/{sub_flow}", e.g.
+ *                            "wallet/m2m-settlement". When set, AtlasShell
+ *                            resolves via MCP and overrides the leaf-derived
+ *                            sub_flow context.
  *
  * Plus pass-through context keys preserved from older deeplinks:
  *   ?v=<version_id>        — pin to a specific project version
@@ -25,6 +30,16 @@ export interface AtlasURLState {
   traceID: string | null;
   persona: string | null;
   from: string | null;
+  /**
+   * PM-authoring sub_flow override. When set, AtlasShell resolves the full
+   * slug via the MCP resolver and attaches the resulting SubFlowSummary to
+   * the active leaf, overriding any leaf-derived sub_flow. Format:
+   * "{sub_product_slug}/{sub_flow_slug}", e.g. "wallet/m2m-settlement".
+   *
+   * `null` when absent — downstream code falls back to leaf-derivation
+   * (data-adapters.fetchSubFlowForLeaf).
+   */
+  subFlow: string | null;
 }
 
 export const DEFAULT_ATLAS_URL_STATE: AtlasURLState = {
@@ -36,6 +51,7 @@ export const DEFAULT_ATLAS_URL_STATE: AtlasURLState = {
   traceID: null,
   persona: null,
   from: null,
+  subFlow: null,
 };
 
 /** Parse the shell state from a URLSearchParams snapshot. */
@@ -51,6 +67,7 @@ export function parseAtlasURL(params: URLSearchParams | null | undefined): Atlas
     traceID: params.get("trace") || null,
     persona: params.get("persona") || null,
     from: params.get("from") || null,
+    subFlow: params.get("subFlow") || null,
   };
 }
 
@@ -65,6 +82,7 @@ export function buildAtlasURL(state: Partial<AtlasURLState>, basePath = "/atlas"
   if (state.traceID) p.set("trace", state.traceID);
   if (state.persona) p.set("persona", state.persona);
   if (state.from) p.set("from", state.from);
+  if (state.subFlow) p.set("subFlow", state.subFlow);
   const qs = p.toString();
   return qs ? `${basePath}?${qs}` : basePath;
 }
@@ -84,7 +102,8 @@ export function shouldReplaceHistory(
     prev.leaf === next.leaf &&
     prev.versionID === next.versionID &&
     prev.persona === next.persona &&
-    prev.from === next.from
+    prev.from === next.from &&
+    prev.subFlow === next.subFlow
     // intentionally not comparing frame / trace
   );
 }

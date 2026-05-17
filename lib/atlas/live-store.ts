@@ -32,6 +32,8 @@ import {
   fetchLeafCanvas,
   fetchLeafOverlays,
   fetchLeavesForFlow,
+  fetchSubFlowBySlug,
+  fetchSubFlowForLeafProject,
   refetchBrainNodes,
 } from "./data-adapters";
 import {
@@ -49,6 +51,8 @@ import {
   type Leaf,
   type LeafEdge,
   type Platform,
+  type PRDFull,
+  type SubFlowSummary,
 } from "./types";
 
 // ─── Selection state (mirrors the URL) ───────────────────────────────────────
@@ -170,6 +174,16 @@ interface AtlasStoreState {
   leavesByFlow: Record<string, Leaf[]>;
   /** flow_id (= our DB flows.id) → loaded slot. */
   leafSlots: Record<string, LeafSlot>;
+  /**
+   * Per-leaf PRD cache (plan 005 U2 dependency). Keyed by leaf.id.
+   *   - missing key      → never fetched (U2's loadLeafPRD will trigger).
+   *   - null value       → fetched, sub_flow has no PRD yet (empty state).
+   *   - PRDFull          → fetched, ready to render.
+   *
+   * Declared at U1 so U2 doesn't need to re-touch the store contract.
+   * Populated lazily by `loadLeafPRD(leafID)` when the PRD tab opens.
+   */
+  prdByLeaf: Record<string, PRDFull | null>;
 
   // Selection (also mirrored in URL)
   selection: AtlasSelection;
@@ -192,6 +206,25 @@ interface AtlasStoreState {
   loadLeavesForFlow: (slug: string, versionID?: string) => Promise<void>;
   openLeaf: (flowID: string | null) => Promise<void>;
   closeLeaf: () => void;
+  /**
+   * Attach a SubFlowSummary to a leaf in `leavesByFlow`. Plan 005 U1 calls
+   * this in two places:
+   *   1. After openLeaf resolves and fetchSubFlowForLeaf returns a binding,
+   *      we patch the open leaf with its derived sub_flow.
+   *   2. When AtlasShell sees `?subFlow=<slug>` and the MCP resolver returns
+   *      a hit, the URL-derived sub_flow overrides the leaf-derived one.
+   *
+   * Idempotent: a no-op when the leaf already carries the same SubFlowSummary
+   * (referential equality on id is sufficient because the server is the
+   * source of truth).
+   */
+  attachSubFlowToLeaf: (leafID: string, subFlow: SubFlowSummary | null) => void;
+  /**
+   * Plan 005 U2 — lazy-fetch the PRD doc for a leaf's sub_flow. Stub today;
+   * U2 wires it to the MCP `prd.author op:get` proxy. Marked async + returns
+   * Promise<void> so U2 can flesh out without changing the contract.
+   */
+  loadLeafPRD: (leafID: string) => Promise<void>;
   selectFrame: (frameID: string | null) => void;
   selectFlow: (flowID: string | null) => void;
   /**
@@ -304,6 +337,7 @@ export const useAtlas = create<AtlasStoreState>()(
       synapses: [],
       leavesByFlow: {},
       leafSlots: {},
+      prdByLeaf: {},
       selection: {
         flowID: null,
         leafID: null,
@@ -320,7 +354,7 @@ export const useAtlas = create<AtlasStoreState>()(
       // ─── Platform / hydration ────────────────────────────────────────────
       setPlatform: async (p) => {
         if (get().platform === p && get().hydrated) return;
-        set({ platform: p, hydrated: false, leavesByFlow: {}, leafSlots: {} });
+        set({ platform: p, hydrated: false, leavesByFlow: {}, leafSlots: {}, prdByLeaf: {} });
         await get().hydrateInitial();
       },
 
@@ -533,9 +567,55 @@ export const useAtlas = create<AtlasStoreState>()(
             overrides: overlays.overrides ?? {},
           };
           set({ leafSlots: { ...get().leafSlots, [leafID]: slot } });
+
+          // Plan 005 U1 — derive sub_flow context (best-effort). When the
+          // leaf's underlying flow is bound to a sub_flow taxonomy row, the
+          // PM-authoring tabs (PRD, Activity, Comments) and the center-pane
+          // prototype-canvas swap become available. Fire-and-forget — the
+          // UI tolerates absence.
+          void fetchSubFlowForLeafProject(projectSlug)
+            .then((sf) => {
+              if (sf) get().attachSubFlowToLeaf(leafID, sf);
+            })
+            .catch(() => {
+              // Best-effort.
+            });
         } finally {
           openLeafInFlight.delete(leafID);
         }
+      },
+
+      attachSubFlowToLeaf: (leafID, subFlow) => {
+        const leavesByFlow = get().leavesByFlow;
+        let touched = false;
+        const next: Record<string, Leaf[]> = {};
+        for (const [productSlug, leaves] of Object.entries(leavesByFlow)) {
+          let mutatedRow = false;
+          const updated = leaves.map((l) => {
+            if (l.id !== leafID) return l;
+            // Idempotent: don't churn the reference if it's already the same.
+            if (l.subFlow?.id === subFlow?.id && l.subFlow?.fullSlug === subFlow?.fullSlug) {
+              return l;
+            }
+            mutatedRow = true;
+            return { ...l, subFlow: subFlow ?? undefined };
+          });
+          if (mutatedRow) {
+            touched = true;
+            next[productSlug] = updated;
+          } else {
+            next[productSlug] = leaves;
+          }
+        }
+        if (touched) set({ leavesByFlow: next });
+      },
+
+      loadLeafPRD: async (leafID) => {
+        // Plan 005 U2 stub. Today, just stamp a `null` so the prdByLeaf
+        // slice has a deterministic shape; U2 replaces the body with the
+        // real `prd.author op:get` MCP proxy call.
+        if (Object.prototype.hasOwnProperty.call(get().prdByLeaf, leafID)) return;
+        set({ prdByLeaf: { ...get().prdByLeaf, [leafID]: null } });
       },
 
       closeLeaf: () => {

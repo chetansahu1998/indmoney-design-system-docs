@@ -1261,6 +1261,13 @@ func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/projects/{slug}/flows/{flow_id}/activity",
 		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleFlowActivity)))
 
+	// Plan 2026-05-18-001 U1 — Atlas leaf-overlay sub_flow lookup.
+	// Returns the sub_flow bound to a flow via flows.section_id →
+	// sub_flow.figma_section_id, or 404 if no binding exists. Powers the
+	// PM-authoring tabs in Atlas's right rail (PRD/Activity/Comments).
+	mux.HandleFunc("GET /v1/projects/{slug}/flows/{flow_id}/sub-flow",
+		s.requireAuth(projects.AdaptAuthMiddleware(claimsReader, s.projectsServer.HandleSubFlowForLeaf)))
+
 	// Phase 5.2 P4 — Figma frame metadata proxy. Auth-gated, tenant-
 	// scoped. Powers the DRD's figmaLink custom block thumbnails.
 	mux.HandleFunc("GET /v1/figma/frame-metadata",

@@ -413,6 +413,78 @@ func (t *TenantRepo) GetSubFlowBySlug(ctx context.Context, fullSlug string) (Sub
 	return sf, nil
 }
 
+// GetSubFlowByFlowID resolves a sub_flow from a flow_id via the
+// flows.section_id → sub_flow.figma_section_id binding.
+//
+// Resolution path (single read, tenant-scoped):
+//
+//	flows.id            (caller's input)
+//	flows.section_id    (Figma section id stamped on extract; mig 0001 col)
+//	sub_flow.figma_section_id  (set by autosync U2 — repository_figma_autosync_subflow.go)
+//
+// The `section_id` column on `flows` is the Figma section node id (e.g.
+// "12345:6789"); when the autosync pipeline first sees a section whose
+// parsed `{SubProduct}/{SubFlow}` name resolves to a sub_flow row, it
+// calls LinkSubFlowToFigmaSection to write that same section id onto the
+// sub_flow row. The two halves meet here.
+//
+// Returns ErrNotFound when:
+//   - flow_id doesn't exist in the caller's tenant.
+//   - flow.section_id IS NULL (freeform flow with no Figma section ancestor).
+//   - No sub_flow has been upserted/bound for that section yet
+//     (autosync race; PM created the section but autosync hasn't run).
+//
+// Read-only. Used by HandleSubFlowForLeaf (Atlas leaf-overlay path) and
+// any future MCP tool that wants to attach sub_flow context to a flow.
+func (t *TenantRepo) GetSubFlowByFlowID(ctx context.Context, flowID string) (SubFlow, error) {
+	if t.tenantID == "" {
+		return SubFlow{}, errors.New("sub_flow: tenant_id required")
+	}
+	if flowID == "" {
+		return SubFlow{}, ErrNotFound
+	}
+	// One round-trip: join flows → sub_flow on section_id within tenant.
+	// Both tables carry tenant_id, so the WHERE clause defends in depth
+	// against accidental cross-tenant binds. deleted_at IS NULL filter
+	// on flows matches the contract used by assertFlowVisibleByID.
+	row := t.readHandle().QueryRowContext(ctx,
+		`SELECT `+subFlowQualifiedCols(`sf`)+`
+		   FROM flows f
+		   JOIN sub_flow sf
+		     ON sf.tenant_id = f.tenant_id
+		    AND sf.figma_section_id = f.section_id
+		  WHERE f.tenant_id = ?
+		    AND f.id = ?
+		    AND f.section_id IS NOT NULL
+		    AND f.deleted_at IS NULL`,
+		t.tenantID, flowID,
+	)
+	sf, err := scanSubFlow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SubFlow{}, ErrNotFound
+	}
+	if err != nil {
+		return SubFlow{}, fmt.Errorf("lookup sub_flow by flow_id: %w", err)
+	}
+	return sf, nil
+}
+
+// subFlowQualifiedCols returns subFlowSelectCols with every column prefixed
+// by the given table alias. Used in joins where multiple tables (e.g.
+// `flows f JOIN sub_flow sf`) may collide on `id`/`created_at` selectors.
+func subFlowQualifiedCols(alias string) string {
+	cols := []string{
+		"id", "sub_product_id", "name", "slug", "drd_id", "figma_section_id",
+		"prototype_url", "prototype_title", "prototype_attached_at", "prototype_superseded_at",
+		"created_at",
+	}
+	parts := make([]string, len(cols))
+	for i, c := range cols {
+		parts[i] = alias + "." + c
+	}
+	return strings.Join(parts, ", ")
+}
+
 // GetSubFlowByFigmaSection returns the sub_flow bound to a Figma section
 // id. Powers autosync's "section already known?" lookup (U2).
 func (t *TenantRepo) GetSubFlowByFigmaSection(ctx context.Context, figmaSectionID string) (SubFlow, error) {

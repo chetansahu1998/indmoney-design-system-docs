@@ -55,6 +55,8 @@ import type {
   LeafEdge,
   LeafOverlays,
   Platform,
+  SubFlowCanvasLifecycle,
+  SubFlowSummary,
   Synapse,
 } from "./types";
 
@@ -992,6 +994,139 @@ export function subscribeGraphEvents(
     es?.close();
     es = null;
   };
+}
+
+// ─── Sub_flow leaf-overlay fetcher (plan 005 U1) ─────────────────────────────
+
+/**
+ * Backend response shape for GET /v1/projects/{slug}/flows/{flow_id}/sub-flow.
+ * Mirrors subFlowForLeafResponse in services/ds-service/internal/projects/server.go.
+ */
+interface SubFlowForLeafResponse {
+  id: string;
+  full_slug: string;
+  name: string;
+  canvas_lifecycle: SubFlowCanvasLifecycle;
+  prototype_url?: string;
+  prototype_title?: string;
+  figma_section_id?: string;
+}
+
+/**
+ * Resolve the sub_flow bound to a leaf's underlying flow. Returns null when
+ * the flow has no sub_flow binding (legacy flow or autosync race window) so
+ * callers can `leaf.subFlow = result ?? undefined` cleanly.
+ *
+ * Separate from fetchLeafOverlays() because:
+ *   - The sub_flow lookup is a single read; overlays are 5 reads in parallel.
+ *   - U6's prototype-canvas swap needs sub_flow earlier than overlay fan-out.
+ *   - URL-override path (?subFlow=) skips this adapter and uses MCP resolve.
+ */
+export async function fetchSubFlowForLeaf(
+  slug: string,
+  flowID: string,
+): Promise<SubFlowSummary | null> {
+  if (!slug || !flowID) return null;
+  const res = await getJSON<SubFlowForLeafResponse>(
+    `/v1/projects/${encodeURIComponent(slug)}/flows/${encodeURIComponent(flowID)}/sub-flow`,
+  );
+  if (!res.ok) {
+    // 404 is expected for legacy flows; surface as null. Other errors swallow
+    // here too — the inspector tolerates missing sub_flow context and the
+    // network panel surfaces transient failures.
+    return null;
+  }
+  return {
+    id: res.data.id,
+    fullSlug: res.data.full_slug,
+    name: res.data.name,
+    canvasLifecycle: res.data.canvas_lifecycle,
+    prototypeURL: res.data.prototype_url,
+    prototypeTitle: res.data.prototype_title,
+    figmaSectionID: res.data.figma_section_id,
+  };
+}
+
+/**
+ * Resolve the sub_flow bound to an Atlas leaf (= ds-service project). Picks
+ * the first non-deleted flow in the project as the lookup key and delegates
+ * to fetchSubFlowForLeaf. Mirrors the resolvedFlowID pattern in
+ * fetchLeafOverlays so leaf-derived sub_flow context stays consistent with
+ * how overlays are bundled.
+ *
+ * Returns null when:
+ *   - The project has no flows.
+ *   - The flow has no sub_flow binding (legacy / pre-autosync).
+ *   - Any network error — best-effort context, the UI tolerates absence.
+ */
+export async function fetchSubFlowForLeafProject(
+  slug: string,
+  versionID?: string,
+): Promise<SubFlowSummary | null> {
+  if (!slug) return null;
+  const proj = await fetchProject(slug, versionID);
+  if (!proj.ok) return null;
+  const flows = proj.data.flows ?? [];
+  const first = flows.find((f) => !f.DeletedAt) ?? flows[0];
+  if (!first?.ID) return null;
+  return fetchSubFlowForLeaf(slug, first.ID);
+}
+
+/**
+ * MCP `resolve(slug)` response (subset). The full envelope is documented in
+ * services/ds-service/internal/mcp/tools_resolve.go::ResolveResult.
+ * We pluck only the fields needed to construct a SubFlowSummary so future
+ * additions to the resolver don't break this consumer.
+ */
+interface ResolveSubFlowEnvelope {
+  data?: {
+    level?: string;
+    sub_flow?: {
+      id?: string;
+      full_slug?: string;
+      name?: string;
+    };
+    canvas_lifecycle?: SubFlowCanvasLifecycle;
+    prototype_url?: string;
+  };
+}
+
+/**
+ * Resolve a full sub_flow slug ("{sub_product}/{sub_flow}") via the MCP
+ * proxy at /api/resolve/<segments>. Used by AtlasShell when the URL carries
+ * `?subFlow=<slug>` so it can attach a SubFlowSummary to the open leaf
+ * without waiting on the per-flow overlay endpoint.
+ *
+ * Auth: the Next.js proxy requires a Bearer token; getToken() pulls from
+ * lib/auth-client (the same path every adapter here uses).
+ *
+ * Returns null on any failure — caller falls back to leaf-derivation.
+ */
+export async function fetchSubFlowBySlug(
+  fullSlug: string,
+): Promise<SubFlowSummary | null> {
+  if (!fullSlug || !fullSlug.includes("/")) return null;
+  const token = getToken();
+  if (!token) return null;
+  try {
+    const res = await fetch(`/api/resolve/${fullSlug}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as ResolveSubFlowEnvelope;
+    const sf = body?.data?.sub_flow;
+    if (!sf?.id || !sf.full_slug) return null;
+    return {
+      id: sf.id,
+      fullSlug: sf.full_slug,
+      name: sf.name ?? "",
+      canvasLifecycle: body.data?.canvas_lifecycle ?? "empty",
+      prototypeURL: body.data?.prototype_url || undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ─── Re-exports for ergonomic callers ────────────────────────────────────────
