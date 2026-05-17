@@ -421,6 +421,45 @@ export interface FrameTag {
   created_at: string;
 }
 
+// ─── Coverage Wall (plan 005 U7) ────────────────────────────────────────────
+//
+// Mirror of the Go shape in
+// services/ds-service/internal/projects/prd_outline.go (WallRow/WallCounts/
+// WallResult). The Wall corkboard view in the Atlas center pane consumes
+// this verbatim. Keep these in lockstep with the Go-side json tags.
+
+export type BindingStatus = "bound" | "untagged" | "orphaned";
+
+export interface WallRow {
+  figma_node_id: string;
+  frame_name: string;
+  binding_status: BindingStatus;
+  prd_state_id?: string;
+  prd_state_label?: string;
+  criteria_count: number;
+  events_count: number;
+  copy_count: number;
+  edge_cases_count: number;
+  a11y_count: number;
+  total_word_count: number;
+  last_touched_by?: string;
+  last_touched_at?: string;
+  has_render: boolean;
+}
+
+export interface WallCounts {
+  total: number;
+  bound: number;
+  untagged: number;
+  orphaned: number;
+  coverage_percent: number;
+}
+
+export interface WallResult {
+  frames: WallRow[];
+  counts: WallCounts;
+}
+
 /** Per-leaf bundle pre-fetched together for the inspector. */
 export interface LeafOverlays {
   violations: DisplayViolation[];

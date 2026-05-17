@@ -31,6 +31,14 @@ interface Props {
   scale?: 1 | 2;
   width?: number | string;
   height?: number | string;
+  /**
+   * Plan 005 U7 — optional pre-minted token. When the caller already
+   * batched a token mint for many node IDs (e.g. Wall.tsx using
+   * useFrameThumbTokens), they pass the per-frame query string here so
+   * we don't fire an extra mint per card. Falls back to the singular
+   * self-mint hook when absent.
+   */
+  assetTokenQS?: string;
 }
 
 export function FrameThumbnail({
@@ -40,8 +48,10 @@ export function FrameThumbnail({
   scale = 1,
   width,
   height,
+  assetTokenQS: pre,
 }: Props) {
-  const assetTokenQS = useFrameThumbToken(fileKey, figmaNodeID, scale);
+  const selfMinted = useFrameThumbToken(fileKey, figmaNodeID, scale);
+  const assetTokenQS = pre ?? selfMinted;
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
 

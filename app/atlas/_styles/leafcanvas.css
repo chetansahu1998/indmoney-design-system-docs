@@ -1457,3 +1457,184 @@
   font-size: 11px;
   color: #ff9b9b;
 }
+
+/* ─── Plan 005 U7 ─ Coverage wall (lc-wall-*) ──────────────────────────── */
+
+.lc-wall {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  overflow: auto;
+  height: 100%;
+  width: 100%;
+  background: var(--bg-0);
+}
+.lc-wall-empty {
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--text-2);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+.lc-wall-empty strong {
+  color: var(--text-1);
+  font-weight: 600;
+  font-size: 14px;
+}
+.lc-wall-empty code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg-1);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.lc-wall-counts {
+  display: flex;
+  gap: 16px;
+  padding: 10px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.lc-wall-counts strong {
+  color: var(--text-1);
+  font-weight: 600;
+  margin-right: 4px;
+}
+.lc-wall-pct { margin-left: auto; }
+.lc-wall-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.lc-wall-orphans h3 {
+  margin: 16px 0 4px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.lc-wall-orphans p {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.lc-wall-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.lc-wall-card--clickable { cursor: pointer; }
+.lc-wall-card--clickable:hover { border-color: var(--accent); }
+.lc-wall-card--bound      { border-color: rgba(80, 200, 120, 0.3); }
+.lc-wall-card--untagged   { border-color: rgba(255, 179, 71, 0.3); }
+.lc-wall-card--orphaned   {
+  border-color: rgba(220, 80, 80, 0.3);
+  background: rgba(220, 80, 80, 0.04);
+}
+.lc-wall-card-thumb {
+  height: 92px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0.08));
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-2);
+  font-size: 28px;
+  overflow: hidden;
+}
+.lc-wall-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+.lc-wall-card-name {
+  color: var(--text-1);
+  font-weight: 500;
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lc-wall-card-name em { color: var(--text-2); font-style: italic; }
+.lc-wall-card-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--bg-0);
+  color: var(--text-2);
+}
+.lc-wall-card-badge--bound    { background: rgba(80, 200, 120, 0.15); color: rgb(80, 200, 120); }
+.lc-wall-card-badge--untagged { background: rgba(255, 179, 71, 0.15); color: rgb(255, 179, 71); }
+.lc-wall-card-badge--orphaned { background: rgba(220, 80, 80, 0.15); color: rgb(220, 80, 80); }
+.lc-wall-card-label { color: var(--text-2); font-size: 11px; }
+.lc-wall-card-counts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px 6px;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.lc-wall-card-stat {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  font-size: 10px;
+}
+.lc-wall-card-stat dt { color: var(--text-2); letter-spacing: 0.02em; margin: 0; }
+.lc-wall-card-stat dd { margin: 0; color: var(--text-1); font-weight: 600; }
+.lc-wall-card-stat--zero dd { color: var(--text-2); font-weight: 400; }
+.lc-wall-card-touched { font-size: 10px; color: var(--text-2); }
+.lc-wall-card-cta {
+  padding-top: 4px;
+  border-top: 1px dashed var(--line);
+}
+.lc-wall-card-cta code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+/* Header toggle button on LeafInspector */
+.lc-mode-toggle {
+  margin-right: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.lc-mode-toggle:hover { color: var(--text-1); border-color: var(--line-strong); }
+.lc-mode-toggle--active {
+  background: var(--accent);
+  color: #0a0d12;
+  border-color: var(--accent);
+  font-weight: 600;
+}

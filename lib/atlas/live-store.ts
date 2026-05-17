@@ -54,7 +54,14 @@ import {
   type Platform,
   type PRDFull,
   type SubFlowSummary,
+  type WallResult,
 } from "./types";
+
+// Plan 005 U7 — per-leaf center-pane mode. "canvas" is the existing
+// LeafCanvas (or PrototypeCanvas, per U6); "wall" swaps in the coverage
+// wall corkboard. Only meaningful for sub_flow-bound leaves; legacy
+// leaves never expose the toggle.
+export type LeafMode = "canvas" | "wall";
 
 // ─── Selection state (mirrors the URL) ───────────────────────────────────────
 
@@ -185,6 +192,21 @@ interface AtlasStoreState {
    * Populated lazily by `loadLeafPRD(leafID)` when the PRD tab opens.
    */
   prdByLeaf: Record<string, PRDFull | null>;
+  /**
+   * Per-leaf coverage wall cache (plan 005 U7). Same tri-state contract
+   * as prdByLeaf:
+   *   - missing key      → never fetched (loadLeafWall will trigger).
+   *   - null value       → fetched, sub_flow has no bound section yet.
+   *   - WallResult       → fetched, ready to render.
+   */
+  wallByLeaf: Record<string, WallResult | null>;
+  /**
+   * Per-leaf center-pane mode override (plan 005 U7). Missing key means
+   * "default" (canvas / prototype per U6). The wall toggle in the
+   * LeafInspector header writes this slot; the swap survives leaf
+   * re-open within a session.
+   */
+  leafMode: Record<string, LeafMode>;
 
   // Selection (also mirrored in URL)
   selection: AtlasSelection;
@@ -226,6 +248,19 @@ interface AtlasStoreState {
    * Promise<void> so U2 can flesh out without changing the contract.
    */
   loadLeafPRD: (leafID: string) => Promise<void>;
+  /**
+   * Plan 005 U7 — lazy-fetch the coverage wall for a leaf's sub_flow.
+   * Hits the same /api/prd/{sp}/{sf} proxy used by the legacy viewer
+   * (the response carries both PRD summary AND the wall payload). Caches
+   * under wallByLeaf with the same tri-state semantics as loadLeafPRD.
+   */
+  loadLeafWall: (leafID: string) => Promise<void>;
+  /**
+   * Plan 005 U7 — flip the center-pane mode for a leaf. Persists for the
+   * session so a user can re-open the same leaf without losing their
+   * wall view.
+   */
+  setLeafMode: (leafID: string, mode: LeafMode) => void;
   selectFrame: (frameID: string | null) => void;
   selectFlow: (flowID: string | null) => void;
   /**
@@ -339,6 +374,8 @@ export const useAtlas = create<AtlasStoreState>()(
       leavesByFlow: {},
       leafSlots: {},
       prdByLeaf: {},
+      wallByLeaf: {},
+      leafMode: {},
       selection: {
         flowID: null,
         leafID: null,
@@ -355,7 +392,15 @@ export const useAtlas = create<AtlasStoreState>()(
       // ─── Platform / hydration ────────────────────────────────────────────
       setPlatform: async (p) => {
         if (get().platform === p && get().hydrated) return;
-        set({ platform: p, hydrated: false, leavesByFlow: {}, leafSlots: {}, prdByLeaf: {} });
+        set({
+          platform: p,
+          hydrated: false,
+          leavesByFlow: {},
+          leafSlots: {},
+          prdByLeaf: {},
+          wallByLeaf: {},
+          leafMode: {},
+        });
         await get().hydrateInitial();
       },
 
@@ -686,6 +731,70 @@ export const useAtlas = create<AtlasStoreState>()(
           console.warn("loadLeafPRD: fetch failed", err);
           set({ prdByLeaf: { ...get().prdByLeaf, [leafID]: null } });
         }
+      },
+
+      loadLeafWall: async (leafID) => {
+        // Plan 005 U7 — fetch the WallResult for a leaf's sub_flow via
+        // the same /api/prd/{sp}/{sf} proxy the legacy viewer used. The
+        // section.inspect response carries the wall payload alongside
+        // PRD summary; we keep loadLeafWall independent of loadLeafPRD
+        // so toggling into the wall mode doesn't force a PRD refetch.
+        if (Object.prototype.hasOwnProperty.call(get().wallByLeaf, leafID)) return;
+        let leaf: Leaf | undefined;
+        for (const leaves of Object.values(get().leavesByFlow)) {
+          const found = leaves.find((l) => l.id === leafID);
+          if (found) {
+            leaf = found;
+            break;
+          }
+        }
+        if (!leaf?.subFlow?.fullSlug) {
+          set({ wallByLeaf: { ...get().wallByLeaf, [leafID]: null } });
+          return;
+        }
+        const parts = leaf.subFlow.fullSlug.split("/");
+        if (parts.length !== 2 || !parts[0] || !parts[1]) {
+          set({ wallByLeaf: { ...get().wallByLeaf, [leafID]: null } });
+          return;
+        }
+        const [subProduct, subFlow] = parts;
+        const token = getToken();
+        if (!token) {
+          set({ wallByLeaf: { ...get().wallByLeaf, [leafID]: null } });
+          return;
+        }
+        try {
+          const res = await fetch(
+            `/api/prd/${encodeURIComponent(subProduct)}/${encodeURIComponent(subFlow)}`,
+            {
+              method: "GET",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/json",
+              },
+              cache: "no-store",
+            },
+          );
+          if (!res.ok) {
+            // eslint-disable-next-line no-console
+            console.warn(`loadLeafWall: ${res.status} for ${leaf.subFlow.fullSlug}`);
+            set({ wallByLeaf: { ...get().wallByLeaf, [leafID]: null } });
+            return;
+          }
+          const body = (await res.json()) as { wall?: WallResult } | null;
+          const wall = body?.wall ?? null;
+          set({ wallByLeaf: { ...get().wallByLeaf, [leafID]: wall } });
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn("loadLeafWall: fetch failed", err);
+          set({ wallByLeaf: { ...get().wallByLeaf, [leafID]: null } });
+        }
+      },
+
+      setLeafMode: (leafID, mode) => {
+        const cur = get().leafMode[leafID];
+        if (cur === mode) return;
+        set({ leafMode: { ...get().leafMode, [leafID]: mode } });
       },
 
       closeLeaf: () => {

@@ -52,6 +52,7 @@ import "./atlas";
 import "./leafcanvas";
 import AtlasDRDEditor from "./AtlasDRDEditor"; // Phase 6 — Notion-like DRD
 import { PrototypeCanvas } from "./PrototypeCanvas"; // Plan 005 U6
+import { Wall } from "./Wall"; // Plan 005 U7
 
 // Inject the DRD editor into the global namespace the ported leafcanvas
 // looks up. Doing this at module-load means LeafInspector can call it on
@@ -79,6 +80,84 @@ function getLeavesArray(): Leaf[] {
   // Leaf shape lets U6's PrototypeCanvas swap + the inspector both
   // dereference `leaf.subFlow.*` without local-narrow-type collisions.
   return (typeof window !== "undefined" ? (window as any).LEAVES : null) ?? [];
+}
+
+// CenterPaneSwitch — picks the center-pane renderer per leaf.
+//
+// Priority:
+//   1. Wall mode (plan 005 U7) — user-triggered via LeafInspector toggle.
+//   2. Prototype iframe (plan 005 U6) — when sub_flow lifecycle is proto-*
+//      AND a prototypeURL is set.
+//   3. LeafCanvas — default. Legacy leaves always land here.
+function CenterPaneSwitch({
+  leaf,
+  slotVersion,
+  selectedFrameID,
+  setSelectedFrameID,
+  closeLeaf,
+  LeafCanvas,
+}: {
+  leaf: Leaf;
+  slotVersion: number;
+  selectedFrameID: string | null;
+  setSelectedFrameID: (id: string | null) => void;
+  closeLeaf: () => void;
+  LeafCanvas: React.FC<any>;
+}) {
+  const mode = useAtlas((s) => s.leafMode[leaf.id] ?? "canvas");
+  const wall = useAtlas((s) => s.wallByLeaf[leaf.id]);
+  const setLeafMode = useAtlas((s) => s.setLeafMode);
+  if (mode === "wall" && leaf.subFlow) {
+    // Wall.tsx tolerates a null/undefined wall — we render a tiny "loading"
+    // placeholder until loadLeafWall lands the data.
+    if (wall) {
+      return (
+        <Wall
+          key={`wall-${leaf.id}`}
+          data={wall}
+          slug={leaf.id}
+          fileKey={leaf.subFlow.figmaFileKey ?? undefined}
+          onFrameClick={(figmaNodeID) => {
+            setLeafMode(leaf.id, "canvas");
+            setSelectedFrameID(figmaNodeID);
+          }}
+        />
+      );
+    }
+    return (
+      <div className="lc-wall lc-wall-empty" style={{ minHeight: 240 }}>
+        <strong>Loading wall…</strong>
+        <span>Pulling frames + coverage from /api/prd/{leaf.subFlow.fullSlug}</span>
+      </div>
+    );
+  }
+  const lifecycle = leaf.subFlow?.canvasLifecycle;
+  const protoURL = leaf.subFlow?.prototypeURL;
+  const useProto =
+    (lifecycle === "proto-only" || lifecycle === "proto-wip") && !!protoURL;
+  if (useProto) {
+    return (
+      <PrototypeCanvas
+        key={`proto-${leaf.id}-${protoURL}`}
+        url={protoURL!}
+        title={leaf.subFlow?.prototypeTitle ?? leaf.label}
+        banner={
+          lifecycle === "proto-wip"
+            ? "Designer is working on the section — not yet on the Final Designs page."
+            : null
+        }
+      />
+    );
+  }
+  return (
+    <LeafCanvas
+      key={`canvas-${leaf.id}-${slotVersion}`}
+      leaf={leaf}
+      onClose={closeLeaf}
+      onPickFrame={setSelectedFrameID}
+      selectedFrameId={selectedFrameID}
+    />
+  );
 }
 
 export interface AtlasShellInnerProps {
@@ -547,41 +626,14 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
           style={{ ["--atlas-inspector-width" as any]: `${inspectorWidth}px` }}
         >
           <div className="atlas-leaf-canvas-wrap">
-            {(() => {
-              // Plan 005 U6 — when the sub_flow is still in the proto
-              // phase, the center pane renders the PM's HTML prototype
-              // iframe instead of leafcanvas. Falls back to leafcanvas
-              // when prototypeURL is absent (data bug) or lifecycle is
-              // `design-shipped` / `empty` / undefined (legacy leaf).
-              const lifecycle = leafSticky.subFlow?.canvasLifecycle;
-              const protoURL = leafSticky.subFlow?.prototypeURL;
-              const useProto =
-                (lifecycle === "proto-only" || lifecycle === "proto-wip") &&
-                !!protoURL;
-              if (useProto) {
-                return (
-                  <PrototypeCanvas
-                    key={`proto-${leafSticky.id}-${protoURL}`}
-                    url={protoURL!}
-                    title={leafSticky.subFlow?.prototypeTitle ?? leafSticky.label}
-                    banner={
-                      lifecycle === "proto-wip"
-                        ? "Designer is working on the section — not yet on the Final Designs page."
-                        : null
-                    }
-                  />
-                );
-              }
-              return (
-                <LeafCanvas
-                  key={`canvas-${leafSticky.id}-${slotVersion}`}
-                  leaf={leafSticky}
-                  onClose={closeLeaf}
-                  onPickFrame={setSelectedFrameID}
-                  selectedFrameId={selectedFrameID}
-                />
-              );
-            })()}
+            <CenterPaneSwitch
+              leaf={leafSticky}
+              slotVersion={slotVersion}
+              selectedFrameID={selectedFrameID}
+              setSelectedFrameID={setSelectedFrameID}
+              closeLeaf={closeLeaf}
+              LeafCanvas={LeafCanvas}
+            />
           </div>
           <div className="atlas-leaf-inspector-wrap">
             {selectedAtomicChild ? (

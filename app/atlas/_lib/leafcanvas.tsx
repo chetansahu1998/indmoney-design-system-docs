@@ -26,6 +26,8 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallba
 import { CopyOverridesTab } from "./leafcanvas-v2/CopyOverridesTab";
 // Plan 005 U2 — shared FrameThumbnail used by PRD state cards (and U7's Wall).
 import { FrameThumbnail } from "./FrameThumbnail";
+// Plan 005 U7 — wall mode toggle reads/writes useAtlas.leafMode directly.
+import { useAtlas } from "../../../lib/atlas/live-store";
 import { setLeafZoom } from "./leafcanvas-v2/leaf-zoom-signal";
 import { canvasGestureTracker } from "./leafcanvas-v2/gesture-tracker";
 import { clog } from "./leafcanvas-v2/canvas-log";
@@ -1053,7 +1055,16 @@ window.LeafInspector = function LeafInspector({ leaf, frameId, onClose, onPickFr
           {frame && <div className="lc-ins-meta">Frame {frame.idx + 1} of {leaf.frames} · {leaf.label}</div>}
           {!frame && <div className="lc-ins-meta">{leaf.frames} frames · {violations.length} violations · {decisions.length} decisions</div>}
         </div>
-        <button className="lc-ins-close" onClick={onClose}>✕</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/*
+            Plan 005 U7 — wall toggle. Only visible for sub_flow-bound
+            leaves (a wall corkboard isn't meaningful for design-system
+            audit leaves). Reads/writes useAtlas.leafMode via the global
+            __atlasStore hook installed by AtlasShell.
+          */}
+          {leaf.subFlow && <WallModeToggle leafID={leaf.id} />}
+          <button className="lc-ins-close" onClick={onClose}>✕</button>
+        </div>
       </div>
       <div className="lc-ins-tabs">
         {/*
@@ -1657,4 +1668,33 @@ function targetChipLabel(kind: string): string {
     default:
       return kind;
   }
+}
+
+// WallModeToggle — header button in the LeafInspector that flips the
+// center pane between canvas and the coverage wall. Hidden for legacy
+// leaves (no sub_flow). Triggers a wall fetch on first activation so the
+// data is ready by the time AtlasShellInner swaps in <Wall>.
+function WallModeToggle({ leafID }: { leafID: string }) {
+  const mode = useAtlas((s) => s.leafMode[leafID] ?? "canvas");
+  const setLeafMode = useAtlas((s) => s.setLeafMode);
+  const loadLeafWall = useAtlas((s) => s.loadLeafWall);
+  const isWall = mode === "wall";
+  function toggle() {
+    if (isWall) {
+      setLeafMode(leafID, "canvas");
+    } else {
+      setLeafMode(leafID, "wall");
+      void loadLeafWall(leafID);
+    }
+  }
+  return (
+    <button
+      type="button"
+      className={`lc-mode-toggle ${isWall ? "lc-mode-toggle--active" : ""}`}
+      onClick={toggle}
+      title={isWall ? "Back to canvas" : "View wall"}
+    >
+      {isWall ? "Canvas" : "Wall"}
+    </button>
+  );
 }
