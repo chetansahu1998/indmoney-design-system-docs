@@ -30,6 +30,15 @@
 // Idempotent: InlineSVGMarkup checks for an existing non-empty
 // `svg_markup` before re-sanitizing + re-writing. Re-running the CLI
 // after a partial run is safe and skips already-inlined nodes.
+// Pass `--force` to bypass the skip and re-read on-disk SVG bytes —
+// use this after a Figma re-export rewrites bytes for the same node id.
+//
+// Concurrency: each per-screen UPDATE is optimistic-locked on
+// `updated_at`. If the live Stage 9 pipeline (or any other writer)
+// modifies a row between the CLI's load and its UPDATE, that row
+// is skipped (`concurrent_skipped=N` in the summary) and a re-run
+// picks it up. The CLI can safely run concurrent with live traffic;
+// in the worst case it just defers the splice to a later pass.
 //
 // Failures are screen-local. A single bad SVG or missing file logs and
 // continues; the version row is never failed.
@@ -60,6 +69,7 @@ func main() {
 	dataDir := flag.String("data-dir", "", "ds-service data root (default: $REPO_DIR/services/ds-service/data or ./services/ds-service/data)")
 	dryRun := flag.Bool("dry-run", false, "discover candidate versions + log per-version SVG cluster counts; skip writes")
 	perVersionTimeout := flag.Duration("timeout", 10*time.Minute, "per-version wall-clock budget for the inline pass")
+	force := flag.Bool("force", false, "bypass the 'already has svg_markup' skip — re-read on-disk SVG bytes and overwrite stale markup; use after a Figma re-export rewrote bytes for the same node id")
 	flag.Parse()
 
 	if *versionFilter != "" && *tenantFilter == "" {
@@ -110,6 +120,7 @@ func main() {
 		totalScreens     int
 		totalSVGClusters int
 		totalOversize    int
+		totalConcurrent  int
 		totalErrors      int
 	)
 
@@ -164,7 +175,7 @@ func main() {
 				// through to an absent PNG.
 				_ = v.PrunedAt
 				totalVersions++
-				inlined, screens, svgCount, oversize, err := runVersion(rootCtx, log, conn, repo, tid, pr, v, dataRoot, *perVersionTimeout, *dryRun)
+				inlined, screens, svgCount, oversize, concurrent, err := runVersion(rootCtx, log, conn, repo, tid, pr, v, dataRoot, *perVersionTimeout, *dryRun, *force)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "tenant %s project %s version %s: %v\n",
 						tid, pr.ID, v.ID, err)
@@ -175,12 +186,13 @@ func main() {
 				totalScreens += screens
 				totalSVGClusters += svgCount
 				totalOversize += oversize
+				totalConcurrent += concurrent
 			}
 		}
 	}
 
-	fmt.Printf("ok versions=%d screens=%d svg_clusters=%d inlined_screens=%d oversize_skipped=%d errors=%d dry_run=%v\n",
-		totalVersions, totalScreens, totalSVGClusters, totalInlined, totalOversize, totalErrors, *dryRun)
+	fmt.Printf("ok versions=%d screens=%d svg_clusters=%d inlined_screens=%d oversize_skipped=%d concurrent_skipped=%d errors=%d dry_run=%v force=%v\n",
+		totalVersions, totalScreens, totalSVGClusters, totalInlined, totalOversize, totalConcurrent, totalErrors, *dryRun, *force)
 	// Reflect failures in the exit code so `fly ssh console -C` and CI
 	// invocations don't silently swallow operator-visible problems.
 	if totalErrors > 0 {
@@ -189,7 +201,8 @@ func main() {
 }
 
 // runVersion handles one (tenant, project, version) tuple. Returns
-// (inlinedScreens, totalScreens, svgClusterCount, oversizeScreens, error).
+// (inlinedScreens, totalScreens, svgClusterCount, oversizeScreens,
+//  concurrentSkippedScreens, error).
 func runVersion(
 	parentCtx context.Context,
 	log *slog.Logger,
@@ -201,16 +214,17 @@ func runVersion(
 	dataDir string,
 	timeout time.Duration,
 	dryRun bool,
-) (int, int, int, int, error) {
+	force bool,
+) (int, int, int, int, int, error) {
 	ctx, cancel := context.WithTimeout(parentCtx, timeout)
 	defer cancel()
 
 	screens, err := repo.ListScreensByVersion(ctx, version.ID)
 	if err != nil {
-		return 0, 0, 0, 0, fmt.Errorf("list screens: %w", err)
+		return 0, 0, 0, 0, 0, fmt.Errorf("list screens: %w", err)
 	}
 	if len(screens) == 0 {
-		return 0, 0, 0, 0, nil
+		return 0, 0, 0, 0, 0, nil
 	}
 
 	// Discover SVG cluster IDs by walking each screen's canonical_tree
@@ -243,7 +257,7 @@ func runVersion(
 		log.Info("no svg clusters",
 			"tenant_id", tenantID, "version_id", version.ID,
 			"screens", len(screens))
-		return 0, len(screens), 0, 0, nil
+		return 0, len(screens), 0, 0, 0, nil
 	}
 	svgIDs := make([]string, 0, len(svgSet))
 	for id := range svgSet {
@@ -255,7 +269,7 @@ func runVersion(
 			"tenant_id", tenantID, "file_id", project.FileID,
 			"version_id", version.ID, "version_index", version.VersionIndex,
 			"screens", len(screens), "svg_clusters", len(svgIDs))
-		return 0, len(screens), len(svgIDs), 0, nil
+		return 0, len(screens), len(svgIDs), 0, 0, nil
 	}
 
 	in := projects.PipelineInputs{
@@ -265,23 +279,26 @@ func runVersion(
 		FileID:    project.FileID,
 		Frames:    frames,
 	}
-	var oversize int
+	var oversize, concurrent int
 	deps := projects.SVGInlineDeps{
-		DB:              conn.DB,
-		DataDir:         dataDir,
-		Log:             log,
-		OversizeScreens: &oversize,
+		DB:                conn.DB,
+		DataDir:           dataDir,
+		Log:               log,
+		OversizeScreens:   &oversize,
+		SkippedConcurrent: &concurrent,
+		ForceRefresh:      force,
 	}
 	inlined, err := projects.InlineSVGMarkup(ctx, deps, in, svgIDs)
 	if err != nil {
-		return 0, len(screens), len(svgIDs), oversize, err
+		return 0, len(screens), len(svgIDs), oversize, concurrent, err
 	}
 	log.Info("inlined",
 		"tenant_id", tenantID, "file_id", project.FileID,
 		"version_id", version.ID, "version_index", version.VersionIndex,
 		"screens", len(screens), "svg_clusters", len(svgIDs),
-		"updated_screens", inlined, "oversize_skipped", oversize)
-	return inlined, len(screens), len(svgIDs), oversize, nil
+		"updated_screens", inlined, "oversize_skipped", oversize,
+		"concurrent_skipped", concurrent, "force", force)
+	return inlined, len(screens), len(svgIDs), oversize, concurrent, nil
 }
 
 // ─── DB helpers ─────────────────────────────────────────────────────

@@ -821,10 +821,22 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 					// to inline falls through to the PNG path on the
 					// client (R5 silent fallback).
 					if p.Repo != nil && p.Repo.r != nil && p.Repo.r.db != nil {
+						// Stage 9 surfaces the oversize + optimistic-lock-skip
+						// counts so an operator running backfill-svg-markup in
+						// parallel can confirm Stage 9 observed (and gracefully
+						// deferred to) concurrent writes.
+						var oversize, concurrent int
 						inlineDeps := SVGInlineDeps{
-							DB:      p.Repo.r.db,
-							DataDir: p.DataDir,
-							Log:     p.Log,
+							DB:                p.Repo.r.db,
+							DataDir:           p.DataDir,
+							Log:               p.Log,
+							OversizeScreens:   &oversize,
+							SkippedConcurrent: &concurrent,
+							// Stage 9 never force-refreshes — the typical case
+							// is the same node id rendering the same bytes;
+							// flipping force here would re-sanitize every
+							// cluster on every Figma re-export and burn CPU
+							// for zero benefit.
 						}
 						inlined, ierr := InlineSVGMarkup(bgCtx, inlineDeps, in, svgs)
 						if p.Log != nil {
@@ -837,6 +849,8 @@ func (p *Pipeline) runStages(ctx context.Context, in PipelineInputs) error {
 								p.Log.Info("stage 9: svg inline pass done",
 									"version_id", versionID,
 									"screens_updated", inlined,
+									"oversize_skipped", oversize,
+									"concurrent_skipped", concurrent,
 								)
 							}
 						}

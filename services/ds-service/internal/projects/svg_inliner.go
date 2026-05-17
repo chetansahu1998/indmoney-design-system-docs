@@ -35,9 +35,22 @@
 // path on the client (U7 has the R5 silent-fallback branch). One
 // poison-pill SVG does not block the whole version.
 //
-// Idempotency: re-running InlineSVGMarkup on the same version
-// re-reads the latest asset_cache row and re-splices, overwriting
-// any prior svg_markup. Safe for Stage 9 retry.
+// Idempotency: by default, nodes that already carry a non-empty
+// `svg_markup` field are SKIPPED — re-runs are cheap and won't
+// re-sanitize unchanged bytes. When the on-disk SVG bytes have
+// actually changed (typical case: a Figma re-export wrote fresh
+// `<sanitized-node>.svg` to `data/assets/<tenant>/<file>/v<vi>/`),
+// callers must pass `SVGInlineDeps.ForceRefresh = true` to bypass
+// the skip and overwrite stale markup. The backfill CLI's `--force`
+// flag flips this on. Stage 9 leaves it off because the same version
+// re-rendering the same node id with the same bytes is the common
+// case.
+//
+// Concurrency: the UPDATE is optimistic-locked on `updated_at` so a
+// parallel writer (live Stage 6 commit, parallel Stage 9 re-run, ops
+// fix script) cannot be silently stomped — if another transaction
+// changed the row between our load and our UPDATE, rows-affected is
+// 0 and we surrender the splice; a future pass will re-attempt.
 
 package projects
 
@@ -70,6 +83,20 @@ type SVGInlineDeps struct {
 	// big" from "skipped — no matching nodes" so operator-facing summaries
 	// can flag screens needing attention. Audit reviewer #4.
 	OversizeScreens *int
+	// SkippedConcurrent (optional out-counter): when non-nil, incremented
+	// once per screen where the optimistic-lock UPDATE matched zero rows
+	// — i.e. a concurrent writer modified the canonical_tree between the
+	// inliner's load and its UPDATE. Surfaces the race in operator-visible
+	// summaries instead of swallowing it silently. Audit reviewer #1.
+	SkippedConcurrent *int
+	// ForceRefresh, when true, bypasses the "already has non-empty
+	// svg_markup" skip so the inliner re-reads the on-disk SVG bytes
+	// and overwrites stale markup with fresh sanitized output. Set by
+	// the backfill CLI's `--force` flag when an operator wants to pick
+	// up post-re-export changes. Defaults to false so live Stage 9
+	// re-runs stay cheap (the common case writes the same bytes). Audit
+	// reviewer #2.
+	ForceRefresh bool
 }
 
 // maxSingleSVGBytes caps the size of any one SVG markup payload before
@@ -183,7 +210,7 @@ func inlineForScreen(
 	screenID string,
 	svgSet map[string]struct{},
 ) (bool, error) {
-	treeJSON, err := loadCanonicalTreeRaw(ctx, deps.DB, screenID)
+	treeJSON, loadedAt, err := loadCanonicalTreeRaw(ctx, deps.DB, screenID)
 	if err != nil {
 		return false, fmt.Errorf("load tree: %w", err)
 	}
@@ -220,12 +247,19 @@ func inlineForScreen(
 		if _, want := svgSet[idVal]; !want {
 			return
 		}
-		// Already inlined (idempotent re-run): leave the prior value.
-		// The asset_cache row is the source of truth across runs, so
-		// the existing string was sanitized + persisted in a previous
-		// pass; no need to re-sanitize.
-		if existing, has := node["svg_markup"].(string); has && existing != "" {
-			return
+		// Idempotency skip: nodes that already carry a non-empty
+		// `svg_markup` are NOT re-read from disk by default. This is the
+		// cheap behaviour — re-sanitizing an unchanged byte string is
+		// pointless.
+		//
+		// When `ForceRefresh` is set on the deps, the skip is bypassed
+		// so callers triggering a refresh after a Figma re-export (which
+		// rewrites the on-disk SVG bytes for the same node id) can pick
+		// up the fresher payload. The CLI `--force` flag flips this on.
+		if !deps.ForceRefresh {
+			if existing, has := node["svg_markup"].(string); has && existing != "" {
+				return
+			}
 		}
 		raw, err := readSVGBytes(deps.DataDir, in.TenantID, in.FileID, versionIndex, idVal)
 		if err != nil {
@@ -284,18 +318,45 @@ func inlineForScreen(
 	// outer iteration, but joining through `screens` here means any
 	// future caller (a new HTTP handler, a one-shot fix script) can't
 	// accidentally cross-tenant UPDATE.
-	_, err = deps.DB.ExecContext(ctx,
+	//
+	// Optimistic-lock guard (audit reviewer #1): `AND updated_at = ?`
+	// uses the timestamp we observed at load time. If any other writer
+	// (live Stage 6 commit, parallel Stage 9 re-run, ops-issued fix
+	// script) bumped `updated_at` between our load and this UPDATE,
+	// rows-affected is 0 and we surrender the splice for this screen.
+	// The on-disk SVG bytes are persistent and a future inliner pass
+	// will re-attempt against the fresher tree.
+	res, err := deps.DB.ExecContext(ctx,
 		`UPDATE screen_canonical_trees
 		    SET canonical_tree      = '',
 		        canonical_tree_gz   = NULL,
 		        canonical_tree_zstd = ?,
 		        updated_at          = ?
 		  WHERE screen_id = ?
+		    AND updated_at = ?
 		    AND screen_id IN (SELECT id FROM screens WHERE tenant_id = ?)`,
-		zstdBlob, rfc3339(time.Now().UTC()), screenID, in.TenantID,
+		zstdBlob, rfc3339(time.Now().UTC()), screenID, loadedAt, in.TenantID,
 	)
 	if err != nil {
 		return false, fmt.Errorf("UPDATE screen_canonical_trees: %w", err)
+	}
+	rows, raErr := res.RowsAffected()
+	if raErr != nil {
+		// SQLite always supports RowsAffected; treat error as fatal so the
+		// caller can decide whether to retry.
+		return false, fmt.Errorf("rows affected: %w", raErr)
+	}
+	if rows == 0 {
+		// Concurrent writer won. Log + skip gracefully — the next
+		// inliner pass will see the fresher tree and re-attempt.
+		if deps.Log != nil {
+			deps.Log.Info("svg inline: concurrent writer; skipping screen",
+				"screen_id", screenID, "loaded_at", loadedAt)
+		}
+		if deps.SkippedConcurrent != nil {
+			*deps.SkippedConcurrent++
+		}
+		return false, nil
 	}
 	return true, nil
 }
@@ -307,25 +368,35 @@ func inlineForScreen(
 // can iterate every screen across every tenant in one DB connection.
 // Not exposed via HTTP.
 func LoadCanonicalTreeForBackfill(ctx context.Context, db *sql.DB, screenID string) (string, error) {
-	return loadCanonicalTreeRaw(ctx, db, screenID)
+	tree, _, err := loadCanonicalTreeRaw(ctx, db, screenID)
+	return tree, err
 }
 
-func loadCanonicalTreeRaw(ctx context.Context, db *sql.DB, screenID string) (string, error) {
-	var legacy string
+// loadCanonicalTreeRaw decompresses the canonical_tree from the storage
+// triple (legacy TEXT / gzip blob / zstd blob — picks the first one set)
+// and also returns the row's `updated_at` so callers can implement
+// optimistic-locking on the subsequent UPDATE. Returns ("", "", nil)
+// when the row doesn't exist.
+func loadCanonicalTreeRaw(ctx context.Context, db *sql.DB, screenID string) (string, string, error) {
+	var legacy, updatedAt string
 	var gz, zstdBlob []byte
 	err := db.QueryRowContext(ctx,
-		`SELECT canonical_tree, canonical_tree_gz, canonical_tree_zstd
+		`SELECT canonical_tree, canonical_tree_gz, canonical_tree_zstd, updated_at
 		   FROM screen_canonical_trees
 		  WHERE screen_id = ?`,
 		screenID,
-	).Scan(&legacy, &gz, &zstdBlob)
+	).Scan(&legacy, &gz, &zstdBlob, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+		return "", "", nil
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return ResolveCanonicalTree(legacy, gz, zstdBlob)
+	tree, terr := ResolveCanonicalTree(legacy, gz, zstdBlob)
+	if terr != nil {
+		return "", "", terr
+	}
+	return tree, updatedAt, nil
 }
 
 // readSVGBytes reads the rendered SVG file written by
