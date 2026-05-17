@@ -18,6 +18,17 @@ import (
 // (idempotent — re-runs return the existing row) → call the stem method.
 // `tab_name` and `state_label` are name-keyed; we resolve them inside the
 // tool to keep the wire shape PM-friendly (no UUIDs in args).
+//
+// Audit thread-through (plan 2026-05-17-004 / U2): every write op records
+// a `prd_audit` row via `recordAudit` after the underlying repo write
+// succeeds. The call is best-effort — a failed audit is logged and
+// swallowed; a successful PRD write must NOT be rolled back because of
+// an audit insert failure. See KTD-2 of the plan and the contract
+// comment on `projects.TenantRepo.RecordPRDAudit`.
+//
+// Read ops (`prd.get`, `prd.export`) record no audit. `prd.upsert_tab`
+// also records no audit: tabs are structural (no `prd_state.id` to key
+// the audit row on); `prd_audit` is per-state by design.
 
 // ─── prd.get ───────────────────────────────────────────────────────────────
 
@@ -114,6 +125,11 @@ func (prdUpsertTabTool) Invoke(ctx context.Context, deps Deps, args json.RawMess
 	if err != nil {
 		return Result{}, fmt.Errorf("prd.upsert_tab: %w", err)
 	}
+	// Audit: skipped. Tabs are structural — `prd_audit` is keyed on
+	// prd_state.id (FK enforced) and there's no representative state at
+	// tab creation time. The wall's `last_touched_*` lights up the moment
+	// a state is added via prd.add_state, which is the load-bearing
+	// authoring action PMs care about. Plan 2026-05-17-004 U2 KTD-2.
 	return Result{Data: tab}, nil
 }
 
@@ -175,6 +191,7 @@ func (prdAddStateTool) Invoke(ctx context.Context, deps Deps, args json.RawMessa
 	if err != nil {
 		return Result{}, fmt.Errorf("prd.add_state: %w", err)
 	}
+	recordAudit(ctx, deps, state.ID, projects.OpUpsertState)
 	return Result{Data: state}, nil
 }
 
@@ -232,6 +249,7 @@ func (prdAddEventTool) Invoke(ctx context.Context, deps Deps, args json.RawMessa
 	if err != nil {
 		return Result{}, fmt.Errorf("prd.add_event: %w", err)
 	}
+	recordAudit(ctx, deps, state.ID, projects.OpAddEvent)
 	return Result{Data: evt}, nil
 }
 
@@ -285,6 +303,7 @@ func (prdAddAcceptanceCriterionTool) Invoke(ctx context.Context, deps Deps, args
 	if err != nil {
 		return Result{}, fmt.Errorf("prd.add_acceptance_criterion: %w", err)
 	}
+	recordAudit(ctx, deps, state.ID, projects.OpAddAcceptanceCriterion)
 	return Result{Data: row}, nil
 }
 
@@ -336,6 +355,7 @@ func (prdAddEdgeCaseTool) Invoke(ctx context.Context, deps Deps, args json.RawMe
 	if err != nil {
 		return Result{}, fmt.Errorf("prd.add_edge_case: %w", err)
 	}
+	recordAudit(ctx, deps, state.ID, projects.OpAddEdgeCase)
 	return Result{Data: row}, nil
 }
 
@@ -390,6 +410,7 @@ func (prdUpsertCopyStringTool) Invoke(ctx context.Context, deps Deps, args json.
 	if err != nil {
 		return Result{}, fmt.Errorf("prd.upsert_copy_string: %w", err)
 	}
+	recordAudit(ctx, deps, state.ID, projects.OpUpsertCopyString)
 	return Result{Data: row}, nil
 }
 
@@ -441,6 +462,7 @@ func (prdAddA11yNoteTool) Invoke(ctx context.Context, deps Deps, args json.RawMe
 	if err != nil {
 		return Result{}, fmt.Errorf("prd.add_a11y_note: %w", err)
 	}
+	recordAudit(ctx, deps, state.ID, projects.OpAddA11yNote)
 	return Result{Data: row}, nil
 }
 
@@ -495,6 +517,7 @@ func (prdAttachFrameTool) Invoke(ctx context.Context, deps Deps, args json.RawMe
 	if err != nil {
 		return Result{}, fmt.Errorf("prd.attach_frame: %w", err)
 	}
+	recordAudit(ctx, deps, state.ID, projects.OpAttachFrameTag)
 	return Result{Data: tag}, nil
 }
 
@@ -530,6 +553,16 @@ func (prdDetachFrameTool) Invoke(ctx context.Context, deps Deps, args json.RawMe
 	if err := deps.Repo.DetachFrameTag(ctx, in.TagID); err != nil {
 		return Result{}, fmt.Errorf("prd.detach_frame: %w", err)
 	}
+	// Audit: skipped. prd_audit is per-state by design (FK on
+	// prd_state_id), and resolving tag_id → prd_state_id BEFORE delete
+	// would require a new exported lookup on projects.TenantRepo —
+	// out-of-scope per the plan's "instrumentation only" boundary
+	// (U2: do not modify prd.go). Recording the audit AFTER delete is
+	// impossible (the row is gone). Net effect: detach operations are
+	// invisible to the coverage wall's last_touched_* columns. Acceptable:
+	// the attach is the load-bearing authoring action that wall consumers
+	// care about; detach is the cleanup tail. Revisit if PMs complain that
+	// "I just unbound this frame" doesn't surface in the wall.
 	return Result{Data: map[string]any{"tag_id": in.TagID, "detached": true}}, nil
 }
 
@@ -620,6 +653,27 @@ func resolveTab(ctx context.Context, deps Deps, slug, tabName string) (projects.
 		return projects.PRDTab{}, prd, sf, fmt.Errorf("upsert tab %q: %w", tabName, err)
 	}
 	return tab, prd, sf, nil
+}
+
+// recordAudit fires a best-effort prd_audit insert after a successful
+// write. A failure here is logged via the per-request logger and
+// swallowed — never returned. The contract (per plan KTD-2): a failed
+// audit is strictly less bad than a refused edit.
+//
+// Callers pass the `prd_state.id` the write affected. For tools that
+// write to a state-keyed stem (events, criteria, copy strings, etc.)
+// the state id is already in hand from resolveState. For tools that
+// have no state context (upsert_tab; detach_frame after the row is
+// gone) the caller must skip — there's nothing to key the audit on.
+func recordAudit(ctx context.Context, deps Deps, stateID string, op projects.PRDAuditOp) {
+	if err := deps.Repo.RecordPRDAudit(ctx, stateID, deps.UserID, op); err != nil {
+		toolLog(deps).Warn("prd_audit insert failed",
+			"op", string(op),
+			"state_id", stateID,
+			"user_id", deps.UserID,
+			"err", err.Error(),
+		)
+	}
 }
 
 // resolveState returns (PRDState, PRDTab) for a (slug, tabName, stateLabel)

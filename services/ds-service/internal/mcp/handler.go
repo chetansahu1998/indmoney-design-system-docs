@@ -143,6 +143,7 @@ func handleInvoke(deps HandlerDeps) http.HandlerFunc {
 			Repo:   repo,
 			Broker: deps.Broker,
 			UserID: userID,
+			Log:    deps.Log,
 		}
 
 		result, invokeErr := deps.Registry.Invoke(r.Context(), name, toolDeps, raw)

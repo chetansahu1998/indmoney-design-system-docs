@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 
@@ -71,6 +72,22 @@ type Deps struct {
 	// UserID is the authenticated user (auth.Claims.Sub). Threaded into
 	// audit + ydoc snapshot writers that record `updated_by_user_id`.
 	UserID string
+
+	// Log is the per-request structured logger. Tools that record
+	// best-effort side effects (e.g. prd_audit insertion in tools_prd.go)
+	// use it to surface failures without failing the user-facing tool
+	// result. May be nil in test contexts; tools must guard with a
+	// `slog.Default()` fallback (see toolLog helper).
+	Log *slog.Logger
+}
+
+// toolLog returns a non-nil logger for tools. Centralizes the
+// `slog.Default()` fallback so each tool doesn't repeat the guard.
+func toolLog(d Deps) *slog.Logger {
+	if d.Log != nil {
+		return d.Log
+	}
+	return slog.Default()
 }
 
 // Result is the wire shape every tool returns. The HTTP handler serializes
