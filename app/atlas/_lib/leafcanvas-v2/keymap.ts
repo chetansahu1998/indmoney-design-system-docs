@@ -135,15 +135,27 @@ export function __getActionTableForTesting(): ActionTable {
  * full DOM mounting.
  */
 export function isCanvasKeymapEligible(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) {
-    // Document-level events (no specific target). Fall back to the
-    // active element — fine in practice; tests can override by
-    // dispatching against a known element.
-    target = document.activeElement;
-    if (!(target instanceof Element)) return false;
+  const el: Element | null = target instanceof Element ? target : null;
+
+  if (el) {
+    if (isEditableElement(el)) return false;
+    if (el.closest(".lc-stage")) return true;
+    // Specific outside element (toolbar button, modal etc.) — out of
+    // scope for canvas hotkeys. Only body/documentElement fall through
+    // to the permissive fallback below.
+    if (el !== document.body && el !== document.documentElement) {
+      return false;
+    }
   }
-  if (isEditableElement(target)) return false;
-  return target.closest(".lc-stage") !== null;
+
+  // Permissive fallback: target is null/document/body. Browsers drop
+  // focus to <body> after pointer events that don't hit a focusable
+  // element (which is nearly every canvas click), so without this
+  // fallback the entire keymap goes inert after the first click.
+  // Re-check active element for an editable focus to be safe.
+  const active = document.activeElement;
+  if (active instanceof Element && isEditableElement(active)) return false;
+  return document.querySelector(".lc-stage") !== null;
 }
 
 function isEditableElement(el: Element): boolean {

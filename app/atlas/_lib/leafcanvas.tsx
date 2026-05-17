@@ -367,6 +367,14 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
   // ---- pan/zoom event handlers
   const dragRef = useRef({ active: false, startX: 0, startY: 0, camX: 0, camY: 0, moved: false });
   const onPointerDown = (e) => {
+    // Re-claim focus for the stage on any pointer-down inside it. The
+    // browser drops focus to <body> after clicks on non-focusable
+    // children, which would silently de-arm every canvas hotkey. The
+    // keymap focus gate has a permissive fallback, but keeping focus
+    // pinned to .lc-stage also lets visible-focus styling work.
+    if (stageRef.current && document.activeElement !== stageRef.current) {
+      stageRef.current.focus({ preventScroll: true });
+    }
     if (e.target.closest(".lc-frame")) return; // let frame click bubble
     // Cancel any in-flight camera snap so the user's drag wins.
     snapAnimRef.current?.cancel();
@@ -571,8 +579,26 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
       // stays uniform.
       fitSelection: () => {},
       zoom100: () => {
-        const c = camRef.current;
-        writeCamera({ x: c.x, y: c.y, z: 1 });
+        // Snap to 100% but re-anchor the world point under the viewport
+        // center to actual content — keeping the fit-all translate at
+        // z=1 lands the viewport on empty space (Bug 1). Prefer the
+        // selected frame's center; else the content bbox center.
+        if (selectedFrameId && layout.frames) {
+          const f = layout.frames.find((x) => x.id === selectedFrameId);
+          if (f) {
+            writeCamera({ x: f.x + f.w / 2, y: f.y + f.h / 2, z: 1 });
+            return;
+          }
+        }
+        if (layout.frames && layout.frames.length > 0) {
+          const minX = Math.min(...layout.frames.map((f) => f.x));
+          const maxX = Math.max(...layout.frames.map((f) => f.x + f.w));
+          const minY = Math.min(...layout.frames.map((f) => f.y));
+          const maxY = Math.max(...layout.frames.map((f) => f.y + f.h));
+          writeCamera({ x: (minX + maxX) / 2, y: (minY + maxY) / 2, z: 1 });
+          return;
+        }
+        writeCamera({ x: 0, y: 0, z: 1 });
       },
       zoomIn: () => zoomIn(),
       zoomOut: () => zoomOut(),

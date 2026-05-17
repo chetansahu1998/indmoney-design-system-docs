@@ -148,6 +148,22 @@ describe("isCanvasKeymapEligible — focus gate", () => {
     stage.appendChild(ta);
     expect(isCanvasKeymapEligible(ta)).toBe(false);
   });
+
+  it("returns true for document.body when a .lc-stage exists (focus drop fallback)", () => {
+    // Reproduces the Bug 6 case: browser dropped focus to <body> after
+    // a canvas click. Hotkeys must still fire so the keymap doesn't go
+    // inert on every interaction.
+    expect(isCanvasKeymapEligible(document.body)).toBe(true);
+  });
+
+  it("returns true for a null target when a .lc-stage exists", () => {
+    expect(isCanvasKeymapEligible(null)).toBe(true);
+  });
+
+  it("returns false for body when an editable element is the active element", () => {
+    stageInput.focus();
+    expect(isCanvasKeymapEligible(document.body)).toBe(false);
+  });
 });
 
 describe("registerKeymap + installKeymap — dispatch", () => {
