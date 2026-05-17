@@ -49,6 +49,7 @@ import (
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/inventory"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/extractor"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/mcp"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects/rules"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/sse"
@@ -411,6 +412,11 @@ func main() {
 			return discoverTenantIDs(ctx, dbConn.DB, log)
 		},
 		Logger: log,
+		// Plan U3b — wire the SSE broker so the autosync sub_flow bridge
+		// can emit figma.design_shipped when a section first appears (or
+		// moves) onto a final-classified page. The same MemoryBroker the
+		// HTTP server uses; *MemoryBroker satisfies SubFlowEventBroker.
+		Broker: broker,
 	})
 	if err != nil {
 		log.Error("figma_inventory poller init", "err", err)
@@ -473,7 +479,16 @@ func main() {
 	// on the same SIGTERM as the audit + graph workers. First crawl runs
 	// 30s after boot (avoids hammering Figma while the server is still
 	// finishing other init); subsequent cycles run every 5 min.
-	inventoryPoller.Start(workerCtx)
+	//
+	// FIGMA_INVENTORY_DISABLED=1 short-circuits startup. Useful during
+	// bulk re-extraction runs where the autosync executor wants the entire
+	// per-PAT tier-1 budget for its own Figma calls, and any poller
+	// activity is just contention. Also handy for offline development.
+	if os.Getenv("FIGMA_INVENTORY_DISABLED") == "1" {
+		log.Warn("FIGMA_INVENTORY_DISABLED=1 — inventory poller will not start")
+	} else {
+		inventoryPoller.Start(workerCtx)
+	}
 
 	// Autosync auto-retry ticker. Re-runs the Planner+Executor across
 	// every in-window allowlist file at a regular cadence. The planner
@@ -1238,6 +1253,29 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.projectsServer.HandleDRDInternalLoadGated())
 	mux.HandleFunc("POST /internal/drd/snapshot",
 		s.projectsServer.HandleDRDInternalSnapshotGated())
+
+	// ─── MCP (plan 002 — PM workflow tool surface) ────────────────────────
+	// GET  /v1/mcp/tools           — cold catalog (3 visible meta-verbs)
+	// POST /v1/mcp/invoke/{name}   — invoke any registered tool by name
+	//
+	// Consumed by the ind-suite stdio MCP bridge (U7) which Claude Code
+	// loads from the indmoney-ds plugin. Tenant scoping comes from the
+	// JWT claims via requireAuth → claimsFrom; multi-tenant claims are
+	// rejected at the handler level (Phase 1 doesn't support cross-tenant
+	// invocation; Phase 2 U11 will add file-scoped capability tokens).
+	//
+	// s.broker is stored interface-typed (projects.SSEPublisher) on the
+	// server struct but is concretely a *sse.MemoryBroker — handler
+	// signatures want the concrete type so the broker can be inspected
+	// for in-memory fan-out diagnostics. Assert is safe at process boot.
+	mcpBroker, _ := s.broker.(*sse.MemoryBroker)
+	mcp.RegisterRoutes(mux, mcp.HandlerDeps{
+		DB:           s.db,
+		Broker:       mcpBroker,
+		ClaimsReader: claimsReader,
+		Registry:     mcp.NewDefaultRegistry(),
+		Log:          s.log,
+	}, s.requireAuth)
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────

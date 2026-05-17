@@ -1,8 +1,9 @@
 ---
 title: "feat: MCP server + PM authoring workflow (DRD → Figma autosync → typed PRD with role-bound frames)"
-status: active
+status: completed
 created: 2026-05-17
 revised: 2026-05-17
+completed: 2026-05-17
 type: feat
 depth: deep
 ideation: docs/ideation/2026-05-17-mcp-pm-authoring-workflow-ideation.md
@@ -1093,7 +1094,12 @@ For each remaining unit, the audit identified existing code that overlaps. Where
 
 **Milestone**: MCP layer complete. PRD typed-stems (U4) + autosync gate (U3b) + MCP registry (U6) + coverage wall (U6b) + universal slug resolver (U9b) + local stdio bridge (U7) all shipped. Claude can now connect to ds-service and exercise the full DRD/PRD authoring vocabulary via the `indmoney-ds` MCP bridge.
 
-Remaining: U8 (`ind-prd` skill update to drive the PM authoring loop), U9 (Next.js viewer rendering wall + iframe + document views), Ship (cmd/server/main.go integration + smoke test + plan status flip).
+| 2026-05-17 | `edc5a16` (ind-suite) | **U8** — ind-prd skill MCP-driven authoring | Skill extended (NOT rewritten) from 480 → 827 lines (v2.4.0 → v2.5.0). Preserved frontmatter, substrate block, CREATE/EDIT mode (now branches on slug / filesystem path legacy / no arg), Trove gate + dispatch, ind_mem_save. New: Phase 0c (open with the wall — non-negotiable, calls `section.inspect` first), Phase 1 (stem-by-stem authoring walk: condition → criteria → edge cases → copy → events → a11y → design/FE handling → frame attach → return to wall), Discipline section (4 non-negotiables incl. "type the data, don't write it in prose"), Phase 3 (review on exported markdown), Phase 4 (export via `prd.author op:export` then write to `~/INDmoney/{LOB}/Documents/`), 3 few-shot examples from Asset Widget Banks Tab. **Workspace path fix**: every `~/Desktop/INDmoney/` replaced with `~/INDmoney/` per CLAUDE.md. Removed Phase 2 (engineering clarifications) — those answers now flow inline as typed criteria / events / a11y notes during Phase 1 stem walks. Tabs default to "default" (single-tab v1 per U2b). |
+| 2026-05-17 | `daa6a44` | **U9** — Next.js PRD viewer | 2286 lines, 10 files under `app/projects/[subProduct]/[subFlow]/prd/` (two dynamic segments because Next.js segments can't contain slashes — universal slug `{sub_product}/{sub_flow}` naturally maps to two segments). PRDShell wraps CanvasShell (lifecycle-switched renderer: empty → CTA, proto-only → iframe, proto-wip → iframe + WIP banner, design-shipped → FrameGrid) + Wall (corkboard from U6b WallResult) + DocumentView (typed-stems PRD from U4 PRDFull) + read-only DRDPane (full collab deferred — needs sub_flow→flow_id resolver). PrototypeCanvas: sandbox="allow-scripts allow-same-origin allow-forms", referrerpolicy="no-referrer", HTTPS-only guard. SSE auto-swap on `figma.design_shipped` via existing /v1/inbox/events ticket+EventSource pattern (no new SSE channel). API proxies POST to /v1/mcp/invoke/{section.inspect, prd.author op:get}. `npx tsc --noEmit` clean. Frame thumbnails deferred to placeholders — existing /v1/projects/{slug}/screens/{id}/png endpoint is keyed by project_slug + screen UUID, not (sub_flow_slug, figma_node_id); real thumbnail path needs a new endpoint or figma_node_id→screen_id lookup. |
+
+**Milestone — Phase 1 complete**: end-to-end loop functional. Designer creates Figma section → autosync (U2) → sub_flow row + prd_state skeletons (U2b) → PM opens `/ind-prd <slug>` in Claude Code → stdio MCP bridge (U7) → ds-service `/v1/mcp/*` (U6) → progressive discovery surfaces drd.read / prd.author / section.inspect → PM authors stem-by-stem (U8) → typed PRD persists (U4) → viewer at `/projects/<sub_product>/<sub_flow>/prd` renders wall + iframe (until design ships, then auto-swaps to frames) + document view (U9).
+
+**Deferred to Phase 2 (next-week follow-up, tracked in this plan)**: U10 remote `/mcp` HTTP+SSE endpoint on ds-service so claude.ai web Connectors can register; U11 file-scoped auth replacing the OAuth shim (sidesteps Claude org-connector issue #46207); U12 Figma plugin for `@role` tagging (designer tooling). Plus follow-ups noted in U2b/U3b/U6b/U8/U9 reports: full DRD collab pane (sub_flow→flow_id resolver), figma_node_id→screen_id frame thumbnail lookup, audit thread-through for tools_prd.go write sites, /tmp Python pipeline absorption into Go autosync, JSON-side sidecar `prd.export`.
 
 (Subsequent units appended here on each commit.)
 
