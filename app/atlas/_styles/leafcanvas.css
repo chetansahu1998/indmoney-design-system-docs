@@ -1638,3 +1638,40 @@
   border-color: var(--accent);
   font-weight: 600;
 }
+
+/* ─── Plan 005 Phase A ─ DRD anchor pulse on prototype click ─────────────── */
+
+/*
+ * The pulse lives as an OVERLAY div appended into .lc-drd-editor-host
+ * — not inside BlockNote's editor tree. ProseMirror owns its child DOM
+ * and strips foreign classes on its next dirty pass, so a class on
+ * .bn-block doesn't survive a render. The overlay sits as a sibling,
+ * absolutely positioned over the target block's bounding box.
+ */
+
+.lc-drd-anchor-overlay {
+  position: absolute;
+  pointer-events: none;
+  z-index: 5;
+  border-radius: 6px;
+}
+
+.lc-drd-anchor-pulse {
+  animation: lc-drd-anchor-pulse 1.6s ease-out;
+  border-radius: 6px;
+}
+
+@keyframes lc-drd-anchor-pulse {
+  0% {
+    background: rgba(120, 200, 255, 0.0);
+    box-shadow: 0 0 0 0 rgba(120, 200, 255, 0.55);
+  }
+  20% {
+    background: rgba(120, 200, 255, 0.32);
+    box-shadow: 0 0 0 6px rgba(120, 200, 255, 0.22);
+  }
+  100% {
+    background: rgba(120, 200, 255, 0.0);
+    box-shadow: 0 0 0 0 rgba(120, 200, 255, 0);
+  }
+}

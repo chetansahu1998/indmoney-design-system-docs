@@ -1,0 +1,1417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=375, initial-scale=1">
+<title>Unified Watchlist + Screener — Design Intent Prototype</title>
+<style>
+:root {
+  --ca:#017AFE; --cp:#089958; --cn:#DD2624; --cal:#FF6631;
+  --t1:#191C1F; --t2:#393B3E; --t3:#88898A; --tm:#5E6063; --tp:#AAB0BF;
+  --bg:#FFFFFF; --bgm:#F9F9F9; --bgs:#EFEFF1; --sep:#EFEFEF;
+  --pt:#E9FBEC; --nt:#FFE6E4; --at:#FFEDDF; --it:#E2F4FF;
+  --br:#036968; --nav-dark:#223464; --ticker-bg:#1b2a50;
+  --tab-inactive:#c0c2c6; --ticker-green:#1fd8ad; --ticker-red:#fe6062;
+  --ff:"Basier Circle",Inter,system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:#E0E0E0;font-family:var(--ff);}
+svg{display:block;}
+
+.banner{background:var(--at);border-bottom:1px solid var(--cal);color:var(--cal);font:500 13px/18px var(--ff);text-align:center;padding:8px 16px;}
+.frame{width:375px;height:812px;margin:12px auto;background:var(--bg);border-radius:40px;box-shadow:0 8px 40px rgba(0,0,0,.18);overflow:hidden;position:relative;}
+.screen{display:none;flex-direction:column;height:812px;overflow:hidden;}
+.screen.active{display:flex;}
+
+/* ── CHROME ── */
+.sb{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;font:500 13px/18px var(--ff);color:#fffffe;background:var(--nav-dark);flex-shrink:0;}
+.ind-nav{height:44px;display:flex;align-items:center;padding:0 16px;background:var(--nav-dark);flex-shrink:0;}
+.ind-avatar{width:28px;height:28px;background:rgba(255,255,255,.15);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font:600 10px/1 var(--ff);flex-shrink:0;}
+.ind-actions{margin-left:auto;display:flex;gap:10px;align-items:center;}
+.icon-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:#fffffe;background:none;border:none;padding:0;}
+.icon-btn svg{width:20px;height:20px;}
+
+.stabs{height:28px;display:flex;align-items:stretch;overflow-x:auto;padding:0 4px;background:var(--nav-dark);flex-shrink:0;scrollbar-width:none;}
+.stabs::-webkit-scrollbar{display:none;}
+.stab{flex-shrink:0;display:flex;align-items:center;padding:0 10px;font:400 14px/17px var(--ff);color:var(--tab-inactive);cursor:pointer;position:relative;gap:4px;white-space:nowrap;}
+.stab.on{font:500 14px/17px var(--ff);color:#fffffe;}
+.stab.on::after{content:'';position:absolute;bottom:0;left:10px;right:10px;height:2px;background:#fffffe;border-radius:2px 2px 0 0;}
+.badge{background:var(--cn);color:#fff;font:500 10px/1 var(--ff);padding:2px 5px;border-radius:8px;}
+
+.ticker{height:34px;background:var(--ticker-bg);display:flex;align-items:center;padding:0 16px;gap:16px;overflow:hidden;flex-shrink:0;}
+.t-open{font:500 11px/15px var(--ff);color:var(--ticker-green);letter-spacing:.8px;text-transform:uppercase;white-space:nowrap;}
+.t-item{font:400 12px/15px var(--ff);color:rgba(255,255,255,.8);white-space:nowrap;display:flex;align-items:center;gap:4px;}
+.up{color:var(--ticker-green);} .dn{color:var(--ticker-red);}
+
+/* ── WATCHLIST HEADER ── */
+.wl-bar{height:40px;display:flex;align-items:center;padding:0 16px;gap:8px;border-bottom:1px solid var(--sep);flex-shrink:0;}
+.wl-count{font:500 11px/15px var(--ff);color:var(--t3);text-transform:uppercase;letter-spacing:.3px;margin-right:auto;}
+.vtog{display:flex;background:var(--bgs);border-radius:100px;padding:2px;flex-shrink:0;}
+.vchip{height:26px;padding:0 12px;border-radius:100px;font:500 12px/15px var(--ff);cursor:pointer;display:flex;align-items:center;}
+.vchip.on{background:var(--ca);color:#fff;}
+.vchip.off{color:var(--t3);}
+.ttog{display:flex;align-items:center;gap:5px;cursor:pointer;flex-shrink:0;}
+.ttog svg{width:14px;height:14px;}
+.trk{width:32px;height:18px;border-radius:9px;position:relative;flex-shrink:0;}
+.trk.off{background:var(--sep);}
+.trk.on{background:var(--ca);}
+.tthumb{position:absolute;top:2px;width:14px;height:14px;background:#fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:left .15s;}
+.trk.off .tthumb{left:2px;} .trk.on .tthumb{left:16px;}
+.cfg-btn{width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--t3);cursor:pointer;border-radius:6px;flex-shrink:0;}
+.cfg-btn:hover{background:var(--bgm);}
+.cfg-btn svg{width:18px;height:18px;}
+
+.act-row{height:36px;display:flex;align-items:center;padding:0 12px;gap:0;}
+.act-btn{width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--t3);cursor:pointer;border-radius:6px;}
+.act-btn:hover{background:var(--bgm);}
+.act-btn svg{width:18px;height:18px;}
+.tag-btn{height:26px;border:1px solid var(--sep);border-radius:4px;display:flex;align-items:center;gap:5px;padding:0 8px;font:500 12px/15px var(--ff);color:var(--t3);cursor:pointer;margin-left:4px;}
+.tag-btn svg{width:12px;height:12px;}
+
+/* ── WATCHLIST NAME TABS (Figma V5: active = #223464 dark navy fill) ── */
+.wl-name-strip{height:44px;padding:8px 16px;display:flex;align-items:center;gap:8px;overflow-x:auto;scrollbar-width:none;background:var(--bg);border-bottom:1px solid var(--sep);flex-shrink:0;}
+.wl-name-strip::-webkit-scrollbar{display:none;}
+.wl-ntab{height:28px;padding:0 12px;border-radius:14px;font:500 13px/28px var(--ff);white-space:nowrap;cursor:pointer;flex-shrink:0;background:transparent;color:var(--t1);}
+.wl-ntab.on{background:var(--nav-dark);color:#fff;font:500 13px/28px var(--ff);}
+.wl-ntab:hover:not(.on){background:var(--bgm);}
+.wl-nadd{height:28px;padding:0 12px;border-radius:14px;font:500 13px/28px var(--ff);white-space:nowrap;cursor:pointer;flex-shrink:0;background:var(--bg);color:var(--ca);border:1px solid var(--ca);display:flex;align-items:center;gap:4px;}
+.wl-nadd svg{width:10px;height:10px;}
+.wl-nadd:hover{background:var(--it);}
+
+/* ── ACTION BAR (Figma reference: circle Filter + circle Edit + + Add pill) ── */
+.act-circle{width:32px;height:32px;border-radius:50%;border:1px solid var(--ca);display:flex;align-items:center;justify-content:center;color:var(--ca);cursor:pointer;background:var(--bg);flex-shrink:0;}
+.act-circle:hover{background:var(--it);}
+.act-circle svg{width:14px;height:14px;}
+.act-add{height:32px;border-radius:28px;border:1px solid var(--ca);padding:0 12px 0 10px;display:flex;align-items:center;gap:4px;color:var(--ca);font:500 13px/32px var(--ff);cursor:pointer;background:var(--bg);flex-shrink:0;}
+.act-add:hover{background:var(--it);}
+.act-add svg{width:12px;height:12px;}
+
+/* ── ORDER CONFIRMATION SHEET (replaces alert() in S3) ── */
+.ord-stock{padding:16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--sep);}
+.ord-stock-info{flex:1;min-width:0;}
+.ord-stock-name{font:500 16px/20px var(--ff);color:var(--t1);}
+.ord-stock-tkr{font:400 13px/18px var(--ff);color:var(--t3);margin-top:2px;}
+.ord-stock-price{text-align:right;}
+.ord-stock-ltp{font:500 16px/20px var(--ff);color:var(--t1);}
+.ord-stock-chg{font:400 13px/18px var(--ff);margin-top:2px;}
+.ord-row{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--sep);}
+.ord-row-l{font:400 14px/17px var(--ff);color:var(--tm);}
+.ord-row-r{font:500 14px/17px var(--ff);color:var(--t1);text-align:right;}
+.ord-seg{display:flex;background:var(--bgs);border-radius:8px;padding:2px;}
+.ord-seg-opt{flex:1;height:28px;border-radius:6px;font:500 13px/28px var(--ff);text-align:center;cursor:pointer;color:var(--tm);padding:0 12px;}
+.ord-seg-opt.on{background:var(--bg);color:var(--t1);box-shadow:0 1px 2px rgba(0,0,0,.06);}
+.ord-qty{display:flex;align-items:center;gap:8px;}
+.ord-qty-btn{width:28px;height:28px;border-radius:6px;border:1px solid var(--sep);background:var(--bg);font:500 16px/1 var(--ff);color:var(--t1);cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.ord-qty-val{width:48px;text-align:center;font:500 14px/17px var(--ff);color:var(--t1);}
+.ord-total{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;background:var(--bgm);}
+.ord-total-l{font:500 13px/15px var(--ff);color:var(--t3);text-transform:uppercase;letter-spacing:.3px;}
+.ord-total-r{font:500 18px/22px var(--ff);color:var(--t1);}
+
+/* ── SUCCESS STATE (S8) ── */
+.success-wrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;}
+.success-icon{width:64px;height:64px;color:var(--cp);margin-bottom:16px;}
+.success-icon svg{width:64px;height:64px;}
+.success-title{font:500 20px/28px var(--ff);color:var(--t1);margin-bottom:6px;}
+.success-body{font:400 14px/20px var(--ff);color:var(--tm);max-width:280px;}
+.success-card{margin:24px 16px 0;padding:14px 16px;background:var(--bgm);border-radius:8px;width:calc(100% - 32px);max-width:343px;display:flex;flex-direction:column;gap:8px;}
+.success-row{display:flex;align-items:center;justify-content:space-between;}
+.success-row-l{font:400 13px/17px var(--ff);color:var(--t3);}
+.success-row-r{font:500 13px/17px var(--ff);color:var(--t1);}
+
+/* ── EMPTY / COLD STATE (S10) ── */
+.cold-wrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px;text-align:center;}
+.cold-icon{width:80px;height:80px;color:var(--tp);margin-bottom:16px;}
+.cold-icon svg{width:80px;height:80px;}
+.cold-title{font:500 18px/24px var(--ff);color:var(--t1);margin-bottom:8px;}
+.cold-body{font:400 14px/20px var(--ff);color:var(--tm);max-width:280px;margin-bottom:24px;}
+
+/* ── INLINE NEWS / ANALYST PROJECTION (Figma reference: green/red inline chips between rows) ── */
+.row-news{padding:6px 16px 10px 60px;font:400 12px/16px var(--ff);color:var(--tm);display:flex;align-items:flex-start;gap:6px;}
+.row-news-tag{font:500 12px/16px var(--ff);color:var(--cp);flex-shrink:0;}
+.row-news-tag.alert{color:var(--cal);}
+.row-analyst{padding:0 16px 0 60px;margin-top:-8px;font:400 12px/16px var(--ff);color:var(--tm);}
+.row-analyst .pos{color:var(--cp);font-weight:500;}
+.row-analyst .neg{color:var(--cn);font-weight:500;}
+
+/* ── REVIEW NAVIGATOR (mandatory for >5 screens per skill §5.2) ── */
+#review-nav{position:fixed;bottom:16px;right:16px;z-index:9999;background:#1a1a1a;border:1px solid #333;border-radius:12px;padding:12px 14px;font:400 11px/15px -apple-system,BlinkMacSystemFont,sans-serif;color:#ccc;max-width:220px;box-shadow:0 4px 20px rgba(0,0,0,.5);}
+#review-nav .rn-title{font-weight:600;color:#fff;margin-bottom:8px;font-size:11px;}
+#review-nav .rn-group{margin-bottom:8px;}
+#review-nav .rn-group:last-child{margin-bottom:0;}
+#review-nav .rn-glabel{font-size:9px;text-transform:uppercase;color:#666;letter-spacing:.5px;margin-bottom:3px;}
+#review-nav .rn-item{display:block;padding:3px 0;cursor:pointer;font-size:11px;}
+#review-nav .rn-item:hover{text-decoration:underline;}
+#review-nav .rn-entry{color:#4fc3f7;}
+#review-nav .rn-active{color:#81c995;}
+#review-nav .rn-warn{color:#ffb74d;}
+#review-nav .rn-locked{color:#ef9a9a;}
+#review-nav .rn-toggle{position:absolute;top:-12px;right:8px;background:#1a1a1a;border:1px solid #333;color:#999;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;line-height:1;}
+#review-nav.collapsed{padding:6px 10px;}
+#review-nav.collapsed .rn-group,#review-nav.collapsed .rn-title{display:none;}
+
+/* ── CONTENT ── */
+.content{flex:1;overflow-y:auto;min-height:0;}
+.sep-f{height:1px;background:var(--sep);}
+.sep-i{height:1px;background:var(--sep);margin:0 16px;}
+.gap{height:8px;background:var(--bgs);}
+.sec-lbl{padding:10px 16px 4px;font:500 11px/15px var(--ff);color:var(--t3);text-transform:uppercase;}
+
+/* ── LIST ROW (64px) ── */
+.lrow{height:64px;display:flex;align-items:center;padding:0 16px;gap:12px;cursor:pointer;}
+.lrow:hover{background:var(--bgm);}
+.lrow:active{background:var(--bgs);}
+.slogo{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font:700 9px/1 var(--ff);flex-shrink:0;}
+.rc{flex:1;min-width:0;}
+.rt{font:500 14px/17px var(--ff);color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rs{font:400 13px/18px var(--ff);color:var(--tm);margin-top:3px;display:flex;align-items:center;gap:5px;}
+.rdiv{width:1px;height:10px;background:var(--sep);flex-shrink:0;}
+.rr{text-align:right;flex-shrink:0;}
+.rp{font:500 14px/17px var(--ff);color:var(--t1);}
+.rc2{font:400 13px/18px var(--ff);margin-top:3px;}
+
+/* ── TRADE PILLS ── */
+.pills{display:flex;gap:6px;flex-shrink:0;}
+.pill{height:32px;border-radius:28px;padding:0 14px;font:500 14px/18px var(--ff);cursor:pointer;border:none;display:flex;align-items:center;}
+.pill.buy{background:var(--pt);color:var(--cp);}
+.pill.sell{background:var(--nt);color:var(--cn);}
+.pill:active{filter:brightness(.92);}
+
+/* ── WATCHLIST LIST ROWS (card-less — same flat row paradigm as .lrow) ── */
+.wl-card{height:64px;display:flex;align-items:center;padding:0 16px;gap:12px;cursor:pointer;}
+.wl-card:hover{background:var(--bgm);}
+.wl-card:active{background:var(--bgs);}
+.scr-badge{display:inline-flex;align-items:center;height:18px;border-radius:100px;padding:0 7px;font:500 11px/1 var(--ff);background:var(--it);color:var(--ca);margin-left:6px;}
+.create-row{height:56px;display:flex;align-items:center;padding:0 16px;gap:12px;cursor:pointer;}
+.create-row:hover{background:var(--bgm);}
+.create-row:active{background:var(--bgs);}
+.create-icon{width:32px;height:32px;border-radius:8px;border:1.5px dashed var(--ca);display:flex;align-items:center;justify-content:center;color:var(--ca);flex-shrink:0;}
+.create-icon svg{width:16px;height:16px;}
+
+/* ── TRADER BANNER ── */
+.trader-banner{padding:7px 16px;background:var(--it);border-bottom:1px solid rgba(1,122,254,.15);display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.trader-banner svg{width:14px;height:14px;color:var(--ca);flex-shrink:0;}
+.trader-banner span{font:500 12px/15px var(--ff);color:var(--ca);}
+
+/* ── BOTTOM NAV ── */
+.bnav{height:72px;background:var(--bg);border-top:1px solid var(--sep);display:flex;align-items:flex-start;padding-top:8px;flex-shrink:0;}
+.ntab{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;}
+.nti{width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:var(--t3);}
+.nti svg{width:22px;height:22px;}
+.ntl{font:500 11px/15px var(--ff);color:var(--t3);}
+.ntab.on .nti{color:var(--ca);}
+.ntab.on .ntl{color:var(--ca);}
+.hi{height:34px;display:flex;align-items:center;justify-content:center;}
+.hib{width:134px;height:5px;border-radius:3px;background:rgba(25,28,31,.18);}
+
+/* ── SCREENER TABLE ── */
+.sc-wrap{display:flex;flex-direction:column;}
+.sc-hrow{display:flex;border-bottom:1px solid var(--sep);height:36px;flex-shrink:0;}
+.sc-fh{width:130px;flex-shrink:0;display:flex;align-items:center;padding:0 12px;border-right:1px solid var(--sep);font:500 11px/15px var(--ff);color:var(--t3);text-transform:uppercase;}
+.sc-sh{flex:1;overflow-x:auto;display:flex;scrollbar-width:none;}
+.sc-sh::-webkit-scrollbar{display:none;}
+.sc-ch{min-width:80px;height:36px;display:flex;align-items:center;padding:0 10px;gap:4px;border-right:1px solid var(--sep);font:500 11px/15px var(--ff);color:var(--t3);cursor:pointer;white-space:nowrap;text-transform:uppercase;}
+.sa{display:inline-flex;align-items:center;}
+.sa svg{width:11px;height:11px;color:var(--tp);}
+.sa.asc svg{color:var(--ca);}
+.sc-drow{display:flex;border-bottom:1px solid var(--sep);height:52px;cursor:pointer;}
+.sc-drow:hover{background:var(--bgm);}
+.sc-drow:active{background:var(--bgs);}
+.sc-fc{width:130px;flex-shrink:0;display:flex;align-items:center;padding:0 10px;gap:8px;border-right:1px solid var(--sep);}
+.sl-sm{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font:700 8px/1 var(--ff);flex-shrink:0;}
+.tkr{font:500 12px/15px var(--ff);color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sc-sc{flex:1;overflow-x:auto;display:flex;scrollbar-width:none;}
+.sc-sc::-webkit-scrollbar{display:none;}
+.sc-dc{min-width:80px;height:52px;display:flex;flex-direction:column;align-items:flex-end;justify-content:center;padding:0 10px;border-right:1px solid var(--sep);}
+.cv{font:500 13px/18px var(--ff);color:var(--t1);}
+.cs{font:400 11px/15px var(--ff);color:var(--t3);margin-top:2px;}
+
+/* ── BOTTOM SHEET ── */
+.overlay{position:absolute;inset:0;background:rgba(0,0,0,.46);z-index:20;display:flex;flex-direction:column;justify-content:flex-end;}
+.sheet{background:var(--bg);border-radius:20px 20px 0 0;max-height:88%;display:flex;flex-direction:column;}
+.s-handle{height:24px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.s-hbar{width:40px;height:4px;background:#CECECE;border-radius:2px;}
+.s-head{height:44px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid var(--sep);flex-shrink:0;}
+.s-title{font:500 16px/20px var(--ff);color:var(--t1);flex:1;}
+.s-close{width:24px;height:24px;display:flex;align-items:center;justify-content:center;font:400 18px/1 var(--ff);color:var(--t3);cursor:pointer;}
+.s-body{flex:1;overflow-y:auto;}
+.s-sec{padding:16px 16px 12px;}
+.s-sec-t{font:500 11px/15px var(--ff);color:var(--t3);text-transform:uppercase;margin-bottom:10px;}
+.s-foot{padding:12px 16px 32px;border-top:1px solid var(--sep);flex-shrink:0;}
+.mcard{border:1.5px solid var(--sep);border-radius:12px;padding:16px;cursor:pointer;margin-bottom:10px;}
+.mcard.on{border-color:var(--ca);background:var(--it);}
+.mc-icon{width:40px;height:40px;border-radius:10px;background:var(--bgs);display:flex;align-items:center;justify-content:center;margin-bottom:10px;color:var(--t3);}
+.mc-icon svg{width:22px;height:22px;}
+.mcard.on .mc-icon{background:rgba(1,122,254,.1);color:var(--ca);}
+.mc-t{font:500 14px/17px var(--ff);color:var(--t1);margin-bottom:4px;display:flex;align-items:center;gap:6px;}
+.mc-s{font:400 13px/18px var(--ff);color:var(--t3);}
+.new-tag{font:500 11px/1 var(--ff);color:var(--ca);background:var(--it);padding:3px 8px;border-radius:100px;}
+
+/* ── STICKY NAV ── */
+.snav{height:40px;background:var(--bg);display:flex;align-items:center;padding:0 16px;border-bottom:1px solid var(--sep);flex-shrink:0;}
+.snav-back{width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;margin-left:-6px;color:var(--t1);}
+.snav-back svg{width:20px;height:20px;}
+.snav-t{flex:1;text-align:center;font:500 16px/20px var(--ff);color:var(--t1);}
+.snav-a{font:500 14px/18px var(--ff);color:var(--ca);cursor:pointer;}
+
+/* ── FILTER UI ── */
+.chips{display:flex;flex-wrap:wrap;gap:8px;}
+.fchip{height:32px;border-radius:100px;padding:0 14px;font:400 13px/18px var(--ff);cursor:pointer;display:flex;align-items:center;gap:5px;border:1px solid var(--sep);}
+.fchip.on{background:var(--it);border-color:var(--ca);color:var(--ca);font:500 13px/18px var(--ff);}
+.fchip.off{color:var(--t3);}
+.radio{display:flex;align-items:center;padding:11px 0;gap:12px;cursor:pointer;border-bottom:1px solid var(--sep);}
+.radio:last-child{border-bottom:none;}
+.rdot{width:20px;height:20px;border-radius:50%;border:2px solid var(--sep);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.rdot.on{border-color:var(--ca);}
+.rinner{width:10px;height:10px;border-radius:50%;background:var(--ca);}
+.rl{font:400 14px/17px var(--ff);color:var(--t1);}
+.rsub{font:400 13px/18px var(--ff);color:var(--t3);margin-left:auto;}
+.fsumm{display:flex;align-items:center;gap:8px;padding:8px 16px;background:var(--it);border-top:1px solid rgba(1,122,254,.15);flex-shrink:0;}
+.fsumm svg{width:14px;height:14px;color:var(--ca);flex-shrink:0;}
+.fsumm-t{font:500 13px/18px var(--ff);color:var(--ca);flex:1;}
+.res-bar{padding:12px 16px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+.res-n{font:500 20px/28px var(--ff);color:var(--t1);}
+.res-s{font:400 13px/18px var(--ff);color:var(--t3);margin-top:2px;}
+.inp-lbl{font:500 11px/15px var(--ff);color:var(--t3);text-transform:uppercase;margin-bottom:6px;}
+.inp{width:100%;height:48px;border:1px solid var(--sep);border-radius:8px;padding:0 12px;font:500 14px/17px var(--ff);color:var(--t1);background:var(--bg);outline:none;}
+.inp:focus{border-color:var(--ca);}
+.inp-hint{font:400 12px/15px var(--ff);color:var(--t3);margin-top:6px;}
+.btn{display:block;width:100%;height:48px;border:none;border-radius:28px;font:600 16px/20px var(--ff);cursor:pointer;text-align:center;}
+.btn.pri{background:var(--ca);color:#fff;}
+.btn.grn{background:var(--cp);color:#fff;}
+.btn-foot{padding:12px 16px 32px;background:var(--bg);border-top:1px solid var(--sep);flex-shrink:0;}
+</style>
+</head>
+<body>
+
+<!-- ── SVG SPRITE ── -->
+<svg style="display:none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="ico-bell" viewBox="0 0 20 20">
+    <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M15 7A5 5 0 0 0 5 7c0 5.33-2.5 7-2.5 7h15s-2.5-1.67-2.5-7z"/>
+    <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M11.3 17.5a1.5 1.5 0 0 1-2.6 0"/>
+  </symbol>
+  <symbol id="ico-search" viewBox="0 0 20 20">
+    <circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <line x1="14.5" y1="14.5" x2="13" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="ico-sliders" viewBox="0 0 20 20">
+    <line x1="4" y1="6" x2="16" y2="6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="4" y1="10" x2="16" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="4" y1="14" x2="16" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="7" cy="6" r="2" fill="currentColor"/>
+    <circle cx="13" cy="10" r="2" fill="currentColor"/>
+    <circle cx="9" cy="14" r="2" fill="currentColor"/>
+  </symbol>
+  <symbol id="ico-home" viewBox="0 0 22 22">
+    <path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" d="M3 9.5L11 3l8 6.5V19a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9.5z"/>
+    <rect x="8" y="14" width="6" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  </symbol>
+  <symbol id="ico-chart" viewBox="0 0 22 22">
+    <polyline points="3,17 8,11 13,14 19,7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <polyline points="16,7 19,7 19,10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="ico-grid" viewBox="0 0 22 22">
+    <rect x="3" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <rect x="12" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <rect x="3" y="12" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <rect x="12" y="12" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  </symbol>
+  <symbol id="ico-person" viewBox="0 0 22 22">
+    <circle cx="11" cy="7" r="3.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <path d="M3 20a8 8 0 0 1 16 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="ico-dots" viewBox="0 0 22 22">
+    <circle cx="5" cy="11" r="1.5" fill="currentColor"/>
+    <circle cx="11" cy="11" r="1.5" fill="currentColor"/>
+    <circle cx="17" cy="11" r="1.5" fill="currentColor"/>
+  </symbol>
+  <symbol id="ico-chevron-left" viewBox="0 0 20 20">
+    <polyline points="13,4 7,10 13,16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="ico-sort" viewBox="0 0 12 14">
+    <line x1="6" y1="1" x2="6" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <polyline points="3,4 6,1 9,4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <polyline points="3,10 6,13 9,10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="ico-sort-asc" viewBox="0 0 12 14">
+    <line x1="6" y1="1" x2="6" y2="13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <polyline points="3,4 6,1 9,4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <polyline points="3,10 6,13 9,10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity=".3"/>
+  </symbol>
+  <symbol id="ico-filter" viewBox="0 0 18 18">
+    <polygon points="16,2 2,2 7,9.5 7,16 11,14.5 11,9.5 16,2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="ico-edit" viewBox="0 0 18 18">
+    <path d="M13 2l3 3-9 9H4v-3L13 2z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="ico-plus" viewBox="0 0 16 16">
+    <line x1="8" y1="2" x2="8" y2="14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="2" y1="8" x2="14" y2="8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="ico-bolt" viewBox="0 0 12 16">
+    <polygon points="7,1 1,9 6,9 5,15 11,7 6,7" fill="currentColor"/>
+  </symbol>
+  <symbol id="ico-tag" viewBox="0 0 16 16">
+    <path d="M9 2H2v7l6 6 7-7-6-6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="5.5" cy="5.5" r="1" fill="currentColor"/>
+  </symbol>
+  <symbol id="ico-search-lg" viewBox="0 0 24 24">
+    <circle cx="10.5" cy="10.5" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <line x1="19" y1="19" x2="16" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="ico-sliders-lg" viewBox="0 0 24 24">
+    <line x1="4" y1="7" x2="20" y2="7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="4" y1="17" x2="20" y2="17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="8" cy="7" r="2.5" fill="currentColor"/>
+    <circle cx="16" cy="12" r="2.5" fill="currentColor"/>
+    <circle cx="11" cy="17" r="2.5" fill="currentColor"/>
+  </symbol>
+  <symbol id="ico-rupee" viewBox="0 0 22 22">
+    <path d="M6 5h10M6 9h10M14 5c0 4-3 5-8 5l8 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="ico-dollar" viewBox="0 0 22 22">
+    <line x1="11" y1="3" x2="11" y2="19" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M15 6.5c-.7-1.5-2.3-2.5-4-2.5-2.5 0-4 1.3-4 3 0 1.7 1.3 2.5 4 3s4 1.3 4 3c0 1.7-1.5 3-4 3-1.7 0-3.3-1-4-2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="ico-chevrons-up" viewBox="0 0 22 22">
+    <polyline points="3,15 11,7 19,15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <polyline points="3,11 11,3 19,11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="ico-bars" viewBox="0 0 22 22">
+    <rect x="3.5" y="11" width="3" height="8" rx=".5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <rect x="9.5" y="6" width="3" height="13" rx=".5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <rect x="15.5" y="2" width="3" height="17" rx=".5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  </symbol>
+  <symbol id="ico-cash" viewBox="0 0 22 22">
+    <rect x="3" y="6" width="16" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <circle cx="11" cy="11.5" r="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+    <line x1="6" y1="11.5" x2="6.5" y2="11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="15.5" y1="11.5" x2="16" y2="11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="ico-check-circle" viewBox="0 0 64 64">
+    <circle cx="32" cy="32" r="28" fill="currentColor" opacity=".12"/>
+    <circle cx="32" cy="32" r="22" fill="currentColor"/>
+    <polyline points="22,32 29,39 42,25" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="ico-info" viewBox="0 0 16 16">
+    <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <line x1="8" y1="7" x2="8" y2="11.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+    <circle cx="8" cy="4.7" r=".9" fill="currentColor"/>
+  </symbol>
+  <symbol id="ico-empty-cold" viewBox="0 0 80 80">
+    <rect x="10" y="20" width="60" height="44" rx="4" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".4"/>
+    <line x1="10" y1="32" x2="70" y2="32" stroke="currentColor" stroke-width="1.5" opacity=".4"/>
+    <circle cx="16" cy="26" r="1.2" fill="currentColor" opacity=".5"/>
+    <circle cx="20" cy="26" r="1.2" fill="currentColor" opacity=".5"/>
+    <line x1="18" y1="42" x2="34" y2="42" stroke="currentColor" stroke-width="1.5" opacity=".5"/>
+    <line x1="18" y1="50" x2="42" y2="50" stroke="currentColor" stroke-width="1.5" opacity=".5"/>
+    <circle cx="55" cy="46" r="11" fill="none" stroke="currentColor" stroke-width="1.8"/>
+    <line x1="63" y1="54" x2="70" y2="61" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="50" y1="46" x2="60" y2="46" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="55" y1="41" x2="55" y2="51" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+  </symbol>
+</svg>
+
+<div class="banner">Design Intent Prototype &nbsp;·&nbsp; Unified Watchlist + Screener &nbsp;·&nbsp; 10 screens · 2026-05-04</div>
+
+<div class="frame">
+
+<!-- ═══════════════════════════════════════
+     S1 · Watchlist Home
+     ═══════════════════════════════════════ -->
+<div class="screen active" id="s1" data-screen="S1" data-screen-label="My Watchlist — Watchlist Home">
+  <div class="sb"><span>9:41</span><span>●●●</span></div>
+  <div class="ind-nav">
+    <div class="ind-avatar">CS</div>
+    <div class="ind-actions">
+      <button class="icon-btn" title="Notifications"><svg><use href="#ico-bell"/></svg></button>
+      <button class="icon-btn" title="Search"><svg><use href="#ico-search"/></svg></button>
+    </div>
+  </div>
+  <div class="stabs">
+    <div class="stab">Explore</div>
+    <div class="stab">My Stocks</div>
+    <div class="stab">Orders</div>
+    <div class="stab on">Watchlist</div>
+    <div class="stab">IPO</div>
+  </div>
+  <div class="ticker">
+    <span class="t-open">MARKET IS OPEN</span>
+    <span class="t-item">Sensex 81,245 <span class="up">▲ 1.2%</span></span>
+    <span class="t-item">Nifty 24,460 <span class="up">▲ 0.9%</span></span>
+    <span class="t-item">BankNifty 52,120 <span class="dn">▼ 0.4%</span></span>
+  </div>
+  <div class="wl-name-strip">
+    <div class="wl-ntab on">My Watchlist</div>
+    <div class="wl-ntab" onclick="showS('s9')">FMCG Low P/E</div>
+    <div class="wl-nadd" onclick="showS('s4')"><svg><use href="#ico-plus"/></svg> Create watchlist</div>
+  </div>
+  <div class="wl-bar">
+    <span class="wl-count">18 Stocks</span>
+    <div class="vtog">
+      <div class="vchip on" onclick="showS('s1')">Watchlist</div>
+      <div class="vchip off" onclick="showS('s2')">Screener</div>
+    </div>
+    <div class="ttog" onclick="showS('s3')" title="Trader Mode">
+      <svg width="14" height="16" style="color:var(--t3)"><use href="#ico-bolt"/></svg>
+      <div class="trk off"><div class="tthumb"></div></div>
+    </div>
+  </div>
+  <div class="act-row" style="justify-content:flex-end;gap:8px;padding:0 16px;">
+    <div class="act-circle" title="Filter"><svg><use href="#ico-filter"/></svg></div>
+    <div class="act-circle" title="Edit"><svg><use href="#ico-edit"/></svg></div>
+    <div class="act-add" title="Add stock"><svg><use href="#ico-plus"/></svg> Add</div>
+  </div>
+  <div class="sep-f"></div>
+  <div class="content">
+    <div class="lrow">
+      <div class="slogo" style="background:#FFF0E6;color:#FF6631;">ZOM</div>
+      <div class="rc">
+        <div class="rt">Eternal Ltd</div>
+        <div class="rs">ETERNAL <div class="rdiv"></div> ⬡ 40.8 Qty</div>
+      </div>
+      <div class="rr"><div class="rp">₹228.50</div><div class="rc2 up">▲ 4.2%</div></div>
+    </div>
+    <div class="row-analyst">15 analysts project <span class="neg">25% down</span> over 12M</div>
+    <div class="sep-i" style="margin-top:8px;"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#E6F4FF;color:#036968;">TAT</div>
+      <div class="rc">
+        <div class="rt">TATA Power Ltd.</div>
+        <div class="rs">TATAPOWER <div class="rdiv"></div> ⬡ 4 Lots</div>
+      </div>
+      <div class="rr"><div class="rp">₹396.15</div><div class="rc2 dn">▼ 1.8%</div></div>
+    </div>
+    <div class="row-news"><span class="row-news-tag">News</span> Airtel buys 68.7L Indus Power shares, stake up to 0.2%</div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#E9FBEC;color:#089958;">HDFC</div>
+      <div class="rc">
+        <div class="rt">HDFC Bank Ltd.</div>
+        <div class="rs">HDFCBANK <div class="rdiv"></div> ⬡ 200 Qty</div>
+      </div>
+      <div class="rr"><div class="rp">₹1,642.30</div><div class="rc2 up">▲ 0.6%</div></div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#E2F4FF;color:#017AFE;">INFY</div>
+      <div class="rc">
+        <div class="rt">Infosys Ltd.</div>
+        <div class="rs">INFY <div class="rdiv"></div> ⬡ 50 Qty</div>
+      </div>
+      <div class="rr"><div class="rp">₹1,456.85</div><div class="rc2 dn">▼ 2.1%</div></div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#F5F5F8;color:#757779;">WIP</div>
+      <div class="rc">
+        <div class="rt">Wipro Ltd.</div>
+        <div class="rs">WIPRO <div class="rdiv"></div> ⬡ 100 Qty</div>
+      </div>
+      <div class="rr"><div class="rp">₹512.60</div><div class="rc2 up">▲ 1.4%</div></div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#FFF4EC;color:#FF6631;">ITC</div>
+      <div class="rc">
+        <div class="rt">ITC Ltd.</div>
+        <div class="rs">ITC <div class="rdiv"></div> ⬡ 500 Qty</div>
+      </div>
+      <div class="rr"><div class="rp">₹458.30</div><div class="rc2 up">▲ 0.8%</div></div>
+    </div>
+    <div class="gap"></div>
+    <div class="sec-lbl">My Watchlists</div>
+    <div class="wl-card" onclick="showS('s9')">
+      <div class="slogo" style="background:var(--it);color:var(--ca);font-size:10px;border-radius:8px;font-weight:600;">SCR</div>
+      <div class="rc">
+        <div class="rt">FMCG Low P/E <span class="scr-badge">Screener</span></div>
+        <div class="rs" style="color:var(--ca);font:400 12px/15px var(--ff);">Large Cap · P/E &lt; 20 · FMCG · 109 stocks</div>
+      </div>
+      <div class="rr"><svg style="width:16px;height:16px;color:var(--tp);transform:rotate(180deg);"><use href="#ico-chevron-left"/></svg></div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="create-row" onclick="showS('s4')">
+      <div class="create-icon"><svg><use href="#ico-plus"/></svg></div>
+      <span style="font:500 14px/17px var(--ff);color:var(--ca);">Create New Watchlist</span>
+    </div>
+  </div>
+  <div class="bnav">
+    <div class="ntab on"><div class="nti"><svg><use href="#ico-rupee"/></svg></div><div class="ntl">INDstocks</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-dollar"/></svg></div><div class="ntl">US Stocks</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-chevrons-up"/></svg></div><div class="ntl">Dashboard</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-bars"/></svg></div><div class="ntl">Funds</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-cash"/></svg></div><div class="ntl">Insta Cash</div></div>
+  </div>
+  <div class="hi"><div class="hib"></div></div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     S2 · Screener View
+     ═══════════════════════════════════════ -->
+<div class="screen" id="s2" data-screen="S2" data-screen-label="Screener View — toggle">
+  <div class="sb"><span>9:41</span><span>●●●</span></div>
+  <div class="ind-nav">
+    <div class="ind-avatar">CS</div>
+    <div class="ind-actions">
+      <button class="icon-btn" title="Notifications"><svg><use href="#ico-bell"/></svg></button>
+      <button class="icon-btn" title="Search"><svg><use href="#ico-search"/></svg></button>
+    </div>
+  </div>
+  <div class="stabs">
+    <div class="stab">Explore</div>
+    <div class="stab">My Stocks</div>
+    <div class="stab">Orders</div>
+    <div class="stab on">Watchlist</div>
+    <div class="stab">IPO</div>
+  </div>
+  <div class="ticker">
+    <span class="t-open">MARKET IS OPEN</span>
+    <span class="t-item">Sensex 81,245 <span class="up">▲ 1.2%</span></span>
+    <span class="t-item">Nifty 24,460 <span class="up">▲ 0.9%</span></span>
+    <span class="t-item">BankNifty 52,120 <span class="dn">▼ 0.4%</span></span>
+  </div>
+  <div class="wl-name-strip">
+    <div class="wl-ntab on">My Watchlist</div>
+    <div class="wl-ntab" onclick="showS('s9')">FMCG Low P/E</div>
+    <div class="wl-nadd" onclick="showS('s4')"><svg><use href="#ico-plus"/></svg> Create watchlist</div>
+  </div>
+  <div class="wl-bar">
+    <span class="wl-count">18 Stocks</span>
+    <div class="vtog">
+      <div class="vchip off" onclick="showS('s1')">Watchlist</div>
+      <div class="vchip on" onclick="showS('s2')">Screener</div>
+    </div>
+    <div class="cfg-btn" title="Configure columns" onclick="showS('s5')"><svg><use href="#ico-sliders"/></svg></div>
+  </div>
+  <div class="sep-f"></div>
+  <div class="content">
+    <div class="sc-wrap">
+      <div class="sc-hrow">
+        <div class="sc-fh">Stock</div>
+        <div class="sc-sh" id="sh2">
+          <div class="sc-ch">LTP <span class="sa asc"><svg><use href="#ico-sort-asc"/></svg></span></div>
+          <div class="sc-ch">CHG% <span class="sa"><svg><use href="#ico-sort"/></svg></span></div>
+          <div class="sc-ch">MKT CAP <span class="sa"><svg><use href="#ico-sort"/></svg></span></div>
+          <div class="sc-ch">P/E <span class="sa"><svg><use href="#ico-sort"/></svg></span></div>
+          <div class="sc-ch">52W H <span class="sa"><svg><use href="#ico-sort"/></svg></span></div>
+          <div class="sc-ch">VOL <span class="sa"><svg><use href="#ico-sort"/></svg></span></div>
+        </div>
+      </div>
+      <div class="sc-drow">
+        <div class="sc-fc"><div class="sl-sm" style="background:#FFF0E6;color:#FF6631;">Z</div><span class="tkr">ETERNAL</span></div>
+        <div class="sc-sc">
+          <div class="sc-dc"><span class="cv">₹228.50</span></div>
+          <div class="sc-dc"><span class="cv up">+4.2%</span></div>
+          <div class="sc-dc"><span class="cv">2.84L Cr</span></div>
+          <div class="sc-dc"><span class="cv">42.1</span></div>
+          <div class="sc-dc"><span class="cv">₹268.00</span></div>
+          <div class="sc-dc"><span class="cv">1.2 Cr</span></div>
+        </div>
+      </div>
+      <div class="sc-drow">
+        <div class="sc-fc"><div class="sl-sm" style="background:#E6F4FF;color:#036968;">T</div><span class="tkr">TATAPWR</span></div>
+        <div class="sc-sc">
+          <div class="sc-dc"><span class="cv">₹396.15</span></div>
+          <div class="sc-dc"><span class="cv dn">-1.8%</span></div>
+          <div class="sc-dc"><span class="cv">1.26L Cr</span></div>
+          <div class="sc-dc"><span class="cv">38.4</span></div>
+          <div class="sc-dc"><span class="cv">₹447.50</span></div>
+          <div class="sc-dc"><span class="cv">84.5L</span></div>
+        </div>
+      </div>
+      <div class="sc-drow">
+        <div class="sc-fc"><div class="sl-sm" style="background:#E9FBEC;color:#089958;">H</div><span class="tkr">HDFCBNK</span></div>
+        <div class="sc-sc">
+          <div class="sc-dc"><span class="cv">₹1,642</span></div>
+          <div class="sc-dc"><span class="cv up">+0.6%</span></div>
+          <div class="sc-dc"><span class="cv">12.4L Cr</span></div>
+          <div class="sc-dc"><span class="cv">18.2</span></div>
+          <div class="sc-dc"><span class="cv">₹1,880</span></div>
+          <div class="sc-dc"><span class="cv">2.1 Cr</span></div>
+        </div>
+      </div>
+      <div class="sc-drow">
+        <div class="sc-fc"><div class="sl-sm" style="background:#E2F4FF;color:#017AFE;">I</div><span class="tkr">INFY</span></div>
+        <div class="sc-sc">
+          <div class="sc-dc"><span class="cv">₹1,456</span></div>
+          <div class="sc-dc"><span class="cv dn">-2.1%</span></div>
+          <div class="sc-dc"><span class="cv">6.06L Cr</span></div>
+          <div class="sc-dc"><span class="cv">22.8</span></div>
+          <div class="sc-dc"><span class="cv">₹1,842</span></div>
+          <div class="sc-dc"><span class="cv">1.8 Cr</span></div>
+        </div>
+      </div>
+      <div class="sc-drow">
+        <div class="sc-fc"><div class="sl-sm" style="background:#F5F5F8;color:#757779;">W</div><span class="tkr">WIPRO</span></div>
+        <div class="sc-sc">
+          <div class="sc-dc"><span class="cv">₹512.60</span></div>
+          <div class="sc-dc"><span class="cv up">+1.4%</span></div>
+          <div class="sc-dc"><span class="cv">2.71L Cr</span></div>
+          <div class="sc-dc"><span class="cv">19.6</span></div>
+          <div class="sc-dc"><span class="cv">₹619.90</span></div>
+          <div class="sc-dc"><span class="cv">62.1L</span></div>
+        </div>
+      </div>
+      <div class="sc-drow">
+        <div class="sc-fc"><div class="sl-sm" style="background:#FFF4EC;color:#FF6631;">I</div><span class="tkr">ITC</span></div>
+        <div class="sc-sc">
+          <div class="sc-dc"><span class="cv">₹458.30</span></div>
+          <div class="sc-dc"><span class="cv up">+0.8%</span></div>
+          <div class="sc-dc"><span class="cv">5.74L Cr</span></div>
+          <div class="sc-dc"><span class="cv">27.1</span></div>
+          <div class="sc-dc"><span class="cv">₹528.50</span></div>
+          <div class="sc-dc"><span class="cv">71.3L</span></div>
+        </div>
+      </div>
+    </div>
+    <div style="padding:12px 16px;font:400 12px/15px var(--ff);color:var(--tp);text-align:center;">← Scroll rows right to reveal more columns →</div>
+  </div>
+  <div class="bnav">
+    <div class="ntab on"><div class="nti"><svg><use href="#ico-rupee"/></svg></div><div class="ntl">INDstocks</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-dollar"/></svg></div><div class="ntl">US Stocks</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-chevrons-up"/></svg></div><div class="ntl">Dashboard</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-bars"/></svg></div><div class="ntl">Funds</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-cash"/></svg></div><div class="ntl">Insta Cash</div></div>
+  </div>
+  <div class="hi"><div class="hib"></div></div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     S3 · Trader Mode ON
+     ═══════════════════════════════════════ -->
+<div class="screen" id="s3" data-screen="S3" data-screen-label="Trader Mode ON">
+  <div class="sb"><span>9:41</span><span>●●●</span></div>
+  <div class="ind-nav">
+    <div class="ind-avatar">CS</div>
+    <div class="ind-actions">
+      <button class="icon-btn" title="Notifications"><svg><use href="#ico-bell"/></svg></button>
+      <button class="icon-btn" title="Search"><svg><use href="#ico-search"/></svg></button>
+    </div>
+  </div>
+  <div class="stabs">
+    <div class="stab">Explore</div>
+    <div class="stab">My Stocks</div>
+    <div class="stab">Orders</div>
+    <div class="stab on">Watchlist</div>
+    <div class="stab">IPO</div>
+  </div>
+  <div class="ticker">
+    <span class="t-open">MARKET IS OPEN</span>
+    <span class="t-item">Sensex 81,245 <span class="up">▲ 1.2%</span></span>
+    <span class="t-item">Nifty 24,460 <span class="up">▲ 0.9%</span></span>
+  </div>
+  <div class="wl-name-strip">
+    <div class="wl-ntab on">My Watchlist</div>
+    <div class="wl-ntab" onclick="showS('s9')">FMCG Low P/E</div>
+    <div class="wl-nadd" onclick="showS('s4')"><svg><use href="#ico-plus"/></svg> Create watchlist</div>
+  </div>
+  <div class="wl-bar">
+    <span class="wl-count">18 Stocks</span>
+    <div class="vtog">
+      <div class="vchip on">Watchlist</div>
+      <div class="vchip off" onclick="showS('s2')">Screener</div>
+    </div>
+    <div class="ttog" onclick="showS('s1')" title="Trader Mode ON">
+      <svg width="14" height="16" style="color:var(--ca)"><use href="#ico-bolt"/></svg>
+      <div class="trk on"><div class="tthumb"></div></div>
+    </div>
+  </div>
+  <div class="trader-banner">
+    <svg><use href="#ico-bolt"/></svg>
+    <span>Trader Mode ON — tap Buy or Sell to place an order</span>
+  </div>
+  <div class="sep-f"></div>
+  <div class="content">
+    <div class="lrow">
+      <div class="slogo" style="background:#FFF0E6;color:#FF6631;">ZOM</div>
+      <div class="rc">
+        <div class="rt">Eternal Ltd</div>
+        <div class="rs">₹228.50 &nbsp;<span class="up">▲ 4.2%</span></div>
+      </div>
+      <div class="pills">
+        <button class="pill buy" onclick="openOrder('BUY','ZOM','#FFF0E6','#FF6631','Eternal Ltd','ETERNAL','228.50','+4.2','up')">Buy</button>
+        <button class="pill sell" onclick="openOrder('SELL','ZOM','#FFF0E6','#FF6631','Eternal Ltd','ETERNAL','228.50','+4.2','up')">Sell</button>
+      </div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#E6F4FF;color:#036968;">TAT</div>
+      <div class="rc">
+        <div class="rt">TATA Power Ltd.</div>
+        <div class="rs">₹396.15 &nbsp;<span class="dn">▼ 1.8%</span></div>
+      </div>
+      <div class="pills">
+        <button class="pill buy" onclick="openOrder('BUY','TAT','#E6F4FF','#036968','TATA Power Ltd.','TATAPOWER','396.15','-1.8','dn')">Buy</button>
+        <button class="pill sell" onclick="openOrder('SELL','TAT','#E6F4FF','#036968','TATA Power Ltd.','TATAPOWER','396.15','-1.8','dn')">Sell</button>
+      </div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#E9FBEC;color:#089958;">HDFC</div>
+      <div class="rc">
+        <div class="rt">HDFC Bank Ltd.</div>
+        <div class="rs">₹1,642.30 &nbsp;<span class="up">▲ 0.6%</span></div>
+      </div>
+      <div class="pills">
+        <button class="pill buy" onclick="openOrder('BUY','HDFC','#E9FBEC','#089958','HDFC Bank Ltd.','HDFCBANK','1642.30','+0.6','up')">Buy</button>
+        <button class="pill sell" onclick="openOrder('SELL','HDFC','#E9FBEC','#089958','HDFC Bank Ltd.','HDFCBANK','1642.30','+0.6','up')">Sell</button>
+      </div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#E2F4FF;color:#017AFE;">INFY</div>
+      <div class="rc">
+        <div class="rt">Infosys Ltd.</div>
+        <div class="rs">₹1,456.85 &nbsp;<span class="dn">▼ 2.1%</span></div>
+      </div>
+      <div class="pills">
+        <button class="pill buy" onclick="openOrder('BUY','INFY','#E2F4FF','#017AFE','Infosys Ltd.','INFY','1456.85','-2.1','dn')">Buy</button>
+        <button class="pill sell" onclick="openOrder('SELL','INFY','#E2F4FF','#017AFE','Infosys Ltd.','INFY','1456.85','-2.1','dn')">Sell</button>
+      </div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#F5F5F8;color:#757779;">WIP</div>
+      <div class="rc">
+        <div class="rt">Wipro Ltd.</div>
+        <div class="rs">₹512.60 &nbsp;<span class="up">▲ 1.4%</span></div>
+      </div>
+      <div class="pills">
+        <button class="pill buy" onclick="openOrder('BUY','WIP','#F5F5F8','#757779','Wipro Ltd.','WIPRO','512.60','+1.4','up')">Buy</button>
+        <button class="pill sell" onclick="openOrder('SELL','WIP','#F5F5F8','#757779','Wipro Ltd.','WIPRO','512.60','+1.4','up')">Sell</button>
+      </div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#FFF4EC;color:#FF6631;">ITC</div>
+      <div class="rc">
+        <div class="rt">ITC Ltd.</div>
+        <div class="rs">₹458.30 &nbsp;<span class="up">▲ 0.8%</span></div>
+      </div>
+      <div class="pills">
+        <button class="pill buy" onclick="openOrder('BUY','ITC','#FFF4EC','#FF6631','ITC Ltd.','ITC','458.30','+0.8','up')">Buy</button>
+        <button class="pill sell" onclick="openOrder('SELL','ITC','#FFF4EC','#FF6631','ITC Ltd.','ITC','458.30','+0.8','up')">Sell</button>
+      </div>
+    </div>
+  </div>
+  <div class="bnav">
+    <div class="ntab on"><div class="nti"><svg><use href="#ico-rupee"/></svg></div><div class="ntl">INDstocks</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-dollar"/></svg></div><div class="ntl">US Stocks</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-chevrons-up"/></svg></div><div class="ntl">Dashboard</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-bars"/></svg></div><div class="ntl">Funds</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-cash"/></svg></div><div class="ntl">Insta Cash</div></div>
+  </div>
+  <div class="hi"><div class="hib"></div></div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     S4 · Create Watchlist — mode selector
+     ═══════════════════════════════════════ -->
+<div class="screen" id="s4" data-screen="S4" data-screen-label="Create Watchlist — mode selector">
+  <div class="sb"><span>9:41</span><span>●●●</span></div>
+  <div class="ind-nav">
+    <div class="ind-avatar">CS</div>
+    <div class="ind-actions">
+      <button class="icon-btn" title="Notifications"><svg><use href="#ico-bell"/></svg></button>
+    </div>
+  </div>
+  <div style="flex:1;background:var(--bgm);padding:16px;opacity:.2;pointer-events:none;">
+    <div class="lrow" style="background:transparent;">
+      <div class="slogo" style="background:#FFF0E6;color:#FF6631;">ZOM</div>
+      <div class="rc"><div class="rt">Eternal Ltd</div><div class="rs">ETERNAL · 40.8 Qty</div></div>
+      <div class="rr"><div class="rp">₹228.50</div></div>
+    </div>
+  </div>
+  <div class="overlay">
+    <div class="sheet">
+      <div class="s-handle"><div class="s-hbar"></div></div>
+      <div class="s-head">
+        <span class="s-title">Create Watchlist</span>
+        <div class="s-close" onclick="showS('s1')">&#x2715;</div>
+      </div>
+      <div class="s-body">
+        <div class="s-sec">
+          <div class="s-sec-t">How do you want to add stocks?</div>
+          <div class="mcard" onclick="showS('s1')">
+            <div class="mc-icon"><svg><use href="#ico-search-lg"/></svg></div>
+            <div class="mc-t">Add by Search</div>
+            <div class="mc-s">Search and add individual stocks manually to build your watchlist.</div>
+          </div>
+          <div class="mcard on" onclick="showS('s10')">
+            <div class="mc-icon"><svg><use href="#ico-sliders-lg"/></svg></div>
+            <div class="mc-t">Add by Screener <span class="new-tag">New</span></div>
+            <div class="mc-s">Set filters — sector, P/E, market cap and more. Matching stocks become your watchlist.</div>
+          </div>
+        </div>
+      </div>
+      <div class="s-foot">
+        <button class="btn pri" onclick="showS('s10')">Continue with Screener</button>
+      </div>
+    </div>
+  </div>
+  <div class="hi"><div class="hib"></div></div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     S5 · Add by Screener — filter stocks
+     ═══════════════════════════════════════ -->
+<div class="screen" id="s5" data-screen="S5" data-screen-label="Add by Screener — filter sheet">
+  <div class="sb"><span>9:41</span><span>●●●</span></div>
+  <div class="snav">
+    <div class="snav-back" onclick="showS('s4')"><svg><use href="#ico-chevron-left"/></svg></div>
+    <div class="snav-t">Filter Stocks</div>
+    <div class="snav-a">Clear All</div>
+  </div>
+  <div class="content">
+    <div class="s-sec">
+      <div class="s-sec-t">Market Cap</div>
+      <div class="chips">
+        <div class="fchip on">✓ Large Cap</div>
+        <div class="fchip off">Mid Cap</div>
+        <div class="fchip off">Small Cap</div>
+        <div class="fchip off">Micro Cap</div>
+      </div>
+    </div>
+    <div class="sep-f"></div>
+    <div class="s-sec">
+      <div class="s-sec-t">P/E Ratio</div>
+      <div class="radio">
+        <div class="rdot on"><div class="rinner"></div></div>
+        <span class="rl">Below 20</span>
+        <span class="rsub" style="color:var(--cp);">Value zone</span>
+      </div>
+      <div class="radio">
+        <div class="rdot"></div>
+        <span class="rl">20 – 40</span>
+        <span class="rsub">Growth zone</span>
+      </div>
+      <div class="radio">
+        <div class="rdot"></div>
+        <span class="rl">Above 40</span>
+        <span class="rsub" style="color:var(--cal);">Premium</span>
+      </div>
+    </div>
+    <div class="sep-f"></div>
+    <div class="s-sec">
+      <div class="s-sec-t">Sector</div>
+      <div class="chips">
+        <div class="fchip on">✓ FMCG</div>
+        <div class="fchip off">Banking</div>
+        <div class="fchip off">IT</div>
+        <div class="fchip off">Pharma</div>
+        <div class="fchip off">Auto</div>
+        <div class="fchip off">Energy</div>
+        <div class="fchip off">Infra</div>
+      </div>
+    </div>
+    <div class="sep-f"></div>
+    <div class="s-sec">
+      <div class="s-sec-t">52W Performance</div>
+      <div class="chips">
+        <div class="fchip off">Near 52W High</div>
+        <div class="fchip off">Near 52W Low</div>
+        <div class="fchip off">Up &gt; 20%</div>
+        <div class="fchip off">Down &gt; 20%</div>
+      </div>
+    </div>
+    <div class="sep-f"></div>
+    <div class="s-sec">
+      <div class="s-sec-t">Dividend Yield</div>
+      <div class="chips">
+        <div class="fchip off">&gt; 1%</div>
+        <div class="fchip off">&gt; 2%</div>
+        <div class="fchip off">&gt; 4%</div>
+      </div>
+    </div>
+    <div style="height:16px;"></div>
+  </div>
+  <div class="fsumm">
+    <svg><use href="#ico-filter"/></svg>
+    <span class="fsumm-t">3 filters active: Large Cap · P/E &lt; 20 · FMCG</span>
+  </div>
+  <div class="btn-foot">
+    <button class="btn pri" onclick="showS('s6')">Show 109 Stocks</button>
+  </div>
+  <div class="hi"><div class="hib"></div></div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     S6 · Screener Results + Save
+     ═══════════════════════════════════════ -->
+<div class="screen" id="s6" data-screen="S6" data-screen-label="Screener Results + Save">
+  <div class="sb"><span>9:41</span><span>●●●</span></div>
+  <div class="snav">
+    <div class="snav-back" onclick="showS('s5')"><svg><use href="#ico-chevron-left"/></svg></div>
+    <div class="snav-t">Screener Results</div>
+    <div class="snav-a" onclick="showS('s5')">Edit Filters</div>
+  </div>
+  <div class="res-bar">
+    <div>
+      <div class="res-n">109 Stocks Match</div>
+      <div class="res-s">Large Cap · P/E &lt; 20 · FMCG</div>
+    </div>
+    <span style="font:500 11px/15px var(--ff);color:var(--t3);">Mkt Cap ▼</span>
+  </div>
+  <div class="sep-f"></div>
+  <div class="sc-hrow" style="flex-shrink:0;">
+    <div class="sc-fh">Stock</div>
+    <div class="sc-sh" id="sh6">
+      <div class="sc-ch">LTP <span class="sa"><svg><use href="#ico-sort"/></svg></span></div>
+      <div class="sc-ch">CHG% <span class="sa"><svg><use href="#ico-sort"/></svg></span></div>
+      <div class="sc-ch">MKT CAP <span class="sa asc"><svg><use href="#ico-sort-asc"/></svg></span></div>
+      <div class="sc-ch">P/E <span class="sa"><svg><use href="#ico-sort"/></svg></span></div>
+      <div class="sc-ch">52W H <span class="sa"><svg><use href="#ico-sort"/></svg></span></div>
+    </div>
+  </div>
+  <div class="content">
+    <div class="sc-drow">
+      <div class="sc-fc"><div class="sl-sm" style="background:#E9FBEC;color:#089958;">H</div><span class="tkr">HDFCBNK</span></div>
+      <div class="sc-sc">
+        <div class="sc-dc"><span class="cv">₹1,642</span></div>
+        <div class="sc-dc"><span class="cv up">+0.6%</span></div>
+        <div class="sc-dc"><span class="cv">12.4L Cr</span></div>
+        <div class="sc-dc"><span class="cv">18.2</span></div>
+        <div class="sc-dc"><span class="cv">₹1,880</span></div>
+      </div>
+    </div>
+    <div class="sc-drow">
+      <div class="sc-fc"><div class="sl-sm" style="background:#F5F5F8;color:#757779;">W</div><span class="tkr">WIPRO</span></div>
+      <div class="sc-sc">
+        <div class="sc-dc"><span class="cv">₹512.60</span></div>
+        <div class="sc-dc"><span class="cv up">+1.4%</span></div>
+        <div class="sc-dc"><span class="cv">2.71L Cr</span></div>
+        <div class="sc-dc"><span class="cv">19.6</span></div>
+        <div class="sc-dc"><span class="cv">₹619.90</span></div>
+      </div>
+    </div>
+    <div class="sc-drow">
+      <div class="sc-fc"><div class="sl-sm" style="background:#E2F4FF;color:#017AFE;">ITC</div><span class="tkr">ITC</span></div>
+      <div class="sc-sc">
+        <div class="sc-dc"><span class="cv">₹458.30</span></div>
+        <div class="sc-dc"><span class="cv up">+0.8%</span></div>
+        <div class="sc-dc"><span class="cv">5.74L Cr</span></div>
+        <div class="sc-dc"><span class="cv">27.1</span></div>
+        <div class="sc-dc"><span class="cv">₹528.50</span></div>
+      </div>
+    </div>
+    <div class="sc-drow">
+      <div class="sc-fc"><div class="sl-sm" style="background:#FFF0E6;color:#FF6631;">HUL</div><span class="tkr">HINDUNILVR</span></div>
+      <div class="sc-sc">
+        <div class="sc-dc"><span class="cv">₹2,314</span></div>
+        <div class="sc-dc"><span class="cv dn">-0.4%</span></div>
+        <div class="sc-dc"><span class="cv">5.42L Cr</span></div>
+        <div class="sc-dc"><span class="cv">56.4</span></div>
+        <div class="sc-dc"><span class="cv">₹2,778</span></div>
+      </div>
+    </div>
+    <div class="sc-drow">
+      <div class="sc-fc"><div class="sl-sm" style="background:#E9FBEC;color:#089958;">BRI</div><span class="tkr">BRITANNIA</span></div>
+      <div class="sc-sc">
+        <div class="sc-dc"><span class="cv">₹5,124</span></div>
+        <div class="sc-dc"><span class="cv up">+1.1%</span></div>
+        <div class="sc-dc"><span class="cv">1.23L Cr</span></div>
+        <div class="sc-dc"><span class="cv">52.8</span></div>
+        <div class="sc-dc"><span class="cv">₹5,740</span></div>
+      </div>
+    </div>
+    <div style="padding:12px 16px;font:400 12px/15px var(--ff);color:var(--tp);text-align:center;">+ 104 more stocks match your filters</div>
+    <div class="gap"></div>
+    <div class="s-sec" style="padding-bottom:16px;">
+      <div class="inp-lbl">Name Your Watchlist</div>
+      <input type="text" class="inp" placeholder="e.g. FMCG Low P/E" value="FMCG Low P/E">
+      <div class="inp-hint">Stocks are fixed at save time. Tap Edit Filters to re-screen anytime.</div>
+    </div>
+    <div style="height:24px;"></div>
+  </div>
+  <div class="btn-foot">
+    <button class="btn grn" onclick="showS('s9')">Save Watchlist — 109 Stocks</button>
+  </div>
+  <div class="hi"><div class="hib"></div></div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     S7 · Order Confirmation Sheet (replaces alert() — opens over S3 Trader Mode)
+     ═══════════════════════════════════════ -->
+<div class="screen" id="s7" data-screen="S7" data-screen-label="Order Confirmation Sheet">
+  <div class="sb"><span>9:41</span><span>●●●</span></div>
+  <div class="ind-nav">
+    <div class="ind-avatar">CS</div>
+    <div class="ind-actions">
+      <button class="icon-btn" title="Notifications"><svg><use href="#ico-bell"/></svg></button>
+      <button class="icon-btn" title="Search"><svg><use href="#ico-search"/></svg></button>
+    </div>
+  </div>
+  <div class="stabs">
+    <div class="stab">Explore</div>
+    <div class="stab">My Stocks</div>
+    <div class="stab">Orders</div>
+    <div class="stab on">Watchlist</div>
+    <div class="stab">IPO</div>
+  </div>
+  <div class="ticker">
+    <span class="t-open">MARKET IS OPEN</span>
+    <span class="t-item">Sensex 81,245 <span class="up">▲ 1.2%</span></span>
+    <span class="t-item">Nifty 24,460 <span class="up">▲ 0.9%</span></span>
+  </div>
+  <div style="flex:1;background:var(--bgm);opacity:.35;pointer-events:none;"></div>
+  <div class="overlay" onclick="if(event.target===this)showS('s3')">
+    <div class="sheet" style="max-height:600px;">
+      <div class="s-handle"><div class="s-hbar"></div></div>
+      <div class="s-head">
+        <span class="s-title" id="ord-side-title">Buy Eternal Ltd</span>
+        <div class="s-close" onclick="showS('s3')">&#x2715;</div>
+      </div>
+      <div class="s-body">
+        <div class="ord-stock">
+          <div class="slogo" id="ord-logo" style="background:#FFF0E6;color:#FF6631;width:40px;height:40px;border-radius:10px;font-size:11px;">ZOM</div>
+          <div class="ord-stock-info">
+            <div class="ord-stock-name" id="ord-name">Eternal Ltd</div>
+            <div class="ord-stock-tkr"><span id="ord-tkr">ETERNAL</span> · NSE</div>
+          </div>
+          <div class="ord-stock-price">
+            <div class="ord-stock-ltp" id="ord-ltp">₹228.50</div>
+            <div class="ord-stock-chg up" id="ord-chg">+4.2%</div>
+          </div>
+        </div>
+        <div class="ord-row">
+          <span class="ord-row-l">Order type</span>
+          <div class="ord-seg">
+            <div class="ord-seg-opt on">Market</div>
+            <div class="ord-seg-opt">Limit</div>
+          </div>
+        </div>
+        <div class="ord-row">
+          <span class="ord-row-l">Product</span>
+          <div class="ord-seg">
+            <div class="ord-seg-opt on">Delivery</div>
+            <div class="ord-seg-opt">Intraday</div>
+          </div>
+        </div>
+        <div class="ord-row">
+          <span class="ord-row-l">Quantity</span>
+          <div class="ord-qty">
+            <button class="ord-qty-btn" onclick="ordQty(-1)">−</button>
+            <span class="ord-qty-val" id="ord-qty">10</span>
+            <button class="ord-qty-btn" onclick="ordQty(1)">+</button>
+          </div>
+        </div>
+        <div class="ord-row">
+          <span class="ord-row-l">Price</span>
+          <span class="ord-row-r" id="ord-price-row">At market <span style="color:var(--t3);font-weight:400;">(~₹228.50)</span></span>
+        </div>
+        <div class="ord-row" style="background:var(--bgm);">
+          <span class="ord-row-l">Estimated charges</span>
+          <span class="ord-row-r" style="color:var(--ca);text-decoration:underline;">View breakup</span>
+        </div>
+        <div class="ord-total">
+          <span class="ord-total-l">Total order value</span>
+          <span class="ord-total-r" id="ord-total">₹2,285.00</span>
+        </div>
+        <div style="padding:12px 16px;font:400 12px/16px var(--ff);color:var(--t3);display:flex;align-items:flex-start;gap:6px;">
+          <svg style="width:14px;height:14px;color:var(--t3);margin-top:1px;flex-shrink:0;"><use href="#ico-info"/></svg>
+          <span>Funds will be debited from IND Wallet. Margin available: ₹47,820.</span>
+        </div>
+      </div>
+      <div class="s-foot" style="display:flex;gap:8px;">
+        <button class="btn" style="flex:1;height:48px;background:var(--bgs);color:var(--t1);border-radius:28px;font:500 16px/20px var(--ff);" onclick="showS('s3')">Cancel</button>
+        <button class="btn" id="ord-cta" style="flex:2;height:48px;background:var(--cp);color:#fff;border-radius:28px;font:600 16px/20px var(--ff);" onclick="showS('s8')">Place Buy Order</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     S8 · Order Placed Success
+     ═══════════════════════════════════════ -->
+<div class="screen" id="s8" data-screen="S8" data-screen-label="Order Placed — Success">
+  <div class="sb"><span>9:41</span><span>●●●</span></div>
+  <div class="ind-nav">
+    <div class="ind-avatar">CS</div>
+    <div class="ind-actions">
+      <button class="icon-btn" title="Notifications"><svg><use href="#ico-bell"/></svg></button>
+      <button class="icon-btn" title="Search"><svg><use href="#ico-search"/></svg></button>
+    </div>
+  </div>
+  <div class="success-wrap">
+    <div class="success-icon"><svg><use href="#ico-check-circle"/></svg></div>
+    <div class="success-title" id="suc-title">Buy order placed</div>
+    <div class="success-body">Your order is being processed. You'll get a confirmation once it's executed.</div>
+    <div class="success-card">
+      <div class="success-row"><span class="success-row-l">Stock</span><span class="success-row-r" id="suc-stock">Eternal Ltd · ETERNAL</span></div>
+      <div class="success-row"><span class="success-row-l">Quantity</span><span class="success-row-r" id="suc-qty">10 shares</span></div>
+      <div class="success-row"><span class="success-row-l">Order type</span><span class="success-row-r">Market · Delivery</span></div>
+      <div class="success-row"><span class="success-row-l">Estimated value</span><span class="success-row-r" id="suc-total">₹2,285.00</span></div>
+      <div class="success-row"><span class="success-row-l">Order ID</span><span class="success-row-r">#IND2046193</span></div>
+    </div>
+  </div>
+  <div class="btn-foot">
+    <button class="btn pri" onclick="showS('s3')">Done — back to watchlist</button>
+  </div>
+  <div class="hi"><div class="hib"></div></div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     S9 · FMCG Low P/E — screener-based watchlist (post-save destination)
+     Demonstrates: watchlist tab switching, filter summary line, Edit/Re-screen entry,
+     screener-based watchlist with its own stock list (different from "My Watchlist")
+     ═══════════════════════════════════════ -->
+<div class="screen" id="s9" data-screen="S9" data-screen-label="FMCG Low P/E — screener-based watchlist">
+  <div class="sb"><span>9:41</span><span>●●●</span></div>
+  <div class="ind-nav">
+    <div class="ind-avatar">CS</div>
+    <div class="ind-actions">
+      <button class="icon-btn" title="Notifications"><svg><use href="#ico-bell"/></svg></button>
+      <button class="icon-btn" title="Search"><svg><use href="#ico-search"/></svg></button>
+    </div>
+  </div>
+  <div class="stabs">
+    <div class="stab">Explore</div>
+    <div class="stab">My Stocks</div>
+    <div class="stab">Orders</div>
+    <div class="stab on">Watchlist</div>
+    <div class="stab">IPO</div>
+  </div>
+  <div class="ticker">
+    <span class="t-open">MARKET IS OPEN</span>
+    <span class="t-item">Sensex 81,245 <span class="up">▲ 1.2%</span></span>
+    <span class="t-item">Nifty 24,460 <span class="up">▲ 0.9%</span></span>
+    <span class="t-item">BankNifty 52,120 <span class="dn">▼ 0.4%</span></span>
+  </div>
+  <div class="wl-name-strip">
+    <div class="wl-ntab" onclick="showS('s1')">My Watchlist</div>
+    <div class="wl-ntab on">FMCG Low P/E</div>
+    <div class="wl-nadd" onclick="showS('s4')"><svg><use href="#ico-plus"/></svg> Create watchlist</div>
+  </div>
+  <!-- Filter summary line — tappable to re-screen, per DRD §Screener-based watchlist header -->
+  <div onclick="showS('s5')" style="display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--it);border-bottom:1px solid rgba(1,122,254,.12);cursor:pointer;">
+    <svg style="width:14px;height:14px;color:var(--ca);flex-shrink:0;"><use href="#ico-filter"/></svg>
+    <span style="font:500 13px/17px var(--ff);color:var(--ca);flex:1;">Large Cap · P/E &lt; 20 · FMCG</span>
+    <span style="font:400 12px/15px var(--ff);color:var(--ca);">Edit</span>
+  </div>
+  <div class="wl-bar">
+    <span class="wl-count">109 Stocks</span>
+    <div class="vtog">
+      <div class="vchip on">Watchlist</div>
+      <div class="vchip off" onclick="showS('s2')">Screener</div>
+    </div>
+    <div class="ttog" title="Trader Mode (off)" style="opacity:.6;cursor:default;">
+      <svg width="14" height="16" style="color:var(--t3)"><use href="#ico-bolt"/></svg>
+      <div class="trk off"><div class="tthumb"></div></div>
+    </div>
+  </div>
+  <div class="act-row" style="justify-content:flex-end;gap:8px;padding:0 16px;">
+    <div class="act-circle" title="Re-screen filters" onclick="showS('s5')"><svg><use href="#ico-filter"/></svg></div>
+    <div class="act-circle" title="Edit name"><svg><use href="#ico-edit"/></svg></div>
+  </div>
+  <div class="sep-f"></div>
+  <div class="content">
+    <!-- Real FMCG Low P/E stocks — different from My Watchlist's data -->
+    <div class="lrow">
+      <div class="slogo" style="background:#E9FBEC;color:#089958;">HDFC</div>
+      <div class="rc">
+        <div class="rt">HDFC Bank Ltd.</div>
+        <div class="rs">HDFCBANK <div class="rdiv"></div> P/E 18.2 <div class="rdiv"></div> 12.4L Cr</div>
+      </div>
+      <div class="rr"><div class="rp">₹1,642.30</div><div class="rc2 up">▲ 0.6%</div></div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#FFF4EC;color:#FF6631;">ITC</div>
+      <div class="rc">
+        <div class="rt">ITC Ltd.</div>
+        <div class="rs">ITC <div class="rdiv"></div> P/E 16.8 <div class="rdiv"></div> 5.74L Cr</div>
+      </div>
+      <div class="rr"><div class="rp">₹458.30</div><div class="rc2 up">▲ 0.8%</div></div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#FFF0E6;color:#FF6631;">HUL</div>
+      <div class="rc">
+        <div class="rt">Hindustan Unilever</div>
+        <div class="rs">HINDUNILVR <div class="rdiv"></div> P/E 19.4 <div class="rdiv"></div> 5.42L Cr</div>
+      </div>
+      <div class="rr"><div class="rp">₹2,314.10</div><div class="rc2 dn">▼ 0.4%</div></div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#E9FBEC;color:#089958;">BRI</div>
+      <div class="rc">
+        <div class="rt">Britannia Industries</div>
+        <div class="rs">BRITANNIA <div class="rdiv"></div> P/E 18.1 <div class="rdiv"></div> 1.23L Cr</div>
+      </div>
+      <div class="rr"><div class="rp">₹5,124.80</div><div class="rc2 up">▲ 1.1%</div></div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#E2F4FF;color:#017AFE;">DAB</div>
+      <div class="rc">
+        <div class="rt">Dabur India Ltd.</div>
+        <div class="rs">DABUR <div class="rdiv"></div> P/E 17.6 <div class="rdiv"></div> 92.4K Cr</div>
+      </div>
+      <div class="rr"><div class="rp">₹532.40</div><div class="rc2 up">▲ 0.3%</div></div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#E6F4FF;color:#036968;">MAR</div>
+      <div class="rc">
+        <div class="rt">Marico Ltd.</div>
+        <div class="rs">MARICO <div class="rdiv"></div> P/E 19.8 <div class="rdiv"></div> 80.1K Cr</div>
+      </div>
+      <div class="rr"><div class="rp">₹620.15</div><div class="rc2 up">▲ 1.6%</div></div>
+    </div>
+    <div class="sep-i"></div>
+    <div class="lrow">
+      <div class="slogo" style="background:#FFEDDF;color:#FF6631;">GOD</div>
+      <div class="rc">
+        <div class="rt">Godrej Consumer</div>
+        <div class="rs">GODREJCP <div class="rdiv"></div> P/E 19.2 <div class="rdiv"></div> 1.18L Cr</div>
+      </div>
+      <div class="rr"><div class="rp">₹1,156.30</div><div class="rc2 dn">▼ 0.7%</div></div>
+    </div>
+    <div style="padding:14px 16px;font:400 12px/16px var(--ff);color:var(--tp);text-align:center;">+ 102 more stocks match your filters</div>
+  </div>
+  <div class="bnav">
+    <div class="ntab on"><div class="nti"><svg><use href="#ico-rupee"/></svg></div><div class="ntl">INDstocks</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-dollar"/></svg></div><div class="ntl">US Stocks</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-chevrons-up"/></svg></div><div class="ntl">Dashboard</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-bars"/></svg></div><div class="ntl">Funds</div></div>
+    <div class="ntab"><div class="nti"><svg><use href="#ico-cash"/></svg></div><div class="ntl">Insta Cash</div></div>
+  </div>
+  <div class="hi"><div class="hib"></div></div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     S10 · Screener Cold State (Add by Screener — first time, no filters)
+     ═══════════════════════════════════════ -->
+<div class="screen" id="s10" data-screen="S10" data-screen-label="Screener Cold State">
+  <div class="sb"><span>9:41</span><span>●●●</span></div>
+  <div class="snav">
+    <div class="snav-back" onclick="showS('s4')"><svg><use href="#ico-chevron-left"/></svg></div>
+    <div class="snav-t">Add by Screener</div>
+    <div class="snav-a"></div>
+  </div>
+  <div class="cold-wrap">
+    <div class="cold-icon"><svg><use href="#ico-empty-cold"/></svg></div>
+    <div class="cold-title">Build your watchlist with filters</div>
+    <div class="cold-body">Pick filters across market cap, sector, P/E, performance and more. Matching stocks become your saved watchlist.</div>
+    <button class="btn pri" style="width:auto;padding:0 24px;height:44px;border-radius:24px;font:500 14px/44px var(--ff);" onclick="showS('s5')">Set filters</button>
+    <div style="margin-top:32px;padding:0 16px;width:100%;max-width:343px;">
+      <div style="font:500 11px/15px var(--ff);color:var(--t3);text-transform:uppercase;letter-spacing:.3px;margin-bottom:10px;">Quick start</div>
+      <div class="lrow" onclick="showS('s5')" style="height:56px;border:1px solid var(--sep);border-radius:8px;margin-bottom:8px;padding:0 14px;">
+        <div class="slogo" style="background:var(--it);color:var(--ca);font-size:9px;font-weight:600;border-radius:6px;width:28px;height:28px;">FMC</div>
+        <div class="rc"><div class="rt" style="font:500 13px/16px var(--ff);">FMCG Low P/E</div><div class="rs" style="font:400 11px/15px var(--ff);">Large Cap · P/E &lt; 20 · FMCG</div></div>
+      </div>
+      <div class="lrow" onclick="showS('s5')" style="height:56px;border:1px solid var(--sep);border-radius:8px;margin-bottom:8px;padding:0 14px;">
+        <div class="slogo" style="background:#FFF0E6;color:#FF6631;font-size:9px;font-weight:600;border-radius:6px;width:28px;height:28px;">52W</div>
+        <div class="rc"><div class="rt" style="font:500 13px/16px var(--ff);">Near 52W Highs</div><div class="rs" style="font:400 11px/15px var(--ff);">Up &gt; 20% · Large + Mid Cap</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="hi"><div class="hib"></div></div>
+</div>
+
+</div><!-- /frame -->
+
+<!-- ═══════════════════════════════════════
+     REVIEW NAVIGATOR (skill §5.2 mandatory for >5 screens)
+     ═══════════════════════════════════════ -->
+<div id="review-nav">
+  <div class="rn-toggle" onclick="document.getElementById('review-nav').classList.toggle('collapsed')">−</div>
+  <div class="rn-title">Review Nav</div>
+  <div class="rn-group">
+    <div class="rn-glabel">Watchlist views (entry)</div>
+    <div class="rn-item rn-entry" onclick="showS('s1')">S1 · My Watchlist (compact)</div>
+    <div class="rn-item rn-entry" onclick="showS('s9')">S9 · FMCG Low P/E (screener-based)</div>
+  </div>
+  <div class="rn-group">
+    <div class="rn-glabel">Active modes (same watchlist)</div>
+    <div class="rn-item rn-active" onclick="showS('s2')">S2 · Screener View toggle</div>
+    <div class="rn-item rn-active" onclick="showS('s3')">S3 · Trader Mode ON</div>
+  </div>
+  <div class="rn-group">
+    <div class="rn-glabel">Create-by-screener flow</div>
+    <div class="rn-item rn-warn" onclick="showS('s4')">S4 · Mode selector sheet</div>
+    <div class="rn-item rn-warn" onclick="showS('s10')">S10 · Cold state</div>
+    <div class="rn-item rn-warn" onclick="showS('s5')">S5 · Filter sheet</div>
+    <div class="rn-item rn-warn" onclick="showS('s6')">S6 · Results + Save</div>
+  </div>
+  <div class="rn-group">
+    <div class="rn-glabel">Order flow (from S3)</div>
+    <div class="rn-item rn-locked" onclick="showS('s7')">S7 · Order sheet</div>
+    <div class="rn-item rn-locked" onclick="showS('s8')">S8 · Order placed</div>
+  </div>
+</div>
+
+<script>
+function showS(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  var t=document.getElementById(id);
+  if(t){t.classList.add('active');syncScroll();}
+}
+
+/* Order sheet — populate S7 with stock context, then open it */
+var _ord = {side:'BUY', qty:10, price:228.50, stock:'Eternal Ltd', tkr:'ETERNAL'};
+function openOrder(side, abbr, bg, fg, name, tkr, ltp, chg, dir){
+  _ord.side = side; _ord.qty = 10; _ord.price = parseFloat(ltp);
+  _ord.stock = name; _ord.tkr = tkr;
+  document.getElementById('ord-side-title').textContent = (side==='BUY'?'Buy ':'Sell ') + name;
+  var logo = document.getElementById('ord-logo');
+  logo.style.background = bg; logo.style.color = fg; logo.textContent = abbr;
+  document.getElementById('ord-name').textContent = name;
+  document.getElementById('ord-tkr').textContent = tkr;
+  document.getElementById('ord-ltp').textContent = '₹' + Number(ltp).toLocaleString('en-IN',{minimumFractionDigits:2});
+  var chgEl = document.getElementById('ord-chg');
+  chgEl.textContent = (chg.startsWith('-')?'▼ ':'▲ ') + chg.replace('-','').replace('+','') + '%';
+  chgEl.className = 'ord-stock-chg ' + dir;
+  document.getElementById('ord-price-row').innerHTML = 'At market <span style="color:var(--t3);font-weight:400;">(~₹' + Number(ltp).toLocaleString('en-IN',{minimumFractionDigits:2}) + ')</span>';
+  var cta = document.getElementById('ord-cta');
+  if(side==='BUY'){ cta.style.background = 'var(--cp)'; cta.textContent = 'Place Buy Order'; }
+  else { cta.style.background = 'var(--cn)'; cta.textContent = 'Place Sell Order'; }
+  refreshOrdTotal();
+  // Pre-fill success state
+  document.getElementById('suc-title').textContent = (side==='BUY'?'Buy':'Sell') + ' order placed';
+  document.getElementById('suc-stock').textContent = name + ' · ' + tkr;
+  showS('s7');
+}
+function ordQty(delta){
+  _ord.qty = Math.max(1, _ord.qty + delta);
+  document.getElementById('ord-qty').textContent = _ord.qty;
+  refreshOrdTotal();
+}
+function refreshOrdTotal(){
+  var total = (_ord.qty * _ord.price);
+  document.getElementById('ord-total').textContent = '₹' + total.toLocaleString('en-IN',{minimumFractionDigits:2});
+  document.getElementById('suc-qty').textContent = _ord.qty + ' shares';
+  document.getElementById('suc-total').textContent = '₹' + total.toLocaleString('en-IN',{minimumFractionDigits:2});
+}
+function syncScroll(){
+  var rows=[...document.querySelectorAll('.screen.active .sc-sc')];
+  var heads=[...document.querySelectorAll('.screen.active .sc-sh')];
+  var all=[...rows,...heads];
+  all.forEach(el=>{
+    var c=el.cloneNode(true);
+    el.parentNode.replaceChild(c,el);
+  });
+  rows=[...document.querySelectorAll('.screen.active .sc-sc')];
+  heads=[...document.querySelectorAll('.screen.active .sc-sh')];
+  function onScroll(src){
+    var l=src.scrollLeft;
+    [...rows,...heads].forEach(r=>{if(r!==src)r.scrollLeft=l;});
+  }
+  rows.forEach(r=>r.addEventListener('scroll',()=>onScroll(r),{passive:true}));
+  heads.forEach(h=>h.addEventListener('scroll',()=>onScroll(h),{passive:true}));
+}
+syncScroll();
+</script>
+<script src="/prototype-bridge.js" defer></script>
+</body>
+</html>

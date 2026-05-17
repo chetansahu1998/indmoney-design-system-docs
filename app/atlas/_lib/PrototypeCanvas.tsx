@@ -29,7 +29,9 @@
  * surface tokens.
  */
 
-import React from "react";
+import React, { useRef } from "react";
+
+import { PrototypeAnchorBridge } from "./PrototypeAnchorBridge";
 
 interface Props {
   url: string;
@@ -38,6 +40,11 @@ interface Props {
 }
 
 export function PrototypeCanvas({ url, title, banner }: Props) {
+  // Ref shared with PrototypeAnchorBridge so it can validate inbound
+  // postMessage events by `event.source === iframeRef.current.contentWindow`,
+  // and so plan 005 Phase C's reverse-direction focus can post into the
+  // iframe.
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   // Localhost over HTTP is permitted (Next dev serves prototype HTML from
   // /public on http://localhost:3001); all other origins require HTTPS so
   // we never mixed-content-block a real-world prototype URL.
@@ -69,6 +76,7 @@ export function PrototypeCanvas({ url, title, banner }: Props) {
         </div>
       )}
       <iframe
+        ref={iframeRef}
         src={url}
         title={title ?? "Prototype"}
         sandbox="allow-scripts allow-same-origin allow-forms"
@@ -80,6 +88,7 @@ export function PrototypeCanvas({ url, title, banner }: Props) {
             : "lc-proto-iframe"
         }
       />
+      <PrototypeAnchorBridge iframeRef={iframeRef} />
       <div className="lc-proto-footer">
         <a href={url} target="_blank" rel="noreferrer noopener">
           Open prototype in new tab ↗
