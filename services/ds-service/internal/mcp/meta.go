@@ -502,6 +502,8 @@ func NewDefaultRegistry() *Registry {
 	r.Register(prdAttachFrameTool{})
 	r.Register(prdDetachFrameTool{})
 	r.Register(prdExportTool{})
+	// Deep — universal slug resolver (U9b, KTD-6).
+	r.Register(resolveTool{})
 
 	metaRegistry = r
 	return r
