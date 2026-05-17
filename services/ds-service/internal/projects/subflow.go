@@ -49,14 +49,24 @@ type SubProduct struct {
 // SubFlow is a first-class row in `sub_flow`. Hangs off a SubProduct.
 // drd_id and figma_section_id are nullable — the workflow allows
 // authoring before the Figma section exists.
+//
+// Prototype columns (U3b — mig 0039) carry the KTD-8 "prototype as
+// placeholder" lifecycle: a PM can attach an HTML prototype URL while
+// the design is still in flight; autosync flips PrototypeSupersededAt
+// the moment it links FigmaSectionID via a section on a final-classified
+// page (figma_page_classifier.PageClassFinal, mig 0029).
 type SubFlow struct {
-	ID             string
-	SubProductID   string
-	Name           string
-	Slug           string  // lowercase, hyphenated; scoped to sub_product
-	DRDID          *string // nullable; set by U3 when a DRD is opened
-	FigmaSectionID *string // nullable; set by U2 autosync
-	CreatedAt      time.Time
+	ID                    string
+	SubProductID          string
+	Name                  string
+	Slug                  string  // lowercase, hyphenated; scoped to sub_product
+	DRDID                 *string // nullable; set by U3 when a DRD is opened
+	FigmaSectionID        *string // nullable; set by U2 autosync (gated by U3b on final-page residency)
+	PrototypeURL          *string // nullable; set by AttachPrototype (U3b)
+	PrototypeTitle        *string // nullable; companion to PrototypeURL
+	PrototypeAttachedAt   *time.Time
+	PrototypeSupersededAt *time.Time // nullable; set when a final-page section is linked
+	CreatedAt             time.Time
 }
 
 // FullSlug returns the universal join key {sub_product.slug}/{sub_flow.slug}.
@@ -122,6 +132,14 @@ func scanSubProduct(row interface {
 	return sp, nil
 }
 
+// subFlowSelectCols is the canonical column list for SELECT queries that
+// build a SubFlow row. Centralised so the four prototype columns added
+// by mig 0039 stay aligned across every reader. Order matches the
+// Scan target list inside scanSubFlow.
+const subFlowSelectCols = `id, sub_product_id, name, slug, drd_id, figma_section_id,
+		prototype_url, prototype_title, prototype_attached_at, prototype_superseded_at,
+		created_at`
+
 // scanSubFlow is the shared row decoder.
 func scanSubFlow(row interface {
 	Scan(dest ...any) error
@@ -129,8 +147,11 @@ func scanSubFlow(row interface {
 	var sf SubFlow
 	var createdAt string
 	var drdID, figmaSectionID sql.NullString
+	var protoURL, protoTitle, protoAttachedAt, protoSupersededAt sql.NullString
 	if err := row.Scan(&sf.ID, &sf.SubProductID, &sf.Name, &sf.Slug,
-		&drdID, &figmaSectionID, &createdAt); err != nil {
+		&drdID, &figmaSectionID,
+		&protoURL, &protoTitle, &protoAttachedAt, &protoSupersededAt,
+		&createdAt); err != nil {
 		return SubFlow{}, err
 	}
 	if drdID.Valid {
@@ -140,6 +161,22 @@ func scanSubFlow(row interface {
 	if figmaSectionID.Valid {
 		v := figmaSectionID.String
 		sf.FigmaSectionID = &v
+	}
+	if protoURL.Valid {
+		v := protoURL.String
+		sf.PrototypeURL = &v
+	}
+	if protoTitle.Valid {
+		v := protoTitle.String
+		sf.PrototypeTitle = &v
+	}
+	if protoAttachedAt.Valid {
+		ts := parseTime(protoAttachedAt.String)
+		sf.PrototypeAttachedAt = &ts
+	}
+	if protoSupersededAt.Valid {
+		ts := parseTime(protoSupersededAt.String)
+		sf.PrototypeSupersededAt = &ts
 	}
 	sf.CreatedAt = parseTime(createdAt)
 	return sf, nil
@@ -278,7 +315,7 @@ func (t *TenantRepo) GetSubFlowByName(ctx context.Context, subProductID, name st
 
 func (t *TenantRepo) getSubFlowByLowerName(ctx context.Context, subProductID, lowerName string, h dbtx) (SubFlow, error) {
 	row := h.QueryRowContext(ctx,
-		`SELECT id, sub_product_id, name, slug, drd_id, figma_section_id, created_at
+		`SELECT `+subFlowSelectCols+`
 		   FROM sub_flow
 		  WHERE tenant_id = ? AND sub_product_id = ? AND LOWER(TRIM(name)) = ?`,
 		t.tenantID, subProductID, lowerName,
@@ -305,7 +342,9 @@ func (t *TenantRepo) GetSubFlowBySlug(ctx context.Context, fullSlug string) (Sub
 		return SubFlow{}, ErrNotFound
 	}
 	row := t.readHandle().QueryRowContext(ctx,
-		`SELECT sf.id, sf.sub_product_id, sf.name, sf.slug, sf.drd_id, sf.figma_section_id, sf.created_at
+		`SELECT sf.id, sf.sub_product_id, sf.name, sf.slug, sf.drd_id, sf.figma_section_id,
+		        sf.prototype_url, sf.prototype_title, sf.prototype_attached_at, sf.prototype_superseded_at,
+		        sf.created_at
 		   FROM sub_flow sf
 		   JOIN sub_product sp
 		     ON sp.tenant_id = sf.tenant_id AND sp.id = sf.sub_product_id
@@ -332,7 +371,7 @@ func (t *TenantRepo) GetSubFlowByFigmaSection(ctx context.Context, figmaSectionI
 		return SubFlow{}, ErrNotFound
 	}
 	row := t.readHandle().QueryRowContext(ctx,
-		`SELECT id, sub_product_id, name, slug, drd_id, figma_section_id, created_at
+		`SELECT `+subFlowSelectCols+`
 		   FROM sub_flow
 		  WHERE tenant_id = ? AND figma_section_id = ?`,
 		t.tenantID, figmaSectionID,
@@ -358,7 +397,7 @@ func (t *TenantRepo) ListSubFlows(ctx context.Context, subProductFilter string) 
 	var err error
 	if subProductFilter == "" {
 		rows, err = t.readHandle().QueryContext(ctx,
-			`SELECT id, sub_product_id, name, slug, drd_id, figma_section_id, created_at
+			`SELECT `+subFlowSelectCols+`
 			   FROM sub_flow
 			  WHERE tenant_id = ?
 			  ORDER BY created_at ASC`,
@@ -366,7 +405,7 @@ func (t *TenantRepo) ListSubFlows(ctx context.Context, subProductFilter string) 
 		)
 	} else {
 		rows, err = t.readHandle().QueryContext(ctx,
-			`SELECT id, sub_product_id, name, slug, drd_id, figma_section_id, created_at
+			`SELECT `+subFlowSelectCols+`
 			   FROM sub_flow
 			  WHERE tenant_id = ? AND sub_product_id = ?
 			  ORDER BY created_at ASC`,

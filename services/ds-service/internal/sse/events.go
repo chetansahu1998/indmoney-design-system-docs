@@ -252,3 +252,57 @@ func (e GraphIndexUpdated) Type() string { return "graph.index_updated" }
 
 // Payload implements Event.
 func (e GraphIndexUpdated) Payload() any { return e }
+
+// FigmaDesignShipped (Plan 2026-05-17-002 U3b — KTD-8) fires when autosync
+// detects a sub_flow's bound section has moved onto a "final"-classified
+// Figma page (figma_page.page_classification = 'final', written by
+// ClassifyPages during syncFileDeep — mig 0029). Viewer should swap from
+// the prototype iframe to the rendered Figma frames.
+//
+// Published on the inbox:<tenant_id> channel so any tab the PM has open
+// can react without a project-specific subscription. SubFlowSlug is the
+// universal join key "{sub_product.slug}/{sub_flow.slug}" (KTD-6) — the
+// viewer keys its route off that, not off SubFlowID.
+//
+// Emitted once per transition: subsequent re-runs of autosync on an
+// already-bound sub_flow do NOT re-publish (the repo short-circuits on
+// the equal-section-id fast path).
+type FigmaDesignShipped struct {
+	Tenant         string `json:"tenant_id"`
+	SubFlowID      string `json:"sub_flow_id"`
+	SubFlowSlug    string `json:"sub_flow_slug"`
+	FigmaSectionID string `json:"figma_section_id"`
+}
+
+// TenantID implements Event.
+func (e FigmaDesignShipped) TenantID() string { return e.Tenant }
+
+// Type implements Event.
+func (e FigmaDesignShipped) Type() string { return "figma.design_shipped" }
+
+// Payload implements Event.
+func (e FigmaDesignShipped) Payload() any { return e }
+
+// DRDPrototypeAttached (Plan 2026-05-17-002 U3b — KTD-8) fires when a PM
+// attaches a prototype URL to a sub_flow via AttachPrototype. Lets any
+// viewer tab currently open on the sub_flow swap from "empty" to
+// "proto-only" without a manual reload.
+//
+// Idempotent re-attach with the same URL does NOT re-publish — the repo
+// short-circuits before reaching the broker.
+type DRDPrototypeAttached struct {
+	Tenant       string `json:"tenant_id"`
+	SubFlowID    string `json:"sub_flow_id"`
+	SubFlowSlug  string `json:"sub_flow_slug"`
+	PrototypeURL string `json:"prototype_url"`
+	Title        string `json:"title,omitempty"`
+}
+
+// TenantID implements Event.
+func (e DRDPrototypeAttached) TenantID() string { return e.Tenant }
+
+// Type implements Event.
+func (e DRDPrototypeAttached) Type() string { return "drd.prototype_attached" }
+
+// Payload implements Event.
+func (e DRDPrototypeAttached) Payload() any { return e }

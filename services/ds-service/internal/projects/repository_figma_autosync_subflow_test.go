@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/sse"
 )
 
 // repository_figma_autosync_subflow_test.go — U2 of the MCP + PM authoring
@@ -16,10 +18,27 @@ import (
 // seedSectionForSubFlow writes the figma_section row a U2 lookup needs.
 // Wraps seedSection (which already lives in repository_figma_autosync_test.go)
 // with a per-call file/page/section trio so each test gets its own context.
+//
+// Default classification: PageClassFinal — the historical U2 tests
+// (written before U3b's gate) all expect figma_section_id to be linked.
+// Tests that exercise the WIP path use seedSectionForSubFlowOnPage with
+// an explicit non-final classification.
 func seedSectionForSubFlow(t *testing.T, repo *TenantRepo, fileKey, pageID, sectionID, name string) {
 	t.Helper()
+	seedSectionForSubFlowOnPage(t, repo, fileKey, pageID, sectionID, name, PageClassFinal)
+}
+
+// seedSectionForSubFlowOnPage is the explicit-classification variant.
+// Used by U3b's design-shipped-gate tests to exercise the proto-wip
+// path (page_classification != 'final' → autosync leaves
+// figma_section_id NULL).
+func seedSectionForSubFlowOnPage(t *testing.T, repo *TenantRepo, fileKey, pageID, sectionID, name string, classification PageClassification) {
+	t.Helper()
 	ctx := context.Background()
-	pages := []FigmaPageRow{{FileKey: fileKey, PageID: pageID, Name: "Page", OrderIndex: 0}}
+	pages := []FigmaPageRow{{
+		FileKey: fileKey, PageID: pageID, Name: "Page", OrderIndex: 0,
+		Classification: classification,
+	}}
 	sections := []FigmaSectionRow{{FileKey: fileKey, PageID: pageID, SectionID: sectionID, Name: name, OrderIndex: 0}}
 	if _, _, err := repo.UpsertFigmaPagesAndSections(ctx, fileKey, pages, sections, nil, repo.now().UTC()); err != nil {
 		t.Fatalf("seed section %s: %v", sectionID, err)
@@ -39,7 +58,7 @@ func TestUpsertSubFlowFromSection_HappyPath(t *testing.T) {
 	)
 	seedSectionForSubFlow(t, repo, fileKey, pageID, sectionID, name)
 
-	sf, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name)
+	sf, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name, nil)
 	if err != nil {
 		t.Fatalf("upsert from section: %v", err)
 	}
@@ -72,11 +91,11 @@ func TestUpsertSubFlowFromSection_Idempotent(t *testing.T) {
 	)
 	seedSectionForSubFlow(t, repo, fileKey, pageID, sectionID, name)
 
-	first, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name)
+	first, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name, nil)
 	if err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	second, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name)
+	second, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name, nil)
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -121,7 +140,7 @@ func TestUpsertSubFlowFromSection_PreexistingSubFlowFromDRDPath(t *testing.T) {
 	)
 	seedSectionForSubFlow(t, repo, fileKey, pageID, sectionID, name)
 
-	sf, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name)
+	sf, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name, nil)
 	if err != nil {
 		t.Fatalf("upsert from section: %v", err)
 	}
@@ -161,7 +180,7 @@ func TestUpsertSubFlowFromSection_AdminOverrideWins(t *testing.T) {
 		t.Fatalf("seed override: %v", err)
 	}
 
-	sf, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name)
+	sf, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name, nil)
 	if err != nil {
 		t.Fatalf("upsert from section: %v", err)
 	}
@@ -204,7 +223,7 @@ func TestUpsertSubFlowFromSection_EmptyOverridesIgnored(t *testing.T) {
 		t.Fatalf("seed blank overrides: %v", err)
 	}
 
-	sf, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name)
+	sf, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name, nil)
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
@@ -235,7 +254,7 @@ func TestUpsertSubFlowFromSection_SlashlessLandsInUnassigned(t *testing.T) {
 
 	var subProductIDs []string
 	for _, c := range cases {
-		sf, err := repo.UpsertSubFlowFromSection(ctx, c.fileKey, c.pageID, c.sectionID, c.name)
+		sf, err := repo.UpsertSubFlowFromSection(ctx, c.fileKey, c.pageID, c.sectionID, c.name, nil)
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
@@ -269,7 +288,7 @@ func TestUpsertSubFlowFromSection_CaseInsensitiveIdempotency(t *testing.T) {
 		sectionID = "10:1"
 	)
 	seedSectionForSubFlow(t, repo, fileKey, pageID, sectionID, "Wallet/M2M Settlement")
-	first, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, "Wallet/M2M Settlement")
+	first, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, "Wallet/M2M Settlement", nil)
 	if err != nil {
 		t.Fatalf("first: %v", err)
 	}
@@ -279,7 +298,7 @@ func TestUpsertSubFlowFromSection_CaseInsensitiveIdempotency(t *testing.T) {
 	// create a duplicate row (case-insensitive LOWER(TRIM(name)) index
 	// on sub_flow).
 	seedSectionForSubFlow(t, repo, fileKey, pageID, sectionID, "WALLET/M2M Settlement")
-	second, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, "WALLET/M2M Settlement")
+	second, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, "WALLET/M2M Settlement", nil)
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -303,7 +322,7 @@ func TestUpsertSubFlowFromSection_RenameToDifferentSubFlow(t *testing.T) {
 		sectionID = "10:1"
 	)
 	seedSectionForSubFlow(t, repo, fileKey, pageID, sectionID, "Wallet/Foo")
-	fooSF, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, "Wallet/Foo")
+	fooSF, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, "Wallet/Foo", nil)
 	if err != nil {
 		t.Fatalf("foo: %v", err)
 	}
@@ -313,7 +332,7 @@ func TestUpsertSubFlowFromSection_RenameToDifferentSubFlow(t *testing.T) {
 	// "Foo" row stays (PM intent may still hold), but its figma_section_id
 	// is cleared so the partial unique index can re-grant the binding.
 	seedSectionForSubFlow(t, repo, fileKey, pageID, sectionID, "Wallet/Bar")
-	barSF, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, "Wallet/Bar")
+	barSF, err := repo.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, "Wallet/Bar", nil)
 	if err != nil {
 		t.Fatalf("bar: %v", err)
 	}
@@ -356,11 +375,11 @@ func TestUpsertSubFlowFromSection_TenantIsolation(t *testing.T) {
 	seedSectionForSubFlow(t, repoA, fileKey, pageID, sectionID, name)
 	seedSectionForSubFlow(t, repoB, fileKey, pageID, sectionID, name)
 
-	sfA, err := repoA.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name)
+	sfA, err := repoA.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name, nil)
 	if err != nil {
 		t.Fatalf("tenantA: %v", err)
 	}
-	sfB, err := repoB.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name)
+	sfB, err := repoB.UpsertSubFlowFromSection(ctx, fileKey, pageID, sectionID, name, nil)
 	if err != nil {
 		t.Fatalf("tenantB: %v", err)
 	}
@@ -384,11 +403,166 @@ func TestUpsertSubFlowFromSection_RejectsEmptyArgs(t *testing.T) {
 	repo := NewTenantRepo(d.DB, tA)
 	ctx := context.Background()
 
-	_, err := repo.UpsertSubFlowFromSection(ctx, "", "", "", "Wallet/M2M")
+	_, err := repo.UpsertSubFlowFromSection(ctx, "", "", "", "Wallet/M2M", nil)
 	if err == nil {
 		t.Errorf("expected error for empty args")
 	}
 	if err != nil && !strings.Contains(err.Error(), "required") {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// ─── U3b — design-shipped gate (page classification) ─────────────────────
+
+// TestUpsertSubFlowFromSection_FinalPageLinksSection verifies the U3b gate
+// flips figma_section_id when the hosting page is classified 'final'.
+func TestUpsertSubFlowFromSection_FinalPageLinksSection(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	seedSectionForSubFlowOnPage(t, repo, "fk-1", "0:1", "10:1",
+		"Wallet/M2M Settlement", PageClassFinal)
+
+	sf, err := repo.UpsertSubFlowFromSection(ctx, "fk-1", "0:1", "10:1",
+		"Wallet/M2M Settlement", nil)
+	if err != nil {
+		t.Fatalf("autosync: %v", err)
+	}
+	if sf.FigmaSectionID == nil || *sf.FigmaSectionID != "10:1" {
+		t.Errorf("expected figma_section_id bound on final page, got %v", sf.FigmaSectionID)
+	}
+}
+
+// TestUpsertSubFlowFromSection_NonFinalPageSkipsLink verifies the gate
+// holds back the binding for WIP-class pages.
+func TestUpsertSubFlowFromSection_NonFinalPageSkipsLink(t *testing.T) {
+	cases := []PageClassification{PageClassVersion, PageClassNoise, PageClassUnknown}
+	for _, class := range cases {
+		t.Run(string(class), func(t *testing.T) {
+			d, tA, _, _ := newTestDB(t)
+			repo := NewTenantRepo(d.DB, tA)
+			ctx := context.Background()
+
+			seedSectionForSubFlowOnPage(t, repo, "fk-1", "0:1", "10:1",
+				"Wallet/M2M Settlement", class)
+
+			sf, err := repo.UpsertSubFlowFromSection(ctx, "fk-1", "0:1", "10:1",
+				"Wallet/M2M Settlement", nil)
+			if err != nil {
+				t.Fatalf("autosync: %v", err)
+			}
+			// sub_flow row still created.
+			if sf.ID == "" || sf.Name != "M2M Settlement" {
+				t.Errorf("sub_flow row should still be created on WIP page: %+v", sf)
+			}
+			// But figma_section_id stays NULL.
+			if sf.FigmaSectionID != nil {
+				t.Errorf("expected NULL figma_section_id on %q page, got %v", class, *sf.FigmaSectionID)
+			}
+		})
+	}
+}
+
+// TestUpsertSubFlowFromSection_DesignShippedPublishes verifies that a
+// fresh bind on a final-classified page publishes the FigmaDesignShipped
+// SSE event on the inbox:<tenant_id> channel.
+func TestUpsertSubFlowFromSection_DesignShippedPublishes(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	seedSectionForSubFlowOnPage(t, repo, "fk-1", "0:1", "10:1",
+		"Wallet/M2M Settlement", PageClassFinal)
+
+	broker := &protoStubBroker{}
+	bound, err := repo.UpsertSubFlowFromSection(ctx, "fk-1", "0:1", "10:1",
+		"Wallet/M2M Settlement", broker)
+	if err != nil {
+		t.Fatalf("autosync: %v", err)
+	}
+
+	if len(broker.events) != 1 {
+		t.Fatalf("expected 1 SSE event published, got %d", len(broker.events))
+	}
+	ev, ok := broker.events[0].event.(sse.FigmaDesignShipped)
+	if !ok {
+		t.Fatalf("unexpected event type: %T", broker.events[0].event)
+	}
+	if ev.SubFlowID != bound.ID {
+		t.Errorf("event SubFlowID: got %q, want %q", ev.SubFlowID, bound.ID)
+	}
+	if ev.FigmaSectionID != "10:1" {
+		t.Errorf("event FigmaSectionID: got %q, want %q", ev.FigmaSectionID, "10:1")
+	}
+	if ev.SubFlowSlug != "wallet/m2m-settlement" {
+		t.Errorf("event slug: got %q, want %q", ev.SubFlowSlug, "wallet/m2m-settlement")
+	}
+	if broker.events[0].channel != "inbox:"+tA {
+		t.Errorf("event channel: got %q, want %q", broker.events[0].channel, "inbox:"+tA)
+	}
+}
+
+// TestUpsertSubFlowFromSection_DesignShippedIdempotent confirms re-running
+// autosync against an already-bound sub_flow does NOT re-publish.
+func TestUpsertSubFlowFromSection_DesignShippedIdempotent(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	seedSectionForSubFlowOnPage(t, repo, "fk-1", "0:1", "10:1",
+		"Wallet/M2M Settlement", PageClassFinal)
+
+	broker := &protoStubBroker{}
+	if _, err := repo.UpsertSubFlowFromSection(ctx, "fk-1", "0:1", "10:1",
+		"Wallet/M2M Settlement", broker); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if _, err := repo.UpsertSubFlowFromSection(ctx, "fk-1", "0:1", "10:1",
+		"Wallet/M2M Settlement", broker); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if len(broker.events) != 1 {
+		t.Errorf("expected 1 event total (first bind only), got %d", len(broker.events))
+	}
+}
+
+// TestUpsertSubFlowFromSection_StampsPrototypeSupersededAt verifies the
+// gate stamps prototype_superseded_at when a section binds while a
+// prototype URL is in place.
+func TestUpsertSubFlowFromSection_StampsPrototypeSupersededAt(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	// PM authors a DRD with a prototype URL BEFORE design exists.
+	sp, err := repo.UpsertSubProduct(ctx, "Wallet")
+	if err != nil {
+		t.Fatalf("seed sub_product: %v", err)
+	}
+	sf, err := repo.UpsertSubFlow(ctx, sp.ID, "M2M Settlement")
+	if err != nil {
+		t.Fatalf("seed sub_flow: %v", err)
+	}
+	if err := repo.AttachPrototype(ctx, sf.ID, "https://example.com/proto", "", nil); err != nil {
+		t.Fatalf("attach proto: %v", err)
+	}
+
+	// Designer ships the section on a final page; autosync binds + stamps.
+	seedSectionForSubFlowOnPage(t, repo, "fk-1", "0:1", "10:1",
+		"Wallet/M2M Settlement", PageClassFinal)
+	bound, err := repo.UpsertSubFlowFromSection(ctx, "fk-1", "0:1", "10:1",
+		"Wallet/M2M Settlement", nil)
+	if err != nil {
+		t.Fatalf("autosync: %v", err)
+	}
+	if bound.ID != sf.ID {
+		t.Fatalf("expected reuse of pre-existing sub_flow")
+	}
+	if bound.PrototypeSupersededAt == nil {
+		t.Errorf("prototype_superseded_at should be stamped when section binds while proto is attached")
+	}
+	if bound.PrototypeURL == nil || *bound.PrototypeURL != "https://example.com/proto" {
+		t.Errorf("prototype_url should be preserved for history; got %v", bound.PrototypeURL)
 	}
 }

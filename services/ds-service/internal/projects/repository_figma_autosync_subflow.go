@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/sse"
 )
 
 // repository_figma_autosync_subflow.go — U2 of the MCP + PM authoring
@@ -42,8 +44,9 @@ import (
 //
 // Behaviour matrix:
 //   - Section name "Wallet/M2M Settlement", no override → creates
-//     sub_product="Wallet" + sub_flow="M2M Settlement" + links the
-//     section id.
+//     sub_product="Wallet" + sub_flow="M2M Settlement". figma_section_id
+//     is linked ONLY if the hosting page is classified 'final' (mig 0029,
+//     PageClassFinal).
 //   - Section name "Onboarding" (slash-less), no override → lands under
 //     sub_product="(unassigned)" + sub_flow="Onboarding". The
 //     "(unassigned)" bucket is materialised lazily on first encounter and
@@ -53,7 +56,8 @@ import (
 //   - Either override empty/blank → the override is treated as absent
 //     (we don't half-apply).
 //   - sub_flow row pre-exists from the DRD path with figma_section_id
-//     NULL → fills figma_section_id on the existing row; no duplicate.
+//     NULL → fills figma_section_id on the existing row when the page is
+//     final-classified; otherwise leaves the binding NULL.
 //   - Section renamed Wallet/Foo → Wallet/Bar: a NEW sub_flow row "Bar"
 //     is created; the old "Foo" row stays (it represents PM intent that
 //     may still hold) but loses the figma_section_id binding so the
@@ -61,8 +65,28 @@ import (
 //   - Section name with different casing of the same words → matches the
 //     existing row via LOWER(TRIM(name)) (U1's case-insensitive index).
 //
+// U3b "design-shipped" gate (KTD-8 — added 2026-05-17):
+//
+//	The figma_section_id flip is now conditional on the section sitting
+//	on a final-classified figma_page (page_classification = 'final',
+//	written by ClassifyPages during syncFileDeep — mig 0029). The
+//	rationale: a designer's WIP page must not yank the prototype
+//	iframe out from under the PM mid-authoring. Once the section
+//	moves to (or appears directly on) a final page, the link flips
+//	and:
+//	  - prototype_superseded_at is stamped when prototype_url is set,
+//	  - sse.FigmaDesignShipped is published on inbox:<tenant_id>.
+//
+//	The sub_flow row is still upserted (so PRD skeleton work in U2b
+//	can run on WIP sections); only the binding is gated. The viewer's
+//	"proto-wip" lifecycle state (CanvasLifecycle) surfaces the WIP
+//	section to the PM without needing the binding.
+//
+//	The broker parameter may be nil — publish is then skipped. CLIs,
+//	batch fixers, and tests that don't exercise the SSE path pass nil.
+//
 // Returns the resulting SubFlow row (whether created or pre-existing).
-func (t *TenantRepo) UpsertSubFlowFromSection(ctx context.Context, fileKey, pageID, sectionID, sectionName string) (SubFlow, error) {
+func (t *TenantRepo) UpsertSubFlowFromSection(ctx context.Context, fileKey, pageID, sectionID, sectionName string, broker SubFlowEventBroker) (SubFlow, error) {
 	if t.tenantID == "" {
 		return SubFlow{}, errors.New("sub_flow: tenant_id required")
 	}
@@ -89,8 +113,26 @@ func (t *TenantRepo) UpsertSubFlowFromSection(ctx context.Context, fileKey, page
 	}
 
 	// Bind sub_flow.figma_section_id. Fast path: already bound to the same
-	// section id → nothing to do.
+	// section id → nothing to do. (Also short-circuits the SSE re-publish
+	// path: if the binding survives, we never re-emit FigmaDesignShipped.)
 	if subFlow.FigmaSectionID != nil && *subFlow.FigmaSectionID == sectionID {
+		return subFlow, nil
+	}
+
+	// U3b — design-shipped gate (KTD-8). Only flip figma_section_id when
+	// the section's hosting page is classified 'final' (mig 0029,
+	// page_classification column written by ClassifyPages). On a WIP page
+	// the sub_flow row stays usable (PRD skeleton can still build off it),
+	// but the binding waits for the designer to move the section to a
+	// final page.
+	isFinal, classifyErr := t.isSectionPageFinal(ctx, fileKey, pageID)
+	if classifyErr != nil {
+		return SubFlow{}, fmt.Errorf("classify hosting page %s: %w", pageID, classifyErr)
+	}
+	if !isFinal {
+		// Return the row as-is — figma_section_id still NULL (or holding
+		// a previous binding from a former final page that since changed
+		// — see edge case in plan §"Section moves off Final Designs").
 		return subFlow, nil
 	}
 
@@ -107,13 +149,75 @@ func (t *TenantRepo) UpsertSubFlowFromSection(ctx context.Context, fileKey, page
 		return SubFlow{}, fmt.Errorf("link sub_flow %s -> section %s: %w", subFlow.ID, sectionID, err)
 	}
 
+	// If a prototype was attached to this sub_flow, stamp the supersede
+	// timestamp now — the viewer reads this to know the iframe should
+	// give way to Figma frames. Idempotent: an already-set value is
+	// preserved by the partial WHERE clause.
+	if subFlow.PrototypeURL != nil && *subFlow.PrototypeURL != "" && subFlow.PrototypeSupersededAt == nil {
+		now := t.now().UTC()
+		if _, err := t.handle().ExecContext(ctx, `
+			UPDATE sub_flow
+			   SET prototype_superseded_at = ?
+			 WHERE tenant_id = ? AND id = ?
+			   AND prototype_superseded_at IS NULL
+		`, rfc3339(now), t.tenantID, subFlow.ID); err != nil {
+			return SubFlow{}, fmt.Errorf("stamp prototype_superseded_at: %w", err)
+		}
+	}
+
 	// Re-read so the returned struct carries the freshly-set
 	// figma_section_id (test idempotency assertions rely on this).
 	bound, err := t.GetSubFlowByFigmaSection(ctx, sectionID)
 	if err != nil {
 		return SubFlow{}, fmt.Errorf("re-read sub_flow after link: %w", err)
 	}
+
+	// Publish figma.design_shipped on the tenant inbox channel. Fires
+	// once per transition (the fast-path early-return above prevents
+	// re-emit on re-runs). Broker may be nil — production wires it from
+	// poller.cfg.Broker; CLIs and tests pass nil.
+	if broker != nil {
+		slug, slugErr := t.loadSubFlowFullSlug(ctx, bound.ID)
+		if slugErr == nil {
+			broker.Publish(inboxChannelForTenant(t.tenantID), sse.FigmaDesignShipped{
+				Tenant:         t.tenantID,
+				SubFlowID:      bound.ID,
+				SubFlowSlug:    slug,
+				FigmaSectionID: sectionID,
+			})
+		}
+		// Slug-resolution failure is non-fatal — the binding succeeded.
+	}
+
 	return bound, nil
+}
+
+// isSectionPageFinal reads figma_page.page_classification for one (file,
+// page) pair and returns true when the value equals PageClassFinal. Any
+// other value (including NULL / missing row) returns false — the safe
+// default is "treat as WIP".
+//
+// Uses the write handle so a poller that just upserted the page in the
+// same cycle observes the freshly-written classification (split-pool
+// architecture — read pool can lag the writer by milliseconds).
+func (t *TenantRepo) isSectionPageFinal(ctx context.Context, fileKey, pageID string) (bool, error) {
+	var class sql.NullString
+	row := t.handle().QueryRowContext(ctx, `
+		SELECT page_classification
+		  FROM figma_page
+		 WHERE tenant_id = ? AND file_key = ? AND page_id = ?
+		   AND deleted_at IS NULL
+	`, t.tenantID, fileKey, pageID)
+	if err := row.Scan(&class); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !class.Valid {
+		return false, nil
+	}
+	return PageClassification(class.String) == PageClassFinal, nil
 }
 
 // pickSubFlowNames computes the (sub_product, sub_flow) display names

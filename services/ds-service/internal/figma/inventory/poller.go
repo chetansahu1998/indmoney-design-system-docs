@@ -76,6 +76,12 @@ type Config struct {
 	NewClient      func(pat string) FigmaInventoryClient // optional override for tests
 	Logger         *slog.Logger
 	Now            func() time.Time // injectable clock
+	// Broker, when set, lets the autosync sub_flow bridge publish
+	// figma.design_shipped SSE events on the inbox:<tenant_id> channel
+	// when a section transitions onto a final-classified page (plan U3b).
+	// Optional — nil means publishes are skipped. Production wires it from
+	// cmd/server/main.go's broker; tests typically leave it nil.
+	Broker projects.SubFlowEventBroker
 }
 
 // FigmaInventoryClient is the slice of *client.Client this poller calls.
@@ -617,7 +623,12 @@ func (p *Poller) syncFileDeep(
 	// commit ab286d0), and the in-memory map is the canonical source for
 	// this cycle anyway. Same WARN-and-continue discipline as U2.
 	for _, sec := range sectionRows {
-		subFlow, sfErr := repo.UpsertSubFlowFromSection(ctx, f.FileKey, sec.PageID, sec.SectionID, sec.Name)
+		// Plan U3b — pass the broker through so the autosync gate can
+		// publish figma.design_shipped when it flips figma_section_id
+		// for a section now living on a final-classified page. Broker
+		// is optional; production wires it from cfg.Broker, tests pass
+		// nil.
+		subFlow, sfErr := repo.UpsertSubFlowFromSection(ctx, f.FileKey, sec.PageID, sec.SectionID, sec.Name, p.cfg.Broker)
 		if sfErr != nil {
 			logger.Warn("figma_inventory: sub_flow upsert failed",
 				"file", f.FileKey, "page", sec.PageID, "section", sec.SectionID,
