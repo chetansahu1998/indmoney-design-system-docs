@@ -39,6 +39,40 @@ import type {
   TextStyle,
 } from "./types";
 
+/**
+ * Debounced aggregator for icon-cluster post-retry failures (QA Bug 9).
+ * Module-scope so retries across React render passes share the same
+ * counter. The naive per-image `console.warn` floods devtools — on the
+ * QA leaf 555+ warns fired during a single browse, drowning real errors
+ * during debugging. Now we count + flush every 5s with one consolidated
+ * warn carrying the failed-cluster-id sample.
+ */
+const _clusterFailureBuf: { ids: string[]; total: number; timer: number | null } = {
+  ids: [],
+  total: 0,
+  timer: null,
+};
+
+function reportClusterFailure(id: string): void {
+  _clusterFailureBuf.total += 1;
+  if (_clusterFailureBuf.ids.length < 6) {
+    _clusterFailureBuf.ids.push(id);
+  }
+  if (_clusterFailureBuf.timer !== null) return;
+  if (typeof window === "undefined") return;
+  _clusterFailureBuf.timer = window.setTimeout(() => {
+    const sample = _clusterFailureBuf.ids.slice();
+    const total = _clusterFailureBuf.total;
+    _clusterFailureBuf.ids.length = 0;
+    _clusterFailureBuf.total = 0;
+    _clusterFailureBuf.timer = null;
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[icon-cluster] ${total} cluster image(s) failed after retries (sample: ${sample.join(", ")})`,
+    );
+  }, 5000);
+}
+
 export interface NodeToHTMLContext {
   /** image-fill ref → URL (raster fills proxied through ds-service). */
   imageRefs: ImageRefMap;
@@ -349,8 +383,10 @@ function renderClusterPlaceholder(
         img.style.border = "1px dashed rgba(94, 234, 212, 0.6)";
         img.style.borderRadius = "4px";
         img.style.background = "rgba(94, 234, 212, 0.05)";
-        // eslint-disable-next-line no-console
-        console.warn("[icon-cluster] image load failed after retries", { id: node.id, url });
+        // QA bug 9: per-image console.warn floods devtools (~555+/leaf
+        // on a single failing-cluster heavy leaf). Aggregate into a
+        // debounced counter so the signal is present without the noise.
+        reportClusterFailure(node.id ?? "<unknown>");
       },
       style: { ...positioning, ...sizing, display: "block", objectFit: "contain" },
     });

@@ -270,6 +270,16 @@ func inlineForScreen(
 	return true, nil
 }
 
+// LoadCanonicalTreeForBackfill is an exported entry point that mirrors
+// loadCanonicalTreeRaw for use by the `backfill-svg-markup` command.
+// Bypasses the TenantRepo's per-screen tenant join (cross-tenant safety
+// is the operator's responsibility for one-shot CLI runs) so the CLI
+// can iterate every screen across every tenant in one DB connection.
+// Not exposed via HTTP.
+func LoadCanonicalTreeForBackfill(ctx context.Context, db *sql.DB, screenID string) (string, error) {
+	return loadCanonicalTreeRaw(ctx, db, screenID)
+}
+
 func loadCanonicalTreeRaw(ctx context.Context, db *sql.DB, screenID string) (string, error) {
 	var legacy string
 	var gz, zstdBlob []byte
