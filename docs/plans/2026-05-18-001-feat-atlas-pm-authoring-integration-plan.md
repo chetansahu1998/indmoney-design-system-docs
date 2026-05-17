@@ -1,6 +1,6 @@
 ---
 title: "feat: Integrate PM authoring (PRD/prototype/wall/audit) into Atlas's existing inspector + center pane"
-status: active
+status: completed
 created: 2026-05-18
 type: feat
 depth: deep
