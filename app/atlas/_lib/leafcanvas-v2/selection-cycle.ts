@@ -51,8 +51,34 @@ export function findAncestorChain(
   id: string,
 ): CanonicalLikeNode[] | null {
   if (!root || !id) return null;
+  const unwrapped = unwrapEnvelope(root);
+  if (!unwrapped) return null;
   const path: CanonicalLikeNode[] = [];
-  if (walkForId(root, id, path)) return path;
+  if (walkForId(unwrapped, id, path)) return path;
+  return null;
+}
+
+/**
+ * The Zustand slot stores either:
+ *   1. The bare document node (`{id, type, children, ...}`)
+ *   2. The raw Figma `/v1/files/<id>` envelope
+ *      (`{document, styles, components, componentSets, schemaVersion}`)
+ *
+ * Pre-2026-05-17 this module assumed case (1); on case (2) every walker
+ * silently returned null because the envelope has no `id`/`children`.
+ * That broke Enter / Shift+Enter / Tab / Cmd+A selection navigation
+ * (QA Bug 4 + 5 — observable second root cause after the focus-gate fix).
+ * `AtomicChildInspector.findByFigmaID` already does this unwrap; mirror
+ * it here so every consumer of selection-cycle is envelope-safe.
+ */
+function unwrapEnvelope(
+  root: CanonicalLikeNode,
+): CanonicalLikeNode | null {
+  if (typeof root.id === "string") return root;
+  // Envelope: the document lives one level down.
+  const obj = root as unknown as Record<string, unknown>;
+  const doc = obj.document;
+  if (doc && typeof doc === "object") return doc as CanonicalLikeNode;
   return null;
 }
 
@@ -197,8 +223,10 @@ export function collectIdsByType(
   allowedTypes: ReadonlySet<string>,
 ): string[] {
   if (!root) return [];
+  const unwrapped = unwrapEnvelope(root);
+  if (!unwrapped) return [];
   const out: string[] = [];
-  walkCollect(root, allowedTypes, out);
+  walkCollect(unwrapped, allowedTypes, out);
   return out;
 }
 

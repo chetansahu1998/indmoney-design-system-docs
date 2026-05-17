@@ -190,8 +190,23 @@ func inlineForScreen(
 		return false, fmt.Errorf("unmarshal tree: %w", err)
 	}
 
+	// Descend into the `document` envelope if present. The canonical_tree
+	// JSON is the raw `/v1/files/<id>` response shape, where the actual
+	// node tree lives under `tree.document.children`, and the top-level
+	// keys are `styles componentSets components document schemaVersion`.
+	// ExtractClustersWithSVGFlag (pipeline_cluster_prerender.go:260)
+	// already does this descent; the inliner missed it on initial U8
+	// ship, which made *every* inline pass a no-op (QA Bug 8 root cause).
+	// `walkRoot` is a reference to the same in-memory tree map; mutations
+	// to descendant nodes propagate back to `tree` for the post-loop
+	// json.Marshal.
+	walkRoot := tree
+	if doc, hasDoc := tree["document"].(map[string]any); hasDoc {
+		walkRoot = doc
+	}
+
 	inlinedCount := 0
-	walkAndMutate(tree, func(node map[string]any) {
+	walkAndMutate(walkRoot, func(node map[string]any) {
 		idVal, ok := node["id"].(string)
 		if !ok || idVal == "" {
 			return
@@ -327,16 +342,22 @@ func readSVGBytes(dataDir, tenantID, fileID string, versionIndex int, nodeID str
 }
 
 func isValidFigmaNodeID(id string) bool {
-	if id == "" || len(id) > 64 {
+	if id == "" || len(id) > 256 {
 		return false
 	}
-	// Allow ASCII digits, ':', and the leading 'I' Figma uses for
-	// instance node ids. Reject anything else.
+	// Allow ASCII digits, ':', ';', and the leading 'I' Figma uses for
+	// instance node ids. The semicolon separates instance-override
+	// chain segments — Figma emits ids like
+	// "I20013:239603;1625:49634;1625:46951;1434:24120;1742:27214" for
+	// deeply nested overrides. Without ';' in the allowlist the
+	// inliner silently rejects ~28% of cluster nodes on real leaves
+	// (QA Bug 8). Reject anything else.
 	for i := 0; i < len(id); i++ {
 		c := id[i]
 		switch {
 		case c >= '0' && c <= '9':
 		case c == ':':
+		case c == ';':
 		case c == 'I' && i == 0:
 		default:
 			return false

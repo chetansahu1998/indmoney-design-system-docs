@@ -249,6 +249,55 @@ func TestMutateCanonicalTree_NilSafe(t *testing.T) {
 	})
 }
 
+// QA Bug 8 regression: InlineSVGMarkup must descend into tree["document"]
+// when the canonical_tree carries the raw Figma /v1/files envelope shape
+// (top-level keys: styles componentSets components document schemaVersion).
+// Before this fix the inliner walked from the envelope root, found no
+// children, and exited silently — making every inline pass a no-op.
+func TestInlineSVGMarkup_DescendsIntoDocumentEnvelope(t *testing.T) {
+	// Build a minimal envelope-shaped tree with one SVG-eligible cluster
+	// nested under `document.children`.
+	tree := map[string]any{
+		"schemaVersion": 1,
+		"document": map[string]any{
+			"id":   "doc",
+			"type": "DOCUMENT",
+			"children": []any{
+				map[string]any{
+					"id":   "1:1",
+					"type": "FRAME",
+					"children": []any{
+						map[string]any{
+							"id":   "1:2",
+							"type": "FRAME",
+							"name": "illustration/hero",
+						},
+					},
+				},
+			},
+		},
+	}
+	visitedIDs := []string{}
+	walkRoot := tree
+	if doc, ok := tree["document"].(map[string]any); ok {
+		walkRoot = doc
+	}
+	MutateCanonicalTree(walkRoot, func(node map[string]any) {
+		if id, ok := node["id"].(string); ok {
+			visitedIDs = append(visitedIDs, id)
+		}
+	})
+	wantedIDs := []string{"doc", "1:1", "1:2"}
+	if len(visitedIDs) != len(wantedIDs) {
+		t.Fatalf("expected %d visits, got %d: %v", len(wantedIDs), len(visitedIDs), visitedIDs)
+	}
+	for i, want := range wantedIDs {
+		if visitedIDs[i] != want {
+			t.Errorf("visit[%d] = %q, want %q", i, visitedIDs[i], want)
+		}
+	}
+}
+
 func TestMutateCanonicalTree_IgnoresNonMapChildren(t *testing.T) {
 	// children with non-map entries (defensive against malformed JSON)
 	// must not cause a panic or partial walk.
@@ -290,7 +339,22 @@ func TestIsValidFigmaNodeID(t *testing.T) {
 		{"1:2 3", false},
 		{"123", false}, // missing colon
 		{"a1:2", false},
-		{strings.Repeat("1", 65), false}, // > 64 chars
+		// Instance-override chains. Figma emits these for deeply nested
+		// instance overrides (Bug 8 root cause). The validator must
+		// accept them so the inliner doesn't reject ~28% of cluster
+		// nodes on real leaves.
+		{"I20696:214334;62:994", true},
+		{"I9644:190198;674:59530", true},
+		{"I20013:239603;1625:49634;1625:46951;1434:24120;1742:27214", true},
+		// Bare semicolons without instance prefix are still well-formed
+		// node id chains (Figma also emits these without 'I' in some
+		// contexts).
+		{"123:456;789:012", true},
+		// Length cap raised from 64 → 256 to cover 5-deep override chains.
+		// "1:" + 65 digits = 67 chars — passes length check and contains ':'.
+		{"1:" + strings.Repeat("1", 65), true},
+		// 256+ chars rejected even with valid format.
+		{"1:" + strings.Repeat("1", 256), false},
 	}
 	for _, tc := range tests {
 		got := isValidFigmaNodeID(tc.id)

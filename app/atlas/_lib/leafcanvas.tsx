@@ -579,10 +579,17 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
       // stays uniform.
       fitSelection: () => {},
       zoom100: () => {
-        // Snap to 100% but re-anchor the world point under the viewport
-        // center to actual content — keeping the fit-all translate at
-        // z=1 lands the viewport on empty space (Bug 1). Prefer the
-        // selected frame's center; else the content bbox center.
+        // Snap to 100% but re-anchor the camera on actual content —
+        // keeping the fit-all camera at z=1 lands on empty space (the
+        // bbox geometric center falls between frames when frames are
+        // arranged in a wide horizontal strip; QA Bug 1).
+        //
+        // Priority:
+        //   1. Selected frame's center — explicit user intent.
+        //   2. The frame nearest the current viewport-center world point
+        //      — preserves "zoom in around where I'm looking."
+        //   3. The first frame — fallback for leaves with no selection
+        //      and a stale fit-all camera that's outside any frame.
         if (selectedFrameId && layout.frames) {
           const f = layout.frames.find((x) => x.id === selectedFrameId);
           if (f) {
@@ -591,11 +598,23 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
           }
         }
         if (layout.frames && layout.frames.length > 0) {
-          const minX = Math.min(...layout.frames.map((f) => f.x));
-          const maxX = Math.max(...layout.frames.map((f) => f.x + f.w));
-          const minY = Math.min(...layout.frames.map((f) => f.y));
-          const maxY = Math.max(...layout.frames.map((f) => f.y + f.h));
-          writeCamera({ x: (minX + maxX) / 2, y: (minY + maxY) / 2, z: 1 });
+          const c = camRef.current;
+          // Camera (x, y) is the world point at viewport center, so we
+          // pick the frame whose center is closest to (c.x, c.y).
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let i = 0; i < layout.frames.length; i++) {
+            const f = layout.frames[i];
+            const fx = f.x + f.w / 2;
+            const fy = f.y + f.h / 2;
+            const d = Math.hypot(fx - c.x, fy - c.y);
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = i;
+            }
+          }
+          const f = layout.frames[bestIdx];
+          writeCamera({ x: f.x + f.w / 2, y: f.y + f.h / 2, z: 1 });
           return;
         }
         writeCamera({ x: 0, y: 0, z: 1 });

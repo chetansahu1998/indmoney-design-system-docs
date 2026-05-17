@@ -196,3 +196,46 @@ describe("findFrameTarget integration via FRAME_TYPES (handleClick contract)", (
     expect(ids).toContain("card-a1");
   });
 });
+
+// QA Bug 4/5 regression: the Zustand slot stores the raw Figma
+// `/v1/files/<id>` envelope on most leaves (top-level keys: styles,
+// componentSets, components, document, schemaVersion). Pre-fix every
+// helper walked from the envelope root, found no `id`/`children`, and
+// returned null — silently breaking Enter / Shift+Enter / Tab / Cmd+A.
+// Pin the envelope-unwrap behavior so callers can stay ignorant of the
+// shape.
+describe("envelope unwrap (QA Bug 4/5 regression)", () => {
+  const ENVELOPE = {
+    schemaVersion: 1,
+    styles: {},
+    components: {},
+    componentSets: {},
+    document: TREE,
+  } as unknown as CanonicalLikeNode;
+
+  it("findAncestorChain descends into .document when root has no id", () => {
+    const chain = findAncestorChain(ENVELOPE, "text-a1-1");
+    expect(chain).not.toBeNull();
+    expect(chain!.map((n) => n.id)).toEqual(["root", "section-a", "card-a1", "text-a1-1"]);
+  });
+
+  it("findFirstChildId resolves through envelope", () => {
+    expect(findFirstChildId(ENVELOPE, "root")).toBe("section-a");
+  });
+
+  it("findParentId resolves through envelope", () => {
+    expect(findParentId(ENVELOPE, "text-a1-1")).toBe("card-a1");
+  });
+
+  it("collectIdsByType resolves through envelope", () => {
+    const ids = collectIdsByType(ENVELOPE, new Set(["FRAME", "INSTANCE"]));
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids).toContain("root");
+  });
+
+  it("returns null on a malformed envelope (neither id nor document)", () => {
+    const broken = { schemaVersion: 1, styles: {} } as unknown as CanonicalLikeNode;
+    expect(findAncestorChain(broken, "x")).toBeNull();
+    expect(collectIdsByType(broken, new Set(["FRAME"]))).toEqual([]);
+  });
+});
