@@ -280,6 +280,48 @@
   --lcv2-distance: #f24822;
 }
 
+/* ── U9: Dev Mode overlay ─────────────────────────────────────
+   When Shift+D toggles the global Dev Mode flag, leafcanvas.tsx
+   sets `data-dev-mode="on"` on .lc-stage. These rules add subtle
+   structural outlines to every frame so the user can SEE the
+   layout hierarchy at a glance without entering a separate route.
+
+   Scope: inside `[data-dev-mode="on"]` we paint:
+     - 1px dashed gray outline on every FRAME / COMPONENT /
+       INSTANCE / GROUP — the "every container" overlay.
+     - 1px dashed magenta outline on autolayout containers
+       (data-layout-mode="HORIZONTAL"|"VERTICAL") — emphasizes
+       "this frame controls flexbox-like layout" vs raw absolute.
+
+   Outlines live INSIDE the world transform so they scale with
+   zoom — acceptable for a "structural overview" pass. A future
+   U9-followup can promote to chrome-layer painting for fixed-pixel
+   outlines and per-band padding/gap visualization.
+
+   pointer-events untouched so the user can still click frames. */
+.lc-stage[data-dev-mode="on"] [data-figma-type="FRAME"],
+.lc-stage[data-dev-mode="on"] [data-figma-type="COMPONENT"],
+.lc-stage[data-dev-mode="on"] [data-figma-type="INSTANCE"],
+.lc-stage[data-dev-mode="on"] [data-figma-type="GROUP"] {
+  outline: 1px dashed rgba(13, 153, 255, 0.25);
+  outline-offset: -1px;
+}
+
+.lc-stage[data-dev-mode="on"] [data-layout-mode="HORIZONTAL"],
+.lc-stage[data-dev-mode="on"] [data-layout-mode="VERTICAL"] {
+  outline: 1px dashed rgba(255, 0, 255, 0.45);
+  outline-offset: -1px;
+}
+
+/* TEXT baseline guides: a faint underline at the text's baseline
+   so designers can see how characters align across nearby labels.
+   Implemented as box-shadow inset bottom because <span> elements
+   don't reliably honor border-bottom across all font-feature
+   configurations. */
+.lc-stage[data-dev-mode="on"] [data-figma-type="TEXT"] {
+  box-shadow: inset 0 -1px 0 rgba(13, 153, 255, 0.4);
+}
+
 /* ── U1: chrome layer (screen-space SVG sibling of .lc-world) ──
    Hosts selection rings, hover outlines, padding bands, gap fills,
    distance lines, marquee rect, breadcrumb chip, dimension chip.

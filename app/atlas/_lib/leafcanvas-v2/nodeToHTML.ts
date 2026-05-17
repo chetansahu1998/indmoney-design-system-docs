@@ -832,6 +832,16 @@ function renderContainer(
       "data-figma-id": node.id,
       "data-figma-type": node.type,
       "data-state-group": node.__stateGroup,
+      // U9 — expose layoutMode as a data attr so the Dev Mode CSS
+      // rules can target autolayout containers without re-walking
+      // the tree at paint time. Three values surface: HORIZONTAL,
+      // VERTICAL, NONE (omitted for nodes without a layoutMode
+      // signal, e.g., TEXT / VECTOR). The chrome painter and the
+      // Dev Mode overlay both consume this.
+      "data-layout-mode":
+        ownLayoutMode === "HORIZONTAL" || ownLayoutMode === "VERTICAL"
+          ? ownLayoutMode
+          : undefined,
       style: baseStyle,
     },
     ...childElements,

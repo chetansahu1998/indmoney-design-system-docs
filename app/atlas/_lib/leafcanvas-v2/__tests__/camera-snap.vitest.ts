@@ -201,7 +201,8 @@ describe("animateCamera — spring integration (U2)", () => {
     // Drain rAF ticks at 60Hz until onDone fires or hard cap reached.
     let safety = 600;
     while (!onDoneFired && safety > 0 && pendingCb) {
-      const cb = pendingCb;
+      // Snapshot before nulling so TS keeps the narrowed function type.
+      const cb: (ts: number) => void = pendingCb;
       pendingCb = null;
       cb(nowMs);
       nowMs += 1000 / 60;
@@ -303,7 +304,8 @@ describe("animateCamera — spring integration (U2)", () => {
 
     let safety = 100;
     while (!onDoneFired && safety > 0 && pendingCb) {
-      const cb = pendingCb;
+      // Snapshot before nulling so TS keeps the narrowed function type.
+      const cb: (ts: number) => void = pendingCb;
       pendingCb = null;
       cb(nowMs);
       nowMs += 1000 / 60;

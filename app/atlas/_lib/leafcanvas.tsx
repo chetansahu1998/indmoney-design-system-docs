@@ -47,6 +47,10 @@ import { ChromeLayer } from "./leafcanvas-v2/chrome-layer";
 // hotkeys (Shift+1, Cmd+0, N/Shift+N, ...) to whichever camera is active;
 // LeafCanvas registers its implementations on mount via this slot.
 import { registerCameraActions } from "./leafcanvas-v2/camera-actions";
+// U9 — dev-mode-state subscription so .lc-stage paints a CSS attr
+// when Dev Mode toggles, which the canvas-v2.css Dev Mode overlay
+// rules target.
+import { subscribeDevMode, getDevMode } from "./leafcanvas-v2/dev-mode-state";
 
 // ─── Loose model types ──────────────────────────────────────────────────
 // These describe only the fields this file reads. The upstream brain /
@@ -263,6 +267,21 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
     const off = registerSnapTarget(snapToBBox);
     return off;
   }, [snapToBBox]);
+
+  // U9 — Dev Mode CSS attr on .lc-stage. The flag is toggled via
+  // Shift+D (registered by U3a in AtlasShellInner). The attr toggles
+  // a set of canvas-v2.css rules that paint subtle outlines on every
+  // frame and tint autolayout containers — making the layout
+  // structure visible without entering a separate mode.
+  useEffect(() => {
+    const apply = () => {
+      const stage = stageRef.current;
+      if (!stage) return;
+      stage.setAttribute("data-dev-mode", getDevMode() ? "on" : "off");
+    };
+    apply();
+    return subscribeDevMode(apply);
+  }, []);
 
   // U1 — spatial-store reset on leaf swap. The spatial-store accumulates
   // nodeId→worldRect entries scoped by screenID; without an explicit
