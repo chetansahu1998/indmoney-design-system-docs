@@ -43,6 +43,10 @@ import {
 import { setCamera } from "./leafcanvas-v2/camera-state";
 import { invalidateAll as invalidateSpatialStore } from "./leafcanvas-v2/spatial-store";
 import { ChromeLayer } from "./leafcanvas-v2/chrome-layer";
+// U3 — camera-actions registry. The keymap in AtlasShellInner dispatches
+// hotkeys (Shift+1, Cmd+0, N/Shift+N, ...) to whichever camera is active;
+// LeafCanvas registers its implementations on mount via this slot.
+import { registerCameraActions } from "./leafcanvas-v2/camera-actions";
 
 // ─── Loose model types ──────────────────────────────────────────────────
 // These describe only the fields this file reads. The upstream brain /
@@ -530,18 +534,74 @@ window.LeafCanvas = function LeafCanvas({ leaf, onClose, onPickFrame, selectedFr
     if (selectedFrameId) focusOnFrame(selectedFrameId);
   }, [selectedFrameId]);
 
+  // U3 — register camera actions with the module-level registry so the
+  // keymap (mounted in AtlasShellInner) can dispatch hotkeys to the
+  // active LeafCanvas. Re-registers on every render so closures over
+  // the latest `selectedFrameId` stay fresh — the registry slot is
+  // single-target so re-register is cheap (one assignment).
+  useEffect(() => {
+    const findCurrentFrameIdx = () => {
+      if (!selectedFrameId || !layout.frames) return -1;
+      return layout.frames.findIndex((f) => f.id === selectedFrameId);
+    };
+    const off = registerCameraActions({
+      fitAll: () => fitAll(),
+      // LeafCanvas does not own atomic-selection state; AtlasShellInner
+      // wires `canvas.fit-selection` directly to requestSnapToSelected.
+      // This implementation is a fallback no-op so the registry shape
+      // stays uniform.
+      fitSelection: () => {},
+      zoom100: () => {
+        const c = camRef.current;
+        writeCamera({ x: c.x, y: c.y, z: 1 });
+      },
+      zoomIn: () => zoomIn(),
+      zoomOut: () => zoomOut(),
+      nextNamedFrame: () => {
+        if (!layout.frames || layout.frames.length === 0) return;
+        const curr = findCurrentFrameIdx();
+        const next = curr < 0 ? 0 : (curr + 1) % layout.frames.length;
+        const f = layout.frames[next];
+        onPickFrame?.(f.id);
+        // onPickFrame triggers selectedFrameId effect → focusOnFrame
+        // already snaps the camera. No additional call needed.
+      },
+      prevNamedFrame: () => {
+        if (!layout.frames || layout.frames.length === 0) return;
+        const curr = findCurrentFrameIdx();
+        const prev =
+          curr < 0
+            ? layout.frames.length - 1
+            : (curr - 1 + layout.frames.length) % layout.frames.length;
+        const f = layout.frames[prev];
+        onPickFrame?.(f.id);
+      },
+    });
+    return off;
+  }, [fitAll, zoomIn, zoomOut, writeCamera, layout, selectedFrameId, onPickFrame]);
+
   return (
     <div className="leafcanvas">
       <LeafTopBar leaf={leaf} onClose={onClose} onPickLeaf={(id) => { window.__openLeaf?.(id); }} violations={violations.length} />
       <div
         className="lc-stage"
         ref={stageRef}
+        // U3 — make the canvas keyboard-focusable so the keymap's
+        // canvas-eligible focus gate has a target. `tabIndex={0}`
+        // includes the stage in tab order; click-to-focus is automatic
+        // on any tabbable element. Browser default focus ring is
+        // suppressed in CSS (canvas-v2.css `.lc-stage:focus`) — the
+        // stage covers most of the viewport, so a 2px outline would
+        // be visually noisy. Focus state is implicit (hotkeys work)
+        // rather than explicit (visible ring).
+        tabIndex={0}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         style={{
           backgroundImage:
             "radial-gradient(rgba(255,255,255,0.045) 1px, transparent 1px)",
+          outline: "none",
           // backgroundSize / backgroundPosition are written imperatively
           // via applyCameraToDOM (RAF-driven). Initial values get set by
           // the auto-fit effect on mount before first paint.

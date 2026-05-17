@@ -22,6 +22,14 @@ import { AtlasShellProvider, type AtlasShellContextShape } from "./AtlasShellCon
 import { AtomicChildInspector, findByFigmaID } from "./leafcanvas-v2/AtomicChildInspector";
 import { requestCameraSnap } from "./leafcanvas-v2/camera-snap";
 import { getHoveredAtomicChild, setHoveredAtomicChild } from "./leafcanvas-v2/hover-signal";
+// U3 — centralized keymap. Replaces the previously-scattered Shift+2
+// and Esc useEffects with a single action-table + installKeymap call.
+// The keymap module gates on canvas focus (.lc-stage subtree) and
+// rejects editable targets, so Cmd+A inside an InlineTextEditor still
+// behaves natively.
+import { installKeymap, registerKeymap, type ActionTable } from "./leafcanvas-v2/keymap";
+import { getCameraActions } from "./leafcanvas-v2/camera-actions";
+import { toggleDevMode } from "./leafcanvas-v2/dev-mode-state";
 
 // Side-effect imports — order matters; see AtlasShell for rationale.
 import "./tweaks-panel";
@@ -119,20 +127,13 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
     requestCameraSnap({ x: bb.x, y: bb.y, width: bb.width, height: bb.height });
   }, [selectedAtomicChild, atomicCanonicalTree]);
 
-  useEffect(() => {
-    if (!leafID) return;
-    const onKey = (e: KeyboardEvent) => {
-      // Shift+2 (Figma's "Zoom to Selection" shortcut). Use code !==
-      // key to handle layouts where Shift+2 produces a different
-      // character (e.g. UK keyboard sends `"`).
-      if (e.shiftKey && (e.code === "Digit2" || e.key === "@")) {
-        e.preventDefault();
-        requestSnapToSelected();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [leafID, requestSnapToSelected]);
+  // U3 — Shift+2 is now dispatched through the keymap action table
+  // below (`canvas.fit-selection`). The previous standalone effect
+  // here is folded into the combined keymap registration further
+  // down so we register one window listener, not many. The
+  // requestSnapToSelected callback remains — the inline
+  // "Scroll into view" button in AtomicChildInspector still calls it
+  // directly via requestCameraSnap.
 
   // Open a leaf — awaits the leaf-slot load BEFORE flipping local state
   // so LeafCanvas mounts with the data already present in the live store.
@@ -163,36 +164,102 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
     closeLeafFromStore();
   }, [closeLeafFromStore]);
 
-  // Esc layered close. Order (innermost → outermost):
-  //   1. hover state → clear it (Phase 2 U9)
+  // U3 — Esc layered close + full Figma keymap. Previously this lived
+  // as a standalone useEffect that owned its own window keydown
+  // listener; the layered close logic is now the action handler for
+  // `selection.escape-layered` and registers alongside the rest of
+  // the camera + mode + search hotkeys.
+  //
+  // Order of Esc layers (innermost → outermost), preserved verbatim:
+  //   1. hover state  → clear it
   //   2. atomic-child selection → clear it (D8 spec)
   //   3. selected frame → deselect
   //   4. leaf open → close leaf
-  // Each layer consumes the keystroke; user must press Esc again to
-  // pop the next layer. Hover is the cheapest layer (synchronous
-  // module-level state mutation, no React re-render fan-out for the
-  // existing hover painters since they'll see the cleared signal on
-  // the next subscription tick).
+  // Each Esc press consumes one layer; the user must press again to
+  // pop the next.
   useEffect(() => {
-    const fn = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || !leafID) return;
-      if (getHoveredAtomicChild() !== null) {
-        setHoveredAtomicChild(null);
-        return;
-      }
-      if (selectedAtomicChild) {
-        closeAtomicInspector();
-        return;
-      }
-      if (selectedFrameID) {
-        setSelectedFrameID(null);
-        return;
-      }
-      closeLeaf();
+    if (!leafID) return;
+
+    const table: ActionTable = {
+      // Camera — delegates to leafcanvas-registered actions. The
+      // registry can be null if the LeafCanvas hasn't mounted yet
+      // (race with the leafID flip), so each handler null-checks.
+      "canvas.fit-all": () => getCameraActions()?.fitAll(),
+      "canvas.fit-selection": () => requestSnapToSelected(),
+      "canvas.zoom-100": () => getCameraActions()?.zoom100(),
+      "canvas.zoom-in": () => getCameraActions()?.zoomIn(),
+      "canvas.zoom-out": () => getCameraActions()?.zoomOut(),
+      "canvas.next-named-frame": () => getCameraActions()?.nextNamedFrame(),
+      "canvas.prev-named-frame": () => getCameraActions()?.prevNamedFrame(),
+
+      // Mode flag (U9 paints the annotations; U3 just toggles).
+      "mode.toggle-dev-mode": () => toggleDevMode(),
+
+      // Layered close (ported verbatim from the prior useEffect).
+      "selection.escape-layered": () => {
+        if (getHoveredAtomicChild() !== null) {
+          setHoveredAtomicChild(null);
+          return;
+        }
+        if (selectedAtomicChild) {
+          closeAtomicInspector();
+          return;
+        }
+        if (selectedFrameID) {
+          setSelectedFrameID(null);
+          return;
+        }
+        closeLeaf();
+      },
+
+      // Selection-dependent (U4 fills these in). Registered as no-ops
+      // for now so the keymap dispatches without throwing; the
+      // matchAction wiring is in place so muscle memory works the
+      // moment U4 lands.
+      "selection.next-sibling": () => {
+        /* U4 */
+      },
+      "selection.prev-sibling": () => {
+        /* U4 */
+      },
+      "selection.select-all": () => {
+        /* U4 */
+      },
+      "selection.descend": () => {
+        /* U4 */
+      },
+      "selection.ascend": () => {
+        /* U4 */
+      },
+
+      // Hand tool toggle — defers to follow-up; canvas already pans
+      // on default pointer-drag, so H toggling doesn't change behavior
+      // until we add a "frame-select" mode separately.
+      "mode.toggle-hand-tool": () => {
+        /* follow-up */
+      },
+
+      // Cmd+F palette — U3b commit ships this in a separate change set
+      // so the palette UI lands without bloating this commit.
+      "search.open-palette": () => {
+        /* U3b */
+      },
     };
-    window.addEventListener("keydown", fn);
-    return () => window.removeEventListener("keydown", fn);
-  }, [leafID, selectedFrameID, closeLeaf, selectedAtomicChild, closeAtomicInspector]);
+
+    const unregisterTable = registerKeymap(table);
+    const uninstall = installKeymap();
+    return () => {
+      unregisterTable();
+      uninstall();
+    };
+  }, [
+    leafID,
+    requestSnapToSelected,
+    selectedFrameID,
+    selectedAtomicChild,
+    closeLeaf,
+    closeAtomicInspector,
+  ]);
 
   // window globals for backward compat with the ported modules.
   useEffect(() => {
