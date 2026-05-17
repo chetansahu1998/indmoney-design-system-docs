@@ -546,6 +546,14 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
       const id = window.setTimeout(() => setPhase("open"), 360);
       return () => window.clearTimeout(id);
     }
+    if (leaf && leafSticky && leaf.id === leafSticky.id && leaf !== leafSticky) {
+      // Same leaf, fresh reference — e.g. plan 005 U1 attached the sub_flow
+      // after openLeaf already promoted sticky, or U6/U7's SSE refetch
+      // replaced the leaf row. Refresh sticky in place WITHOUT re-triggering
+      // the entry animation so CenterPaneSwitch + LeafInspector see the
+      // new leaf.subFlow / leaf.violations / leaf.frames values.
+      setLeafSticky(leaf);
+    }
     if (!leaf && leafSticky) {
       // Closed — kick off exit; sticky drops once the animation ends.
       setPhase("exiting");

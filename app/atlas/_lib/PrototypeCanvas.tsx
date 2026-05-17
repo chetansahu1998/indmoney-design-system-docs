@@ -38,7 +38,13 @@ interface Props {
 }
 
 export function PrototypeCanvas({ url, title, banner }: Props) {
-  const safe = url.startsWith("https://");
+  // Localhost over HTTP is permitted (Next dev serves prototype HTML from
+  // /public on http://localhost:3001); all other origins require HTTPS so
+  // we never mixed-content-block a real-world prototype URL.
+  const safe =
+    url.startsWith("https://") ||
+    url.startsWith("http://localhost:") ||
+    url.startsWith("http://127.0.0.1:");
   if (!safe) {
     return (
       <div className="lc-proto-error" role="alert">

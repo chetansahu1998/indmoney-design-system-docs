@@ -209,6 +209,14 @@ export default function AtlasShell({ initialURL }: AtlasShellProps = {}) {
           frames: l.frames,
           violations: l.violations,
           frameKind: "real",
+          // Plan 005 — propagate sub_flow binding to window.LEAVES so the
+          // legacy `getLeavesArray()` mirror used by LeafInspector and
+          // AtlasShellInner's CenterPaneSwitch sees the same binding the
+          // zustand store carries. Without this projection, U1 attaches
+          // leaf.subFlow into leavesByFlow but the UI never picks it up —
+          // PRD tab stays hidden, prototype iframe never swaps, Wall toggle
+          // never appears. Found during plan 005 preview E2E.
+          subFlow: l.subFlow,
         };
         flatLeaves.push(row);
         (byFlow[l.flow] ??= []).push(row);
