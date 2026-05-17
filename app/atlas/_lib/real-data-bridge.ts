@@ -33,6 +33,10 @@ const originalBuildViolations = W.buildViolations;
 const originalBuildDecisions = W.buildDecisions;
 const originalBuildActivity = W.buildActivity;
 const originalBuildComments = W.buildComments;
+// Plan 005 U2 — buildPRD doesn't exist on the legacy mock path. Captured
+// for symmetry with the other originals; bridgeBuildPRD never delegates
+// because there's no mock PRD source.
+const originalBuildPRD = W.buildPRD;
 const originalPhoneFrame = W.PhoneFrame;
 
 // Snapshot helper — read live-store outside React (these wrappers are
@@ -119,6 +123,35 @@ function bridgeBuildActivity(leaf: any) {
     return [];
   }
   return originalBuildActivity?.(leaf) ?? [];
+}
+
+/**
+ * Plan 005 U2 — read the per-leaf PRDFull from the live store. First call
+ * triggers loadLeafPRD (fire-and-forget); subsequent calls return the
+ * cached value. Returns `null` for:
+ *   - leaves without a sub_flow binding,
+ *   - leaves whose PRD slot hasn't loaded yet (renderer shows skeleton),
+ *   - leaves whose sub_flow has no PRD seeded yet.
+ *
+ * Unlike the other bridges, there is no mock fallback — the legacy mock
+ * builders never produced PRD shapes, so non-live mode also returns null.
+ */
+function bridgeBuildPRD(leaf: any) {
+  // `originalBuildPRD` is captured at install time and is almost always
+  // undefined (the legacy mock layer never shipped a buildPRD); we keep
+  // the reference for symmetry but rely solely on the live store.
+  void originalBuildPRD;
+  if (!leaf || !leaf.id) return null;
+  const state = snapshot();
+  if (!Object.prototype.hasOwnProperty.call(state.prdByLeaf, leaf.id)) {
+    // First access: kick the lazy fetch. Fire-and-forget — the renderer
+    // will re-call once the store updates and a value lands in prdByLeaf.
+    void state.loadLeafPRD(leaf.id).catch(() => {
+      /* loadLeafPRD already stamps null on error; nothing to do here. */
+    });
+    return null;
+  }
+  return state.prdByLeaf[leaf.id] ?? null;
 }
 
 function bridgeBuildComments(leaf: any) {
@@ -293,6 +326,7 @@ if (typeof window !== "undefined") {
   W.buildDecisions = bridgeBuildDecisions;
   W.buildActivity = bridgeBuildActivity;
   W.buildComments = bridgeBuildComments;
+  W.buildPRD = bridgeBuildPRD;
   W.PhoneFrame = PhoneFrameWrapper;
 }
 

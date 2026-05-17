@@ -21,6 +21,7 @@
 
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import { getToken } from "../auth-client";
 import type { TextOverride } from "../projects/client";
 import {
   deleteTextOverride,
@@ -611,11 +612,80 @@ export const useAtlas = create<AtlasStoreState>()(
       },
 
       loadLeafPRD: async (leafID) => {
-        // Plan 005 U2 stub. Today, just stamp a `null` so the prdByLeaf
-        // slice has a deterministic shape; U2 replaces the body with the
-        // real `prd.author op:get` MCP proxy call.
+        // Plan 005 U2 — real fetch path. The MCP proxy at
+        // /api/prd/{sub_product}/{sub_flow}/full unwraps the {data: …}
+        // envelope and returns either a full PRDFull payload OR the
+        // empty-state object {sub_flow_id, prd: null, note}. Both are
+        // collapsed to `prdByLeaf[leafID] = PRDFull | null` so consumers
+        // only ever branch on null.
+        //
+        // Idempotent: once a leaf has any value (including null) we
+        // skip refetching. SSE prd.* events should clear the cache
+        // explicitly (future unit) before re-triggering this loader.
         if (Object.prototype.hasOwnProperty.call(get().prdByLeaf, leafID)) return;
-        set({ prdByLeaf: { ...get().prdByLeaf, [leafID]: null } });
+
+        // Locate the leaf's SubFlowSummary so we know which {sub_product}
+        // /{sub_flow} pair to request. No sub_flow → stamp null cleanly
+        // so PRDTab renders the "no sub-flow bound" placeholder.
+        let leaf: Leaf | undefined;
+        for (const leaves of Object.values(get().leavesByFlow)) {
+          const found = leaves.find((l) => l.id === leafID);
+          if (found) {
+            leaf = found;
+            break;
+          }
+        }
+        if (!leaf?.subFlow?.fullSlug) {
+          set({ prdByLeaf: { ...get().prdByLeaf, [leafID]: null } });
+          return;
+        }
+        const parts = leaf.subFlow.fullSlug.split("/");
+        if (parts.length !== 2 || !parts[0] || !parts[1]) {
+          set({ prdByLeaf: { ...get().prdByLeaf, [leafID]: null } });
+          return;
+        }
+        const [subProduct, subFlow] = parts;
+        const token = getToken();
+        if (!token) {
+          set({ prdByLeaf: { ...get().prdByLeaf, [leafID]: null } });
+          return;
+        }
+        try {
+          const res = await fetch(
+            `/api/prd/${encodeURIComponent(subProduct)}/${encodeURIComponent(subFlow)}/full`,
+            {
+              method: "GET",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/json",
+              },
+              cache: "no-store",
+            },
+          );
+          if (!res.ok) {
+            // 4xx/5xx — surface as null so the UI shows the placeholder
+            // instead of a stuck spinner. Console-warn keeps the dev
+            // path visible without surfacing a toast to PMs.
+            // eslint-disable-next-line no-console
+            console.warn(`loadLeafPRD: ${res.status} for ${leaf.subFlow.fullSlug}`);
+            set({ prdByLeaf: { ...get().prdByLeaf, [leafID]: null } });
+            return;
+          }
+          const body = (await res.json()) as unknown;
+          // The proxy already unwrapped MCP's `{data: …}` envelope. The
+          // remaining ambiguity is "full PRD vs empty placeholder"; the
+          // empty branch has `{sub_flow_id, prd: null, note}` (no `id`
+          // field on the root). Discriminate on `id`.
+          if (body && typeof body === "object" && "id" in (body as Record<string, unknown>)) {
+            set({ prdByLeaf: { ...get().prdByLeaf, [leafID]: body as PRDFull } });
+          } else {
+            set({ prdByLeaf: { ...get().prdByLeaf, [leafID]: null } });
+          }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn("loadLeafPRD: fetch failed", err);
+          set({ prdByLeaf: { ...get().prdByLeaf, [leafID]: null } });
+        }
       },
 
       closeLeaf: () => {

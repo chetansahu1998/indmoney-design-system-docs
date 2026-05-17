@@ -3246,14 +3246,19 @@ func (s *Server) HandleFlowActivity(w http.ResponseWriter, r *http.Request) {
 // subFlowForLeafResponse is the JSON shape returned by HandleSubFlowForLeaf.
 // The field names mirror the frontend `SubFlowSummary` type in
 // lib/atlas/types.ts; downstream units (U2/U6/U7) consume this verbatim.
+//
+// FigmaFileKey is populated server-side via LookupFigmaSectionFileKey when
+// FigmaSectionID is set. Required by U2's <FrameThumbnail> to construct the
+// /api/figma/frame-png request; absent for unbound sub_flows.
 type subFlowForLeafResponse struct {
-	ID               string  `json:"id"`
-	FullSlug         string  `json:"full_slug"`
-	Name             string  `json:"name"`
-	CanvasLifecycle  string  `json:"canvas_lifecycle"`
-	PrototypeURL     *string `json:"prototype_url,omitempty"`
-	PrototypeTitle   *string `json:"prototype_title,omitempty"`
-	FigmaSectionID   *string `json:"figma_section_id,omitempty"`
+	ID              string  `json:"id"`
+	FullSlug        string  `json:"full_slug"`
+	Name            string  `json:"name"`
+	CanvasLifecycle string  `json:"canvas_lifecycle"`
+	PrototypeURL    *string `json:"prototype_url,omitempty"`
+	PrototypeTitle  *string `json:"prototype_title,omitempty"`
+	FigmaSectionID  *string `json:"figma_section_id,omitempty"`
+	FigmaFileKey    *string `json:"figma_file_key,omitempty"`
 }
 
 // computeCanvasLifecycle derives the four-state lifecycle string from a
@@ -3370,6 +3375,17 @@ func (s *Server) HandleSubFlowForLeaf(w http.ResponseWriter, r *http.Request) {
 		PrototypeURL:    sf.PrototypeURL,
 		PrototypeTitle:  sf.PrototypeTitle,
 		FigmaSectionID:  sf.FigmaSectionID,
+	}
+	// Best-effort: resolve the bound section's file_key so the frontend
+	// <FrameThumbnail> component can address /api/figma/frame-png. A
+	// missing figma_section row (autosync deleted the section since
+	// LinkSubFlowToFigmaSection wrote it) is non-fatal — the field stays
+	// absent and the UI degrades to the placeholder glyph.
+	if sf.FigmaSectionID != nil && *sf.FigmaSectionID != "" {
+		if fk, err := repo.LookupFigmaSectionFileKey(r.Context(), *sf.FigmaSectionID); err == nil && fk != "" {
+			fkCopy := fk
+			resp.FigmaFileKey = &fkCopy
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

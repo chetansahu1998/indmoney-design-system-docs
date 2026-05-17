@@ -1010,6 +1010,8 @@ interface SubFlowForLeafResponse {
   prototype_url?: string;
   prototype_title?: string;
   figma_section_id?: string;
+  /** Plan 005 U2 — required by <FrameThumbnail> to construct PNG requests. */
+  figma_file_key?: string;
 }
 
 /**
@@ -1044,6 +1046,7 @@ export async function fetchSubFlowForLeaf(
     prototypeURL: res.data.prototype_url,
     prototypeTitle: res.data.prototype_title,
     figmaSectionID: res.data.figma_section_id,
+    figmaFileKey: res.data.figma_file_key,
   };
 }
 

@@ -690,6 +690,168 @@
 .lc-com-input:hover { border-color: var(--text-3); }
 .lc-com-input-field { font-size: 12px; color: var(--text-3); }
 
+/* ----- PRD tab (plan 005 U2) ----- */
+.lc-prd { display: flex; flex-direction: column; gap: 18px; }
+.lc-prd-head { display: flex; flex-direction: column; gap: 6px; }
+.lc-prd-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-0);
+}
+.lc-prd-tab { display: flex; flex-direction: column; gap: 10px; }
+.lc-prd-tab-h {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-0);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.lc-prd-md {
+  margin: 0;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-1);
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+.lc-prd-thin {
+  padding: 10px 12px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  line-height: 1.5;
+}
+.lc-prd-state {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.02);
+}
+.lc-prd-state-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.lc-prd-state-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-0);
+}
+.lc-prd-state-frame {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.lc-prd-block { display: flex; flex-direction: column; gap: 4px; }
+.lc-prd-block-h {
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.lc-prd-block-body { font-size: 12px; color: var(--text-1); }
+.lc-prd-ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--text-1);
+  line-height: 1.5;
+}
+.lc-prd-ul li { margin-bottom: 3px; }
+.lc-prd-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+.lc-prd-tbl th,
+.lc-prd-tbl td {
+  text-align: left;
+  padding: 5px 7px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  color: var(--text-1);
+}
+.lc-prd-tbl th {
+  color: var(--text-3);
+  font-weight: 500;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.lc-prd-mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  background: rgba(255,255,255,0.04);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--text-2);
+}
+.lc-prd-schema {
+  margin: 0;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--text-3);
+  white-space: pre-wrap;
+  max-width: 220px;
+}
+.lc-prd-thumbs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+.lc-prd-thumb-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.lc-prd-thumb {
+  border-radius: 4px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.04);
+}
+.lc-prd-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: opacity 180ms ease-out;
+}
+.lc-prd-thumb-skel {
+  width: 100%;
+  height: 100%;
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+  animation: lc-prd-thumb-pulse 1.6s ease-in-out infinite;
+  position: absolute;
+  inset: 0;
+}
+.lc-prd-thumb-fallback {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  font-size: 22px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+}
+@keyframes lc-prd-thumb-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.85; }
+}
+.lc-prd-thumb-caption {
+  font-size: 10px;
+  color: var(--text-3);
+  line-height: 1.3;
+  word-break: break-all;
+}
+.lc-prd-thumb-variant { color: var(--text-2); }
+
 /* ----- Empty states ----- */
 .lc-empty { padding: 28px 12px; text-align: center; }
 .lc-empty-icon {

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -801,6 +802,20 @@ func seedFlowWithSubFlowBinding(
 	if err := repo.LinkSubFlowToFigmaSection(ctx, sf.ID, sectionID); err != nil {
 		t.Fatalf("link section: %v", err)
 	}
+	// Plan 005 U2 — seed a matching figma_section row so
+	// LookupFigmaSectionFileKey resolves a file_key for the response.
+	// LinkSubFlowToFigmaSection alone only writes sub_flow.figma_section_id;
+	// the inventory upsert (or this test helper) owns the figma_section row.
+	fileKey := "FK-" + sf.ID
+	if _, err := srv.deps.DB.DB.ExecContext(ctx,
+		`INSERT INTO figma_section (tenant_id, file_key, page_id, section_id, name,
+			x, y, width, height, order_index, first_seen_at, last_seen_at)
+		 VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0, 0, ?, ?)`,
+		tenantID, fileKey, "page:"+sf.ID, sectionID, flowName,
+		rfc3339(time.Now().UTC()), rfc3339(time.Now().UTC()),
+	); err != nil {
+		t.Fatalf("seed figma_section: %v", err)
+	}
 
 	p, err := repo.UpsertProject(ctx, Project{
 		Name: productName + "-" + flowName, Platform: "mobile",
@@ -834,12 +849,13 @@ func TestHandleSubFlowForLeaf_HappyPath(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
 	var resp struct {
-		ID               string  `json:"id"`
-		FullSlug         string  `json:"full_slug"`
-		Name             string  `json:"name"`
-		CanvasLifecycle  string  `json:"canvas_lifecycle"`
-		PrototypeURL     *string `json:"prototype_url,omitempty"`
-		FigmaSectionID   *string `json:"figma_section_id,omitempty"`
+		ID              string  `json:"id"`
+		FullSlug        string  `json:"full_slug"`
+		Name            string  `json:"name"`
+		CanvasLifecycle string  `json:"canvas_lifecycle"`
+		PrototypeURL    *string `json:"prototype_url,omitempty"`
+		FigmaSectionID  *string `json:"figma_section_id,omitempty"`
+		FigmaFileKey    *string `json:"figma_file_key,omitempty"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
@@ -862,6 +878,11 @@ func TestHandleSubFlowForLeaf_HappyPath(t *testing.T) {
 	}
 	if resp.FigmaSectionID == nil || *resp.FigmaSectionID != "sec:"+sfID {
 		t.Errorf("figma_section_id mismatch: %v", resp.FigmaSectionID)
+	}
+	// Plan 005 U2: figma_file_key flows through when the seed inserts
+	// a matching figma_section row.
+	if resp.FigmaFileKey == nil || *resp.FigmaFileKey != "FK-"+sfID {
+		t.Errorf("figma_file_key mismatch: got %v want FK-%s", resp.FigmaFileKey, sfID)
 	}
 }
 

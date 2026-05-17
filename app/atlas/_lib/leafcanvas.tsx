@@ -24,6 +24,8 @@
 "use client";
 import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from "react";
 import { CopyOverridesTab } from "./leafcanvas-v2/CopyOverridesTab";
+// Plan 005 U2 — shared FrameThumbnail used by PRD state cards (and U7's Wall).
+import { FrameThumbnail } from "./FrameThumbnail";
 import { setLeafZoom } from "./leafcanvas-v2/leaf-zoom-signal";
 import { canvasGestureTracker } from "./leafcanvas-v2/gesture-tracker";
 import { clog } from "./leafcanvas-v2/canvas-log";
@@ -96,6 +98,9 @@ declare global {
     buildDecisions?: (leaf: Leaf) => unknown[];
     buildActivity?: (leaf: Leaf) => unknown[];
     buildComments?: (leaf: Leaf) => unknown[];
+    // Plan 005 U2 — read by PRDTab; returns the typed PRDFull document
+    // for a sub_flow-bound leaf or null. Injected by real-data-bridge.ts.
+    buildPRD?: (leaf: Leaf) => unknown;
     FLOWS_BY_ID?: Record<string, unknown>;
     LEAVES?: Record<string, Leaf[]>;
     __openLeaf?: (id: string) => void;
@@ -1014,6 +1019,13 @@ window.LeafInspector = function LeafInspector({ leaf, frameId, onClose, onPickFr
   const decisions = useMemo(() => window.buildDecisions(leaf), [leaf.id]);
   const activity = useMemo(() => window.buildActivity(leaf), [leaf.id]);
   const comments = useMemo(() => window.buildComments(leaf), [leaf.id]);
+  // Plan 005 U2 — pull the typed PRD doc for sub_flow-bound leaves. The
+  // bridge function returns null for legacy leaves and for not-yet-loaded
+  // slots; PRDTab renders the right placeholder per case.
+  const prd = useMemo(
+    () => (window.buildPRD ? window.buildPRD(leaf) : null),
+    [leaf.id],
+  );
 
   const frame = frameId
     ? window.buildLeafCanvas(leaf).frames.find(f => f.id === frameId)
@@ -1031,13 +1043,28 @@ window.LeafInspector = function LeafInspector({ leaf, frameId, onClose, onPickFr
         <button className="lc-ins-close" onClick={onClose}>✕</button>
       </div>
       <div className="lc-ins-tabs">
-        {["drd", "violations", "decisions", "copy", "activity", "comments"].map(t => (
+        {/*
+          Plan 005 U2 — render the PRD tab button when the leaf is bound to
+          a sub_flow. The full 4-vs-6 tab gating moves into U3; for U2 we
+          inject "prd" alongside the legacy tab list so PMs already see the
+          new surface and U3 can refactor the conditional cleanly.
+        */}
+        {(leaf.subFlow
+          ? ["drd", "prd", "violations", "decisions", "copy", "activity", "comments"]
+          : ["drd", "violations", "decisions", "copy", "activity", "comments"]
+        ).map(t => (
           <button
             key={t}
             className={`lc-ins-tab ${tab === t ? "is-active" : ""}`}
             onClick={() => setTab(t)}
           >
-            {t === "drd" ? "DRD" : t === "copy" ? "Copy" : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === "drd"
+              ? "DRD"
+              : t === "prd"
+              ? "PRD"
+              : t === "copy"
+              ? "Copy"
+              : t.charAt(0).toUpperCase() + t.slice(1)}
             {t === "violations" && violations.length > 0 && (
               <span className="lc-tab-pill">{violations.length}</span>
             )}
@@ -1049,6 +1076,7 @@ window.LeafInspector = function LeafInspector({ leaf, frameId, onClose, onPickFr
       </div>
       <div className="lc-ins-body">
         {tab === "drd" && <DRDTab leaf={leaf} frame={frame} />}
+        {tab === "prd" && <PRDTab prd={prd} leaf={leaf} />}
         {tab === "violations" && (
           <ViolationsTab
             violations={frame ? violations.filter(v => v.frameIdx === frame.idx) : violations}
@@ -1190,6 +1218,278 @@ function ActivityTab({ activity }) {
       ))}
     </div>
   );
+}
+
+// ============================================================
+// PRDTab — typed PRD stems for sub_flow-bound leaves (plan 005 U2)
+// ============================================================
+//
+// Rendered when `leaf.subFlow` is present AND the active tab is "prd".
+// The data is read off `window.buildPRD(leaf)` which delegates to
+// bridgeBuildPRD → useAtlas.prdByLeaf[leafID]. The bridge triggers
+// loadLeafPRD on first access; this component handles the three states
+// the store can be in:
+//   - leaf has no subFlow         → "No sub-flow bound" placeholder
+//   - subFlow bound, prd === null → empty PRD placeholder (or loading)
+//   - prd === PRDFull             → walk tabs → states → typed stems
+//
+// Visuals mirror the legacy /prd viewer's StateCard but using Atlas's
+// `lc-prd-*` className tokens declared in leafcanvas.css.
+function PRDTab({ prd, leaf }) {
+  if (!leaf?.subFlow) {
+    return (
+      <div className="lc-empty">
+        <div className="lc-empty-h">No sub-flow bound</div>
+        <div className="lc-empty-sub">
+          This leaf has no Figma section binding yet. Create a Figma section named
+          {" "}<code>{"{SubProduct}/{SubFlow}"}</code> and autosync will hook it up.
+        </div>
+      </div>
+    );
+  }
+  if (!prd) {
+    // The bridge returns null both for "still loading" and "no PRD seeded".
+    // We can't disambiguate cheaply here — show a neutral loading state.
+    // Once SSE-refresh lands (future), the seeded-empty branch will get a
+    // dedicated callout instead.
+    return (
+      <div className="lc-empty">
+        <div className="lc-empty-h">Loading PRD…</div>
+        <div className="lc-empty-sub">
+          If this persists, the sub-flow may not have a PRD yet. Use{" "}
+          <code>/ind-prd</code> in Claude to seed one.
+        </div>
+      </div>
+    );
+  }
+  const tabs = prd.tabs ?? [];
+  if (tabs.length === 0) {
+    return (
+      <div className="lc-empty">
+        <div className="lc-empty-h">No PRD tabs yet</div>
+        <div className="lc-empty-sub">
+          Use <code>/ind-prd add-tab</code> in Claude to seed the first tab.
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="lc-prd">
+      {prd.title && (
+        <header className="lc-prd-head">
+          <div className="lc-prd-title">{prd.title}</div>
+          {prd.summary_md && <pre className="lc-prd-md">{prd.summary_md}</pre>}
+        </header>
+      )}
+      {tabs.map((t) => (
+        <section key={t.id} className="lc-prd-tab">
+          {tabs.length > 1 && <h3 className="lc-prd-tab-h">{t.name}</h3>}
+          {t.overview_md && <pre className="lc-prd-md">{t.overview_md}</pre>}
+          {(t.states ?? []).length === 0 && (
+            <div className="lc-prd-thin">
+              No states yet. Auto-skeleton creates one row per named frame once
+              the designer ships the section, or use{" "}
+              <code>/ind-prd add-state</code> to author manually.
+            </div>
+          )}
+          {(t.states ?? []).map((s) =>
+            s.deleted_at ? null : (
+              <PRDStateCard key={s.id} state={s} leaf={leaf} />
+            ),
+          )}
+        </section>
+      ))}
+      {prd.design_notes_md && (
+        <section className="lc-prd-tab">
+          <h3 className="lc-prd-tab-h">Design notes</h3>
+          <pre className="lc-prd-md">{prd.design_notes_md}</pre>
+        </section>
+      )}
+    </div>
+  );
+}
+
+// PRDStateCard — renders one prd_state with all of its typed children.
+// Mirrors the legacy /prd viewer's StateCard but uses Atlas `lc-prd-*`
+// tokens so the visual hierarchy slots into the inspector rail.
+function PRDStateCard({ state, leaf }) {
+  const fileKey = leaf?.subFlow?.figmaFileKey;
+  const criteria = state.acceptance_criteria ?? [];
+  const edges = state.edge_cases ?? [];
+  const copies = state.copy_strings ?? [];
+  const events = state.events ?? [];
+  const a11y = state.a11y_notes ?? [];
+  const frameTags = state.frame_tags ?? [];
+  const hasAny =
+    criteria.length > 0 ||
+    edges.length > 0 ||
+    copies.length > 0 ||
+    events.length > 0 ||
+    a11y.length > 0 ||
+    frameTags.length > 0 ||
+    state.condition_md ||
+    state.design_handling_md ||
+    state.fe_handling_md;
+
+  return (
+    <article className="lc-prd-state">
+      <header className="lc-prd-state-head">
+        <div className="lc-prd-state-label">{state.label}</div>
+        {state.frame_name && (
+          <div className="lc-prd-state-frame" title="Frame name">
+            {state.frame_name}
+          </div>
+        )}
+      </header>
+
+      {state.condition_md && (
+        <PRDBlock label="Condition">
+          <pre className="lc-prd-md">{state.condition_md}</pre>
+        </PRDBlock>
+      )}
+
+      {criteria.length > 0 && (
+        <PRDBlock label="Acceptance criteria">
+          <ul className="lc-prd-ul">
+            {criteria.map((c) => (
+              <li key={c.id}>{c.criterion}</li>
+            ))}
+          </ul>
+        </PRDBlock>
+      )}
+
+      {events.length > 0 && (
+        <PRDBlock label="Mixpanel events">
+          <table className="lc-prd-tbl">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Fires on</th>
+                <th>Properties</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((e) => (
+                <tr key={e.id}>
+                  <td><code className="lc-prd-mono">{e.name}</code></td>
+                  <td>{e.fires_on}</td>
+                  <td>
+                    <pre className="lc-prd-schema">{prettyJSON(e.properties_schema)}</pre>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </PRDBlock>
+      )}
+
+      {copies.length > 0 && (
+        <PRDBlock label="Copy">
+          <table className="lc-prd-tbl">
+            <thead>
+              <tr>
+                <th>Key</th>
+                <th>Value</th>
+                <th>Locale</th>
+              </tr>
+            </thead>
+            <tbody>
+              {copies.map((c) => (
+                <tr key={c.id}>
+                  <td><code className="lc-prd-mono">{c.key}</code></td>
+                  <td>{c.value}</td>
+                  <td>{c.locale || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </PRDBlock>
+      )}
+
+      {edges.length > 0 && (
+        <PRDBlock label="Edge cases">
+          <ul className="lc-prd-ul">
+            {edges.map((e) => (
+              <li key={e.id}>{e.edge_case}</li>
+            ))}
+          </ul>
+        </PRDBlock>
+      )}
+
+      {a11y.length > 0 && (
+        <PRDBlock label="Accessibility notes">
+          <ul className="lc-prd-ul">
+            {a11y.map((n) => (
+              <li key={n.id}>{n.note}</li>
+            ))}
+          </ul>
+        </PRDBlock>
+      )}
+
+      {state.design_handling_md && (
+        <PRDBlock label="Design handling">
+          <pre className="lc-prd-md">{state.design_handling_md}</pre>
+        </PRDBlock>
+      )}
+
+      {state.fe_handling_md && (
+        <PRDBlock label="Frontend handling">
+          <pre className="lc-prd-md">{state.fe_handling_md}</pre>
+        </PRDBlock>
+      )}
+
+      {frameTags.length > 0 && (
+        <PRDBlock label="Bound frames">
+          <div className="lc-prd-thumbs">
+            {frameTags.map((t) => (
+              <div key={t.id} className="lc-prd-thumb-wrap">
+                <FrameThumbnail
+                  fileKey={fileKey}
+                  figmaNodeID={t.figma_node_id}
+                  alt={t.variant ? `Frame ${t.figma_node_id} (${t.variant})` : `Frame ${t.figma_node_id}`}
+                  width={120}
+                  height={84}
+                />
+                <div className="lc-prd-thumb-caption">
+                  <code className="lc-prd-mono">{t.figma_node_id}</code>
+                  {t.variant && <span className="lc-prd-thumb-variant"> · {t.variant}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </PRDBlock>
+      )}
+
+      {!hasAny && (
+        <div className="lc-prd-thin">
+          No typed stems authored yet. Use{" "}
+          <code>/ind-prd add-state {state.label}</code> in Claude to seed
+          criteria, events, and copy.
+        </div>
+      )}
+    </article>
+  );
+}
+
+function PRDBlock({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="lc-prd-block">
+      <div className="lc-prd-block-h">{label}</div>
+      <div className="lc-prd-block-body">{children}</div>
+    </div>
+  );
+}
+
+// prettyJSON tries to pretty-print a properties_schema string. The column
+// is stored verbatim (could be JSON, could be free-form), so we fall back
+// to the raw string when parse fails.
+function prettyJSON(s: string): string {
+  if (!s) return "";
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2);
+  } catch {
+    return s;
+  }
 }
 
 function CommentsTab({ comments }) {

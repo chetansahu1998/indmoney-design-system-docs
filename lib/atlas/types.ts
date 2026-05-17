@@ -115,6 +115,13 @@ export interface SubFlowSummary {
   prototypeTitle?: string;
   /** Bound Figma section id; null until autosync links the section. */
   figmaSectionID?: string;
+  /**
+   * Figma file_key the bound section lives in. Populated server-side by
+   * HandleSubFlowForLeaf via LookupFigmaSectionFileKey when
+   * figma_section_id is set. Required by <FrameThumbnail> to construct
+   * the /api/figma/frame-png request; absent for legacy / unbound leaves.
+   */
+  figmaFileKey?: string;
 }
 
 /**
@@ -282,17 +289,126 @@ export interface DRDDocument {
 
 /**
  * PRDFull — typed PRD document returned by the MCP `prd.author op:get` tool.
- * Placeholder shape for U2; the leaf-PRD slice is declared on the store now
- * so U2 doesn't need to re-touch live-store.ts. The concrete inner shape
- * (states / criteria / events / copy / a11y) gets fleshed out in U2.
+ *
+ * Snake-case keys mirror the Go-side JSON tags in
+ * services/ds-service/internal/projects/prd.go (PRD, PRDTab, PRDState, and
+ * each typed-stem row). The MCP envelope is `{data: PRDFull | {sub_flow_id,
+ * prd: null, note}}`; the empty branch is represented here as `null` in the
+ * store (`prdByLeaf[leafID] === null`), so consumers only ever see PRDFull
+ * or null.
  */
 export interface PRDFull {
+  /** prd.id (UUID). */
+  id: string;
+  /** tenant_id; server-supplied, opaque to the client. */
+  tenant_id: string;
   /** sub_flow.id this PRD hangs off. */
-  subFlowID: string;
-  /** Opaque payload; U2 replaces with typed-stem schema. */
-  tabs?: unknown;
-  /** When the server last serialised this document. */
-  updatedAt?: string;
+  sub_flow_id: string;
+  title: string;
+  summary_md: string;
+  design_notes_md: string;
+  created_at: string;
+  updated_at: string;
+  tabs?: PRDTabFull[];
+}
+
+export interface PRDTabFull {
+  id: string;
+  tenant_id: string;
+  prd_id: string;
+  name: string;
+  position: number;
+  overview_md: string;
+  created_at: string;
+  states?: PRDStateFull[];
+}
+
+export interface PRDStateFull {
+  id: string;
+  tenant_id: string;
+  prd_tab_id: string;
+  label: string;
+  position: number;
+  /** Designer-supplied display name for the bound frame (optional). */
+  frame_name?: string | null;
+  condition_md: string;
+  design_handling_md: string;
+  fe_handling_md: string;
+  /** Soft-delete sentinel; soft-deleted states never surface in the doc view. */
+  deleted_at?: string | null;
+  created_at: string;
+  updated_at: string;
+
+  acceptance_criteria?: AcceptanceCriterion[];
+  edge_cases?: EdgeCase[];
+  copy_strings?: CopyString[];
+  events?: PRDStateEvent[];
+  a11y_notes?: A11yNote[];
+  frame_tags?: FrameTag[];
+}
+
+export interface AcceptanceCriterion {
+  id: string;
+  tenant_id: string;
+  prd_state_id: string;
+  position: number;
+  criterion: string;
+  created_at: string;
+}
+
+export interface EdgeCase {
+  id: string;
+  tenant_id: string;
+  prd_state_id: string;
+  position: number;
+  edge_case: string;
+  created_at: string;
+}
+
+export interface CopyString {
+  id: string;
+  tenant_id: string;
+  prd_state_id: string;
+  key: string;
+  value: string;
+  locale: string;
+  created_at: string;
+}
+
+/**
+ * Mixpanel-style analytics event. Named `PRDStateEvent` (not `Event`) so it
+ * doesn't shadow the global DOM `Event` symbol when imported alongside
+ * React handler types.
+ */
+export interface PRDStateEvent {
+  id: string;
+  tenant_id: string;
+  prd_state_id: string;
+  position: number;
+  name: string;
+  /** JSON-shaped string (best-effort parse); stored verbatim per prd.go. */
+  properties_schema: string;
+  fires_on: string;
+  created_at: string;
+}
+
+export interface A11yNote {
+  id: string;
+  tenant_id: string;
+  prd_state_id: string;
+  position: number;
+  note: string;
+  created_at: string;
+}
+
+export interface FrameTag {
+  id: string;
+  tenant_id: string;
+  prd_state_id: string;
+  figma_node_id: string;
+  variant?: string | null;
+  position: number;
+  created_at: string;
 }
 
 /** Per-leaf bundle pre-fetched together for the inspector. */
