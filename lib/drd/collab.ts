@@ -79,8 +79,8 @@ export async function mintDRDTicket(
 }
 
 /**
- * mintDRDTicketForSubFlow calls POST /api/projects/{sub_product}/{sub_flow}/drd/ticket
- * (which proxies to ds-service POST /v1/projects/{sub_product_slug}/{sub_flow_slug}/drd/ticket)
+ * mintDRDTicketForSubFlow calls POST /api/prd/{sub_product}/{sub_flow}/drd/ticket
+ * (which proxies to ds-service POST /v1/sub-flows/{sub_product_slug}/{sub_flow_slug}/drd/ticket)
  * to receive a 60s single-use ticket. Same response shape as mintDRDTicket
  * — including the resolved `flow_id` the server picked from the
  * sub_flow → flow_drd binding — so callers can hand it straight to
@@ -98,7 +98,7 @@ export async function mintDRDTicketForSubFlow(
     const token = getToken();
     if (!token) return { ok: false, status: 401, error: "no auth token" };
     const res = await fetch(
-      `/api/projects/${encodeURIComponent(subProductSlug)}/${encodeURIComponent(subFlowSlug)}/drd/ticket`,
+      `/api/prd/${encodeURIComponent(subProductSlug)}/${encodeURIComponent(subFlowSlug)}/drd/ticket`,
       {
         method: "POST",
         headers: {

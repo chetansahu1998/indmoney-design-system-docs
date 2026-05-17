@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * PRDShell — client-side root of the /projects/{subProduct}/{subFlow}/prd
+ * PRDShell — client-side root of the /prd/{subProduct}/{subFlow}
  * viewer (U9).
  *
  * Layout (mirrors app/atlas/_lib/Shell.tsx chrome + atlas canvas+panel
@@ -16,11 +16,11 @@
  *   └────────────────────────────────────┴─────────────────────┘
  *
  * Lifecycle:
- *   1. Mount → fetch /api/projects/{sp}/{sf}/prd (section.inspect bundle).
+ *   1. Mount → fetch /api/prd/{sp}/{sf} (section.inspect bundle).
  *   2. Subscribe to inbox:<tenant> SSE; on figma.design_shipped or
  *      drd.prototype_attached for this sub_flow, re-fetch.
  *   3. Wall (default) reads `data.wall` directly. Document tab triggers
- *      a one-time fetch of /api/projects/{sp}/{sf}/prd/full.
+ *      a one-time fetch of /api/prd/{sp}/{sf}/full.
  *
  * Auth + base URL match the conventions in lib/projects/client.ts and
  * app/atlas/_lib/Shell.tsx. We never bypass app/projects/layout.tsx's
@@ -73,7 +73,7 @@ export function PRDShell({ subProduct, subFlow }: Props) {
     (async () => {
       try {
         const res = await fetch(
-          `/api/projects/${encodeURIComponent(subProduct)}/${encodeURIComponent(
+          `/api/prd/${encodeURIComponent(subProduct)}/${encodeURIComponent(
             subFlow,
           )}/prd`,
           {

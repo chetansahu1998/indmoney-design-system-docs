@@ -1,5 +1,5 @@
 /**
- * GET /api/projects/{subProduct}/{subFlow}/prd
+ * GET /api/prd/{subProduct}/{subFlow}
  *
  * U9 viewer endpoint — thin proxy onto ds-service's MCP `section.inspect`.
  * Returns the sub_flow metadata + DRD/PRD existence summary + the frames

@@ -1,12 +1,12 @@
 /**
- * POST /api/projects/{subProduct}/{subFlow}/drd/ticket
+ * POST /api/prd/{subProduct}/{subFlow}/drd/ticket
  *
  * U3 follow-up — Next.js proxy onto ds-service's slug-keyed DRD ticket
  * endpoint. The PRD viewer's DRDPane mints a Hocuspocus ticket here, then
  * opens a Y.Doc against the resolved flow_id.
  *
  * Upstream contract:
- *   POST {DS_SERVICE_URL}/v1/projects/{sub_product_slug}/{sub_flow_slug}/drd/ticket
+ *   POST {DS_SERVICE_URL}/v1/sub-flows/{sub_product_slug}/{sub_flow_slug}/drd/ticket
  *   → 200 { ticket, trace_id, flow_id, tenant_id, user_id, role, expires_in }
  *
  * The upstream resolves the sub_flow → flow_id binding (bootstrapping the
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   const traceId = req.headers.get("x-trace-id") ?? crypto.randomUUID();
 
   const upstreamURL =
-    `${DS_SERVICE_URL}/v1/projects/${encodeURIComponent(subProduct)}/${encodeURIComponent(subFlow)}/drd/ticket`;
+    `${DS_SERVICE_URL}/v1/sub-flows/${encodeURIComponent(subProduct)}/${encodeURIComponent(subFlow)}/drd/ticket`;
 
   try {
     const upstream = await fetch(upstreamURL, {

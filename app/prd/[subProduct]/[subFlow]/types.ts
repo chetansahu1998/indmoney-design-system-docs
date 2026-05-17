@@ -1,6 +1,6 @@
 /**
  * TypeScript mirrors of the Go shapes returned by ds-service for the
- * /projects/{sub_product}/{sub_flow}/prd viewer.
+ * /prd/{sub_product}/{sub_flow} viewer.
  *
  * Keep these in sync (field-by-field) with:
  *   services/ds-service/internal/projects/prd.go       (PRDFull + nested)

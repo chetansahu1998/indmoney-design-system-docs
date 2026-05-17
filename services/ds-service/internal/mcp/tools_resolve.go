@@ -291,7 +291,7 @@ func (resolveTool) Invoke(ctx context.Context, deps Deps, args json.RawMessage) 
 		JIRAComponents:   []string{},
 
 		Links: ResolveLinks{
-			PRDViewerURL:      "/projects/" + fullSlug + "/prd",
+			PRDViewerURL:      "/prd/" + fullSlug,
 			FigmaURL:          figmaURL,
 			ConventionsDocURL: conventionsDocURL,
 		},

@@ -115,7 +115,7 @@ func TestResolve_TwoSegmentSlug_HappyPath(t *testing.T) {
 	if out.Links.ConventionsDocURL == "" {
 		t.Errorf("ConventionsDocURL should be populated")
 	}
-	if out.Links.PRDViewerURL != "/projects/wallet/m2m-settlement/prd" {
+	if out.Links.PRDViewerURL != "/prd/wallet/m2m-settlement" {
 		t.Errorf("PRDViewerURL: got %q", out.Links.PRDViewerURL)
 	}
 	if len(res.NextActions) == 0 {

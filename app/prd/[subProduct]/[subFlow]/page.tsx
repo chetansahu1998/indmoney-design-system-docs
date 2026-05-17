@@ -1,5 +1,5 @@
 /**
- * /projects/{subProduct}/{subFlow}/prd — PM-facing PRD viewer (U9).
+ * /prd/{subProduct}/{subFlow} — PM-facing PRD viewer (U9).
  *
  * Server component, but the bulk of work happens in the client shell
  * (PRDShell.tsx). Reason: the auth token lives in zustand-persist +

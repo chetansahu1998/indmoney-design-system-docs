@@ -1,5 +1,5 @@
 /**
- * GET /api/projects/{subProduct}/{subFlow}/prd/full
+ * GET /api/prd/{subProduct}/{subFlow}/full
  *
  * Document-view companion to /api/projects/.../prd. Calls prd.author with
  * `op=get` (which dispatches to the deep prd.get tool) and returns the

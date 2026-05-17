@@ -661,7 +661,7 @@ func TestHandleSubFlowDRDTicket_FirstTimeBootstraps(t *testing.T) {
 	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
 
 	r := requestWithClaims(http.MethodPost,
-		"/v1/projects/"+spSlug+"/"+sfSlug+"/drd/ticket", nil, claims)
+		"/v1/sub-flows/"+spSlug+"/"+sfSlug+"/drd/ticket", nil, claims)
 	r.SetPathValue("sub_product_slug", spSlug)
 	r.SetPathValue("sub_flow_slug", sfSlug)
 	w := httptest.NewRecorder()
@@ -716,7 +716,7 @@ func TestHandleSubFlowDRDTicket_HappyPathReusesExistingChain(t *testing.T) {
 
 	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
 	r := requestWithClaims(http.MethodPost,
-		"/v1/projects/"+spSlug+"/"+sfSlug+"/drd/ticket", nil, claims)
+		"/v1/sub-flows/"+spSlug+"/"+sfSlug+"/drd/ticket", nil, claims)
 	r.SetPathValue("sub_product_slug", spSlug)
 	r.SetPathValue("sub_flow_slug", sfSlug)
 	w := httptest.NewRecorder()
@@ -747,7 +747,7 @@ func TestHandleSubFlowDRDTicket_UnknownSlug(t *testing.T) {
 	claims := &auth.Claims{Sub: uA, Tenants: []string{tA}, Role: "editor"}
 
 	r := requestWithClaims(http.MethodPost,
-		"/v1/projects/no-such-product/no-such-flow/drd/ticket", nil, claims)
+		"/v1/sub-flows/no-such-product/no-such-flow/drd/ticket", nil, claims)
 	r.SetPathValue("sub_product_slug", "no-such-product")
 	r.SetPathValue("sub_flow_slug", "no-such-flow")
 	w := httptest.NewRecorder()
@@ -765,7 +765,7 @@ func TestHandleSubFlowDRDTicket_CrossTenant(t *testing.T) {
 	tenantB := uuid.NewString()
 	claims := &auth.Claims{Sub: uA, Tenants: []string{tenantB}, Role: "editor"}
 	r := requestWithClaims(http.MethodPost,
-		"/v1/projects/"+spSlug+"/"+sfSlug+"/drd/ticket", nil, claims)
+		"/v1/sub-flows/"+spSlug+"/"+sfSlug+"/drd/ticket", nil, claims)
 	r.SetPathValue("sub_product_slug", spSlug)
 	r.SetPathValue("sub_flow_slug", sfSlug)
 	w := httptest.NewRecorder()

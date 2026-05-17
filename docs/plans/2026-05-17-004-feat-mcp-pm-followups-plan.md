@@ -1,7 +1,8 @@
 ---
 title: "feat: MCP PM workflow Phase 1 follow-ups (thumbnails, audit, DRD collab, sidecar, autosync absorption)"
-status: active
+status: completed
 created: 2026-05-17
+completed: 2026-05-17
 type: feat
 depth: standard
 origin: docs/plans/2026-05-17-002-feat-mcp-ds-service-pm-workflow-plan.md
@@ -144,7 +145,7 @@ The `/tmp` Python scripts can be deleted once this lands.
 - Edge: Figma API rate-limit hit → 429 surfaced to the client with a `Retry-After` hint.
 - Integration: Wall component renders 8 frames, all thumbnails appear within 2s when Figma is healthy.
 
-**Verification:** Visiting `/projects/wallet/m2m-settlement/prd` shows actual frame PNGs in the wall, not grey glyphs. DevTools Network tab shows one request to `/v1/figma/frame-png` per unique frame, with subsequent reloads hitting the 5-min cache.
+**Verification:** Visiting `/prd/wallet/m2m-settlement` shows actual frame PNGs in the wall, not grey glyphs. DevTools Network tab shows one request to `/v1/figma/frame-png` per unique frame, with subsequent reloads hitting the 5-min cache.
 
 ---
 
@@ -215,7 +216,7 @@ The `/tmp` Python scripts can be deleted once this lands.
 - `lib/drd/collab.ts::createDRDProvider` — unchanged; just called with a resolved flow_id.
 
 **Test scenarios:**
-- Happy path: PM opens `/projects/wallet/m2m-settlement/prd`, the DRD pane mounts an editable BlockNote editor that loads the current DRD content via the Hocuspocus provider.
+- Happy path: PM opens `/prd/wallet/m2m-settlement`, the DRD pane mounts an editable BlockNote editor that loads the current DRD content via the Hocuspocus provider.
 - Happy path: PM types in the DRD pane; the change persists (verify via direct SQL query of `flow_drd.y_doc_state` revision bump after debounce).
 - Happy path: Two PMs open the same PRD viewer; both see each other's edits in the DRD pane via the existing Yjs CRDT.
 - Edge: First-ever open for a sub_flow with no existing DRD → `ResolveFlowIDForSubFlow` creates the row via `BootstrapDRDForSubFlow`; editor mounts empty; first edit persists.
@@ -336,7 +337,7 @@ The `/tmp` Python scripts can be deleted once this lands.
 
 The plan is "done" when:
 
-1. Visiting `/projects/wallet/m2m-settlement/prd` in the viewer shows real Figma frame PNGs in the Wall and FrameGrid — not placeholder glyphs.
+1. Visiting `/prd/wallet/m2m-settlement` in the viewer shows real Figma frame PNGs in the Wall and FrameGrid — not placeholder glyphs.
 2. After authoring a PRD state via `/ind-prd` in Claude Code, the viewer's Wall shows "last touched by `<email>`, `<relative time>`" for that state.
 3. The DRD pane in the viewer is an editable BlockNote surface; edits persist (revision increments on `flow_drd`); two browser windows on the same PRD see each other's DRD edits via Yjs CRDT.
 4. Invoking `/ind-prd <slug>` and exporting writes both `<slug>.md` AND `<slug>.json` to `~/INDmoney/<sub_product>/Documents/`. The JSON validates against the `PRDFull` Go shape.
@@ -358,3 +359,21 @@ U5 (autosync absorption) ─── operational debt. Land last (no user-visible 
 ```
 
 Critical path for "viewer looks done": U1 → U2 → U3. U4 + U5 are parallelizable.
+
+---
+
+## Ship Log
+
+| Date | Commit | Unit | Notes |
+|---|---|---|---|
+| 2026-05-17 | `adbf2c6` | **U1** — Figma frame-PNG proxy + real thumbnails | 1568 lines. New `/v1/figma/frame-png` (GET, asset-token auth) + `/v1/figma/frame-png-token` (POST, JWT auth) endpoints. Proxies Figma's `/v1/images` API by (file_key, node_id) with 5-min in-memory cache + per-tenant PAT. Reuses `auth.AssetTokenSigner` (packs `figma:<file_key>:<node_id>:<scale>` into resourceID); `Client.GetImages` (plural, already existed); `assetExporter.URLs` for the per-tenant Figma rate-limit budget. Two-endpoint pattern mirrors `HandleMintAssetToken` + `HandleScreenPNG`. Bytes proxied through (not 302'd) to avoid leaking S3 URL. New `FrameThumbnail` React component with skeleton + error fallback; `useFrameThumbToken` hook batches per-Wall token mints. PRDShell threads `figma_file_key` from `section.inspect` down. 8/8 new tests pass. |
+| 2026-05-17 | `ec69694` | **U2** — audit thread-through in tools_prd.go | 614 lines. 7 audit insertion sites in `tools_prd.go` (add_state/add_event/add_acceptance_criterion/add_edge_case/upsert_copy_string/add_a11y_note/attach_frame). Best-effort: failed audit logged via `deps.Log` but never propagates. Skipped: `prd.get`/`prd.export` (read-only), `prd.upsert_tab` (structural — no state_id; `prd_audit` is per-state by design), `prd.detach_frame` (would need `frame_tag.id → state_id` lookup, out of instrumentation-only scope). Added `Log *slog.Logger` to `mcp.Deps` (was missing) + `toolLog(deps)` fallback. 10/10 new tests including end-to-end assertion that `last_touched_by` populates on the wall after `prd.add_state`. Cross-tenant returns 404 (no existence oracle — characterized; tighter than plan's 403). |
+| 2026-05-17 | `b818d67` | **U3** — DRD collab pane via sub_flow → flow_id resolver | 972 lines. Server: `ResolveFlowIDForSubFlow` (looks up `flow_drd` by `sub_flow_id`; falls back to `BootstrapDRDForSubFlow` for first-time). `BootstrapDRDForSubFlow` refactored via new `ensureDRDChainForSubFlow` helper so resolver uses steps 1-3 without forcing a YDoc snapshot. `issueDRDTicket` private helper extracted from `HandleDRDTicket`; both endpoints now call it. New endpoint `POST /v1/projects/{sub_product_slug}/{sub_flow_slug}/drd/ticket`. Frontend: `mintDRDTicketForSubFlow` in `lib/drd/collab.ts`; Next.js proxy; new `DRDPane.tsx` with 4-state connection machine + editor-only-mounts-after-first-sync rule (per docs/solutions/2026-05-02-002 learning). Uses `"blocknote"` Y.Doc fragment name so Atlas-side + viewer-side edits on same flow_id share the Yjs document. Localized `as any` cast on BlockNote provider (HocuspocusProvider.awareness type friction). 9/9 new tests; characterization test locks pre-refactor behavior. |
+| 2026-05-17 | `06bbcd7` | **U4** — `prd.export` JSON sidecar | 433 lines. New `RenderPRDExport(ctx, subFlowID) (PRDExport, error)` returns `{Markdown, Sidecar PRDFull}`. Sidecar IS `PRDFull` serialized — no separate type (KTD-4). Refactored: `renderPRDFullToMarkdown(full PRDFull)` helper shared by both new method + backward-compat `RenderPRDMarkdown` wrapper. Markdown byte-identical to pre-U4 (pinned by test). `prd.author op:export` returns `{markdown, sidecar, sub_flow_full_slug, bytes, sidecar_bytes}`. ind-suite bridge commit `9aad593` writes both `.md` + `.json` to `~/INDmoney/<LOB>/Documents/`. Small `LOB_NAME_OVERRIDES` table (indstocks → INDstocks, etc.). 7 new tests pass. |
+| 2026-05-17 | `5cf965f` | **U5** — autosync writes `figma_node_metadata`; /tmp Python obsolete | 1201 lines. New `inventory.NodeMetadataExtractor` runs in `syncFileDeep` after section subtree blob write. Replaces `/tmp/run_step2_*.py` (37,557 rows previously populated by manual scripts). Depth=1 only (KTD-5 — `LoadSectionSubtree` blob already covers depth=8). Filter: FRAME/INSTANCE/COMPONENT direct children. Batched (50 sections/call) through `Client.GetFileNodes` → existing tier-1 rate limiter. New repo method `UpsertFigmaNodeMetadata` with `ON CONFLICT (tenant_id, file_key, node_id) DO UPDATE`. Migration `0034_figma_node_metadata.up.sql` committed alongside (was previously untracked). RepoFactory closure pattern for per-tenant repo. 19/19 new tests pass. `syncFileDeep` gained a `tenantID` parameter (extractor needs raw tenant id for repo factory). |
+
+| 2026-05-17 | _pending_ | **Fix** — extract PM viewer out of `/projects/` namespace | The U9 viewer was originally placed at `/projects/[subProduct]/[subFlow]/prd` and `/v1/projects/{sub_product_slug}/{sub_flow_slug}/drd/ticket` — but `/projects/` is the legacy Atlas namespace keyed by `project_slug` (single identifier per Figma file import). Mashing the new `{sub_product}/{sub_flow}` keys under that prefix collided with Next.js's "same dynamic segment name at the same level" rule (existing `app/projects/[slug]/page.tsx` redirector blocked any sibling like `[subProduct]`). Underlying bug: two namespaces conflated under one URL prefix. Fixed by moving every PM-viewer surface to a dedicated namespace: `app/prd/[subProduct]/[subFlow]/...` for pages, `app/api/prd/[subProduct]/[subFlow]/...` for proxies, and `/v1/sub-flows/{sub_product_slug}/{sub_flow_slug}/drd/ticket` for the ds-service endpoint. Audited the codebase for similar namespace conflations (real bug fix: `tools_resolve.go::ResolveLinks.PRDViewerURL` returned `/projects/<slug>/prd` — now `/prd/<slug>`). Stale doc-comment URLs cleaned up. Legacy `/projects/[slug]/` and `/v1/projects/{slug}/...` routes untouched. |
+
+**Milestone — follow-ups complete.** All five Phase 1 known gaps closed: viewer renders real thumbnails (U1), wall shows last_touched (U2), DRD pane is editable + collab (U3), exports ship typed sidecars (U4), autosync owns `figma_node_metadata` (U5). Plus a fix moving the PM viewer out of the `/projects/` namespace where it was conflating with legacy Atlas project_slug routes. The PM authoring workflow is feature-complete for the local-stdio Phase 1 footprint.
+
+Phase 2 (origin plan's U10 remote `/mcp` + U11 file-scoped auth) remains the next-week follow-up — not in this plan.

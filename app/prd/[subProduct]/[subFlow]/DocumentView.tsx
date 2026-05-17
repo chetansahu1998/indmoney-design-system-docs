@@ -3,7 +3,7 @@
 /**
  * DocumentView — full typed-stems PRD render.
  *
- * Fetches /api/projects/{sp}/{sf}/prd/full on mount and renders the
+ * Fetches /api/prd/{sp}/{sf}/full on mount and renders the
  * nested PRDFull shape: PRD title + summary → tabs → overview → states
  * (StateCard each).
  *
@@ -42,7 +42,7 @@ export function DocumentView({ subProduct, subFlow, refetchKey }: Props) {
     (async () => {
       try {
         const res = await fetch(
-          `/api/projects/${encodeURIComponent(subProduct)}/${encodeURIComponent(
+          `/api/prd/${encodeURIComponent(subProduct)}/${encodeURIComponent(
             subFlow,
           )}/prd/full`,
           {

@@ -7,7 +7,7 @@
  * full BlockNote + Hocuspocus collab editor, keyed on `sub_flow_slug`.
  *
  * Wire-up:
- *   1. mintDRDTicketForSubFlow → POST /api/projects/{sp}/{sf}/drd/ticket.
+ *   1. mintDRDTicketForSubFlow → POST /api/prd/{sp}/{sf}/drd/ticket.
  *      Server resolves sub_flow → flow_id (bootstrapping the synthetic
  *      project/flow/flow_drd chain on first open) and mints a 60s
  *      single-use ticket.

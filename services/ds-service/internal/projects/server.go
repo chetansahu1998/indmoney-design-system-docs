@@ -2535,7 +2535,7 @@ func (s *Server) issueDRDTicket(w http.ResponseWriter, tenantID, userID, role, f
 	})
 }
 
-// HandleSubFlowDRDTicket serves POST /v1/projects/{sub_product_slug}/{sub_flow_slug}/drd/ticket.
+// HandleSubFlowDRDTicket serves POST /v1/sub-flows/{sub_product_slug}/{sub_flow_slug}/drd/ticket.
 // Resolves (sub_product_slug, sub_flow_slug) → sub_flow_id → flow_id via
 // ResolveFlowIDForSubFlow (which bootstraps the synthetic project/flow/
 // flow_drd chain on first open), then mints a ticket using the same
