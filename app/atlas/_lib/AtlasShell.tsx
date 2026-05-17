@@ -24,7 +24,10 @@ import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
-import { fetchSubFlowBySlug } from "../../../lib/atlas/data-adapters";
+import {
+  fetchSubFlowBySlug,
+  fetchSubFlowForLeafProject,
+} from "../../../lib/atlas/data-adapters";
 import { selectFlows, selectSelection, useAtlas } from "../../../lib/atlas/live-store";
 import { ATLAS_DOMAINS } from "../../../lib/atlas/taxonomy";
 import { track } from "../../../lib/telemetry";
@@ -74,13 +77,57 @@ export default function AtlasShell({ initialURL }: AtlasShellProps = {}) {
   // requested project's leaves so openLeaf can resolve the leaf ID.
   useEffect(() => {
     if (!hydrated) return;
+    // Fast path: ?leaf already in leavesByFlow → open directly. This
+    // covers cold loads where `flows` hasn't populated yet but the
+    // hydrate pipeline already filled leavesByFlow from brain-products.
+    if (url.leaf) {
+      for (const leaves of Object.values(leavesByFlow)) {
+        if (leaves.some((l) => l.id === url.leaf)) {
+          void openLeaf(url.leaf);
+          return;
+        }
+      }
+    }
     if (!url.project) return;
     const project = flows.find((f) => f.id === url.project);
     if (!project) return;
     void loadLeavesForFlow(project.id, project.latestVersionID).then(() => {
       if (url.leaf) void openLeaf(url.leaf);
     });
-  }, [hydrated, url.project, url.leaf, flows, loadLeavesForFlow, openLeaf]);
+  }, [hydrated, url.project, url.leaf, flows, leavesByFlow, loadLeavesForFlow, openLeaf]);
+
+  // Plan 005 — defensive leaf-derived sub_flow attach. The store's
+  // openLeaf action also fires fetchSubFlowForLeafProject (live-store.ts
+  // ~line 622), but that path is fire-and-forget inside an async chain
+  // and can silently lose the result on cold loads (race between
+  // zustand-persist rehydrate, leaves-load, and the canvas/overlays
+  // fetch). We re-fire it from here whenever a leaf is opened but its
+  // row in leavesByFlow has no subFlow attached. Idempotent — the
+  // attachSubFlowToLeaf action no-ops when the binding is already set.
+  useEffect(() => {
+    if (!hydrated) return;
+    if (!selection.leafID) return;
+    let leaf: { id: string; subFlow?: unknown } | undefined;
+    for (const leaves of Object.values(leavesByFlow)) {
+      const found = leaves.find((l) => l.id === selection.leafID);
+      if (found) {
+        leaf = found;
+        break;
+      }
+    }
+    if (!leaf) return;
+    if (leaf.subFlow) return;
+    let cancelled = false;
+    void fetchSubFlowForLeafProject(selection.leafID).then((sf) => {
+      if (cancelled) return;
+      if (!sf) return;
+      if (!selection.leafID) return;
+      attachSubFlowToLeaf(selection.leafID, sf);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, selection.leafID, leavesByFlow, attachSubFlowToLeaf]);
 
   // Plan 005 U1 — `?subFlow=<full_slug>` URL override. When the user lands
   // with an explicit sub_flow, resolve it via the MCP proxy and patch the

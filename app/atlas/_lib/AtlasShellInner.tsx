@@ -175,6 +175,16 @@ export default function AtlasShellInner(_props: AtlasShellInnerProps) {
   const [leafID, setLeafID] = useState<string | null>(null);
   const [selectedFrameID, setSelectedFrameID] = useState<string | null>(null);
 
+  // Plan 005 — sync local leafID with the store's selection.leafID so that
+  // URL deep-link openLeaf (fired by AtlasShell.tsx's URL effect against
+  // the store action, not this component's local callback) actually mounts
+  // the leaf shell. Without this mirror, the store flips selection.leafID
+  // but AtlasShellInner.leafID stays null and the shell never renders.
+  const storeLeafID = useAtlas((s) => s.selection.leafID);
+  useEffect(() => {
+    if (storeLeafID !== leafID) setLeafID(storeLeafID);
+  }, [storeLeafID, leafID]);
+
   // ─── Atomic-child selection wiring (D5/D8/D10 — Zeplin v1) ────────────────
   // The leaf-canvas-v2 renderer fires `selectAtomicChild` on click; the
   // store updates `selection.selectedAtomicChild`. This pane mounts the
