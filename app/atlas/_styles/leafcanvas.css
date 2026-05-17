@@ -1266,3 +1266,87 @@
   color: var(--text-3);
   letter-spacing: 0.04em;
 }
+
+/* ─── Prototype canvas (plan 005 U6) ──────────────────────────────────
+ * Replaces leafcanvas in the center pane when the bound sub_flow's
+ * canvas_lifecycle is proto-only or proto-wip. The iframe fills the
+ * .atlas-leaf-canvas-wrap slot; a yellow banner row sits on top for the
+ * proto-wip variant ("designer still working — not on Final Designs").
+ */
+.lc-proto {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.lc-proto-banner {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #1a1300;
+  background: #ffe9a8;
+  border-bottom: 1px solid var(--line-strong);
+  letter-spacing: 0.01em;
+}
+.lc-proto-iframe {
+  flex: 1 1 auto;
+  width: 100%;
+  border: 0;
+  background: #fff;
+  display: block;
+}
+.lc-proto-iframe--with-banner {
+  /* No height offset needed — the flex parent already accounts for the
+     banner row. Class is kept for future banner-mode tweaks. */
+}
+.lc-proto-footer {
+  flex: 0 0 auto;
+  padding: 6px 14px;
+  font-size: 11px;
+  background: var(--bg-2);
+  border-top: 1px solid var(--line);
+  text-align: right;
+}
+.lc-proto-footer a {
+  color: var(--text-2);
+  text-decoration: none;
+}
+.lc-proto-footer a:hover { color: var(--accent); }
+
+.lc-proto-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  background: var(--bg-1);
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  text-align: center;
+}
+.lc-proto-error-h {
+  font-size: 14px;
+  font-weight: 600;
+  color: #ff8a8a;
+}
+.lc-proto-error-sub {
+  font-size: 12px;
+  color: var(--text-2);
+  word-break: break-all;
+  max-width: 480px;
+}
+.lc-proto-error-link {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.lc-proto-error-link:hover { text-decoration: underline; }

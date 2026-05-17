@@ -1032,6 +1032,50 @@ export const useAtlas = create<AtlasStoreState>()(
             return;
           }
 
+          case "figma.design_shipped":
+          case "drd.prototype_attached": {
+            // Plan 005 U6 — find every leaf whose bound sub_flow matches
+            // the event and refetch its SubFlowSummary. The canvas
+            // lifecycle changes server-side; refetching surfaces the new
+            // value, attachSubFlowToLeaf replaces the leaf row, and
+            // AtlasShellInner's render branch flips between
+            // <PrototypeCanvas> and <LeafCanvas> automatically.
+            //
+            // We match by sub_flow id (preferred — stable) and fall back
+            // to fullSlug when the event only carries the slug. Multiple
+            // leaves can bind to the same sub_flow (rare, but valid:
+            // legacy duplicate projects), so we touch all of them.
+            const targetID = evt.subFlowID;
+            const targetSlug = evt.subFlowSlug;
+            const affected: Array<{ leafID: string; projectSlug: string }> = [];
+            for (const [productSlug, leaves] of Object.entries(get().leavesByFlow)) {
+              for (const l of leaves) {
+                if (!l.subFlow) continue;
+                const matchID = targetID && l.subFlow.id === targetID;
+                const matchSlug =
+                  !matchID && targetSlug && l.subFlow.fullSlug === targetSlug;
+                if (matchID || matchSlug) {
+                  // The leaf's `id` is the ds-service project slug (see
+                  // openLeaf comments) — use it as the slug arg for the
+                  // sub-flow endpoint. productSlug is captured only for
+                  // future use; the per-leaf fetcher walks flows itself.
+                  void productSlug;
+                  affected.push({ leafID: l.id, projectSlug: l.id });
+                }
+              }
+            }
+            for (const { leafID, projectSlug } of affected) {
+              void fetchSubFlowForLeafProject(projectSlug)
+                .then((sf) => {
+                  if (sf) get().attachSubFlowToLeaf(leafID, sf);
+                })
+                .catch(() => {
+                  // Best-effort — the iframe stays until the next refresh.
+                });
+            }
+            return;
+          }
+
           case "decision.created":
           case "decision.superseded":
           case "comment.created": {

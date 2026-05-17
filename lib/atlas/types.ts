@@ -471,7 +471,26 @@ export type AtlasLiveEvent =
   | { type: "violation_lifecycle_changed"; violationID: string; status: DisplayViolationStatus }
   | { type: "decision.created"; flowID: string; decisionID: string }
   | { type: "decision.superseded"; flowID: string; decisionID: string }
-  | { type: "comment.created"; flowID: string; commentID: string };
+  | { type: "comment.created"; flowID: string; commentID: string }
+  /**
+   * Plan 005 U6 — autosync detected that the bound Figma section now has
+   * shipped frames; sub_flow.canvas_lifecycle flips to `design-shipped`.
+   * The store refetches the sub_flow for any open leaf whose
+   * subFlow.id matches; AtlasShellInner swaps PrototypeCanvas → LeafCanvas
+   * without a page reload.
+   *
+   * Payload shape mirrors plan 002 U3b's SSE definitions:
+   *   {sub_flow_id, sub_flow_slug?, tenant_id?}
+   */
+  | { type: "figma.design_shipped"; subFlowID: string; subFlowSlug?: string }
+  /**
+   * Plan 005 U6 — a PM has attached or replaced a prototype URL via the
+   * MCP `drd.attach_prototype` tool. The bound sub_flow's
+   * canvas_lifecycle flips to `proto-only` (or `proto-wip` if a designer
+   * is already working on the Figma section). The store refetches so
+   * the iframe URL updates live.
+   */
+  | { type: "drd.prototype_attached"; subFlowID: string; subFlowSlug?: string };
 
 // ─── Platform alias ──────────────────────────────────────────────────────────
 
