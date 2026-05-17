@@ -82,6 +82,15 @@ type Config struct {
 	// Optional — nil means publishes are skipped. Production wires it from
 	// cmd/server/main.go's broker; tests typically leave it nil.
 	Broker projects.SubFlowEventBroker
+
+	// NodeMetadataExtractor, when set, populates figma_node_metadata
+	// (mig 0034) with depth=1 direct-child frames for every section
+	// during syncFileDeep. Replaces the manual /tmp/run_step2_*.py
+	// pipeline (plan 2026-05-17-004 U5). Optional — nil disables the
+	// stage (poller continues to fetch+upsert pages/sections/subtree
+	// blobs as before). Production wires from cmd/server/main.go; tests
+	// typically leave it nil.
+	NodeMetadataExtractor *NodeMetadataExtractor
 }
 
 // FigmaInventoryClient is the slice of *client.Client this poller calls.
@@ -338,7 +347,7 @@ func (p *Poller) crawlTenant(ctx context.Context, tenantID string) RunStats {
 		if ctx.Err() != nil {
 			return stats
 		}
-		pageCount, sectionCount, nodeCount, err := p.syncFileDeep(ctx, fc, repo, f, seenAt, logger)
+		pageCount, sectionCount, nodeCount, err := p.syncFileDeep(ctx, tenantID, fc, repo, f, seenAt, logger)
 		if err != nil {
 			stats.Errors = append(stats.Errors,
 				fmt.Sprintf("sync_deep %s: %s", f.FileKey, errSummary(err)))
@@ -480,6 +489,7 @@ func (p *Poller) crawlTeam(
 // Returns the per-table counts so the cycle stats can roll them up.
 func (p *Poller) syncFileDeep(
 	ctx context.Context,
+	tenantID string,
 	fc FigmaInventoryClient,
 	repo *projects.TenantRepo,
 	f projects.FigmaFileRow,
@@ -649,6 +659,35 @@ func (p *Poller) syncFileDeep(
 	nodeCount = 0
 	for _, sub := range subtreesBySection {
 		nodeCount += len(sub)
+	}
+
+	// Plan 2026-05-17-004 U5 — populate figma_node_metadata (mig 0034)
+	// with depth=1 direct-child frames for every section in this file.
+	// Replaces the manual /tmp/run_step2_*.py scripts: the running
+	// server now backfills the row-shaped table that ListSectionFrames
+	// (PRD wall) and auto-skeleton consume.
+	//
+	// Best-effort: per-file failure logs a warning and continues. The
+	// next cycle will retry (idempotent UPSERT on PK).
+	if p.cfg.NodeMetadataExtractor != nil && len(sectionRows) > 0 {
+		sectionIDs := make([]string, 0, len(sectionRows))
+		pageIDBySection := make(map[string]string, len(sectionRows))
+		for _, s := range sectionRows {
+			if s.SectionID == "" {
+				continue
+			}
+			sectionIDs = append(sectionIDs, s.SectionID)
+			pageIDBySection[s.SectionID] = s.PageID
+		}
+		if _, nmErr := p.cfg.NodeMetadataExtractor.ExtractForFile(
+			ctx, tenantID, f.FileKey, sectionIDs, pageIDBySection,
+		); nmErr != nil {
+			logger.Warn("figma_inventory: node_metadata extraction failed",
+				"file_key", f.FileKey, "sections", len(sectionIDs),
+				"err", nmErr.Error())
+			// Continue — partial extraction is OK; the table is
+			// best-effort and the next cycle re-runs.
+		}
 	}
 
 	// Mark the file synced for BOTH pages and deep trees in one update —

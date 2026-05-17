@@ -417,6 +417,23 @@ func main() {
 		// moves) onto a final-classified page. The same MemoryBroker the
 		// HTTP server uses; *MemoryBroker satisfies SubFlowEventBroker.
 		Broker: broker,
+		// Plan 2026-05-17-004 U5 — populate figma_node_metadata (mig
+		// 0034) with depth=1 direct-child frames per section as part of
+		// the deep-sync cycle. Replaces the manual /tmp/run_step2_*.py
+		// scripts: a fresh DB now backfills automatically.
+		NodeMetadataExtractor: &inventory.NodeMetadataExtractor{
+			ResolvePAT: figmaPATResolver,
+			NewClient: func(pat string) inventory.FigmaNodesFetcher {
+				return client.New(pat)
+			},
+			Repo: func(tenantID string) *projects.TenantRepo {
+				// Pool-aware: writes hit the write pool, reads use
+				// the read pool — same wiring adminAutoSyncDB uses
+				// for the autosync executor.
+				return projects.NewTenantRepoFromPool(dbConn, tenantID)
+			},
+			Log: log.With("component", "node_metadata_extractor"),
+		},
 	})
 	if err != nil {
 		log.Error("figma_inventory poller init", "err", err)

@@ -435,3 +435,166 @@ func TestLoadSectionSubtree_EmptyTenantID(t *testing.T) {
 		t.Errorf("expected error on empty tenant_id")
 	}
 }
+
+// ─── UpsertFigmaNodeMetadata (mig 0034, plan 2026-05-17-004 U5) ──────────────
+
+// fkmCountRows returns the row count in figma_node_metadata for the given
+// tenant + file. Used by the U5 tests to verify upsert behavior.
+func fkmCountRows(t *testing.T, repo *TenantRepo, fileKey string) int {
+	t.Helper()
+	var n int
+	err := repo.r.db.QueryRow(
+		`SELECT COUNT(*) FROM figma_node_metadata WHERE tenant_id = ? AND file_key = ?`,
+		repo.tenantID, fileKey,
+	).Scan(&n)
+	if err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	return n
+}
+
+func TestUpsertFigmaNodeMetadata_HappyPath(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	rows := []FigmaNodeMetadataRow{
+		{
+			PageID: "0:1", SectionID: "10:1", NodeID: "100:1", ParentID: "10:1",
+			Depth: 1, OrderIndex: 0, NodeType: "FRAME", Name: "Hero",
+			HasBBox: true, AbsX: 0, AbsY: 0, Width: 320, Height: 240,
+			LayoutMode: "VERTICAL",
+		},
+		{
+			PageID: "0:1", SectionID: "10:1", NodeID: "100:2", ParentID: "10:1",
+			Depth: 1, OrderIndex: 1, NodeType: "INSTANCE", Name: "Card",
+			HasBBox: true, AbsX: 0, AbsY: 260, Width: 320, Height: 120,
+			ComponentID: "comp-master-9",
+		},
+	}
+	n, err := repo.UpsertFigmaNodeMetadata(ctx, "fk-1", rows)
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("written: got %d want 2", n)
+	}
+	if got := fkmCountRows(t, repo, "fk-1"); got != 2 {
+		t.Errorf("db rows: got %d want 2", got)
+	}
+}
+
+func TestUpsertFigmaNodeMetadata_IdempotentOnConflict(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+
+	row := FigmaNodeMetadataRow{
+		PageID: "0:1", SectionID: "10:1", NodeID: "100:1", ParentID: "10:1",
+		Depth: 1, OrderIndex: 0, NodeType: "FRAME", Name: "Hero",
+		HasBBox: true, AbsX: 0, AbsY: 0, Width: 320, Height: 240,
+	}
+	if _, err := repo.UpsertFigmaNodeMetadata(ctx, "fk-1", []FigmaNodeMetadataRow{row}); err != nil {
+		t.Fatalf("upsert 1: %v", err)
+	}
+	// Re-upsert with a new name and new dimensions → should UPDATE, not INSERT.
+	row.Name = "Hero v2"
+	row.Width = 480
+	if _, err := repo.UpsertFigmaNodeMetadata(ctx, "fk-1", []FigmaNodeMetadataRow{row}); err != nil {
+		t.Fatalf("upsert 2: %v", err)
+	}
+	if got := fkmCountRows(t, repo, "fk-1"); got != 1 {
+		t.Errorf("row count after re-upsert: got %d want 1 (UPSERT, not INSERT)", got)
+	}
+	// Confirm the update landed.
+	var name string
+	var width float64
+	err := repo.r.db.QueryRow(
+		`SELECT name, width FROM figma_node_metadata
+		  WHERE tenant_id = ? AND file_key = ? AND node_id = ?`,
+		tA, "fk-1", "100:1",
+	).Scan(&name, &width)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if name != "Hero v2" || width != 480 {
+		t.Errorf("update did not persist: name=%q width=%v", name, width)
+	}
+}
+
+func TestUpsertFigmaNodeMetadata_TenantIsolation(t *testing.T) {
+	d, tA, tB, _ := newTestDB(t)
+	repoA := NewTenantRepo(d.DB, tA)
+	repoB := NewTenantRepo(d.DB, tB)
+	ctx := context.Background()
+
+	row := FigmaNodeMetadataRow{
+		PageID: "0:1", SectionID: "10:1", NodeID: "100:1", ParentID: "10:1",
+		Depth: 1, OrderIndex: 0, NodeType: "FRAME", Name: "A's frame",
+		HasBBox: true, AbsX: 0, AbsY: 0, Width: 100, Height: 100,
+	}
+	if _, err := repoA.UpsertFigmaNodeMetadata(ctx, "fk-shared", []FigmaNodeMetadataRow{row}); err != nil {
+		t.Fatalf("upsert A: %v", err)
+	}
+	if got := fkmCountRows(t, repoA, "fk-shared"); got != 1 {
+		t.Errorf("tenant A rows: got %d want 1", got)
+	}
+	if got := fkmCountRows(t, repoB, "fk-shared"); got != 0 {
+		t.Errorf("tenant B should not see A's row; got %d", got)
+	}
+}
+
+func TestUpsertFigmaNodeMetadata_NoBBoxWritesNulls(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	ctx := context.Background()
+	rows := []FigmaNodeMetadataRow{
+		{
+			PageID: "0:1", SectionID: "10:1", NodeID: "100:1", ParentID: "10:1",
+			Depth: 1, OrderIndex: 0, NodeType: "INSTANCE", Name: "swap-stub",
+			HasBBox: false, // Figma sometimes omits bbox on INSTANCE swap stubs
+		},
+	}
+	if _, err := repo.UpsertFigmaNodeMetadata(ctx, "fk-1", rows); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	var hasBBox int
+	var absX, absY, w, h *float64
+	err := repo.r.db.QueryRow(
+		`SELECT has_bbox, abs_x, abs_y, width, height FROM figma_node_metadata
+		  WHERE tenant_id = ? AND node_id = ?`, tA, "100:1",
+	).Scan(&hasBBox, &absX, &absY, &w, &h)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if hasBBox != 0 {
+		t.Errorf("has_bbox: got %d want 0", hasBBox)
+	}
+	if absX != nil || absY != nil || w != nil || h != nil {
+		t.Errorf("bbox coords should be NULL: x=%v y=%v w=%v h=%v", absX, absY, w, h)
+	}
+}
+
+func TestUpsertFigmaNodeMetadata_EmptyRows(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	n, err := repo.UpsertFigmaNodeMetadata(context.Background(), "fk", nil)
+	if err != nil {
+		t.Errorf("empty rows should be no-op, got err: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("written: got %d want 0", n)
+	}
+}
+
+func TestUpsertFigmaNodeMetadata_Validation(t *testing.T) {
+	d, tA, _, _ := newTestDB(t)
+	repo := NewTenantRepo(d.DB, tA)
+	if _, err := repo.UpsertFigmaNodeMetadata(context.Background(), "", []FigmaNodeMetadataRow{{NodeID: "1"}}); err == nil {
+		t.Errorf("empty file_key should error")
+	}
+	emptyRepo := NewTenantRepo(d.DB, "")
+	if _, err := emptyRepo.UpsertFigmaNodeMetadata(context.Background(), "fk", []FigmaNodeMetadataRow{{NodeID: "1"}}); err == nil {
+		t.Errorf("empty tenant should error")
+	}
+}

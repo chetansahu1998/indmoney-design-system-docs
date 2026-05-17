@@ -860,6 +860,154 @@ func (t *TenantRepo) LoadSectionSubtree(ctx context.Context, fileKey, sectionID 
 	return nodes, nil
 }
 
+// ─── figma_node_metadata (mig 0034) — depth=1 direct-child rows ──────────────
+
+// FigmaNodeMetadataRow is one figma_node_metadata row. Mirrors the column
+// set in migration 0034 exactly. Tenant_id is captured from TenantRepo;
+// callers fill the rest.
+//
+// Plan 2026-05-17-004 U5 — the Go autosync NodeMetadataExtractor populates
+// these rows with depth=1 direct-child frames of every section. The
+// /tmp/run_step2_*.py scripts produced the same shape; this struct replaces
+// the manual pipeline.
+type FigmaNodeMetadataRow struct {
+	FileKey       string
+	PageID        string
+	SectionID     string
+	NodeID        string
+	ParentID      string
+	Depth         int
+	OrderIndex    int
+	NodeType      string
+	Name          string
+	HasBBox       bool
+	AbsX          float64
+	AbsY          float64
+	Width         float64
+	Height        float64
+	RelToFrameID  string // optional; "" → SQL NULL
+	RelX          *float64
+	RelY          *float64
+	LayoutMode    string // "", "NONE", "HORIZONTAL", "VERTICAL", "GRID"
+	ComponentID   string // optional
+	ComponentKey  string // optional
+}
+
+// UpsertFigmaNodeMetadata batch-inserts/updates figma_node_metadata rows
+// inside one transaction. PK is (tenant_id, file_key, node_id) per mig
+// 0034 — UPSERT on conflict refreshes all mutable columns and last_seen_at,
+// leaving first_seen_at intact for rows that already existed.
+//
+// Tenant-scoped (tenant_id pulled from TenantRepo). Pure write — no
+// read-before-tx needed. Empty rows slice is a no-op.
+//
+// Returns the number of rows accepted (== len(rows) on success; aborted
+// txs return 0 + error).
+func (t *TenantRepo) UpsertFigmaNodeMetadata(ctx context.Context, fileKey string, rows []FigmaNodeMetadataRow) (int, error) {
+	if t.tenantID == "" {
+		return 0, errors.New("projects: tenant_id required")
+	}
+	if fileKey == "" {
+		return 0, errors.New("projects: file_key required")
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	now := rfc3339(t.now().UTC())
+	tx, err := t.r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin figma_node_metadata tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO figma_node_metadata (
+			tenant_id, file_key, page_id, section_id,
+			node_id, parent_id, depth, order_index,
+			node_type, name,
+			has_bbox, abs_x, abs_y, width, height,
+			rel_to_frame_id, rel_x, rel_y,
+			layout_mode, component_id, component_key,
+			first_seen_at, last_seen_at
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(tenant_id, file_key, node_id) DO UPDATE SET
+			page_id         = excluded.page_id,
+			section_id      = excluded.section_id,
+			parent_id       = excluded.parent_id,
+			depth           = excluded.depth,
+			order_index     = excluded.order_index,
+			node_type       = excluded.node_type,
+			name            = excluded.name,
+			has_bbox        = excluded.has_bbox,
+			abs_x           = excluded.abs_x,
+			abs_y           = excluded.abs_y,
+			width           = excluded.width,
+			height          = excluded.height,
+			rel_to_frame_id = excluded.rel_to_frame_id,
+			rel_x           = excluded.rel_x,
+			rel_y           = excluded.rel_y,
+			layout_mode     = excluded.layout_mode,
+			component_id    = excluded.component_id,
+			component_key   = excluded.component_key,
+			last_seen_at    = excluded.last_seen_at
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("prepare upsert figma_node_metadata: %w", err)
+	}
+	defer stmt.Close()
+
+	written := 0
+	for _, r := range rows {
+		if r.NodeID == "" || r.SectionID == "" || r.ParentID == "" {
+			// Skip malformed rows rather than fail the whole batch — the
+			// poller calls this per file and a single bad node shouldn't
+			// abort the rest. Matches the "log and continue" discipline
+			// the rest of the autosync uses.
+			continue
+		}
+		hasBBox := 0
+		if r.HasBBox {
+			hasBBox = 1
+		}
+		// Optional FK / FLOAT / TEXT columns → SQL NULL via nil-any.
+		var absX, absY, width, height any
+		if r.HasBBox {
+			absX, absY, width, height = r.AbsX, r.AbsY, r.Width, r.Height
+		}
+		var relX, relY any
+		if r.RelX != nil {
+			relX = *r.RelX
+		}
+		if r.RelY != nil {
+			relY = *r.RelY
+		}
+		// layout_mode CHECK constraint: NULL or one of NONE/H/V/GRID.
+		var layoutMode any
+		switch r.LayoutMode {
+		case "NONE", "HORIZONTAL", "VERTICAL", "GRID":
+			layoutMode = r.LayoutMode
+		}
+		if _, err := stmt.ExecContext(ctx,
+			t.tenantID, fileKey, r.PageID, r.SectionID,
+			r.NodeID, r.ParentID, r.Depth, r.OrderIndex,
+			r.NodeType, r.Name,
+			hasBBox, absX, absY, width, height,
+			nullableStr(r.RelToFrameID), relX, relY,
+			layoutMode,
+			nullableStr(r.ComponentID), nullableStr(r.ComponentKey),
+			now, now,
+		); err != nil {
+			return 0, fmt.Errorf("upsert figma_node_metadata %s: %w", r.NodeID, err)
+		}
+		written++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit figma_node_metadata tx: %w", err)
+	}
+	return written, nil
+}
+
 // ─── autosync per-tenant advisory lease (#10) ────────────────────────────────
 
 // TryAcquireAutosyncLease attempts to claim the per-tenant autosync
