@@ -141,6 +141,7 @@ function CenterPaneSwitch({
         key={`proto-${leaf.id}-${protoURL}`}
         url={protoURL!}
         title={leaf.subFlow?.prototypeTitle ?? leaf.label}
+        subFlowSlug={leaf.subFlow?.fullSlug ?? null}
         banner={
           lifecycle === "proto-wip"
             ? "Designer is working on the section — not yet on the Final Designs page."

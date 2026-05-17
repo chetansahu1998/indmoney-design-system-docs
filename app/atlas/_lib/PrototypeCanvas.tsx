@@ -37,9 +37,13 @@ interface Props {
   url: string;
   title?: string | null;
   banner: string | null;
+  /** Plan 005 Phase B — sub-flow slug threaded into the anchor bridge so
+   *  it can fetch first-class drd_anchor rows on mount. Null for legacy
+   *  leaves without a sub_flow binding. */
+  subFlowSlug?: string | null;
 }
 
-export function PrototypeCanvas({ url, title, banner }: Props) {
+export function PrototypeCanvas({ url, title, banner, subFlowSlug }: Props) {
   // Ref shared with PrototypeAnchorBridge so it can validate inbound
   // postMessage events by `event.source === iframeRef.current.contentWindow`,
   // and so plan 005 Phase C's reverse-direction focus can post into the
@@ -88,7 +92,10 @@ export function PrototypeCanvas({ url, title, banner }: Props) {
             : "lc-proto-iframe"
         }
       />
-      <PrototypeAnchorBridge iframeRef={iframeRef} />
+      <PrototypeAnchorBridge
+        iframeRef={iframeRef}
+        subFlowSlug={subFlowSlug ?? undefined}
+      />
       <div className="lc-proto-footer">
         <a href={url} target="_blank" rel="noreferrer noopener">
           Open prototype in new tab ↗

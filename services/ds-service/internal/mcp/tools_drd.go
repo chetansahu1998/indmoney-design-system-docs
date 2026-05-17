@@ -186,3 +186,143 @@ func (drdDetachPrototypeTool) Invoke(ctx context.Context, deps Deps, args json.R
 	}
 	return Result{Data: map[string]any{"sub_flow_id": sf.ID, "detached": true}}, nil
 }
+
+// ─── drd.attach_anchor / detach_anchor / list_anchors (plan 005 Phase B) ───
+//
+// Wire BlockNote block ids to prototype screen ids so the Atlas
+// PrototypeAnchorBridge can resolve a screen-click → DRD-block scroll
+// deterministically (without falling back to the Phase A heuristic).
+
+type drdAttachAnchorTool struct{}
+
+type drdAttachAnchorArgs struct {
+	SubFlowSlug string `json:"sub_flow_slug"`
+	BlockID     string `json:"block_id"`
+	ScreenID    string `json:"screen_id"`
+	UserID      string `json:"user_id,omitempty"`
+}
+
+func (drdAttachAnchorTool) Name() string               { return "drd.attach_anchor" }
+func (drdAttachAnchorTool) Visibility() ToolVisibility { return Deep }
+func (drdAttachAnchorTool) Description() string {
+	return "Bind a DRD BlockNote block id to a prototype screen id. Idempotent."
+}
+func (drdAttachAnchorTool) InputSchema() json.RawMessage {
+	return rawJSON(`{
+		"type": "object",
+		"properties": {
+			"sub_flow_slug": {"type": "string"},
+			"block_id":      {"type": "string", "description": "BlockNote block UUID"},
+			"screen_id":     {"type": "string", "description": "Prototype screen id, e.g. S3"},
+			"user_id":       {"type": "string"}
+		},
+		"required": ["sub_flow_slug", "block_id", "screen_id"],
+		"additionalProperties": false
+	}`)
+}
+func (drdAttachAnchorTool) Invoke(ctx context.Context, deps Deps, args json.RawMessage) (Result, error) {
+	var in drdAttachAnchorArgs
+	if err := decodeArgs(args, &in); err != nil {
+		return Result{}, err
+	}
+	sf, _, err := resolveSlug(ctx, deps, in.SubFlowSlug)
+	if err != nil {
+		return Result{}, fmt.Errorf("drd.attach_anchor: %w", err)
+	}
+	user := strings.TrimSpace(in.UserID)
+	if user == "" {
+		user = deps.UserID
+	}
+	id, err := deps.Repo.AttachDRDAnchor(ctx, sf.ID, in.BlockID, in.ScreenID, user)
+	if err != nil {
+		return Result{}, fmt.Errorf("drd.attach_anchor: %w", err)
+	}
+	return Result{Data: map[string]any{
+		"id":          id,
+		"sub_flow_id": sf.ID,
+		"block_id":    strings.TrimSpace(in.BlockID),
+		"screen_id":   strings.TrimSpace(in.ScreenID),
+	}}, nil
+}
+
+type drdDetachAnchorTool struct{}
+
+type drdDetachAnchorArgs struct {
+	SubFlowSlug string `json:"sub_flow_slug"`
+	BlockID     string `json:"block_id"`
+	ScreenID    string `json:"screen_id"`
+}
+
+func (drdDetachAnchorTool) Name() string               { return "drd.detach_anchor" }
+func (drdDetachAnchorTool) Visibility() ToolVisibility { return Deep }
+func (drdDetachAnchorTool) Description() string {
+	return "Remove one DRD block ↔ prototype screen anchor. No-op when the pair isn't anchored."
+}
+func (drdDetachAnchorTool) InputSchema() json.RawMessage {
+	return rawJSON(`{
+		"type": "object",
+		"properties": {
+			"sub_flow_slug": {"type": "string"},
+			"block_id":      {"type": "string"},
+			"screen_id":     {"type": "string"}
+		},
+		"required": ["sub_flow_slug", "block_id", "screen_id"],
+		"additionalProperties": false
+	}`)
+}
+func (drdDetachAnchorTool) Invoke(ctx context.Context, deps Deps, args json.RawMessage) (Result, error) {
+	var in drdDetachAnchorArgs
+	if err := decodeArgs(args, &in); err != nil {
+		return Result{}, err
+	}
+	sf, _, err := resolveSlug(ctx, deps, in.SubFlowSlug)
+	if err != nil {
+		return Result{}, fmt.Errorf("drd.detach_anchor: %w", err)
+	}
+	if err := deps.Repo.DetachDRDAnchor(ctx, sf.ID, in.BlockID, in.ScreenID); err != nil {
+		return Result{}, fmt.Errorf("drd.detach_anchor: %w", err)
+	}
+	return Result{Data: map[string]any{"detached": true}}, nil
+}
+
+type drdListAnchorsTool struct{}
+
+type drdListAnchorsArgs struct {
+	SubFlowSlug string `json:"sub_flow_slug"`
+}
+
+func (drdListAnchorsTool) Name() string               { return "drd.list_anchors" }
+func (drdListAnchorsTool) Visibility() ToolVisibility { return Deep }
+func (drdListAnchorsTool) Description() string {
+	return "List every DRD block ↔ prototype screen anchor under a sub_flow. Atlas bridge consumes this on leaf-open."
+}
+func (drdListAnchorsTool) InputSchema() json.RawMessage {
+	return rawJSON(`{
+		"type": "object",
+		"properties": {"sub_flow_slug": {"type": "string"}},
+		"required": ["sub_flow_slug"],
+		"additionalProperties": false
+	}`)
+}
+func (drdListAnchorsTool) Invoke(ctx context.Context, deps Deps, args json.RawMessage) (Result, error) {
+	var in drdListAnchorsArgs
+	if err := decodeArgs(args, &in); err != nil {
+		return Result{}, err
+	}
+	sf, _, err := resolveSlug(ctx, deps, in.SubFlowSlug)
+	if err != nil {
+		return Result{}, fmt.Errorf("drd.list_anchors: %w", err)
+	}
+	anchors, err := deps.Repo.ListDRDAnchorsForSubFlow(ctx, sf.ID)
+	if err != nil {
+		return Result{}, fmt.Errorf("drd.list_anchors: %w", err)
+	}
+	if anchors == nil {
+		anchors = []projects.DRDAnchor{}
+	}
+	return Result{Data: map[string]any{
+		"sub_flow_id": sf.ID,
+		"anchors":     anchors,
+		"count":       len(anchors),
+	}}, nil
+}

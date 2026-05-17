@@ -499,6 +499,10 @@ func NewDefaultRegistry() *Registry {
 	r.Register(drdAppendTool{})
 	r.Register(drdAttachPrototypeTool{})
 	r.Register(drdDetachPrototypeTool{})
+	// Plan 005 Phase B — DRD-block ↔ prototype-screen anchors.
+	r.Register(drdAttachAnchorTool{})
+	r.Register(drdDetachAnchorTool{})
+	r.Register(drdListAnchorsTool{})
 	// Deep — prd.*
 	r.Register(prdGetTool{})
 	r.Register(prdUpsertTabTool{})
