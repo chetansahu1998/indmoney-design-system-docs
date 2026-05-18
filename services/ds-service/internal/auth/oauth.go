@@ -47,6 +47,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -394,14 +395,29 @@ func handleTokenAuthCode(w http.ResponseWriter, r *http.Request, db *sql.DB, sig
 		return
 	}
 
-	// Mark the code consumed BEFORE minting tokens. If the token-minting
-	// step fails we'd rather leak one unusable code (already consumed)
-	// than mint two tokens for the same code. SQLite's serial-writer
-	// pool makes this implicitly atomic with the subsequent INSERT.
-	if _, err := db.ExecContext(r.Context(),
+	// Mark the code consumed BEFORE minting tokens — and check RowsAffected
+	// to defend against concurrent double-redemption. The
+	// `WHERE consumed_at IS NULL` clause is the atomic precondition:
+	// SQLite's serial-writer pool ensures exactly one redemption updates
+	// the row from NULL → now; the parallel attempt sees 0 rows affected
+	// and we reject before minting any tokens. Belt-and-braces vs the
+	// scan-then-update check above which can race across the round-trip.
+	res, err := db.ExecContext(r.Context(),
 		`UPDATE oauth_tokens SET consumed_at = ? WHERE id = ? AND kind = 'authorization_code' AND consumed_at IS NULL`,
-		now.Unix(), code); err != nil {
+		now.Unix(), code)
+	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, errServerError, "consume code: "+err.Error())
+		return
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, errServerError, "consume code rows: "+err.Error())
+		return
+	}
+	if n == 0 {
+		// A parallel request raced us and consumed the code first. Treat
+		// as a replay attempt — same outcome as the scan-time check.
+		writeOAuthError(w, http.StatusBadRequest, errInvalidGrant, "code already consumed")
 		return
 	}
 
@@ -449,9 +465,17 @@ func handleTokenRefresh(w http.ResponseWriter, r *http.Request, db *sql.DB, sign
 		// reuses an already-rotated refresh token, assume compromise and
 		// revoke every live refresh token belonging to that user. The
 		// legitimate client will be forced through authorize again.
-		_, _ = db.ExecContext(r.Context(),
+		sweepRes, sweepErr := db.ExecContext(r.Context(),
 			`UPDATE oauth_tokens SET revoked_at = ? WHERE user_id = ? AND kind = 'refresh_token' AND revoked_at IS NULL`,
 			now.Unix(), userID)
+		// Security-relevant: log the sweep so oncall can trace replay
+		// attempts after the fact. Failure to sweep is also logged — the
+		// caller still gets invalid_grant either way.
+		if sweepErr != nil {
+			slog.Warn("refresh_replay_sweep_failed", "user_id", userID, "err", sweepErr.Error())
+		} else if rows, rerr := sweepRes.RowsAffected(); rerr == nil {
+			slog.Warn("refresh_replay_sweep_triggered", "user_id", userID, "rows_revoked", rows)
+		}
 		writeOAuthError(w, http.StatusBadRequest, errInvalidGrant, "refresh_token reused — all sessions revoked")
 		return
 	}
@@ -463,10 +487,37 @@ func handleTokenRefresh(w http.ResponseWriter, r *http.Request, db *sql.DB, sign
 	// Rotate. Mark old row revoked first; this serves as the
 	// consumed-marker — a parallel replay attempt sees revoked_at and
 	// triggers the sweep above. Then INSERT the new refresh row.
-	if _, err := db.ExecContext(r.Context(),
+	//
+	// The `WHERE revoked_at IS NULL` + RowsAffected check is the atomic
+	// guard against concurrent rotation: only one parallel caller's
+	// UPDATE flips the row to revoked; the loser sees 0 rows and falls
+	// into the same replay-defense path as if it had retried with a
+	// stale token.
+	res, err := db.ExecContext(r.Context(),
 		`UPDATE oauth_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
-		now.Unix(), id); err != nil {
+		now.Unix(), id)
+	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, errServerError, "rotate old: "+err.Error())
+		return
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, errServerError, "rotate old rows: "+err.Error())
+		return
+	}
+	if n == 0 {
+		// Concurrent rotation already revoked this row. Fall into the
+		// replay-defense sweep — matches the behavior of a sequential
+		// replay-after-rotate.
+		sweepRes, sweepErr := db.ExecContext(r.Context(),
+			`UPDATE oauth_tokens SET revoked_at = ? WHERE user_id = ? AND kind = 'refresh_token' AND revoked_at IS NULL`,
+			now.Unix(), userID)
+		if sweepErr != nil {
+			slog.Warn("refresh_replay_sweep_failed", "user_id", userID, "err", sweepErr.Error())
+		} else if rows, rerr := sweepRes.RowsAffected(); rerr == nil {
+			slog.Warn("refresh_replay_sweep_triggered", "user_id", userID, "rows_revoked", rows)
+		}
+		writeOAuthError(w, http.StatusBadRequest, errInvalidGrant, "refresh_token reused — all sessions revoked")
 		return
 	}
 
