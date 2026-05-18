@@ -58,7 +58,14 @@ func newIntegrationEnv(t *testing.T) *integrationEnv {
 	if err != nil {
 		t.Fatalf("signing key: %v", err)
 	}
-	access, err := signer.MintAccessToken(h.userA, "a@example.com", "designer", []string{h.tenantA}, time.Hour)
+	// Integration tests use an OAuth-kind token directly (vs. routing
+	// through the full /v1/oauth/* flow each time). The full flow is
+	// exercised by TestIntegration_OAuth_FullFlowProducesUsableMCPToken;
+	// every other test verifies the transport's tool-call surface, and
+	// needs a token POST /mcp will accept (i.e. kind=oauth_access per
+	// plan-002 #6 enforcement). MintAccessToken (session-kind) would be
+	// rejected at the transport's requireOAuthKind gate.
+	access, err := signer.MintOAuthAccessToken(h.userA, "a@example.com", "designer", []string{h.tenantA}, time.Hour)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -99,7 +106,10 @@ func newIntegrationEnv(t *testing.T) *integrationEnv {
 		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}, requireAuth)
 	auth.RegisterOAuthRoutes(mux, h.d.DB, signer, auth.OAuthConfig{
-		AllowedClients: []string{"claude.ai"},
+		Clients: []auth.OAuthClient{{
+			ID:                  "claude.ai",
+			AllowedRedirectURIs: []string{"https://claude.ai/api/mcp/auth_callback"},
+		}},
 	}, requireAuth, claimsReader)
 
 	srv := httptest.NewServer(mux)
@@ -239,6 +249,33 @@ func TestIntegration_MissingAuth_Returns401BeforeDispatch(t *testing.T) {
 	resp, _ := env.jrpc("initialize", nil, "")
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+// 4b. Session-kind JWT (the kind /v1/auth/login mints) MUST be rejected
+// at the MCP transport, even though the signature is valid and the
+// middleware accepts it. Otherwise the OAuth flow is bypassable —
+// plan-002 #6 (P1 security).
+func TestIntegration_SessionKindJWT_RejectedOnMCPTransport(t *testing.T) {
+	env := newIntegrationEnv(t)
+	// Mint a /v1/auth/login-style token via the same signer. Same user,
+	// same tenant — only the Kind claim differs.
+	sessionTok, err := env.signer.MintAccessToken(env.userA, "a@example.com", "designer", []string{env.tenantA}, time.Hour)
+	if err != nil {
+		t.Fatalf("mint session: %v", err)
+	}
+	resp, body := env.jrpc("initialize", nil, sessionTok)
+	// Transport returns the JSON-RPC error envelope (HTTP 200 with
+	// error.code=-32600), not an HTTP 401 — the middleware accepts the
+	// JWT but handleMCP rejects the kind.
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (JSON-RPC error envelope)", resp.StatusCode)
+	}
+	if body.Error == nil {
+		t.Fatal("expected JSON-RPC error rejecting session-kind token")
+	}
+	if !strings.Contains(body.Error.Message, "kind") {
+		t.Errorf("error message should mention kind, got %q", body.Error.Message)
 	}
 }
 

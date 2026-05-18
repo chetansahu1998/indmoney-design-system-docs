@@ -31,6 +31,10 @@ func newTransportHandler(t *testing.T, h *testHarness, claims *auth.Claims) http
 			Email:   "a@example.com",
 			Role:    "user",
 			Tenants: []string{h.tenantA},
+			// requireOAuthKind on POST /mcp + GET /mcp rejects anything
+			// other than oauth_access (plan 002 #6). Default test claims
+			// mint the right kind so individual tests don't have to.
+			Kind: auth.KindOAuthAccess,
 		}
 	}
 	return handleMCP(HandlerDeps{
@@ -452,7 +456,7 @@ func TestTransportMCP_Stream_PublishedEventReachesSubscriber(t *testing.T) {
 	deps := HandlerDeps{
 		DB:           h.d,
 		Broker:       broker,
-		ClaimsReader: func(*http.Request) *auth.Claims { return &auth.Claims{Sub: h.userA, Tenants: []string{h.tenantA}} },
+		ClaimsReader: func(*http.Request) *auth.Claims { return &auth.Claims{Sub: h.userA, Tenants: []string{h.tenantA}, Kind: auth.KindOAuthAccess} },
 		Registry:     h.registry,
 		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -533,7 +537,7 @@ func TestTransportMCP_Stream_RejectsNonEventStreamAccept(t *testing.T) {
 	deps := HandlerDeps{
 		DB:           h.d,
 		Broker:       broker,
-		ClaimsReader: func(*http.Request) *auth.Claims { return &auth.Claims{Sub: h.userA, Tenants: []string{h.tenantA}} },
+		ClaimsReader: func(*http.Request) *auth.Claims { return &auth.Claims{Sub: h.userA, Tenants: []string{h.tenantA}, Kind: auth.KindOAuthAccess} },
 		Registry:     h.registry,
 		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}

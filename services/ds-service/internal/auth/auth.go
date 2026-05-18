@@ -120,15 +120,46 @@ func (k *SigningKey) EncodePriv() string {
 type Claims struct {
 	jwt.RegisteredClaims
 
-	Sub      string   `json:"sub"`
-	Email    string   `json:"email"`
-	Role     string   `json:"role"` // user-level role: super_admin | user
-	Tenants  []string `json:"tenants"`
-	IsAdmin  bool     `json:"is_admin"`
+	Sub     string   `json:"sub"`
+	Email   string   `json:"email"`
+	Role    string   `json:"role"` // user-level role: super_admin | user
+	Tenants []string `json:"tenants"`
+	IsAdmin bool     `json:"is_admin"`
+
+	// Kind distinguishes how the token was minted. Empty string is
+	// treated as KindSession for backwards compat (every JWT issued
+	// before this field existed). New code paths SHOULD set Kind
+	// explicitly. The MCP transport (POST /mcp + GET /mcp) requires
+	// KindOAuthAccess so a long-lived /v1/auth/login session JWT cannot
+	// bypass the OAuth flow. The legacy REST surface
+	// (/v1/mcp/invoke/{name}) stays kind-agnostic for Atlas + stdio bridge.
+	Kind string `json:"kind,omitempty"`
 }
 
-// MintAccessToken creates a 7-day access JWT for a user.
+// Kind constants for the Claims.Kind field.
+const (
+	// KindSession — JWTs minted by /v1/auth/login (long-lived, 7d).
+	KindSession = "session"
+	// KindOAuthAccess — JWTs minted by /v1/oauth/token (short-lived, 1h)
+	// via the Claude Custom Connector flow. Required on POST /mcp.
+	KindOAuthAccess = "oauth_access"
+)
+
+// MintAccessToken creates a 7-day access JWT for a user — the standard
+// /v1/auth/login session token. Stamps Kind=KindSession so the new MCP
+// transport can distinguish it from OAuth-minted access tokens.
 func (k *SigningKey) MintAccessToken(userID, email, role string, tenants []string, lifetime time.Duration) (string, error) {
+	return k.mintWithKind(userID, email, role, tenants, lifetime, KindSession)
+}
+
+// MintOAuthAccessToken creates a short-lived OAuth-flow access JWT.
+// Stamps Kind=KindOAuthAccess. The MCP transport requires this kind on
+// POST /mcp + GET /mcp; the legacy REST surface accepts either kind.
+func (k *SigningKey) MintOAuthAccessToken(userID, email, role string, tenants []string, lifetime time.Duration) (string, error) {
+	return k.mintWithKind(userID, email, role, tenants, lifetime, KindOAuthAccess)
+}
+
+func (k *SigningKey) mintWithKind(userID, email, role string, tenants []string, lifetime time.Duration, kind string) (string, error) {
 	now := time.Now()
 	claims := &Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -145,6 +176,7 @@ func (k *SigningKey) MintAccessToken(userID, email, role string, tenants []strin
 		Role:    role,
 		Tenants: tenants,
 		IsAdmin: role == RoleSuperAdmin,
+		Kind:    kind,
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
 	return tok.SignedString(k.Priv)

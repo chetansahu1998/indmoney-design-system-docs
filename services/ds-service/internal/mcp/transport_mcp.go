@@ -28,6 +28,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/auth"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/sse"
 )
@@ -177,6 +178,10 @@ func handleMCP(deps HandlerDeps) http.HandlerFunc {
 		}
 		if req.JSONRPC != "2.0" {
 			writeJRPCError(w, req.ID, jrpcInvalidRequest, "jsonrpc must be \"2.0\"", req.JSONRPC)
+			return
+		}
+		if err := requireOAuthKind(deps.ClaimsReader, r); err != nil {
+			writeJRPCError(w, req.ID, jrpcInvalidRequest, err.Error(), nil)
 			return
 		}
 
@@ -372,6 +377,10 @@ func handleMCPStream(deps HandlerDeps) http.HandlerFunc {
 			writeJRPCError(w, nil, jrpcInternalError, "streaming not supported", nil)
 			return
 		}
+		if err := requireOAuthKind(deps.ClaimsReader, r); err != nil {
+			writeJRPCError(w, nil, jrpcInvalidRequest, err.Error(), nil)
+			return
+		}
 		tenantID, err := resolveTenant(deps.ClaimsReader, r)
 		if err != nil {
 			writeJRPCError(w, nil, jrpcInvalidRequest, "no tenant", err.Error())
@@ -469,6 +478,31 @@ func containsMediaType(accept, want string) bool {
 		}
 	}
 	return false
+}
+
+// requireOAuthKind returns an error when the request's claims are not
+// of kind="oauth_access". The MCP transport (POST /mcp + GET /mcp) is
+// the Claude-facing endpoint and must require tokens minted via the
+// OAuth flow specifically — accepting long-lived /v1/auth/login session
+// JWTs here would let any logged-in user (or anyone who phished one)
+// bypass the entire OAuth handshake, JTI revocation, and refresh
+// rotation. Plan-002 finding #6 (P1 security).
+//
+// The legacy REST surface /v1/mcp/invoke/{name} is intentionally NOT
+// gated on kind — Atlas and the local stdio bridge call it with
+// /v1/auth/login JWTs and predate the OAuth flow.
+func requireOAuthKind(read ClaimsReader, r *http.Request) error {
+	if read == nil {
+		return errors.New("no claims reader configured")
+	}
+	c := read(r)
+	if c == nil {
+		return errors.New("missing claims")
+	}
+	if c.Kind != auth.KindOAuthAccess {
+		return fmt.Errorf("token kind %q not accepted on /mcp; use an OAuth-minted access token (kind=%q)", c.Kind, auth.KindOAuthAccess)
+	}
+	return nil
 }
 
 func writeJRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {

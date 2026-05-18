@@ -580,7 +580,7 @@ func mintAccessAndRefresh(ctx context.Context, db *sql.DB, signer *SigningKey, c
 		// fall back to the most conservative default.
 		userRole = RoleDesigner
 	}
-	access, err = signer.MintAccessToken(userID, userEmail, userRole, tenants, cfg.accessTTL())
+	access, err = signer.MintOAuthAccessToken(userID, userEmail, userRole, tenants, cfg.accessTTL())
 	if err != nil {
 		return "", "", fmt.Errorf("mint access: %w", err)
 	}
