@@ -140,6 +140,56 @@ func TestTransportMCP_Constitution_VersionAndLengthBudget(t *testing.T) {
 	}
 }
 
+// TestTransportMCP_Initialize_NegotiatesProtocolVersion — finding #15
+// (P1). The handshake must echo back the client's requested protocol
+// version IF it's supported, or return invalid_params with the
+// supported set in error.data otherwise. Hard-coding the server's
+// preferred version (the pre-fix shape) breaks any client speaking an
+// older revision and silently accepts any value the client sends.
+func TestTransportMCP_Initialize_NegotiatesProtocolVersion(t *testing.T) {
+	h := newTestHarness(t)
+	handler := newTransportHandler(t, h, nil)
+
+	// 1. Client requests our preferred version — echoed back.
+	resp := jrpcCall(t, handler, "initialize",
+		map[string]any{"protocolVersion": MCPProtocolVersion}, 1)
+	if resp.Error != nil {
+		t.Fatalf("preferred-version: unexpected jrpc error: %+v", resp.Error)
+	}
+	res := resultAs[mcpInitializeResult](t, resp)
+	if res.ProtocolVersion != MCPProtocolVersion {
+		t.Errorf("preferred-version: echoed = %q, want %q", res.ProtocolVersion, MCPProtocolVersion)
+	}
+
+	// 2. Client omits protocolVersion — server defaults to preferred.
+	resp = jrpcCall(t, handler, "initialize", nil, 2)
+	if resp.Error != nil {
+		t.Fatalf("no-version: unexpected jrpc error: %+v", resp.Error)
+	}
+	res = resultAs[mcpInitializeResult](t, resp)
+	if res.ProtocolVersion != MCPProtocolVersion {
+		t.Errorf("no-version: default = %q, want %q", res.ProtocolVersion, MCPProtocolVersion)
+	}
+
+	// 3. Client requests an unsupported version — invalid_params with
+	//    the supported set in error.data.
+	resp = jrpcCall(t, handler, "initialize",
+		map[string]any{"protocolVersion": "2099-12-31"}, 3)
+	if resp.Error == nil {
+		t.Fatal("expected jrpc error for unsupported version")
+	}
+	if resp.Error.Code != jrpcInvalidParams {
+		t.Errorf("error.code = %d, want %d (invalid_params)", resp.Error.Code, jrpcInvalidParams)
+	}
+	if data, ok := resp.Error.Data.(map[string]any); ok {
+		if _, ok := data["supported"]; !ok {
+			t.Error("error.data missing `supported` field — clients need it to adapt")
+		}
+	} else {
+		t.Errorf("error.data shape = %T, want map", resp.Error.Data)
+	}
+}
+
 // ─── notifications/initialized (U1) ───────────────────────────────────────
 
 func TestTransportMCP_NotificationsInitialized_AcceptedSilently(t *testing.T) {

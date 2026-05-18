@@ -116,10 +116,10 @@ func (h *testHarness) seedSubFlow(productName, flowName string) projects.SubFlow
 
 // ─── Registry-level tests ──────────────────────────────────────────────────
 
-// TestRegistry_ColdCatalog_ReturnsExpectedVisibleTools — Plan 002 U6
-// flipped the 11 prd.author sub-ops to Visible. The cold catalog now
-// carries the original 3 meta-verbs + 11 promoted prd.* tools = 14 total.
-// `prd.author` stays Visible too (as a deprecated alias).
+// TestRegistry_ColdCatalog_ReturnsExpectedVisibleTools — U6 promoted 11
+// prd.author sub-ops to Visible (3 meta-verbs + 11 = 14). /ce-code-review
+// #23 added drd.list_anchors to Visible (hot-path read for Atlas) = 15.
+// `prd.author` stays Visible as a deprecated alias.
 func TestRegistry_ColdCatalog_ReturnsExpectedVisibleTools(t *testing.T) {
 	r := NewDefaultRegistry()
 	visible := r.ListVisible()
@@ -129,17 +129,19 @@ func TestRegistry_ColdCatalog_ReturnsExpectedVisibleTools(t *testing.T) {
 		"prd.author":      false,
 		"section.inspect": false,
 		// U6 promotions — the 11 PRD sub-ops
-		"prd.get":                     false,
-		"prd.upsert_tab":              false,
-		"prd.add_state":               false,
-		"prd.add_event":               false,
+		"prd.get":                      false,
+		"prd.upsert_tab":               false,
+		"prd.add_state":                false,
+		"prd.add_event":                false,
 		"prd.add_acceptance_criterion": false,
-		"prd.add_edge_case":           false,
-		"prd.upsert_copy_string":      false,
-		"prd.add_a11y_note":           false,
-		"prd.attach_frame":            false,
-		"prd.detach_frame":            false,
-		"prd.export":                  false,
+		"prd.add_edge_case":            false,
+		"prd.upsert_copy_string":       false,
+		"prd.add_a11y_note":            false,
+		"prd.attach_frame":             false,
+		"prd.detach_frame":             false,
+		"prd.export":                   false,
+		// /ce-code-review #23 — hot-path read consumed on every leaf-open.
+		"drd.list_anchors": false,
 	}
 	if got, want := len(visible), len(wantNames); got != want {
 		names := []string{}

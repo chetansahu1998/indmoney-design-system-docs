@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -33,9 +34,31 @@ import (
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/sse"
 )
 
-// MCP protocol version negotiated at initialize. Bumped when this server
-// adopts a newer revision of the MCP spec.
+// MCPProtocolVersion is the server's preferred version — echoed back
+// when the client doesn't request a specific one. Bumped when this
+// server adopts a newer revision of the MCP spec.
 const MCPProtocolVersion = "2025-11-20"
+
+// SupportedProtocolVersions enumerates every revision of the MCP spec
+// this server can speak. The initialize handshake's negotiation echoes
+// back the client's requested version IF it appears here, else returns
+// JSON-RPC invalid_params with the supported set in error.data. Most
+// recent first; the preferred version above MUST appear in this list.
+var SupportedProtocolVersions = []string{
+	"2025-11-20",
+}
+
+// isSupportedProtocolVersion is the membership predicate. Linear scan
+// over a single-digit list — cheap. Exported as a method on the slice
+// would require Go 1.21+ for slices.Contains; this is portable.
+func isSupportedProtocolVersion(v string) bool {
+	for _, sv := range SupportedProtocolVersions {
+		if sv == v {
+			return true
+		}
+	}
+	return false
+}
 
 // MCPServerName / Version surface in the initialize handshake.
 const (
@@ -79,10 +102,17 @@ type jrpcError struct {
 
 // ─── MCP-spec payload shapes ───────────────────────────────────────────────
 
+// mcpInitializeParams is the params body the client sends on initialize.
+// We only read protocolVersion; clientInfo and capabilities are
+// per-spec but not yet acted on server-side.
+type mcpInitializeParams struct {
+	ProtocolVersion string `json:"protocolVersion"`
+}
+
 type mcpInitializeResult struct {
-	ProtocolVersion string             `json:"protocolVersion"`
-	Capabilities    mcpCapabilities    `json:"capabilities"`
-	ServerInfo      mcpServerInfo      `json:"serverInfo"`
+	ProtocolVersion string          `json:"protocolVersion"`
+	Capabilities    mcpCapabilities `json:"capabilities"`
+	ServerInfo      mcpServerInfo   `json:"serverInfo"`
 }
 
 type mcpCapabilities struct {
@@ -209,8 +239,31 @@ func handleMCP(deps HandlerDeps) http.HandlerFunc {
 // ─── initialize ────────────────────────────────────────────────────────────
 
 func handleInitialize(w http.ResponseWriter, req jrpcRequest) {
+	// Protocol-version negotiation: read the client's preferred version
+	// from params. If absent OR matches our preferred, echo our
+	// preferred. If present but unsupported, return invalid_params with
+	// the supported list in error.data so the client can adapt.
+	negotiated := MCPProtocolVersion
+	if len(req.Params) > 0 {
+		var params mcpInitializeParams
+		// Tolerant decode — params may carry extra fields (clientInfo,
+		// capabilities) we don't read yet. json.Unmarshal already
+		// ignores unknown keys.
+		if err := json.Unmarshal(req.Params, &params); err == nil && params.ProtocolVersion != "" {
+			if !isSupportedProtocolVersion(params.ProtocolVersion) {
+				writeJRPCError(w, req.ID, jrpcInvalidParams,
+					"unsupported protocolVersion",
+					map[string]any{
+						"requested": params.ProtocolVersion,
+						"supported": SupportedProtocolVersions,
+					})
+				return
+			}
+			negotiated = params.ProtocolVersion
+		}
+	}
 	writeJRPCResult(w, req.ID, mcpInitializeResult{
-		ProtocolVersion: MCPProtocolVersion,
+		ProtocolVersion: negotiated,
 		Capabilities: mcpCapabilities{
 			Tools: mcpToolsCapability{ListChanged: true},
 		},
@@ -224,6 +277,18 @@ func handleInitialize(w http.ResponseWriter, req jrpcRequest) {
 
 // ─── tools/list ────────────────────────────────────────────────────────────
 
+// handleToolsList returns the FULL catalog (Visible + Deep), not just
+// Visible. This is intentional and spec-aligned: per MCP 2025-11-20,
+// the `_meta.defer_loading` annotation is the client's hint to lazy-
+// load specific tools (Anthropic's connector uses it to decide which
+// tools live in the system prompt vs. tool_search). Pre-filtering on
+// the server would hide tools from clients that don't honor
+// defer_loading, breaking discoverability.
+//
+// The legacy REST surface /v1/mcp/tools DOES filter to Visible because
+// it predates defer_loading and its consumers (Atlas, stdio bridge)
+// expect a compact cold catalog. /ce-code-review finding #17 — keep
+// both surfaces as-is.
 func handleToolsList(w http.ResponseWriter, req jrpcRequest, deps HandlerDeps) {
 	all := deps.Registry.ListAll()
 	out := make([]mcpToolDescriptor, 0, len(all))
@@ -514,12 +579,20 @@ func writeJRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {
 	})
 }
 
+// writeJRPCError emits a JSON-RPC 2.0 error response. Per the spec,
+// JSON-RPC errors ALWAYS travel inside an HTTP 200 envelope — the HTTP
+// status reflects transport health, not protocol-level errors. This is
+// the right shape for Claude Connectors and every spec-compliant MCP
+// client, but it confounds generic abuse-detection heuristics that
+// look at 4xx/5xx rates. To compensate, every protocol-level error
+// emits a structured log line that ops dashboards / WAFs can ingest
+// directly. /ce-code-review finding #27 — HTTP 200 behavior is
+// intentional; structured logs cover the abuse-detection gap.
 func writeJRPCError(w http.ResponseWriter, id json.RawMessage, code int, msg string, data any) {
 	w.Header().Set("Content-Type", "application/json")
-	// Protocol errors map to 200 OK with a JSON-RPC error body — JSON-RPC
-	// over HTTP is its own envelope; the HTTP status reflects transport
-	// health, not protocol-level errors. The exception: parse errors with
-	// no id sometimes return 400, but Claude Connectors accept 200.
+	slog.Warn("mcp.jrpc_error",
+		"code", code,
+		"message", msg)
 	_ = json.NewEncoder(w).Encode(jrpcResponse{
 		JSONRPC: "2.0",
 		ID:      id,

@@ -307,10 +307,14 @@ type drdListAnchorsArgs struct {
 }
 
 func (drdListAnchorsTool) Name() string               { return "drd.list_anchors" }
-func (drdListAnchorsTool) Visibility() ToolVisibility { return Deep }
+func (drdListAnchorsTool) Visibility() ToolVisibility { return Visible }
 func (drdListAnchorsTool) Title() string              { return "List DRD Anchors" }
 func (drdListAnchorsTool) SideEffects() SideEffect    { return ReadOnly }
-func (drdListAnchorsTool) DeferLoading() bool         { return true }
+
+// Visible + DeferLoading=false — Atlas hits this on every leaf-open
+// via PrototypeAnchorBridge; gating it behind tool_search would make
+// the cold catalog hide a hot-path read for no benefit. Plan-002 #23.
+func (drdListAnchorsTool) DeferLoading() bool { return false }
 func (drdListAnchorsTool) Description() string {
 	return "List every DRD block ↔ prototype screen anchor for a sub_flow. Use when the Atlas PrototypeAnchorBridge is hydrating on leaf-open, or you need to audit which blocks point at which screens. Don't use when you want the DRD content itself — call drd.read for the YDoc state. Read-only."
 }
