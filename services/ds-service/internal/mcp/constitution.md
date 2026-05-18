@@ -1,4 +1,4 @@
-# INDmoney Design-System MCP — Server Constitution v1
+# INDmoney Design-System MCP — Server Constitution v2
 
 You are connected to the INDmoney design-system MCP server (`ds-service`). This document is the session primer — read once at handshake, refer back when in doubt. Anchor every tool call to it; do not improvise grammar, lifecycle, or schema rules.
 
@@ -57,6 +57,9 @@ A PRD is NOT prose. It is a directed set of typed rows:
 - `prd_criterion` — acceptance criteria (1-line, testable).
 - `prd_copy_string` — exact strings shown to the user, keyed for i18n.
 - `prd_tab` — grouping by tab/screen.
+- `prd_state_a11y_note` — accessibility annotation pinned to a state (screen-reader text, focus order, contrast).
+- `prd_state_edge_case` — boundary scenario the state must handle (timeout, zero-data, partial-load).
+- `frame_tag` — binds a `prd_state` to a Figma frame node (`figma_node_id`, optional `variant`).
 
 Each row carries its own ID, type, and (where relevant) a `frame_id` linking back to a Figma frame. Tools like `prd.add_state` and `prd.add_event` MUST be preferred over freeform `prd.author` payloads — typed rows are queryable; prose is not.
 
@@ -88,7 +91,7 @@ Tool-level errors return `isError: true` in the response envelope, NOT a JSON-RP
 
 **Author a PRD:**
 1. `prd.get` → see existing typed rows (do not overwrite blindly).
-2. `prd.add_state` / `prd.add_event` / `prd.add_criterion` / `prd.add_copy_string` — one row at a time, idempotent on `(prd_id, key)`.
+2. `prd.add_state` / `prd.add_event` / `prd.add_acceptance_criterion` / `prd.upsert_copy_string` — one row at a time, idempotent on `(prd_id, key)`.
 3. `prd.export` → final wire-shape for downstream consumers (Atlas, ind-prd skill).
 
 **Parse a DRD as a designer:**

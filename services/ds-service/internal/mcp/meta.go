@@ -115,10 +115,9 @@ func (drdReadTool) Invoke(ctx context.Context, deps Deps, args json.RawMessage) 
 	}
 	if lifecycle == projects.LifecycleDesignShipped {
 		hints = append(hints, NextAction{
-			Tool: "prd.author",
-			Op:   "get",
+			Tool: "prd.get",
 			When: "design has shipped — read the current PRD with auto-skeleton states",
-			InputHint: rawJSON(`{"op": "get", "args": {"sub_flow_slug": "` + out.SubFlow.FullSlug + `"}}`),
+			InputHint: rawJSON(`{"sub_flow_slug": "` + out.SubFlow.FullSlug + `"}`),
 		})
 		hints = append(hints, NextAction{
 			Tool: "section.inspect",
@@ -248,32 +247,36 @@ func (p prdAuthorTool) Invoke(ctx context.Context, deps Deps, args json.RawMessa
 // The hints encode the typical "after writing a state, you usually add an
 // event, an acceptance criterion, and the design-handling markdown" path
 // captured in the plan body.
+//
+// Hints point at the promoted top-level prd.* tools (plan 002 U6), not at
+// the deprecated `prd.author` dispatch shim. InputHints carry the deep
+// tool's argument shape directly — no `{op, args}` envelope wrap.
 func nextActionsForPRDOp(op string, raw json.RawMessage) []NextAction {
 	switch op {
 	case "get":
 		return []NextAction{
-			{Tool: "prd.author", Op: "add_state",
+			{Tool: "prd.add_state",
 				When: "to add (or refine) a state in a tab"},
-			{Tool: "prd.author", Op: "export",
+			{Tool: "prd.export",
 				When: "to render the PRD as markdown"},
 		}
 	case "upsert_tab":
 		return []NextAction{
-			{Tool: "prd.author", Op: "add_state",
+			{Tool: "prd.add_state",
 				When: "to populate the tab with states", InputHint: passthroughSlug(raw)},
 		}
 	case "add_state":
 		return []NextAction{
-			{Tool: "prd.author", Op: "add_acceptance_criterion",
+			{Tool: "prd.add_acceptance_criterion",
 				When: "to spell out what the state must satisfy", InputHint: passthroughSlug(raw)},
-			{Tool: "prd.author", Op: "add_event",
+			{Tool: "prd.add_event",
 				When: "to declare a Mixpanel event on the state", InputHint: passthroughSlug(raw)},
-			{Tool: "prd.author", Op: "attach_frame",
+			{Tool: "prd.attach_frame",
 				When: "to bind a Figma node to the state", InputHint: passthroughSlug(raw)},
 		}
 	case "add_event":
 		return []NextAction{
-			{Tool: "prd.author", Op: "add_acceptance_criterion",
+			{Tool: "prd.add_acceptance_criterion",
 				When: "to spell out what the event guarantees", InputHint: passthroughSlug(raw)},
 		}
 	}
@@ -455,9 +458,9 @@ func (sectionInspectTool) Invoke(ctx context.Context, deps Deps, args json.RawMe
 			When: "to read the DRD content",
 			InputHint: rawJSON(`{"sub_flow_slug": "` + out.SubFlow.FullSlug + `"}`),
 		},
-		{Tool: "prd.author", Op: "get",
+		{Tool: "prd.get",
 			When: "to read the current PRD with auto-skeleton states",
-			InputHint: rawJSON(`{"op": "get", "args": {"sub_flow_slug": "` + out.SubFlow.FullSlug + `"}}`),
+			InputHint: rawJSON(`{"sub_flow_slug": "` + out.SubFlow.FullSlug + `"}`),
 		},
 	}
 	// First-untagged hint (the "resume here" affordance). Falls back
@@ -472,16 +475,16 @@ func (sectionInspectTool) Invoke(ctx context.Context, deps Deps, args json.RawMe
 	}
 	if firstUntaggedLabel != "" {
 		hints = append(hints, NextAction{
-			Tool: "prd.author", Op: "add_state",
+			Tool: "prd.add_state",
 			When: "first untagged frame — author this state next",
-			InputHint: rawJSON(`{"op": "add_state", "args": {"sub_flow_slug": "` + out.SubFlow.FullSlug +
-				`", "tab_name": "default", "label": "` + jsonEscape(firstUntaggedLabel) + `"}}`),
+			InputHint: rawJSON(`{"sub_flow_slug": "` + out.SubFlow.FullSlug +
+				`", "tab_name": "default", "label": "` + jsonEscape(firstUntaggedLabel) + `"}`),
 		})
 	} else {
 		hints = append(hints, NextAction{
-			Tool: "prd.author", Op: "add_state",
+			Tool: "prd.add_state",
 			When: "to add a state to the PRD (or refine an auto-skeleton row)",
-			InputHint: rawJSON(`{"op": "add_state", "args": {"sub_flow_slug": "` + out.SubFlow.FullSlug + `", "tab_name": "default", "label": "<State label>"}}`),
+			InputHint: rawJSON(`{"sub_flow_slug": "` + out.SubFlow.FullSlug + `", "tab_name": "default", "label": "<State label>"}`),
 		})
 	}
 	return Result{Data: out, NextActions: hints}, nil

@@ -523,22 +523,22 @@ func TestPRDAuthor_AddState_HappyPath(t *testing.T) {
 	}
 
 	// next_actions should include add_acceptance_criterion / add_event /
-	// attach_frame.
-	wantOps := map[string]bool{
-		"add_acceptance_criterion": false,
-		"add_event":                false,
-		"attach_frame":             false,
+	// attach_frame. Plan 002 U6 promoted these to top-level prd.* tools;
+	// hints now point at the promoted names rather than the prd.author
+	// dispatch shim.
+	wantTools := map[string]bool{
+		"prd.add_acceptance_criterion": false,
+		"prd.add_event":                false,
+		"prd.attach_frame":             false,
 	}
 	for _, h := range res.NextActions {
-		if h.Tool == "prd.author" {
-			if _, ok := wantOps[h.Op]; ok {
-				wantOps[h.Op] = true
-			}
+		if _, ok := wantTools[h.Tool]; ok {
+			wantTools[h.Tool] = true
 		}
 	}
-	for op, seen := range wantOps {
+	for tool, seen := range wantTools {
 		if !seen {
-			t.Errorf("expected next-action op %q", op)
+			t.Errorf("expected next-action tool %q", tool)
 		}
 	}
 }
@@ -648,16 +648,18 @@ func TestSectionInspect_HappyPath_ReturnsSummary(t *testing.T) {
 	if len(res.NextActions) == 0 {
 		t.Errorf("expected next_actions, got none")
 	}
-	// next_actions must point at drd.read + prd.author (get + add_state).
+	// next_actions must point at drd.read + the promoted top-level
+	// prd.get / prd.add_state tools (plan 002 U6 — no more prd.author Op
+	// envelope wrap).
 	tools := map[string]bool{}
 	for _, h := range res.NextActions {
-		tools[h.Tool+":"+h.Op] = true
+		tools[h.Tool] = true
 	}
-	if !tools["drd.read:"] {
+	if !tools["drd.read"] {
 		t.Errorf("missing drd.read hint")
 	}
-	if !tools["prd.author:get"] {
-		t.Errorf("missing prd.author:get hint")
+	if !tools["prd.get"] {
+		t.Errorf("missing prd.get hint")
 	}
 }
 

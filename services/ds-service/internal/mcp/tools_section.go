@@ -178,18 +178,21 @@ func (sectionOutlineStatesTool) Invoke(ctx context.Context, deps Deps, args json
 
 // nextActionsForWall emits the "where should I go next?" hint based on
 // the current coverage. Priority order:
-//  1. First untagged frame → suggest prd.author op=add_state with the
-//     frame's name pre-filled as label.
-//  2. Else, first orphaned state → suggest reviewing it.
-//  3. Else (everything bound + authored) → suggest prd.author op=export.
+//  1. First untagged frame → suggest prd.add_state with the frame's name
+//     pre-filled as label.
+//  2. Else, first orphaned state → suggest reviewing the PRD.
+//  3. Else (everything bound + authored) → suggest prd.export.
+//
+// Hints point at the promoted top-level prd.* tools (plan 002 U6) so the
+// InputHint matches the deep tool's argument shape directly — no
+// `{op, args}` envelope wrap.
 func nextActionsForWall(wall projects.WallResult, slug string) []NextAction {
 	for _, r := range wall.Frames {
 		if r.BindingStatus == projects.BindingStatusUntagged {
-			hint := rawJSON(`{"op": "add_state", "args": {"sub_flow_slug": "` + slug +
-				`", "tab_name": "default", "label": "` + jsonEscape(r.FrameName) + `"}}`)
+			hint := rawJSON(`{"sub_flow_slug": "` + slug +
+				`", "tab_name": "default", "label": "` + jsonEscape(r.FrameName) + `"}`)
 			return []NextAction{{
-				Tool:      "prd.author",
-				Op:        "add_state",
+				Tool:      "prd.add_state",
 				When:      "first untagged frame — author this state next",
 				InputHint: hint,
 			}}
@@ -198,21 +201,19 @@ func nextActionsForWall(wall projects.WallResult, slug string) []NextAction {
 	for _, r := range wall.Frames {
 		if r.BindingStatus == projects.BindingStatusOrphaned && r.PRDStateLabel != nil {
 			return []NextAction{{
-				Tool: "prd.author",
-				Op:   "get",
+				Tool: "prd.get",
 				When: "orphaned state — read PRD to decide restore vs purge",
-				InputHint: rawJSON(`{"op": "get", "args": {"sub_flow_slug": "` +
-					slug + `"}}`),
+				InputHint: rawJSON(`{"sub_flow_slug": "` +
+					slug + `"}`),
 			}}
 		}
 	}
 	if wall.Counts.Bound > 0 {
 		return []NextAction{{
-			Tool: "prd.author",
-			Op:   "export",
+			Tool: "prd.export",
 			When: "coverage complete — render PRD as markdown",
-			InputHint: rawJSON(`{"op": "export", "args": {"sub_flow_slug": "` +
-				slug + `"}}`),
+			InputHint: rawJSON(`{"sub_flow_slug": "` +
+				slug + `"}`),
 		}}
 	}
 	return nil
