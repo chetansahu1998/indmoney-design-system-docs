@@ -1329,6 +1329,25 @@ func (s *server) routes(mux *http.ServeMux) {
 	// surface above keeps Atlas + local stdio bridge working unchanged;
 	// `POST /mcp` is the JSON-RPC entry point Claude Custom Connectors use.
 	mcp.RegisterMCPRoutes(mux, mcpDeps, s.requireAuth)
+
+	// Plan 002 U8 — OAuth 2.1 + PKCE endpoints for the Claude.ai Custom
+	// Connector flow. Authorize requires an existing /v1/auth/login
+	// session JWT (carried by Authorization header); token + revoke are
+	// unauthenticated per RFC 6749 / RFC 7009 — the code / refresh token
+	// IS the credential.
+	//
+	// OAuth-minted access tokens are JWTs signed by the same Ed25519
+	// SigningKey as the /v1/auth/login flow, so the existing
+	// requireAuth middleware accepts them transparently. The MCP
+	// transport needs no change.
+	//
+	// OAUTH_ALLOWED_CLIENTS is a comma-separated env var. Default is
+	// "claude.ai" — the only client we onboard initially. Dynamic
+	// Client Registration is out of scope (see plan KTD-5).
+	allowedClients := auth.ParseAllowedClients(getenv("OAUTH_ALLOWED_CLIENTS", "claude.ai"))
+	auth.RegisterOAuthRoutes(mux, s.db.DB, s.jwt, auth.OAuthConfig{
+		AllowedClients: allowedClients,
+	}, s.requireAuth, claimsFrom)
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────
