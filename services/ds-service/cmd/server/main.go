@@ -1357,12 +1357,18 @@ func (s *server) routes(mux *http.ServeMux) {
 	// requireAuth middleware accepts them transparently. The MCP
 	// transport needs no change.
 	//
-	// OAUTH_ALLOWED_CLIENTS is a comma-separated env var. Default is
-	// "claude.ai" — the only client we onboard initially. Dynamic
-	// Client Registration is out of scope (see plan KTD-5).
-	allowedClients := auth.ParseAllowedClients(getenv("OAUTH_ALLOWED_CLIENTS", "claude.ai"))
+	// OAUTH_CLIENTS is a JSON env var enumerating registered clients +
+	// their exact-match redirect_uri allowlists. Unset → DefaultClients()
+	// (claude.ai with its standard callback). Malformed JSON fails-fast
+	// at boot rather than silently dropping the allowlist. Dynamic
+	// Client Registration is out of scope (plan KTD-5).
+	clients, err := auth.ParseClients(os.Getenv("OAUTH_CLIENTS"))
+	if err != nil {
+		s.log.Error("OAUTH_CLIENTS parse failed", "err", err)
+		os.Exit(2)
+	}
 	auth.RegisterOAuthRoutes(mux, s.db.DB, s.jwt, auth.OAuthConfig{
-		AllowedClients: allowedClients,
+		Clients: clients,
 	}, s.requireAuth, claimsFrom)
 }
 

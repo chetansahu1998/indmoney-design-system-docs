@@ -98,8 +98,13 @@ func newHarness(t *testing.T, cfg OAuthConfig) *oauthHarness {
 	if err != nil {
 		t.Fatalf("generate signing key: %v", err)
 	}
-	if cfg.AllowedClients == nil {
-		cfg.AllowedClients = []string{"claude.ai"}
+	if cfg.Clients == nil {
+		// Test harness default: claude.ai with the redirect_uri the
+		// existing scenarios use.
+		cfg.Clients = []OAuthClient{{
+			ID:                  "claude.ai",
+			AllowedRedirectURIs: []string{"https://claude.ai/oauth/callback"},
+		}}
 	}
 	h := &oauthHarness{
 		mux:    http.NewServeMux(),
@@ -442,6 +447,41 @@ func TestOAuth_ClientAllowlist_RejectsUnknown(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	if got, _ := body["error"].(string); got != "invalid_client" {
 		t.Errorf("error = %q, want invalid_client", got)
+	}
+}
+
+// TestOAuth_RedirectURI_MustExactMatchPerClient — code-review finding #3
+// (P0). A known client_id with an unregistered redirect_uri must be
+// rejected with invalid_request. Without this gate, the authorize
+// handler becomes an open-redirect / code-phishing primitive — an
+// attacker who knows the registered client_id can siphon auth codes
+// to their own callback. RFC 6749 §3.1.2.2 mandates exact-match.
+func TestOAuth_RedirectURI_MustExactMatchPerClient(t *testing.T) {
+	h := newHarness(t, OAuthConfig{})
+	seedUser(t, h.db, "u-redir", "u-redir@example.com")
+	h.curClaims = &Claims{Sub: "u-redir", Email: "u-redir@example.com", Role: RoleDesigner, Tenants: []string{"t-alpha"}}
+	defer func() { h.curClaims = nil }()
+
+	params := url.Values{}
+	params.Set("response_type", "code")
+	params.Set("client_id", "claude.ai") // known, allowlisted client
+	// Unregistered URI — looks valid (https), but is NOT in the
+	// client's exact-match list.
+	params.Set("redirect_uri", "https://attacker.example.com/callback")
+	params.Set("code_challenge", pkceChallenge(pkceVerifier))
+	params.Set("code_challenge_method", "S256")
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/oauth/authorize?"+params.Encode(), nil)
+	w := httptest.NewRecorder()
+	h.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (invalid_request for unregistered redirect_uri)", w.Code)
+	}
+	body := map[string]any{}
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if got, _ := body["error"].(string); got != "invalid_request" {
+		t.Errorf("error = %q, want invalid_request", got)
 	}
 }
 

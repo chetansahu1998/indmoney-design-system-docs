@@ -50,18 +50,43 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
+// OAuthClient is one registered third-party that may complete the
+// OAuth flow against this server. Each client has a stable id and an
+// exact-match list of redirect_uris. Per RFC 6749 §3.1.2.2 the server
+// MUST require exact-match (no path/query partial) and MUST reject any
+// redirect_uri not pre-registered for the client_id — without this,
+// the OAuth handshake is a code-phishing primitive.
+type OAuthClient struct {
+	ID                  string
+	AllowedRedirectURIs []string
+}
+
+// HasRedirectURI returns true when raw exactly matches one of the
+// client's pre-registered redirect_uris. Exact match per RFC 6749
+// §3.1.2.2 — no scheme upgrades, no trailing-slash equivalence, no
+// query-parameter tolerance.
+func (c OAuthClient) HasRedirectURI(raw string) bool {
+	for _, allowed := range c.AllowedRedirectURIs {
+		if allowed == raw {
+			return true
+		}
+	}
+	return false
+}
+
 // OAuthConfig is the per-process OAuth configuration.
 type OAuthConfig struct {
-	// AllowedClients enumerates the client_id values that may complete
-	// the authorize step. Env-var driven (OAUTH_ALLOWED_CLIENTS); seeded
-	// at server boot. Unknown client_id → invalid_client.
-	AllowedClients []string
+	// Clients enumerates the registered third-parties that may complete
+	// the authorize step. Each client carries an exact-match list of
+	// redirect_uris. Env-var driven (OAUTH_CLIENTS as JSON); seeded at
+	// server boot. Unknown client_id → invalid_client. Unknown
+	// redirect_uri for a known client_id → invalid_request.
+	Clients []OAuthClient
 
 	// AccessTTL is the lifetime of OAuth-minted access JWTs. Spec says
 	// 1h; we honor the spec by default. Calling code can override for
@@ -109,13 +134,21 @@ func (c OAuthConfig) now() time.Time {
 	return time.Now()
 }
 
-func (c OAuthConfig) clientAllowed(id string) bool {
-	for _, ok := range c.AllowedClients {
-		if ok == id {
-			return true
+// lookupClient returns the registered OAuthClient for an id, or false.
+func (c OAuthConfig) lookupClient(id string) (OAuthClient, bool) {
+	for _, cl := range c.Clients {
+		if cl.ID == id {
+			return cl, true
 		}
 	}
-	return false
+	return OAuthClient{}, false
+}
+
+// clientAllowed is retained as a thin wrapper for the callers that
+// only care about id-level acceptance (revoke; rate-limited paths).
+func (c OAuthConfig) clientAllowed(id string) bool {
+	_, ok := c.lookupClient(id)
+	return ok
 }
 
 // RegisterOAuthRoutes mounts the three OAuth endpoints on mux. The
@@ -203,7 +236,8 @@ func handleOAuthAuthorize(db *sql.DB, cfg OAuthConfig, claimsFromRequest func(*h
 			writeOAuthError(w, http.StatusBadRequest, errInvalidRequest, "client_id required")
 			return
 		}
-		if !cfg.clientAllowed(clientID) {
+		client, ok := cfg.lookupClient(clientID)
+		if !ok {
 			writeOAuthError(w, http.StatusUnauthorized, errInvalidClient, "client_id not allowlisted")
 			return
 		}
@@ -211,8 +245,12 @@ func handleOAuthAuthorize(db *sql.DB, cfg OAuthConfig, claimsFromRequest func(*h
 			writeOAuthError(w, http.StatusBadRequest, errInvalidRequest, "redirect_uri required")
 			return
 		}
-		if !redirectURIAllowed(redirectURI) {
-			writeOAuthError(w, http.StatusBadRequest, errInvalidRequest, "redirect_uri must be https:// or http://localhost")
+		// RFC 6749 §3.1.2.2 — exact-match against the client's
+		// pre-registered redirect_uris. The OAuth 2.1 BCP makes this
+		// non-optional. Without it, an attacker who knows the client_id
+		// can phish auth codes by passing their own callback URL.
+		if !client.HasRedirectURI(redirectURI) {
+			writeOAuthError(w, http.StatusBadRequest, errInvalidRequest, "redirect_uri not registered for client_id")
 			return
 		}
 		if codeChallenge == "" {
@@ -275,26 +313,6 @@ func handleOAuthAuthorize(db *sql.DB, cfg OAuthConfig, claimsFromRequest func(*h
 		u.RawQuery = rq.Encode()
 		http.Redirect(w, r, u.String(), http.StatusFound)
 	}
-}
-
-// redirectURIAllowed mirrors OAuth 2.1 §3.1.2.1 — https:// is the only
-// acceptable production scheme; http://localhost (and 127.0.0.1) are
-// permitted for local development.
-func redirectURIAllowed(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	if u.Scheme == "https" {
-		return true
-	}
-	if u.Scheme == "http" {
-		host := u.Hostname()
-		if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-			return true
-		}
-	}
-	return false
 }
 
 // ─── /v1/oauth/token ──────────────────────────────────────────────────────────
@@ -645,20 +663,49 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// ParseAllowedClients parses a comma-separated env var ("claude.ai,foo")
-// into a slice, dropping empty entries and trimming whitespace. Exposed
-// so cmd/server can build OAuthConfig from OS env.
-func ParseAllowedClients(env string) []string {
+// ParseClients parses the OAUTH_CLIENTS env var into a slice of
+// OAuthClient. Two formats are accepted:
+//
+//  1. JSON (preferred, supports per-client allowlists):
+//     OAUTH_CLIENTS='[{"id":"claude.ai","redirect_uris":["https://claude.ai/api/mcp/auth_callback"]}]'
+//
+//  2. Empty string → DefaultClients() (claude.ai with its standard callback).
+//
+// Returns an error on malformed JSON so cmd/server can fail-fast at boot
+// rather than silently dropping the allowlist.
+func ParseClients(env string) ([]OAuthClient, error) {
 	if env == "" {
-		return nil
+		return DefaultClients(), nil
 	}
-	parts := strings.Split(env, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
+	var raw []struct {
+		ID           string   `json:"id"`
+		RedirectURIs []string `json:"redirect_uris"`
+	}
+	if err := json.Unmarshal([]byte(env), &raw); err != nil {
+		return nil, fmt.Errorf("parse OAUTH_CLIENTS JSON: %w", err)
+	}
+	out := make([]OAuthClient, 0, len(raw))
+	for i, r := range raw {
+		if r.ID == "" {
+			return nil, fmt.Errorf("OAUTH_CLIENTS[%d]: id required", i)
 		}
+		if len(r.RedirectURIs) == 0 {
+			return nil, fmt.Errorf("OAUTH_CLIENTS[%d] (%q): at least one redirect_uri required", i, r.ID)
+		}
+		out = append(out, OAuthClient{
+			ID:                  r.ID,
+			AllowedRedirectURIs: r.RedirectURIs,
+		})
 	}
-	return out
+	return out, nil
+}
+
+// DefaultClients returns the production-default client allowlist —
+// claude.ai with its documented Custom Connector callback. Used when
+// OAUTH_CLIENTS env is unset.
+func DefaultClients() []OAuthClient {
+	return []OAuthClient{{
+		ID:                  "claude.ai",
+		AllowedRedirectURIs: []string{"https://claude.ai/api/mcp/auth_callback"},
+	}}
 }
