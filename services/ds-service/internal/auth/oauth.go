@@ -458,7 +458,7 @@ func handleTokenRefresh(w http.ResponseWriter, r *http.Request, db *sql.DB, sign
 
 	row := db.QueryRowContext(r.Context(), `
 		SELECT user_id, tenant_id, client_id, redirect_uri, scope,
-		       expires_at, consumed_at, revoked_at
+		       expires_at, consumed_at, revoked_at, last_access_jti
 		FROM oauth_tokens
 		WHERE id = ? AND kind = 'refresh_token'`,
 		id)
@@ -467,8 +467,9 @@ func handleTokenRefresh(w http.ResponseWriter, r *http.Request, db *sql.DB, sign
 		userID, tenantID, clientID, redirectURI, scope string
 		expiresAt                                      int64
 		consumedAt, revokedAt                          sql.NullInt64
+		lastAccessJTI                                  sql.NullString
 	)
-	if err := row.Scan(&userID, &tenantID, &clientID, &redirectURI, &scope, &expiresAt, &consumedAt, &revokedAt); err != nil {
+	if err := row.Scan(&userID, &tenantID, &clientID, &redirectURI, &scope, &expiresAt, &consumedAt, &revokedAt, &lastAccessJTI); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeOAuthError(w, http.StatusBadRequest, errInvalidGrant, "refresh_token not found")
 			return
@@ -479,21 +480,7 @@ func handleTokenRefresh(w http.ResponseWriter, r *http.Request, db *sql.DB, sign
 
 	now := cfg.now()
 	if revokedAt.Valid || consumedAt.Valid {
-		// Replay-defense sweep (OAuth 2.1 BCP §4.12.2). If a client
-		// reuses an already-rotated refresh token, assume compromise and
-		// revoke every live refresh token belonging to that user. The
-		// legitimate client will be forced through authorize again.
-		sweepRes, sweepErr := db.ExecContext(r.Context(),
-			`UPDATE oauth_tokens SET revoked_at = ? WHERE user_id = ? AND kind = 'refresh_token' AND revoked_at IS NULL`,
-			now.Unix(), userID)
-		// Security-relevant: log the sweep so oncall can trace replay
-		// attempts after the fact. Failure to sweep is also logged — the
-		// caller still gets invalid_grant either way.
-		if sweepErr != nil {
-			slog.Warn("refresh_replay_sweep_failed", "user_id", userID, "err", sweepErr.Error())
-		} else if rows, rerr := sweepRes.RowsAffected(); rerr == nil {
-			slog.Warn("refresh_replay_sweep_triggered", "user_id", userID, "rows_revoked", rows)
-		}
+		sweepRefreshAndAccessJTIs(r.Context(), db, userID, now, "refresh_replay")
 		writeOAuthError(w, http.StatusBadRequest, errInvalidGrant, "refresh_token reused — all sessions revoked")
 		return
 	}
@@ -527,16 +514,19 @@ func handleTokenRefresh(w http.ResponseWriter, r *http.Request, db *sql.DB, sign
 		// Concurrent rotation already revoked this row. Fall into the
 		// replay-defense sweep — matches the behavior of a sequential
 		// replay-after-rotate.
-		sweepRes, sweepErr := db.ExecContext(r.Context(),
-			`UPDATE oauth_tokens SET revoked_at = ? WHERE user_id = ? AND kind = 'refresh_token' AND revoked_at IS NULL`,
-			now.Unix(), userID)
-		if sweepErr != nil {
-			slog.Warn("refresh_replay_sweep_failed", "user_id", userID, "err", sweepErr.Error())
-		} else if rows, rerr := sweepRes.RowsAffected(); rerr == nil {
-			slog.Warn("refresh_replay_sweep_triggered", "user_id", userID, "rows_revoked", rows)
-		}
+		sweepRefreshAndAccessJTIs(r.Context(), db, userID, now, "refresh_race_loss")
 		writeOAuthError(w, http.StatusBadRequest, errInvalidGrant, "refresh_token reused — all sessions revoked")
 		return
+	}
+
+	// Rotation succeeded — revoke the OLD access JTI so it can't keep
+	// working until its 1h TTL. The middleware's IsJTIRevoked check
+	// picks this up on the very next authenticated request (worst case:
+	// 60s in-memory cache TTL on revoked_jtis).
+	if lastAccessJTI.Valid && lastAccessJTI.String != "" {
+		if err := revokeAccessJTI(r.Context(), db, lastAccessJTI.String, "system", "rotation"); err != nil {
+			slog.Warn("rotate_revoke_old_access_jti_failed", "user_id", userID, "jti", lastAccessJTI.String, "err", err.Error())
+		}
 	}
 
 	access, newRefresh, err := mintAccessAndRefresh(r.Context(), db, signer, cfg, userID, tenantID, clientID, redirectURI, scope, now)
@@ -545,6 +535,54 @@ func handleTokenRefresh(w http.ResponseWriter, r *http.Request, db *sql.DB, sign
 		return
 	}
 	writeTokenResponse(w, access, newRefresh, scope, cfg.accessTTL())
+}
+
+// sweepRefreshAndAccessJTIs is the replay-defense + race-loss sweep
+// helper. Revokes every live refresh row for the user, AND inserts the
+// corresponding access JTIs into revoked_jtis so the in-flight access
+// tokens minted from those refreshes also die. Logs sweep outcome for
+// post-hoc audit — replay attempts are rare and worth tracing.
+func sweepRefreshAndAccessJTIs(ctx context.Context, db *sql.DB, userID string, now time.Time, reason string) {
+	// Collect the access JTIs to revoke BEFORE flipping revoked_at,
+	// because the UPDATE may race with another sweep firing the same
+	// query. Two sweeps writing the same revoked_jtis row is idempotent.
+	jtiRows, err := db.QueryContext(ctx,
+		`SELECT last_access_jti FROM oauth_tokens
+		 WHERE user_id = ? AND kind = 'refresh_token' AND revoked_at IS NULL
+		   AND last_access_jti IS NOT NULL AND last_access_jti != ''`,
+		userID)
+	jtis := make([]string, 0, 4)
+	if err == nil {
+		for jtiRows.Next() {
+			var j sql.NullString
+			if scanErr := jtiRows.Scan(&j); scanErr == nil && j.Valid {
+				jtis = append(jtis, j.String)
+			}
+		}
+		_ = jtiRows.Close()
+	}
+
+	sweepRes, sweepErr := db.ExecContext(ctx,
+		`UPDATE oauth_tokens SET revoked_at = ? WHERE user_id = ? AND kind = 'refresh_token' AND revoked_at IS NULL`,
+		now.Unix(), userID)
+	if sweepErr != nil {
+		slog.Warn("refresh_replay_sweep_failed", "user_id", userID, "reason", reason, "err", sweepErr.Error())
+		return
+	}
+	rows, _ := sweepRes.RowsAffected()
+
+	// Revoke each access JTI — the middleware check turns them into
+	// 401s on the next request.
+	for _, j := range jtis {
+		if jerr := revokeAccessJTI(ctx, db, j, "system", reason); jerr != nil {
+			slog.Warn("sweep_revoke_access_jti_failed", "user_id", userID, "jti", j, "err", jerr.Error())
+		}
+	}
+	slog.Warn("refresh_replay_sweep_triggered",
+		"user_id", userID,
+		"reason", reason,
+		"refresh_rows_revoked", rows,
+		"access_jtis_revoked", len(jtis))
 }
 
 // mintAccessAndRefresh mints a fresh access JWT under (userID, tenantID)
@@ -580,7 +618,7 @@ func mintAccessAndRefresh(ctx context.Context, db *sql.DB, signer *SigningKey, c
 		// fall back to the most conservative default.
 		userRole = RoleDesigner
 	}
-	access, err = signer.MintOAuthAccessToken(userID, userEmail, userRole, tenants, cfg.accessTTL())
+	access, accessJTI, err := signer.MintOAuthAccessToken(userID, userEmail, userRole, tenants, cfg.accessTTL())
 	if err != nil {
 		return "", "", fmt.Errorf("mint access: %w", err)
 	}
@@ -591,17 +629,40 @@ func mintAccessAndRefresh(ctx context.Context, db *sql.DB, signer *SigningKey, c
 	}
 	id := hashToken(refresh)
 
+	// last_access_jti captured at mint time so the next rotation / revoke
+	// can look it up and INSERT into revoked_jtis. Without this column
+	// the access token stayed valid for its full 1h TTL after a revoke
+	// (plan-002 finding #8).
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO oauth_tokens (
 			id, user_id, tenant_id, kind, client_id, redirect_uri, scope,
-			expires_at, created_at
-		) VALUES (?, ?, ?, 'refresh_token', ?, ?, ?, ?, ?)`,
+			expires_at, created_at, last_access_jti
+		) VALUES (?, ?, ?, 'refresh_token', ?, ?, ?, ?, ?, ?)`,
 		id, userID, tenantID, clientID, redirectURI, scope,
-		now.Add(cfg.refreshTTL()).Unix(), now.Unix())
+		now.Add(cfg.refreshTTL()).Unix(), now.Unix(), accessJTI)
 	if err != nil {
 		return "", "", fmt.Errorf("store refresh: %w", err)
 	}
 	return access, refresh, nil
+}
+
+// revokeAccessJTI marks a single JWT id revoked in the shared
+// revoked_jtis table. The middleware's IsJTIRevoked check (60s in-memory
+// cache) picks it up on the next authenticated request. Safe to call
+// with an empty jti (no-op). Idempotent on the PK.
+func revokeAccessJTI(ctx context.Context, db *sql.DB, jti, revokedBy, reason string) error {
+	if jti == "" {
+		return nil
+	}
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO revoked_jtis (jti, revoked_at, revoked_by, reason)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(jti) DO UPDATE SET
+		     revoked_at = excluded.revoked_at,
+		     revoked_by = excluded.revoked_by,
+		     reason = excluded.reason`,
+		jti, time.Now().UTC().Format(time.RFC3339), revokedBy, reason)
+	return err
 }
 
 func writeTokenResponse(w http.ResponseWriter, access, refresh, scope string, ttl time.Duration) {
@@ -635,9 +696,25 @@ func handleOAuthRevoke(db *sql.DB, cfg OAuthConfig) http.HandlerFunc {
 		// RFC 7009 §2.2 — even if the token doesn't exist (or already
 		// revoked, or wrong type), return 200. We don't leak which.
 		id := hashToken(tok)
+
+		// Capture last_access_jti BEFORE the UPDATE so we can revoke the
+		// in-flight access token too. Otherwise the access token kept
+		// working until its 1h TTL — see plan-002 finding #8.
+		var lastJTI sql.NullString
+		_ = db.QueryRowContext(r.Context(),
+			`SELECT last_access_jti FROM oauth_tokens
+			 WHERE id = ? AND kind = 'refresh_token' AND revoked_at IS NULL`,
+			id).Scan(&lastJTI)
+
 		_, _ = db.ExecContext(r.Context(),
 			`UPDATE oauth_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
 			cfg.now().Unix(), id)
+
+		if lastJTI.Valid && lastJTI.String != "" {
+			if err := revokeAccessJTI(r.Context(), db, lastJTI.String, "client_revoke", "explicit_revoke"); err != nil {
+				slog.Warn("revoke_endpoint_jti_failed", "jti", lastJTI.String, "err", err.Error())
+			}
+		}
 		w.WriteHeader(http.StatusOK)
 	}
 }

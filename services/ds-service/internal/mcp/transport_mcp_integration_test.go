@@ -65,7 +65,7 @@ func newIntegrationEnv(t *testing.T) *integrationEnv {
 	// needs a token POST /mcp will accept (i.e. kind=oauth_access per
 	// plan-002 #6 enforcement). MintAccessToken (session-kind) would be
 	// rejected at the transport's requireOAuthKind gate.
-	access, err := signer.MintOAuthAccessToken(h.userA, "a@example.com", "designer", []string{h.tenantA}, time.Hour)
+	access, _, err := signer.MintOAuthAccessToken(h.userA, "a@example.com", "designer", []string{h.tenantA}, time.Hour)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}

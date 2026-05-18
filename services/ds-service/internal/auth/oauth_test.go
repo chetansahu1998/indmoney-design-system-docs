@@ -56,10 +56,17 @@ func newOAuthTestDB(t *testing.T) *sql.DB {
 			expires_at            INTEGER NOT NULL,
 			consumed_at           INTEGER,
 			revoked_at            INTEGER,
-			created_at            INTEGER NOT NULL
+			created_at            INTEGER NOT NULL,
+			last_access_jti       TEXT
 		)`,
 		`CREATE INDEX idx_oauth_tokens_user_id ON oauth_tokens(user_id)`,
 		`CREATE INDEX idx_oauth_tokens_kind_expires ON oauth_tokens(kind, expires_at)`,
+		`CREATE TABLE revoked_jtis (
+			jti        TEXT PRIMARY KEY,
+			revoked_at TEXT NOT NULL,
+			revoked_by TEXT,
+			reason     TEXT
+		)`,
 	}
 	for _, s := range ddl {
 		if _, err := db.Exec(s); err != nil {
@@ -266,6 +273,88 @@ func TestOAuth_HappyPath_AuthorizeTokenRefresh(t *testing.T) {
 	if !revoked.Valid {
 		t.Error("old refresh token revoked_at is NULL after rotation")
 	}
+}
+
+// TestOAuth_AccessJTI_RevokedOnRotation — finding #8 (P1). The access
+// JTI minted by the initial token exchange must be added to revoked_jtis
+// after a refresh rotation, so the middleware's IsJTIRevoked check
+// returns 401 on any in-flight access token from the old chain.
+func TestOAuth_AccessJTI_RevokedOnRotation(t *testing.T) {
+	h := newHarness(t, OAuthConfig{})
+	code := runFullAuthorizeStep(t, h, "u-jti-rot", "t-alpha")
+	_, body := redeemCode(t, h, code)
+	oldAccess, _ := body["access_token"].(string)
+	refresh, _ := body["refresh_token"].(string)
+
+	oldClaims, err := h.signer.VerifyAccessToken(oldAccess)
+	if err != nil {
+		t.Fatalf("verify old access: %v", err)
+	}
+	oldJTI := oldClaims.ID
+
+	// Before rotation, old JTI is NOT in revoked_jtis.
+	if jtiRevoked(t, h.db, oldJTI) {
+		t.Fatalf("old access JTI %q revoked before rotation", oldJTI)
+	}
+
+	// Rotate.
+	rform := url.Values{}
+	rform.Set("grant_type", "refresh_token")
+	rform.Set("refresh_token", refresh)
+	if status, body2 := h.token(t, rform); status != http.StatusOK {
+		t.Fatalf("rotate: status=%d body=%v", status, body2)
+	}
+
+	// After rotation, old access JTI MUST be in revoked_jtis. The
+	// middleware will catch the next request that presents the old
+	// access token.
+	if !jtiRevoked(t, h.db, oldJTI) {
+		t.Errorf("old access JTI %q not revoked after rotation — leaked access token remains valid until 1h TTL", oldJTI)
+	}
+}
+
+// TestOAuth_AccessJTI_RevokedOnRevokeEndpoint — finding #8 (P1).
+// /v1/oauth/revoke must invalidate the in-flight access token, not just
+// the refresh row.
+func TestOAuth_AccessJTI_RevokedOnRevokeEndpoint(t *testing.T) {
+	h := newHarness(t, OAuthConfig{})
+	code := runFullAuthorizeStep(t, h, "u-jti-rev", "t-alpha")
+	_, body := redeemCode(t, h, code)
+	access, _ := body["access_token"].(string)
+	refresh, _ := body["refresh_token"].(string)
+
+	claims, err := h.signer.VerifyAccessToken(access)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if jtiRevoked(t, h.db, claims.ID) {
+		t.Fatalf("access JTI %q revoked before /v1/oauth/revoke called", claims.ID)
+	}
+
+	// POST /v1/oauth/revoke with the refresh token.
+	form := url.Values{}
+	form.Set("token", refresh)
+	req := httptest.NewRequest(http.MethodPost, "/v1/oauth/revoke", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("revoke status = %d, want 200", w.Code)
+	}
+
+	// Access JTI must now be in revoked_jtis.
+	if !jtiRevoked(t, h.db, claims.ID) {
+		t.Errorf("access JTI %q not revoked after /v1/oauth/revoke — access token still valid until 1h TTL", claims.ID)
+	}
+}
+
+// jtiRevoked is a small read of the revoked_jtis table used by the
+// new JTI revocation tests. Mirrors the production IsJTIRevoked SQL.
+func jtiRevoked(t *testing.T, db *sql.DB, jti string) bool {
+	t.Helper()
+	var hit int
+	err := db.QueryRow(`SELECT 1 FROM revoked_jtis WHERE jti = ?`, jti).Scan(&hit)
+	return err == nil && hit == 1
 }
 
 // ─── scenario 2 — PKCE mismatch ───────────────────────────────────────────────

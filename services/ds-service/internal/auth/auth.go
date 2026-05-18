@@ -149,18 +149,23 @@ const (
 // /v1/auth/login session token. Stamps Kind=KindSession so the new MCP
 // transport can distinguish it from OAuth-minted access tokens.
 func (k *SigningKey) MintAccessToken(userID, email, role string, tenants []string, lifetime time.Duration) (string, error) {
-	return k.mintWithKind(userID, email, role, tenants, lifetime, KindSession)
+	tok, _, err := k.mintWithKind(userID, email, role, tenants, lifetime, KindSession)
+	return tok, err
 }
 
 // MintOAuthAccessToken creates a short-lived OAuth-flow access JWT.
-// Stamps Kind=KindOAuthAccess. The MCP transport requires this kind on
-// POST /mcp + GET /mcp; the legacy REST surface accepts either kind.
-func (k *SigningKey) MintOAuthAccessToken(userID, email, role string, tenants []string, lifetime time.Duration) (string, error) {
+// Returns the signed token AND its JTI so the OAuth state machine can
+// record the JTI on the refresh row and revoke it on rotation / revoke
+// (plan-002 finding #8). Stamps Kind=KindOAuthAccess. The MCP transport
+// requires this kind on POST /mcp + GET /mcp; the legacy REST surface
+// accepts either kind.
+func (k *SigningKey) MintOAuthAccessToken(userID, email, role string, tenants []string, lifetime time.Duration) (token, jti string, err error) {
 	return k.mintWithKind(userID, email, role, tenants, lifetime, KindOAuthAccess)
 }
 
-func (k *SigningKey) mintWithKind(userID, email, role string, tenants []string, lifetime time.Duration, kind string) (string, error) {
+func (k *SigningKey) mintWithKind(userID, email, role string, tenants []string, lifetime time.Duration, kind string) (token, jti string, err error) {
 	now := time.Now()
+	jti = uuid.NewString()
 	claims := &Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    "indmoney-ds-service",
@@ -169,7 +174,7 @@ func (k *SigningKey) mintWithKind(userID, email, role string, tenants []string, 
 			ExpiresAt: jwt.NewNumericDate(now.Add(lifetime)),
 			IssuedAt:  jwt.NewNumericDate(now),
 			NotBefore: jwt.NewNumericDate(now),
-			ID:        uuid.NewString(),
+			ID:        jti,
 		},
 		Sub:     userID,
 		Email:   email,
@@ -179,7 +184,11 @@ func (k *SigningKey) mintWithKind(userID, email, role string, tenants []string, 
 		Kind:    kind,
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
-	return tok.SignedString(k.Priv)
+	signed, err := tok.SignedString(k.Priv)
+	if err != nil {
+		return "", "", err
+	}
+	return signed, jti, nil
 }
 
 // VerifyAccessToken parses + validates a JWT and returns the claims.
