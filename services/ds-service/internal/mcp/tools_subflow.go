@@ -97,13 +97,13 @@ func (subflowListTool) Title() string              { return "List Sub-Flows" }
 func (subflowListTool) SideEffects() SideEffect    { return ReadOnly }
 func (subflowListTool) DeferLoading() bool         { return true }
 func (subflowListTool) Description() string {
-	return "List sub_flows in the tenant. Optional sub_product_filter (slug) scopes the result."
+	return "List sub_flows under the tenant, optionally filtered to one sub_product slug. Use when the PM wants to browse what's already under \"wallet\" or pick a sub_flow whose exact slug they forgot. Don't use when you already know the universal slug — call subflow.get for a single row, or resolve for the joined view. Read-only; unknown sub_product filter returns an empty list (not an error)."
 }
 func (subflowListTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_product_filter": {"type": "string", "description": "optional sub_product slug (e.g. \"wallet\"); empty = all"}
+			"sub_product_filter": {"type": "string", "description": "Optional sub_product slug (e.g. \"wallet\") that scopes the result; empty returns every sub_flow under the tenant."}
 		},
 		"additionalProperties": false
 	}`)
@@ -165,12 +165,12 @@ func (subflowGetTool) Title() string              { return "Get Sub-Flow" }
 func (subflowGetTool) SideEffects() SideEffect    { return ReadOnly }
 func (subflowGetTool) DeferLoading() bool         { return true }
 func (subflowGetTool) Description() string {
-	return "Get one sub_flow by its universal slug \"{sub_product_slug}/{sub_flow_slug}\"."
+	return "Fetch a single sub_flow by its universal slug \"{sub_product_slug}/{sub_flow_slug}\". Use when you have the exact slug and want the lightweight summary (id, name, DRD/Figma flags, prototype). Don't use when you want the joined view with frames + PRD + lifecycle (call resolve or section.inspect). Returns an error when the slug doesn't exist in this tenant."
 }
 func (subflowGetTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
-		"properties": {"slug": {"type": "string", "description": "e.g. \"wallet/m2m-settlement\""}},
+		"properties": {"slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug} (e.g. \"wallet/m2m-settlement\")."}},
 		"required": ["slug"],
 		"additionalProperties": false
 	}`)
@@ -215,16 +215,16 @@ func (subflowCreateTool) Title() string              { return "Create Sub-Flow" 
 func (subflowCreateTool) SideEffects() SideEffect    { return Mutating }
 func (subflowCreateTool) DeferLoading() bool         { return true }
 func (subflowCreateTool) Description() string {
-	return "Create (or upsert) a sub_product + sub_flow pair. Optional prototype URL attaches an HTML placeholder until the designer ships."
+	return "Upsert a sub_product + sub_flow pair under the tenant, optionally attaching a prototype URL in one call. Use when the PM is bootstrapping a brand-new flow (e.g. \"Wallet / M2M Settlement\") and may already have a clickable prototype. Don't use when both names already exist and you only want to bind a prototype — call drd.attach_prototype directly. Idempotent on (sub_product name, sub_flow name); slugs are derived server-side."
 }
 func (subflowCreateTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_product":      {"type": "string", "description": "e.g. \"Wallet\""},
-			"sub_flow":         {"type": "string", "description": "e.g. \"M2M Settlement\""},
-			"prototype_url":    {"type": "string", "description": "optional https:// URL of an interactive prototype"},
-			"prototype_title":  {"type": "string", "description": "optional companion label for the prototype"}
+			"sub_product":      {"type": "string", "description": "Display name for the sub_product (e.g. \"Wallet\"). Slug is derived server-side."},
+			"sub_flow":         {"type": "string", "description": "Display name for the sub_flow (e.g. \"M2M Settlement\"). Slug is derived server-side."},
+			"prototype_url":    {"type": "string", "description": "Optional https:// URL of an interactive prototype to attach in the same call."},
+			"prototype_title":  {"type": "string", "description": "Optional companion label for the prototype (shown in the canvas chrome)."}
 		},
 		"required": ["sub_product", "sub_flow"],
 		"additionalProperties": false

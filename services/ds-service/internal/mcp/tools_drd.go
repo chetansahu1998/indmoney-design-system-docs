@@ -43,15 +43,15 @@ func (drdAppendTool) Title() string              { return "Append DRD Snapshot" 
 func (drdAppendTool) SideEffects() SideEffect    { return Mutating }
 func (drdAppendTool) DeferLoading() bool         { return true }
 func (drdAppendTool) Description() string {
-	return "Seed (or append a snapshot to) the DRD YDoc for a sub_flow. Orchestrates UpsertFlow → CreateDRDForSubFlow → PersistYDocSnapshotBySubFlow."
+	return "Seed or append a YDoc snapshot to the DRD for a sub_flow (orchestrates UpsertFlow → CreateDRDForSubFlow → PersistYDocSnapshotBySubFlow). Use when bootstrapping a DRD from a known YDoc payload (e.g. from a skill or an import) or recording a non-collab checkpoint. Don't use when an editor is already live on the doc — go through the Hocuspocus collab path so concurrent edits aren't clobbered. Each call writes a new revision; not idempotent."
 }
 func (drdAppendTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_flow_slug":          {"type": "string"},
-			"content_bytes_base64":   {"type": "string", "description": "base64-encoded binary YDoc state"},
-			"user_id":                {"type": "string", "description": "optional override; defaults to authenticated user"}
+			"sub_flow_slug":          {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."},
+			"content_bytes_base64":   {"type": "string", "description": "Base64-encoded binary YDoc state to persist as the next snapshot."},
+			"user_id":                {"type": "string", "description": "Optional override; defaults to the authenticated user threaded through Deps.UserID."}
 		},
 		"required": ["sub_flow_slug", "content_bytes_base64"],
 		"additionalProperties": false
@@ -114,15 +114,15 @@ func (drdAttachPrototypeTool) Title() string              { return "Attach Proto
 func (drdAttachPrototypeTool) SideEffects() SideEffect    { return Mutating }
 func (drdAttachPrototypeTool) DeferLoading() bool         { return true }
 func (drdAttachPrototypeTool) Description() string {
-	return "Attach an HTML prototype URL to a sub_flow as the placeholder canvas (KTD-8). Publishes drd.prototype_attached SSE."
+	return "Bind an HTTPS prototype URL to a sub_flow as the placeholder canvas (KTD-8). Use when the PM has a clickable prototype published before the Figma design ships and wants Atlas to render it as the canvas. Don't use when the Figma section is already bound (canvas_lifecycle=design-shipped) — the Figma frames take precedence. Idempotent on (sub_flow, url); publishes drd.prototype_attached SSE."
 }
 func (drdAttachPrototypeTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_flow_slug": {"type": "string"},
-			"url":           {"type": "string", "description": "https:// URL of the prototype"},
-			"title":         {"type": "string"}
+			"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."},
+			"url":           {"type": "string", "description": "Fully qualified https:// URL of the prototype (Figma proto, Framer, Maze, etc.)."},
+			"title":         {"type": "string", "description": "Optional companion label shown beside the prototype in the canvas chrome."}
 		},
 		"required": ["sub_flow_slug", "url"],
 		"additionalProperties": false
@@ -165,12 +165,12 @@ func (drdDetachPrototypeTool) Title() string              { return "Detach Proto
 func (drdDetachPrototypeTool) SideEffects() SideEffect    { return Destructive }
 func (drdDetachPrototypeTool) DeferLoading() bool         { return true }
 func (drdDetachPrototypeTool) Description() string {
-	return "Detach the prototype URL from a sub_flow. No-op when nothing is attached."
+	return "Clear the prototype URL bound to a sub_flow (destructive: the prototype reference is gone). Use when the Figma section has shipped and the placeholder prototype should be retired, or the prototype link rotted. Don't use when you only want to swap to a new URL — drd.attach_prototype is idempotent and will overwrite. No-op when nothing is attached."
 }
 func (drdDetachPrototypeTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
-		"properties": {"sub_flow_slug": {"type": "string"}},
+		"properties": {"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."}},
 		"required": ["sub_flow_slug"],
 		"additionalProperties": false
 	}`)
@@ -217,16 +217,16 @@ func (drdAttachAnchorTool) Title() string              { return "Attach DRD Anch
 func (drdAttachAnchorTool) SideEffects() SideEffect    { return Mutating }
 func (drdAttachAnchorTool) DeferLoading() bool         { return true }
 func (drdAttachAnchorTool) Description() string {
-	return "Bind a DRD BlockNote block id to a prototype screen id. Idempotent."
+	return "Bind a DRD BlockNote block id to a prototype screen id so the Atlas PrototypeAnchorBridge can resolve screen-click → DRD-block scroll deterministically. Use when the PM has an active prototype and wants explicit anchors instead of the Phase A heuristic. Don't use when no prototype URL is attached — drd.attach_prototype first. Idempotent on (block_id, screen_id)."
 }
 func (drdAttachAnchorTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_flow_slug": {"type": "string"},
-			"block_id":      {"type": "string", "description": "BlockNote block UUID"},
-			"screen_id":     {"type": "string", "description": "Prototype screen id, e.g. S3"},
-			"user_id":       {"type": "string"}
+			"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."},
+			"block_id":      {"type": "string", "description": "BlockNote block UUID for a DRD block (the anchor source)."},
+			"screen_id":     {"type": "string", "description": "Prototype screen identifier, e.g. \"S3\" (the anchor destination)."},
+			"user_id":       {"type": "string", "description": "Optional override for audit attribution; defaults to the authenticated user."}
 		},
 		"required": ["sub_flow_slug", "block_id", "screen_id"],
 		"additionalProperties": false
@@ -271,15 +271,15 @@ func (drdDetachAnchorTool) Title() string              { return "Detach DRD Anch
 func (drdDetachAnchorTool) SideEffects() SideEffect    { return Destructive }
 func (drdDetachAnchorTool) DeferLoading() bool         { return true }
 func (drdDetachAnchorTool) Description() string {
-	return "Remove one DRD block ↔ prototype screen anchor. No-op when the pair isn't anchored."
+	return "Remove one DRD block ↔ prototype screen anchor (destructive: the binding row is deleted). Use when the PM repositioned a block or the screen id changed and the explicit anchor is now stale. Don't use when you want to inspect what's anchored — call drd.list_anchors first. No-op when the pair isn't anchored."
 }
 func (drdDetachAnchorTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_flow_slug": {"type": "string"},
-			"block_id":      {"type": "string"},
-			"screen_id":     {"type": "string"}
+			"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."},
+			"block_id":      {"type": "string", "description": "BlockNote block UUID for the anchor source row to detach."},
+			"screen_id":     {"type": "string", "description": "Prototype screen identifier for the anchor destination to detach."}
 		},
 		"required": ["sub_flow_slug", "block_id", "screen_id"],
 		"additionalProperties": false
@@ -312,12 +312,12 @@ func (drdListAnchorsTool) Title() string              { return "List DRD Anchors
 func (drdListAnchorsTool) SideEffects() SideEffect    { return ReadOnly }
 func (drdListAnchorsTool) DeferLoading() bool         { return true }
 func (drdListAnchorsTool) Description() string {
-	return "List every DRD block ↔ prototype screen anchor under a sub_flow. Atlas bridge consumes this on leaf-open."
+	return "List every DRD block ↔ prototype screen anchor for a sub_flow. Use when the Atlas PrototypeAnchorBridge is hydrating on leaf-open, or you need to audit which blocks point at which screens. Don't use when you want the DRD content itself — call drd.read for the YDoc state. Read-only."
 }
 func (drdListAnchorsTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
-		"properties": {"sub_flow_slug": {"type": "string"}},
+		"properties": {"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."}},
 		"required": ["sub_flow_slug"],
 		"additionalProperties": false
 	}`)

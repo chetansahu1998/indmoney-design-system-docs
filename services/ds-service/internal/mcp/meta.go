@@ -58,12 +58,12 @@ func (drdReadTool) Visibility() ToolVisibility { return Visible }
 func (drdReadTool) SideEffects() SideEffect    { return ReadOnly }
 func (drdReadTool) DeferLoading() bool         { return false }
 func (drdReadTool) Description() string {
-	return "Read a sub_flow's DRD content. Returns the YDoc state (base64) plus canvas lifecycle hints. Use this first when a PM names a sub_flow."
+	return "Read a sub_flow's DRD YDoc state plus canvas lifecycle hints. Use when starting a PM session and you need to know what's already written in the DRD. Don't use when you need to mutate the DRD — use drd.append for snapshots, or write through the Hocuspocus collab path for live edits."
 }
 func (drdReadTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
-		"properties": {"sub_flow_slug": {"type": "string", "description": "{sub_product_slug}/{sub_flow_slug}"}},
+		"properties": {"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug} (e.g. \"wallet/m2m-settlement\")."}},
 		"required": ["sub_flow_slug"],
 		"additionalProperties": false
 	}`)
@@ -188,14 +188,14 @@ func (prdAuthorTool) Visibility() ToolVisibility { return Visible }
 func (prdAuthorTool) SideEffects() SideEffect { return Mutating }
 func (prdAuthorTool) DeferLoading() bool      { return false }
 func (prdAuthorTool) Description() string {
-	return "Author or read a PRD. Op-dispatched: {op: get|upsert_tab|add_state|add_event|add_acceptance_criterion|add_edge_case|upsert_copy_string|add_a11y_note|attach_frame|detach_frame|export, args: {...}}. Schema for args is op-specific; on first invocation, send op:get for the current shape."
+	return "Author or read a PRD via an op-dispatched verb (get|upsert_tab|add_state|add_event|add_acceptance_criterion|add_edge_case|upsert_copy_string|add_a11y_note|attach_frame|detach_frame|export). Use when a PM names a sub_flow and you want a single entry point that walks the workflow via next_actions. Don't use when you already know the precise deep-tool name (call prd.add_state etc. directly to skip the dispatch hop). On first invocation, send op:get for the current PRD shape."
 }
 func (prdAuthorTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"op":   {"type": "string", "description": "one of: get, upsert_tab, add_state, add_event, add_acceptance_criterion, add_edge_case, upsert_copy_string, add_a11y_note, attach_frame, detach_frame, export"},
-			"args": {"type": "object", "description": "op-specific; the response's schema_hint carries the next op's shape"}
+			"op":   {"type": "string", "description": "One of: get, upsert_tab, add_state, add_event, add_acceptance_criterion, add_edge_case, upsert_copy_string, add_a11y_note, attach_frame, detach_frame, export. Each op maps to a deep prd.* tool."},
+			"args": {"type": "object", "description": "Op-specific argument object; the response's schema_hint carries the shape for the next likely op."}
 		},
 		"required": ["op"],
 		"additionalProperties": false
@@ -335,12 +335,12 @@ func (sectionInspectTool) Visibility() ToolVisibility { return Visible }
 func (sectionInspectTool) SideEffects() SideEffect    { return ReadOnly }
 func (sectionInspectTool) DeferLoading() bool         { return false }
 func (sectionInspectTool) Description() string {
-	return "Inspect a sub_flow: returns sub_flow metadata, DRD/PRD existence summary, and the frames in the bound Figma section. The PM's default first call."
+	return "Inspect a sub_flow end-to-end: sub_flow metadata, DRD/PRD existence summary, Figma section frames, and the U6b coverage wall in one call. Use when a PM opens a sub_flow and you want the resume-here view before deciding the next authoring action. Don't use when you only need DRD bytes (use drd.read) or only the PRD body (use prd.author op:get) — this fans out four reads."
 }
 func (sectionInspectTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
-		"properties": {"sub_flow_slug": {"type": "string"}},
+		"properties": {"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."}},
 		"required": ["sub_flow_slug"],
 		"additionalProperties": false
 	}`)

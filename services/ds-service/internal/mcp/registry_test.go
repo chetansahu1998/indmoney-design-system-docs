@@ -173,10 +173,105 @@ func TestRegistry_ColdCatalogTokenBudget_UnderRoughly1500Bytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal catalog: %v", err)
 	}
-	const budget = 1500
+	// Plan 002 U5 bumped the budget: boundary-aware descriptions
+	// ("Use when …", "Don't use when …") + per-property descriptions on
+	// every InputSchema raise the serialized cold catalog above the
+	// pre-U5 1500-byte ceiling. 4000 bytes is the post-sweep ceiling
+	// (still well under any practical system-prompt budget) — picked
+	// over the plan's nominal ~5000 because the actual marshaled size
+	// sits comfortably below 4000 with margin.
+	const budget = 4000
 	if len(bytes) > budget {
 		t.Errorf("cold catalog %d bytes > budget %d — KTD-5 budget broken", len(bytes), budget)
 		t.Logf("catalog JSON:\n%s", string(bytes))
+	}
+}
+
+// TestAllToolsHaveBoundaryDescriptions enforces plan 002 U5 — every
+// registered tool must:
+//   - state both "Use when" and "Don't use when" in its Description();
+//   - keep the description ≤1200 chars (≈150 words; arxiv 2602.14878 cap);
+//   - annotate every leaf JSON-Schema property with a non-empty
+//     "description" field. Recurses through `properties` and
+//     `items.properties`. Enum-bearing properties are accepted as long
+//     as the property itself has a description.
+//
+// Walker shape mirrors the existing cold-catalog snapshot pattern above.
+func TestAllToolsHaveBoundaryDescriptions(t *testing.T) {
+	r := NewDefaultRegistry()
+	all := r.ListAll()
+	if len(all) == 0 {
+		t.Fatal("expected NewDefaultRegistry to register at least one tool")
+	}
+	const descMaxChars = 1200
+	for _, tool := range all {
+		name := tool.Name()
+		desc := tool.Description()
+		if desc == "" {
+			t.Errorf("%s: Description() is empty", name)
+			continue
+		}
+		if !strings.Contains(desc, "Use when") {
+			t.Errorf("%s: Description() missing \"Use when\" trigger: %q", name, desc)
+		}
+		if !strings.Contains(desc, "Don't use when") {
+			t.Errorf("%s: Description() missing \"Don't use when\" boundary: %q", name, desc)
+		}
+		if len(desc) > descMaxChars {
+			t.Errorf("%s: Description() exceeds %d chars (%d): %q",
+				name, descMaxChars, len(desc), desc)
+		}
+
+		raw := tool.InputSchema()
+		var schema map[string]any
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Errorf("%s: InputSchema() not valid JSON: %v", name, err)
+			continue
+		}
+		walkSchemaProperties(t, name, "", schema)
+	}
+}
+
+// walkSchemaProperties recursively asserts that every leaf property in a
+// JSON-Schema object carries a non-empty "description". Nested objects
+// recurse via `properties`; arrays recurse via `items.properties`. The
+// pathPrefix string accumulates a dotted address for error messages so a
+// missing description on a deeply nested arg points at the exact slot.
+func walkSchemaProperties(t *testing.T, toolName, pathPrefix string, schema map[string]any) {
+	t.Helper()
+	propsAny, ok := schema["properties"]
+	if !ok {
+		return
+	}
+	props, ok := propsAny.(map[string]any)
+	if !ok {
+		return
+	}
+	for propName, propAny := range props {
+		prop, ok := propAny.(map[string]any)
+		if !ok {
+			t.Errorf("%s: property %q%s is not an object", toolName, propName, pathPrefix)
+			continue
+		}
+		fullPath := propName
+		if pathPrefix != "" {
+			fullPath = pathPrefix + "." + propName
+		}
+		descRaw, hasDesc := prop["description"]
+		descStr, _ := descRaw.(string)
+		if !hasDesc || strings.TrimSpace(descStr) == "" {
+			t.Errorf("%s: property %q is missing a non-empty \"description\"", toolName, fullPath)
+		}
+		// Recurse into nested object properties.
+		if typ, _ := prop["type"].(string); typ == "object" {
+			walkSchemaProperties(t, toolName, fullPath, prop)
+		}
+		// Recurse into array item properties when items is itself an object schema.
+		if itemsAny, ok := prop["items"]; ok {
+			if items, ok := itemsAny.(map[string]any); ok {
+				walkSchemaProperties(t, toolName, fullPath+"[]", items)
+			}
+		}
 	}
 }
 

@@ -136,17 +136,13 @@ func (resolveTool) Title() string              { return "Universal Slug Resolver
 func (resolveTool) SideEffects() SideEffect    { return ReadOnly }
 func (resolveTool) DeferLoading() bool         { return true }
 func (resolveTool) Description() string {
-	return "Resolve a universal sub-product slug ({sub_product}/{sub_flow} or " +
-		"{sub_product}/{sub_flow}/{state}) to its joined view: sub_flow + " +
-		"figma frames + PRD states + downstream stubs (mixpanel events, " +
-		"storybook stories, sentry issues, jira components). The slug is " +
-		"the org-wide identifier (KTD-6 of plan 002)."
+	return "Resolve a 2- or 3-segment universal slug ({sub_product}/{sub_flow} or {sub_product}/{sub_flow}/{state}) to the org-wide joined view: sub_flow header, frame count, PRD state count, declared Mixpanel events, DRD/prototype/lifecycle, plus stub arrays (sentry, storybook, jira) downstream teams hydrate. Use when a caller has a slug and wants every external surface that points at it. Don't use when you need full PRD bodies (call prd.get) or the wall (call section.outline_states). Read-only."
 }
 func (resolveTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"slug": {"type": "string", "description": "{sub_product}/{sub_flow} or {sub_product}/{sub_flow}/{state}; lowercase kebab-case"}
+			"slug": {"type": "string", "description": "Universal slug: \"{sub_product}/{sub_flow}\" or \"{sub_product}/{sub_flow}/{state}\". Lowercase kebab-case; each segment non-empty."}
 		},
 		"required": ["slug"],
 		"additionalProperties": false

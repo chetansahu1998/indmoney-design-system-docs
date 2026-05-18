@@ -90,24 +90,36 @@ type Tool interface {
 	InputSchema() json.RawMessage
 	Visibility() ToolVisibility
 	Invoke(ctx context.Context, deps Deps, args json.RawMessage) (Result, error)
+
+	// Plan 002 additions — MCP-spec compliance.
+
+	// Title is the human-readable display name (distinct from the
+	// machine-facing Name). Surfaces in UIs that show a tool catalogue;
+	// MCP spec 2025-06-18 added this field. Example: "Read DRD Content".
+	Title() string
+
+	// SideEffects classifies the tool's impact on system state. The
+	// MCP-spec transport prefixes Destructive tools' descriptions in
+	// the catalogue so Claude reliably asks for confirmation.
+	SideEffects() SideEffect
+
+	// DeferLoading hints that Claude should lazy-load this tool's
+	// definition via `tool_search` rather than carrying it eagerly in
+	// every conversation's system prompt. Anthropic's January 2026
+	// guidance: at >30 simultaneously-loaded tools, selection accuracy
+	// degrades and context cost balloons. Visible tools default to
+	// false (Claude needs them up-front); Deep tools default to true.
+	DeferLoading() bool
 }
 
-// May 18, 2026: Title / SideEffects / DeferLoading were promoted to
-// REQUIRED interface members in an earlier session as part of a Plan 002
-// "MCP-spec compliance" migration that was never finished — only a
-// handful of tools (drdReadTool, prdAuthorTool) implement them, and no
-// caller actually reads them. Moving them to OPTIONAL satellite
-// interfaces so the binary builds while the migration is still in
-// flight; callers can type-assert when the time comes to surface the
-// catalogue metadata.
-
-// ToolTitled returns the human-readable display name for catalogue UIs.
+// May 18, 2026: named satellite interfaces for the three Plan-002
+// methods. Every Tool already satisfies them via the required methods
+// above — these aliases exist so callers can type-assert against a
+// narrower contract (e.g. transport_mcp.go's catalog projection) and
+// so future Tool variants that compose pieces of the contract can
+// still typecheck.
 type ToolTitled interface{ Title() string }
-
-// ToolSideEffected classifies the tool's impact on system state.
 type ToolSideEffected interface{ SideEffects() SideEffect }
-
-// ToolDeferable lets a tool opt out of eager system-prompt loading.
 type ToolDeferable interface{ DeferLoading() bool }
 
 // Deps carries the per-request dependencies a tool needs. The HTTP handler

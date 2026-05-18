@@ -54,12 +54,12 @@ func (sectionFramesTool) Title() string              { return "List Section Fram
 func (sectionFramesTool) SideEffects() SideEffect    { return ReadOnly }
 func (sectionFramesTool) DeferLoading() bool         { return true }
 func (sectionFramesTool) Description() string {
-	return "List the direct-child Figma frames of a sub_flow's bound section (designer's names, canvas y-axis order)."
+	return "List the direct-child Figma frames of a sub_flow's bound section (designer names, y-axis order, abs coords). Use when you only need the frame inventory — e.g. to populate a picker before prd.attach_frame. Don't use when you also want PRD coverage / binding status (call section.outline_states for the wall, or section.inspect for the full bundle). Returns empty frames + a note when no Figma section is bound."
 }
 func (sectionFramesTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
-		"properties": {"sub_flow_slug": {"type": "string", "description": "{sub_product_slug}/{sub_flow_slug}"}},
+		"properties": {"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."}},
 		"required": ["sub_flow_slug"],
 		"additionalProperties": false
 	}`)
@@ -138,12 +138,12 @@ func (sectionOutlineStatesTool) Title() string              { return "Section Co
 func (sectionOutlineStatesTool) SideEffects() SideEffect    { return ReadOnly }
 func (sectionOutlineStatesTool) DeferLoading() bool         { return true }
 func (sectionOutlineStatesTool) Description() string {
-	return "Coverage wall: every frame in the section + every PRD state, joined with binding status, per-stem counts, total word count, and last-touched metadata. The PM's resume-where-I-was view."
+	return "Coverage wall: every frame in the section joined with every PRD state, plus binding status, per-stem counts, total word count, and last-touched metadata. Use when the PM wants the resume-where-I-was view — \"which frames still need a state authored?\" Don't use when you only need the frame list (call section.frames) or only the PRD body (call prd.get). Read-only; populates orphans even when no Figma section is bound."
 }
 func (sectionOutlineStatesTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
-		"properties": {"sub_flow_slug": {"type": "string", "description": "{sub_product_slug}/{sub_flow_slug}"}},
+		"properties": {"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."}},
 		"required": ["sub_flow_slug"],
 		"additionalProperties": false
 	}`)

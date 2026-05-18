@@ -44,12 +44,12 @@ func (prdGetTool) Title() string              { return "Get PRD" }
 func (prdGetTool) SideEffects() SideEffect    { return ReadOnly }
 func (prdGetTool) DeferLoading() bool         { return true }
 func (prdGetTool) Description() string {
-	return "Load the full PRD (tabs, states, all stems, frame tags) for a sub_flow."
+	return "Load the full PRD tree for a sub_flow (tabs, states, all typed stems, frame tags). Use when you need the complete authored shape before mutating — e.g. to confirm a state exists or count criteria. Don't use when you only need a summary (call section.inspect — it carries DRD/PRD/frames counts in one round-trip). Returns prd:nil when no PRD has been seeded yet."
 }
 func (prdGetTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
-		"properties": {"sub_flow_slug": {"type": "string"}},
+		"properties": {"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."}},
 		"required": ["sub_flow_slug"],
 		"additionalProperties": false
 	}`)
@@ -94,16 +94,16 @@ func (prdUpsertTabTool) Title() string              { return "Upsert PRD Tab" }
 func (prdUpsertTabTool) SideEffects() SideEffect    { return Mutating }
 func (prdUpsertTabTool) DeferLoading() bool         { return true }
 func (prdUpsertTabTool) Description() string {
-	return "Create or update a PRD tab keyed by (prd, name). Auto-creates the parent PRD row if missing."
+	return "Create or update a PRD tab keyed by (prd, name); auto-creates the parent PRD row if missing. Use when you need a new tab (e.g. \"Investment\", \"Reconciliation\") before adding states to it, or to refresh a tab's overview markdown. Don't use when you just want to add a state — prd.add_state creates the tab on demand via resolveTab. Idempotent on (prd, name). Tab writes do not emit prd_audit rows."
 }
 func (prdUpsertTabTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_flow_slug": {"type": "string"},
-			"name":          {"type": "string"},
-			"position":      {"type": "integer"},
-			"overview_md":   {"type": "string"}
+			"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."},
+			"name":          {"type": "string", "description": "Tab name (human label). Idempotency key together with the PRD id."},
+			"position":      {"type": "integer", "description": "Ordering hint within the PRD; lower values render first."},
+			"overview_md":   {"type": "string", "description": "Optional markdown blurb shown above the tab's states (problem, goals, etc.)."}
 		},
 		"required": ["sub_flow_slug", "name"],
 		"additionalProperties": false
@@ -160,20 +160,20 @@ func (prdAddStateTool) Title() string              { return "Add PRD State" }
 func (prdAddStateTool) SideEffects() SideEffect    { return Mutating }
 func (prdAddStateTool) DeferLoading() bool         { return true }
 func (prdAddStateTool) Description() string {
-	return "Add (or update via idempotent restore) a PRD state in a tab. Tab + PRD auto-created if missing."
+	return "Add (or update via idempotent restore) a PRD state inside a tab; tab + PRD auto-created. Use when the PM names a state (e.g. \"Cold state\", \"Loading\") and you want to record its condition / design / FE handling notes. Don't use when you want to bind a Figma frame — prd.attach_frame is the per-state binding. Idempotent on (tab, label); records prd_audit with op=upsert_state."
 }
 func (prdAddStateTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_flow_slug":      {"type": "string"},
-			"tab_name":           {"type": "string"},
-			"label":              {"type": "string"},
-			"position":           {"type": "integer"},
-			"frame_name":         {"type": "string"},
-			"condition_md":       {"type": "string"},
-			"design_handling_md": {"type": "string"},
-			"fe_handling_md":     {"type": "string"}
+			"sub_flow_slug":      {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."},
+			"tab_name":           {"type": "string", "description": "Parent tab name. Tab is auto-created if missing."},
+			"label":              {"type": "string", "description": "State label (e.g. \"Cold state\"). Idempotency key together with tab_name."},
+			"position":           {"type": "integer", "description": "Ordering hint within the tab; lower values render first."},
+			"frame_name":         {"type": "string", "description": "Optional Figma frame name shorthand — recorded on the state for cross-reference."},
+			"condition_md":       {"type": "string", "description": "Markdown describing when this state applies (the guard condition)."},
+			"design_handling_md": {"type": "string", "description": "Markdown describing how the design responds in this state."},
+			"fe_handling_md":     {"type": "string", "description": "Markdown describing how the frontend implementation handles this state."}
 		},
 		"required": ["sub_flow_slug", "tab_name", "label"],
 		"additionalProperties": false
@@ -224,19 +224,19 @@ func (prdAddEventTool) Title() string              { return "Add Mixpanel Event"
 func (prdAddEventTool) SideEffects() SideEffect    { return Mutating }
 func (prdAddEventTool) DeferLoading() bool         { return true }
 func (prdAddEventTool) Description() string {
-	return "Add (or update idempotent on name) a Mixpanel event row tied to a PRD state."
+	return "Declare a Mixpanel event tied to a PRD state (name, properties schema, fires_on guard). Use when the PM specifies analytics on a state — the event name becomes part of the resolver's mixpanel_event_names array. Don't use when the trigger is an acceptance criterion or copy string — use prd.add_acceptance_criterion or prd.upsert_copy_string respectively. Idempotent on (state, name); records prd_audit op=add_event."
 }
 func (prdAddEventTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_flow_slug":     {"type": "string"},
-			"tab_name":          {"type": "string"},
-			"state_label":       {"type": "string"},
-			"name":              {"type": "string"},
-			"position":          {"type": "integer"},
-			"properties_schema": {"type": "string", "description": "opaque JSON; the server does not parse it"},
-			"fires_on":          {"type": "string"}
+			"sub_flow_slug":     {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."},
+			"tab_name":          {"type": "string", "description": "Parent tab name; auto-created if missing."},
+			"state_label":       {"type": "string", "description": "Parent state label; auto-created if missing."},
+			"name":              {"type": "string", "description": "Mixpanel event name (e.g. \"wallet_cold_state_viewed\"). Idempotency key together with the state."},
+			"position":          {"type": "integer", "description": "Ordering hint among the state's events; lower values render first."},
+			"properties_schema": {"type": "string", "description": "Opaque JSON describing the event payload; the server does not parse or validate it."},
+			"fires_on":          {"type": "string", "description": "Free-form guard text (e.g. \"on mount\", \"on CTA tap\") describing when the event fires."}
 		},
 		"required": ["sub_flow_slug", "tab_name", "state_label", "name"],
 		"additionalProperties": false
@@ -285,17 +285,17 @@ func (prdAddAcceptanceCriterionTool) Title() string              { return "Add A
 func (prdAddAcceptanceCriterionTool) SideEffects() SideEffect    { return Mutating }
 func (prdAddAcceptanceCriterionTool) DeferLoading() bool         { return true }
 func (prdAddAcceptanceCriterionTool) Description() string {
-	return "Append an acceptance criterion to a PRD state."
+	return "Append an acceptance criterion (testable assertion) to a PRD state. Use when the PM articulates a must-be-true rule for a state — the QA / Playwright stub generator reads these. Don't use when the rule is an edge case (call prd.add_edge_case) or an accessibility rule (call prd.add_a11y_note); each stem has its own slot. Not deduped — repeated calls append additional rows; records prd_audit op=add_acceptance_criterion."
 }
 func (prdAddAcceptanceCriterionTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_flow_slug": {"type": "string"},
-			"tab_name":      {"type": "string"},
-			"state_label":   {"type": "string"},
-			"criterion":     {"type": "string"},
-			"position":      {"type": "integer"}
+			"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."},
+			"tab_name":      {"type": "string", "description": "Parent tab name; auto-created if missing."},
+			"state_label":   {"type": "string", "description": "Parent state label; auto-created if missing."},
+			"criterion":     {"type": "string", "description": "Single acceptance criterion (a testable assertion, written as one sentence)."},
+			"position":      {"type": "integer", "description": "Ordering hint among the state's criteria; lower values render first."}
 		},
 		"required": ["sub_flow_slug", "tab_name", "state_label", "criterion"],
 		"additionalProperties": false
@@ -340,17 +340,17 @@ func (prdAddEdgeCaseTool) Title() string              { return "Add Edge Case" }
 func (prdAddEdgeCaseTool) SideEffects() SideEffect    { return Mutating }
 func (prdAddEdgeCaseTool) DeferLoading() bool         { return true }
 func (prdAddEdgeCaseTool) Description() string {
-	return "Append an edge case to a PRD state."
+	return "Append an edge case (boundary / failure scenario) to a PRD state. Use when the PM names a specific corner — e.g. \"empty list\", \"network 500\", \"user has no KYC\". Don't use when the rule is a happy-path expectation (call prd.add_acceptance_criterion) or an accessibility concern (call prd.add_a11y_note). Not deduped — repeated calls append; records prd_audit op=add_edge_case."
 }
 func (prdAddEdgeCaseTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_flow_slug": {"type": "string"},
-			"tab_name":      {"type": "string"},
-			"state_label":   {"type": "string"},
-			"edge_case":     {"type": "string"},
-			"position":      {"type": "integer"}
+			"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."},
+			"tab_name":      {"type": "string", "description": "Parent tab name; auto-created if missing."},
+			"state_label":   {"type": "string", "description": "Parent state label; auto-created if missing."},
+			"edge_case":     {"type": "string", "description": "Single edge case description (one boundary / failure scenario)."},
+			"position":      {"type": "integer", "description": "Ordering hint among the state's edge cases; lower values render first."}
 		},
 		"required": ["sub_flow_slug", "tab_name", "state_label", "edge_case"],
 		"additionalProperties": false
@@ -396,18 +396,18 @@ func (prdUpsertCopyStringTool) Title() string              { return "Upsert Copy
 func (prdUpsertCopyStringTool) SideEffects() SideEffect    { return Mutating }
 func (prdUpsertCopyStringTool) DeferLoading() bool         { return true }
 func (prdUpsertCopyStringTool) Description() string {
-	return "Upsert an i18n copy_string on a PRD state, idempotent on (key, locale)."
+	return "Upsert an i18n copy_string on a PRD state (the canonical user-facing text for a slot). Use when the PM dictates copy — title, body, CTA, error — for a specific state. Don't use when the text is a guard condition or design note (those go inside prd.add_state's *_md fields). Idempotent on (state, key, locale); records prd_audit op=upsert_copy_string."
 }
 func (prdUpsertCopyStringTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_flow_slug": {"type": "string"},
-			"tab_name":      {"type": "string"},
-			"state_label":   {"type": "string"},
-			"key":           {"type": "string"},
-			"value":         {"type": "string"},
-			"locale":        {"type": "string", "description": "ISO locale tag; defaults to en"}
+			"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."},
+			"tab_name":      {"type": "string", "description": "Parent tab name; auto-created if missing."},
+			"state_label":   {"type": "string", "description": "Parent state label; auto-created if missing."},
+			"key":           {"type": "string", "description": "Copy slot identifier (e.g. \"title\", \"primary_cta\", \"empty.body\"). Idempotency key with locale."},
+			"value":         {"type": "string", "description": "The localized text content for this key + locale pair."},
+			"locale":        {"type": "string", "description": "BCP-47 / ISO locale tag (e.g. \"en\", \"hi\"). Defaults to \"en\" when empty."}
 		},
 		"required": ["sub_flow_slug", "tab_name", "state_label", "key", "value"],
 		"additionalProperties": false
@@ -453,17 +453,17 @@ func (prdAddA11yNoteTool) Title() string              { return "Add A11y Note" }
 func (prdAddA11yNoteTool) SideEffects() SideEffect    { return Mutating }
 func (prdAddA11yNoteTool) DeferLoading() bool         { return true }
 func (prdAddA11yNoteTool) Description() string {
-	return "Append an accessibility note to a PRD state."
+	return "Append an accessibility note (aria, focus, screen-reader behaviour) to a PRD state. Use when the PM or designer specifies a11y handling — keyboard nav, label text, contrast notes, motion-sensitivity. Don't use when the note is a general acceptance criterion (call prd.add_acceptance_criterion) or a copy string (call prd.upsert_copy_string). Not deduped; records prd_audit op=add_a11y_note."
 }
 func (prdAddA11yNoteTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_flow_slug": {"type": "string"},
-			"tab_name":      {"type": "string"},
-			"state_label":   {"type": "string"},
-			"note":          {"type": "string"},
-			"position":      {"type": "integer"}
+			"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."},
+			"tab_name":      {"type": "string", "description": "Parent tab name; auto-created if missing."},
+			"state_label":   {"type": "string", "description": "Parent state label; auto-created if missing."},
+			"note":          {"type": "string", "description": "Single accessibility note (one a11y concern, written as one sentence)."},
+			"position":      {"type": "integer", "description": "Ordering hint among the state's a11y notes; lower values render first."}
 		},
 		"required": ["sub_flow_slug", "tab_name", "state_label", "note"],
 		"additionalProperties": false
@@ -509,18 +509,18 @@ func (prdAttachFrameTool) Title() string              { return "Attach Figma Fra
 func (prdAttachFrameTool) SideEffects() SideEffect    { return Mutating }
 func (prdAttachFrameTool) DeferLoading() bool         { return true }
 func (prdAttachFrameTool) Description() string {
-	return "Attach a Figma node to a PRD state (with optional platform variant)."
+	return "Bind a Figma node id to a PRD state, with an optional platform variant (android | ios | desktop). Use when the PM picks the canonical frame for a state from the coverage wall — this is the load-bearing authoring action the wall's last_touched_* lights up on. Don't use when you only need a prototype URL for the whole sub_flow (call drd.attach_prototype). Records prd_audit op=attach_frame_tag."
 }
 func (prdAttachFrameTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
 		"properties": {
-			"sub_flow_slug": {"type": "string"},
-			"tab_name":      {"type": "string"},
-			"state_label":   {"type": "string"},
-			"figma_node_id": {"type": "string"},
-			"variant":       {"type": "string", "description": "android | ios | desktop | …"},
-			"position":      {"type": "integer"}
+			"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."},
+			"tab_name":      {"type": "string", "description": "Parent tab name; auto-created if missing."},
+			"state_label":   {"type": "string", "description": "Parent state label; auto-created if missing."},
+			"figma_node_id": {"type": "string", "description": "Figma node id (e.g. \"123:456\") of the frame to bind to this state."},
+			"variant":       {"type": "string", "description": "Optional platform variant: android | ios | desktop. Empty means default / shared."},
+			"position":      {"type": "integer", "description": "Ordering hint among the state's frame tags; lower values render first."}
 		},
 		"required": ["sub_flow_slug", "tab_name", "state_label", "figma_node_id"],
 		"additionalProperties": false
@@ -562,12 +562,12 @@ func (prdDetachFrameTool) Title() string              { return "Detach Figma Fra
 func (prdDetachFrameTool) SideEffects() SideEffect    { return Destructive }
 func (prdDetachFrameTool) DeferLoading() bool         { return true }
 func (prdDetachFrameTool) Description() string {
-	return "Detach a frame_tag by its tag_id."
+	return "Remove one frame_tag row by its tag_id (destructive: the binding is deleted). Use when a frame was attached to the wrong state or the Figma node was retired. Don't use when you want to rebind to a different node — call prd.attach_frame instead (the new binding coexists or supersedes via position). No audit row is emitted (prd_audit keys on state_id, which is gone post-delete)."
 }
 func (prdDetachFrameTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
-		"properties": {"tag_id": {"type": "string"}},
+		"properties": {"tag_id": {"type": "string", "description": "Server-issued frame_tag row id (returned by prd.attach_frame's Data.id)."}},
 		"required": ["tag_id"],
 		"additionalProperties": false
 	}`)
@@ -636,12 +636,12 @@ func (prdExportTool) Title() string              { return "Export PRD as JSON" }
 func (prdExportTool) SideEffects() SideEffect    { return ReadOnly }
 func (prdExportTool) DeferLoading() bool         { return true }
 func (prdExportTool) Description() string {
-	return "Render the PRD as deterministic markdown and a typed JSON sidecar (PRDFull shape). No filesystem write — the caller (bridge / skill) decides where the bytes land."
+	return "Render the PRD as deterministic markdown plus a typed JSON sidecar (PRDFull shape). Use when the PM wants to publish docs, hand off to FE, or feed downstream stub generators (Storybook, Playwright, JIRA, tracking-plan). Don't use when you only want the typed tree for in-process consumption — call prd.get directly. Read-only; no filesystem write — the caller decides where the bytes land."
 }
 func (prdExportTool) InputSchema() json.RawMessage {
 	return rawJSON(`{
 		"type": "object",
-		"properties": {"sub_flow_slug": {"type": "string"}},
+		"properties": {"sub_flow_slug": {"type": "string", "description": "Universal join key {sub_product_slug}/{sub_flow_slug}."}},
 		"required": ["sub_flow_slug"],
 		"additionalProperties": false
 	}`)
