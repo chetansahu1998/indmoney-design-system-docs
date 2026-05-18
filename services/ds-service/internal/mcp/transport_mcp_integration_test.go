@@ -279,15 +279,34 @@ func TestIntegration_SessionKindJWT_RejectedOnMCPTransport(t *testing.T) {
 	}
 }
 
-// 5. Cross-tenant: claim says tenantA, slug references tenantB → isError:true.
-func TestIntegration_ToolsCall_CrossTenant_ReturnsIsError(t *testing.T) {
+// 5. Cross-tenant: claim says tenantA, slug references a sub_flow that
+//    EXISTS in tenantB but not in tenantA → must surface as isError:true
+//    AND the response body must NOT leak tenantB's data.
+//
+// /ce-code-review #14 — the pre-fix version of this test asserted only
+// that a non-existent slug returned isError:true, which would pass even
+// if tenant scoping were removed entirely. Now we seed actual data
+// under tenantB so the assertion is "tenantA cannot reach this row,"
+// not just "this row doesn't exist anywhere."
+func TestIntegration_ToolsCall_CrossTenant_DoesNotLeakTenantBData(t *testing.T) {
 	env := newIntegrationEnv(t)
-	// section.inspect under tenantA for a slug that only exists in
-	// tenantB. The tenant-scoped repo returns ErrNotFound, which the
-	// transport wraps as isError:true (NOT as a JSON-RPC error).
+
+	// Seed a real sub_flow under tenantB. Its slug is well-formed and
+	// would resolve cleanly if tenant scoping were misconfigured.
+	sfB := env.harness.seedSubFlowForTenantB("Wallet", "Secret-B")
+	slugB := "wallet/secret-b"
+
+	// Sanity-check the seed actually wrote.
+	if sfB.ID == "" || sfB.Name == "" {
+		t.Fatal("tenantB seed produced no row — test would pass-because-not-found, defeating its purpose")
+	}
+
+	// Call from a tenantA-scoped JWT. The transport-mounted Registry
+	// reads claims from the request → builds a TenantRepo for tenantA
+	// → SQL queries see no rows for slugB.
 	resp, body := env.jrpc("tools/call", map[string]any{
 		"name":      "section.inspect",
-		"arguments": map[string]any{"sub_flow_slug": "other-tenant/secret"},
+		"arguments": map[string]any{"sub_flow_slug": slugB},
 	}, env.access)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
@@ -301,7 +320,18 @@ func TestIntegration_ToolsCall_CrossTenant_ReturnsIsError(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if !out.IsError {
-		t.Error("expected isError=true for cross-tenant miss")
+		t.Errorf("expected isError=true for cross-tenant lookup; got %+v", out)
+	}
+
+	// Defense in depth: the response body must not contain tenantB's
+	// row identifiers anywhere — neither sub_flow ID nor the sub_product
+	// name. A pass-through bug that read the wrong tenant's row would
+	// show up as a leak here.
+	bodyJSON, _ := json.Marshal(body)
+	for _, leak := range []string{sfB.ID, "Secret-B"} {
+		if strings.Contains(string(bodyJSON), leak) {
+			t.Errorf("tenantA response leaked tenantB identifier %q: %s", leak, string(bodyJSON))
+		}
 	}
 }
 

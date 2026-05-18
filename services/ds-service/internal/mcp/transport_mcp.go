@@ -493,6 +493,11 @@ func handleMCPStream(deps HandlerDeps) http.HandlerFunc {
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("X-Trace-ID", traceID)
 		w.WriteHeader(http.StatusOK)
+		// Opt out of the process-wide 5-min WriteTimeout so this stream
+		// can stay open as long as Claude wants. See sse/writedeadline.go.
+		if derr := sse.ClearWriteDeadline(w); derr != nil {
+			deps.Log.Warn("mcp.sse.clear_write_deadline_failed", "err", derr.Error())
+		}
 		flusher.Flush()
 
 		clientGone := r.Context().Done()

@@ -177,6 +177,9 @@ func (s *Server) HandleGraphEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	// Opt out of the process-wide 5-min WriteTimeout — SSE streams must
+	// outlive that cap. See sse/writedeadline.go.
+	_ = sse.ClearWriteDeadline(w)
 	flusher.Flush()
 
 	ch, unsub, err := s.deps.Broker.Subscribe(traceID, tenantID, userID)

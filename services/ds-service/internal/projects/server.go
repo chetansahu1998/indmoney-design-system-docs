@@ -29,7 +29,16 @@ import (
 // need tenant-specific overrides.
 const (
 	MaxBodyBytes      = 10 << 20 // 10 MB
-	MaxFlowsPerExport = 20
+	// MaxFlowsPerExport was 20 (the Figma plugin's per-section export
+	// model). May 18, 2026: the autosync executor now batches all of a
+	// file's sections into a single ExportRequest so the resulting
+	// project_version contains every section's screens together (without
+	// batching, each section became its own version and only the LAST
+	// section was visible on the frontend). Biggest in-scope file today
+	// is INDstocks V4 with 143 sections on its Final/WIP pages combined;
+	// 500 leaves comfortable headroom. Plugin-driven exports still rarely
+	// exceed 5 flows, so this only loosens the cap for the autosync path.
+	MaxFlowsPerExport = 500
 	// 50 was a Phase 1 placeholder — real Figma sections from the
 	// INDstocks file have 70+ frames in a single mode (e.g. "Filters
 	// for Stock Screener" light = 70). 200 leaves headroom for a
@@ -878,9 +887,15 @@ func (s *Server) HandleProjectGet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Active version: explicit ?v= wins, else latest by version_index
-		// (versions slice is already ordered DESC). Mirrors the resolution
-		// pattern in HandleListViolations below.
+		// Active version: explicit ?v= wins. Without ?v=, the historical
+		// behavior was "screens of the latest version" — which broke for
+		// projects whose sections were exported one-by-one by autosync
+		// (each section became its own project_version → only the LAST
+		// section's screens were visible). The "default view" now picks
+		// the most-recent rendered screen PER FLOW across all versions,
+		// so all sections show in a single render. Explicit ?v=<id> still
+		// returns just that version's screens for historical drill-down.
+		// See repository.ListScreensLatestPerFlow for context.
 		activeVersionID := r.URL.Query().Get("v")
 		if activeVersionID == "" && len(versions) > 0 {
 			activeVersionID = versions[0].ID
@@ -888,13 +903,25 @@ func (s *Server) HandleProjectGet(w http.ResponseWriter, r *http.Request) {
 
 		var screens []Screen
 		var screenModes []ScreenMode
-		if activeVersionID != "" {
+		explicitVersion := r.URL.Query().Get("v") != ""
+		if explicitVersion {
 			screens, err = repo.ListScreensByVersion(r.Context(), activeVersionID)
 			if err != nil {
 				writeJSONErr(w, http.StatusInternalServerError, "list_screens", err.Error())
 				return
 			}
 			screenModes, err = repo.ListScreenModesByVersion(r.Context(), activeVersionID)
+			if err != nil {
+				writeJSONErr(w, http.StatusInternalServerError, "list_screen_modes", err.Error())
+				return
+			}
+		} else if len(versions) > 0 {
+			screens, err = repo.ListScreensLatestPerFlow(r.Context(), p.ID)
+			if err != nil {
+				writeJSONErr(w, http.StatusInternalServerError, "list_screens", err.Error())
+				return
+			}
+			screenModes, err = repo.ListScreenModesLatestPerFlow(r.Context(), p.ID)
 			if err != nil {
 				writeJSONErr(w, http.StatusInternalServerError, "list_screen_modes", err.Error())
 				return
@@ -1513,6 +1540,9 @@ func (s *Server) HandleProjectEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	// Opt out of the process-wide 5-min WriteTimeout so this stream can
+	// stay open as long as the client reads. See sse/writedeadline.go.
+	_ = sse.ClearWriteDeadline(w)
 	flusher.Flush()
 
 	ch, unsub, err := s.deps.Broker.Subscribe(traceID, tenantID, userID)
@@ -3789,6 +3819,9 @@ func (s *Server) HandleInboxEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	// Opt out of the process-wide 5-min WriteTimeout so this stream can
+	// stay open as long as the client reads. See sse/writedeadline.go.
+	_ = sse.ClearWriteDeadline(w)
 	flusher.Flush()
 
 	ch, unsub, err := s.deps.Broker.Subscribe(traceID, tenantID, userID)

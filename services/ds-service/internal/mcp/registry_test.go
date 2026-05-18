@@ -114,6 +114,26 @@ func (h *testHarness) seedSubFlow(productName, flowName string) projects.SubFlow
 	return sf
 }
 
+// seedSubFlowForTenantB writes a sub_product + sub_flow under tenantB
+// (not the harness's default tenantA). Used by cross-tenant assertion
+// tests (/ce-code-review #14) so the assertion "tenantA can't see this"
+// has actual data on the other side — otherwise a not-found result
+// would pass even if tenant scoping were removed.
+func (h *testHarness) seedSubFlowForTenantB(productName, flowName string) projects.SubFlow {
+	h.t.Helper()
+	ctx := context.Background()
+	repoB := projects.NewTenantRepo(h.d.DB, h.tenantB)
+	sp, err := repoB.UpsertSubProduct(ctx, productName)
+	if err != nil {
+		h.t.Fatalf("upsert sub_product (tenantB): %v", err)
+	}
+	sf, err := repoB.UpsertSubFlow(ctx, sp.ID, flowName)
+	if err != nil {
+		h.t.Fatalf("upsert sub_flow (tenantB): %v", err)
+	}
+	return sf
+}
+
 // ─── Registry-level tests ──────────────────────────────────────────────────
 
 // TestRegistry_ColdCatalog_ReturnsExpectedVisibleTools — U6 promoted 11

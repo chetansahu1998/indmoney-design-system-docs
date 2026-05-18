@@ -302,6 +302,9 @@ func (s *Server) HandleAssetStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // disable nginx buffering
 	w.WriteHeader(http.StatusOK)
+	// Opt out of the process-wide 5-min WriteTimeout — asset streams
+	// can run longer than that on big projects. See sse/writedeadline.go.
+	_ = sse.ClearWriteDeadline(w)
 	flusher.Flush()
 
 	// Empty-cluster path: nothing to stream, send `complete` and exit. The
