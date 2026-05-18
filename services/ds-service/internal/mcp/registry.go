@@ -153,6 +153,13 @@ type Result struct {
 	Data        any          `json:"data"`
 	NextActions []NextAction `json:"next_actions,omitempty"`
 	SchemaHint  *SchemaHint  `json:"schema_hint,omitempty"`
+
+	// IsError is the plan-002 U2 affordance: a tool that semantically
+	// "failed" (e.g. validation, business rule) but did not return an
+	// error from Invoke can set IsError=true, and the MCP transport
+	// wraps the body with `isError: true` per the spec. The REST surface
+	// ignores this field — existing Atlas callers consume Data directly.
+	IsError bool `json:"is_error,omitempty"`
 }
 
 // NextAction is a meta-verb hint — "after this call, the likely next step

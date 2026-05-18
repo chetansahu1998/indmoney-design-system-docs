@@ -1316,13 +1316,19 @@ func (s *server) routes(mux *http.ServeMux) {
 	// signatures want the concrete type so the broker can be inspected
 	// for in-memory fan-out diagnostics. Assert is safe at process boot.
 	mcpBroker, _ := s.broker.(*sse.MemoryBroker)
-	mcp.RegisterRoutes(mux, mcp.HandlerDeps{
+	mcpDeps := mcp.HandlerDeps{
 		DB:           s.db,
 		Broker:       mcpBroker,
 		ClaimsReader: claimsReader,
 		Registry:     mcp.NewDefaultRegistry(),
 		Log:          s.log,
-	}, s.requireAuth)
+	}
+	mcp.RegisterRoutes(mux, mcpDeps, s.requireAuth)
+
+	// Plan 002 U1 — sibling MCP-spec Streamable HTTP transport. The REST
+	// surface above keeps Atlas + local stdio bridge working unchanged;
+	// `POST /mcp` is the JSON-RPC entry point Claude Custom Connectors use.
+	mcp.RegisterMCPRoutes(mux, mcpDeps, s.requireAuth)
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────
@@ -1450,12 +1456,15 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		// The synthetic user is pinned to DevAuthBypassTenant so cross-
 		// tenant data still segregates.
 		if s.cfg.DevAuthBypass {
+			// IsAdmin=true under DEV_AUTH_BYPASS lets local devs hit
+			// /v1/admin/* endpoints without minting a super-admin JWT.
+			// Production never sets DEV_AUTH_BYPASS so this is dev-only.
 			devClaims := &auth.Claims{
 				Sub:     "dev-user-local",
 				Email:   s.cfg.DevAuthBypassEmail,
-				Role:    "user",
+				Role:    "super_admin",
 				Tenants: []string{s.cfg.DevAuthBypassTenant},
-				IsAdmin: false,
+				IsAdmin: true,
 			}
 			devClaims.ID = "dev-bypass"
 			ctx := context.WithValue(r.Context(), ctxClaims, devClaims)
@@ -2119,10 +2128,18 @@ func startAutosyncRetryLoop(
 		// silently to internal poller timing. ctx.Done() still wins
 		// when the operator SIGTERMs before the poller readies (e.g.
 		// PAT misconfigured → poller errors but never readies).
-		select {
-		case <-pollerReady:
-		case <-ctx.Done():
-			return
+		//
+		// When FIGMA_INVENTORY_DISABLED=1 the poller never starts, so
+		// pollerReady stays open forever. Skip the wait in that case:
+		// the operator is responsible for ensuring figma_section +
+		// figma_node_metadata are populated through other means
+		// (cmd/figma-inventory-sync, the depth=3 curl trigger, etc.).
+		if os.Getenv("FIGMA_INVENTORY_DISABLED") != "1" {
+			select {
+			case <-pollerReady:
+			case <-ctx.Done():
+				return
+			}
 		}
 		runOnce := func() {
 			// F1: panic guard. The retry loop is the autosync subsystem's
