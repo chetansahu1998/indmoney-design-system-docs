@@ -473,7 +473,8 @@ func handleTokenAuthCode(w http.ResponseWriter, r *http.Request, db *sql.DB, sig
 		return
 	}
 
-	access, refresh, err := mintAccessAndRefresh(r.Context(), db, signer, cfg, userID, tenantID, clientID, redirectURI, scope, now)
+	// Initial mint at code-redemption time — no parent chain yet.
+	access, refresh, err := mintAccessAndRefresh(r.Context(), db, signer, cfg, userID, tenantID, clientID, redirectURI, scope, "", now)
 	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, errServerError, err.Error())
 		return
@@ -514,7 +515,7 @@ func handleTokenRefresh(w http.ResponseWriter, r *http.Request, db *sql.DB, sign
 
 	now := cfg.now()
 	if revokedAt.Valid || consumedAt.Valid {
-		sweepRefreshAndAccessJTIs(r.Context(), db, userID, now, "refresh_replay")
+		sweepRefreshAndAccessJTIs(r.Context(), db, userID, id, now, "refresh_replay")
 		writeOAuthError(w, http.StatusBadRequest, errInvalidGrant, "refresh_token reused — all sessions revoked")
 		return
 	}
@@ -548,7 +549,7 @@ func handleTokenRefresh(w http.ResponseWriter, r *http.Request, db *sql.DB, sign
 		// Concurrent rotation already revoked this row. Fall into the
 		// replay-defense sweep — matches the behavior of a sequential
 		// replay-after-rotate.
-		sweepRefreshAndAccessJTIs(r.Context(), db, userID, now, "refresh_race_loss")
+		sweepRefreshAndAccessJTIs(r.Context(), db, userID, id, now, "refresh_race_loss")
 		writeOAuthError(w, http.StatusBadRequest, errInvalidGrant, "refresh_token reused — all sessions revoked")
 		return
 	}
@@ -563,7 +564,9 @@ func handleTokenRefresh(w http.ResponseWriter, r *http.Request, db *sql.DB, sign
 		}
 	}
 
-	access, newRefresh, err := mintAccessAndRefresh(r.Context(), db, signer, cfg, userID, tenantID, clientID, redirectURI, scope, now)
+	// Rotation — link the new row to the old via parent_id so a future
+	// replay of any row in this chain triggers a chain-only sweep.
+	access, newRefresh, err := mintAccessAndRefresh(r.Context(), db, signer, cfg, userID, tenantID, clientID, redirectURI, scope, id, now)
 	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, errServerError, err.Error())
 		return
@@ -572,19 +575,41 @@ func handleTokenRefresh(w http.ResponseWriter, r *http.Request, db *sql.DB, sign
 }
 
 // sweepRefreshAndAccessJTIs is the replay-defense + race-loss sweep
-// helper. Revokes every live refresh row for the user, AND inserts the
-// corresponding access JTIs into revoked_jtis so the in-flight access
-// tokens minted from those refreshes also die. Logs sweep outcome for
-// post-hoc audit — replay attempts are rare and worth tracing.
-func sweepRefreshAndAccessJTIs(ctx context.Context, db *sql.DB, userID string, now time.Time, reason string) {
-	// Collect the access JTIs to revoke BEFORE flipping revoked_at,
-	// because the UPDATE may race with another sweep firing the same
-	// query. Two sweeps writing the same revoked_jtis row is idempotent.
+// helper. Walks the descendant chain of `rootID` via recursive CTE and
+// revokes every row in that chain (refresh rows + their access JTIs).
+// Other chains for the same user — different devices, separate
+// authorize sessions — are left alive (plan-002 finding #7).
+//
+// rootID is the id of the refresh row that triggered the sweep (the
+// row whose replay or race-loss was detected). The chain set includes
+// rootID itself plus every row with parent_id transitively descending
+// from it.
+//
+// Logs sweep outcome for post-hoc audit — replay attempts are rare and
+// worth tracing.
+func sweepRefreshAndAccessJTIs(ctx context.Context, db *sql.DB, userID, rootID string, now time.Time, reason string) {
+	// Build the chain via recursive CTE. SQLite has supported WITH
+	// RECURSIVE since 3.8; the runner pins a modern build.
+	const chainCTE = `
+		WITH RECURSIVE chain(id) AS (
+			SELECT id FROM oauth_tokens WHERE id = ?
+			UNION ALL
+			SELECT t.id FROM oauth_tokens t
+			  JOIN chain c ON t.parent_id = c.id
+		)
+	`
+
+	// Collect access JTIs of the chain BEFORE flipping revoked_at, so
+	// we can hand them to revokeAccessJTI after the UPDATE. The IN
+	// (SELECT id FROM chain) predicate is the chain's transitive closure.
 	jtiRows, err := db.QueryContext(ctx,
-		`SELECT last_access_jti FROM oauth_tokens
-		 WHERE user_id = ? AND kind = 'refresh_token' AND revoked_at IS NULL
+		chainCTE+`
+		SELECT last_access_jti FROM oauth_tokens
+		 WHERE id IN (SELECT id FROM chain)
+		   AND kind = 'refresh_token'
+		   AND revoked_at IS NULL
 		   AND last_access_jti IS NOT NULL AND last_access_jti != ''`,
-		userID)
+		rootID)
 	jtis := make([]string, 0, 4)
 	if err == nil {
 		for jtiRows.Next() {
@@ -597,10 +622,14 @@ func sweepRefreshAndAccessJTIs(ctx context.Context, db *sql.DB, userID string, n
 	}
 
 	sweepRes, sweepErr := db.ExecContext(ctx,
-		`UPDATE oauth_tokens SET revoked_at = ? WHERE user_id = ? AND kind = 'refresh_token' AND revoked_at IS NULL`,
-		now.Unix(), userID)
+		chainCTE+`
+		UPDATE oauth_tokens SET revoked_at = ?
+		 WHERE id IN (SELECT id FROM chain)
+		   AND kind = 'refresh_token'
+		   AND revoked_at IS NULL`,
+		rootID, now.Unix())
 	if sweepErr != nil {
-		slog.Warn("refresh_replay_sweep_failed", "user_id", userID, "reason", reason, "err", sweepErr.Error())
+		slog.Warn("refresh_replay_sweep_failed", "user_id", userID, "root_id", rootID, "reason", reason, "err", sweepErr.Error())
 		return
 	}
 	rows, _ := sweepRes.RowsAffected()
@@ -609,11 +638,12 @@ func sweepRefreshAndAccessJTIs(ctx context.Context, db *sql.DB, userID string, n
 	// 401s on the next request.
 	for _, j := range jtis {
 		if jerr := revokeAccessJTI(ctx, db, j, "system", reason); jerr != nil {
-			slog.Warn("sweep_revoke_access_jti_failed", "user_id", userID, "jti", j, "err", jerr.Error())
+			slog.Warn("sweep_revoke_access_jti_failed", "user_id", userID, "root_id", rootID, "jti", j, "err", jerr.Error())
 		}
 	}
 	slog.Warn("refresh_replay_sweep_triggered",
 		"user_id", userID,
+		"root_id", rootID,
 		"reason", reason,
 		"refresh_rows_revoked", rows,
 		"access_jtis_revoked", len(jtis))
@@ -627,7 +657,12 @@ func sweepRefreshAndAccessJTIs(ctx context.Context, db *sql.DB, userID string, n
 // CRITICAL — tenantID comes from the stored row, never from caller
 // state. This is the cross-tenant safety boundary referenced in
 // Rule 4 of CLAUDE.md.
-func mintAccessAndRefresh(ctx context.Context, db *sql.DB, signer *SigningKey, cfg OAuthConfig, userID, tenantID, clientID, redirectURI, scope string, now time.Time) (access, refresh string, err error) {
+// mintAccessAndRefresh mints a fresh (access, refresh) pair and stores
+// the refresh row. parentID is the id of the refresh row this mint
+// descends from (empty string for the initial mint at the
+// authorization_code redemption). The parent linkage powers the
+// per-chain replay sweep (plan-002 finding #7).
+func mintAccessAndRefresh(ctx context.Context, db *sql.DB, signer *SigningKey, cfg OAuthConfig, userID, tenantID, clientID, redirectURI, scope, parentID string, now time.Time) (access, refresh string, err error) {
 	// The Claims.Tenants slice is what every downstream tenant-check
 	// reads. Build it from the stored tenant_id and ONLY that — no
 	// merging with any other source.
@@ -667,13 +702,20 @@ func mintAccessAndRefresh(ctx context.Context, db *sql.DB, signer *SigningKey, c
 	// can look it up and INSERT into revoked_jtis. Without this column
 	// the access token stayed valid for its full 1h TTL after a revoke
 	// (plan-002 finding #8).
+	// parent_id links this row back to the refresh row it descends from
+	// (plan-002 finding #7). NULL on the initial mint (empty parentID
+	// arg); the rotation path passes the OLD row's id.
+	var parentArg any
+	if parentID != "" {
+		parentArg = parentID
+	}
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO oauth_tokens (
 			id, user_id, tenant_id, kind, client_id, redirect_uri, scope,
-			expires_at, created_at, last_access_jti
-		) VALUES (?, ?, ?, 'refresh_token', ?, ?, ?, ?, ?, ?)`,
+			expires_at, created_at, last_access_jti, parent_id
+		) VALUES (?, ?, ?, 'refresh_token', ?, ?, ?, ?, ?, ?, ?)`,
 		id, userID, tenantID, clientID, redirectURI, scope,
-		now.Add(cfg.refreshTTL()).Unix(), now.Unix(), accessJTI)
+		now.Add(cfg.refreshTTL()).Unix(), now.Unix(), accessJTI, parentArg)
 	if err != nil {
 		return "", "", fmt.Errorf("store refresh: %w", err)
 	}

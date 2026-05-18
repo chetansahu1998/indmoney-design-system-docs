@@ -65,7 +65,8 @@ func newOAuthTestDB(t *testing.T) *sql.DB {
 			consumed_at           INTEGER,
 			revoked_at            INTEGER,
 			created_at            INTEGER NOT NULL,
-			last_access_jti       TEXT
+			last_access_jti       TEXT,
+			parent_id             TEXT
 		)`,
 		`CREATE INDEX idx_oauth_tokens_user_id ON oauth_tokens(user_id)`,
 		`CREATE INDEX idx_oauth_tokens_kind_expires ON oauth_tokens(kind, expires_at)`,
@@ -576,63 +577,156 @@ func TestOAuth_RefreshRotation(t *testing.T) {
 	}
 }
 
-// ─── scenario 6 — refresh-token replay sweeps the user's refresh tokens ──────
+// ─── scenario 6 — refresh-token replay sweeps the CHAIN only ─────────────────
 
-func TestOAuth_RefreshReplayRevokesAllUserTokens(t *testing.T) {
+// TestOAuth_RefreshReplay_SweepsChainOnly — finding #7 (P1). Before
+// the chain-id retrofit, replaying any of the user's old refresh tokens
+// nuked every live refresh token they owned — a victim DoS primitive
+// for anyone who learned a single historical token. The fix tracks
+// parent_id on each rotation so the sweep walks descendants only.
+//
+// Setup: user runs two independent authorize→token flows, producing
+// two chains. Chain 1 gets rotated once to give it depth 2. Replaying
+// chain-1's root must revoke both nodes of chain 1, but leave chain 2
+// fully alive.
+func TestOAuth_RefreshReplay_SweepsChainOnly(t *testing.T) {
 	h := newHarness(t, OAuthConfig{})
 
-	// Build two independent refresh tokens for the same user via two
-	// authorize→token flows.
+	// Build two independent chains for the same user.
 	code1 := runFullAuthorizeStep(t, h, "u-6", "t-alpha")
 	_, body1 := redeemCode(t, h, code1)
-	refresh1, _ := body1["refresh_token"].(string)
+	refresh1Root, _ := body1["refresh_token"].(string)
 
 	code2 := runFullAuthorizeStep(t, h, "u-6", "t-alpha")
 	_, body2 := redeemCode(t, h, code2)
 	refresh2, _ := body2["refresh_token"].(string)
 
-	if refresh1 == "" || refresh2 == "" || refresh1 == refresh2 {
-		t.Fatalf("expected two distinct refresh tokens; got %q / %q", refresh1, refresh2)
+	if refresh1Root == "" || refresh2 == "" || refresh1Root == refresh2 {
+		t.Fatalf("expected two distinct refresh tokens; got %q / %q", refresh1Root, refresh2)
 	}
 
-	// Rotate refresh1 once so it becomes "consumed" (revoked_at set).
+	// Rotate chain 1 once so it has depth 2 — refresh1Root is now the
+	// consumed root, refresh1Rotated is its live descendant.
 	rform := url.Values{}
 	rform.Set("grant_type", "refresh_token")
-	rform.Set("refresh_token", refresh1)
-	if status, _ := h.token(t, rform); status != http.StatusOK {
+	rform.Set("refresh_token", refresh1Root)
+	status, rotateBody := h.token(t, rform)
+	if status != http.StatusOK {
 		t.Fatal("first rotation must succeed")
 	}
-
-	// Replay refresh1 — should trigger sweep that revokes refresh2 too.
-	status, body := h.token(t, rform)
-	if status != http.StatusBadRequest {
-		t.Errorf("replay status = %d, want 400", status)
+	refresh1Rotated, _ := rotateBody["refresh_token"].(string)
+	if refresh1Rotated == "" || refresh1Rotated == refresh1Root {
+		t.Fatalf("rotation didn't yield a new refresh token")
 	}
-	if got, _ := body["error"].(string); got != "invalid_grant" {
+
+	// Replay chain 1's root. The chain-only sweep should:
+	//   - revoke refresh1Root (already revoked from rotation; idempotent)
+	//   - revoke refresh1Rotated (the live descendant)
+	//   - leave refresh2 (a different chain) alive.
+	replayStatus, replayBody := h.token(t, rform)
+	if replayStatus != http.StatusBadRequest {
+		t.Errorf("replay status = %d, want 400", replayStatus)
+	}
+	if got, _ := replayBody["error"].(string); got != "invalid_grant" {
 		t.Errorf("error = %q, want invalid_grant", got)
 	}
 
-	// refresh2 should now be revoked in the DB.
-	var revoked sql.NullInt64
-	if err := h.db.QueryRow(`SELECT revoked_at FROM oauth_tokens WHERE id = ? AND kind = 'refresh_token'`,
-		hashToken(refresh2)).Scan(&revoked); err != nil {
-		t.Fatalf("lookup refresh2: %v", err)
+	// refresh1Rotated must now be revoked (descendant of the replayed root).
+	var rev1Rot sql.NullInt64
+	if err := h.db.QueryRow(`SELECT revoked_at FROM oauth_tokens WHERE id = ?`,
+		hashToken(refresh1Rotated)).Scan(&rev1Rot); err != nil {
+		t.Fatalf("lookup refresh1Rotated: %v", err)
 	}
-	if !revoked.Valid {
-		t.Error("replay-defense sweep did not revoke refresh2")
+	if !rev1Rot.Valid {
+		t.Error("chain sweep did not revoke refresh1Rotated (live descendant of replayed root)")
 	}
 
-	// And refresh2 itself must reject if used.
+	// refresh2 must STILL be alive — it's a different chain, not a
+	// descendant of refresh1Root. This is the heart of the fix: a
+	// replay only kills the chain it leaked from.
+	var rev2 sql.NullInt64
+	if err := h.db.QueryRow(`SELECT revoked_at FROM oauth_tokens WHERE id = ?`,
+		hashToken(refresh2)).Scan(&rev2); err != nil {
+		t.Fatalf("lookup refresh2: %v", err)
+	}
+	if rev2.Valid {
+		t.Error("chain sweep revoked refresh2 — should have been untouched (independent chain)")
+	}
+
+	// And refresh2 itself must still work (rotation succeeds).
 	rform2 := url.Values{}
 	rform2.Set("grant_type", "refresh_token")
 	rform2.Set("refresh_token", refresh2)
-	status2, body3 := h.token(t, rform2)
-	if status2 != http.StatusBadRequest {
-		t.Errorf("refresh2 status after sweep = %d, want 400", status2)
+	s2, body3 := h.token(t, rform2)
+	if s2 != http.StatusOK {
+		t.Errorf("refresh2 rotation after chain-1 sweep: status=%d, want 200; body=%v", s2, body3)
 	}
-	if got, _ := body3["error"].(string); got != "invalid_grant" {
-		t.Errorf("error = %q, want invalid_grant", got)
+}
+
+// TestOAuth_RefreshReplay_DeepChainAllRevoked — finding #7 (P1).
+// Builds a 3-deep chain (R0 → R1 → R2 active) then replays R0. All
+// three rows must be revoked by the descendant-chain walk.
+func TestOAuth_RefreshReplay_DeepChainAllRevoked(t *testing.T) {
+	h := newHarness(t, OAuthConfig{})
+
+	r0 := runAuthorizeAndRedeem(t, h, "u-deep", "t-alpha")
+	r1 := rotate(t, h, r0)
+	r2 := rotate(t, h, r1)
+	if r0 == r1 || r1 == r2 {
+		t.Fatal("rotation did not yield distinct tokens")
 	}
+
+	// Replay R0.
+	rform := url.Values{}
+	rform.Set("grant_type", "refresh_token")
+	rform.Set("refresh_token", r0)
+	status, _ := h.token(t, rform)
+	if status != http.StatusBadRequest {
+		t.Errorf("replay R0 status = %d, want 400", status)
+	}
+
+	// All three rows must be revoked.
+	for label, raw := range map[string]string{"R0": r0, "R1": r1, "R2": r2} {
+		var rev sql.NullInt64
+		if err := h.db.QueryRow(`SELECT revoked_at FROM oauth_tokens WHERE id = ?`,
+			hashToken(raw)).Scan(&rev); err != nil {
+			t.Fatalf("lookup %s: %v", label, err)
+		}
+		if !rev.Valid {
+			t.Errorf("%s not revoked after deep-chain replay sweep", label)
+		}
+	}
+}
+
+// runAuthorizeAndRedeem is a small helper for chain tests — performs
+// the full authorize→redeem flow and returns the refresh token.
+func runAuthorizeAndRedeem(t *testing.T, h *oauthHarness, userID, tenantID string) string {
+	t.Helper()
+	code := runFullAuthorizeStep(t, h, userID, tenantID)
+	_, body := redeemCode(t, h, code)
+	r, _ := body["refresh_token"].(string)
+	if r == "" {
+		t.Fatalf("authorize/redeem produced no refresh token")
+	}
+	return r
+}
+
+// rotate consumes a refresh token, returns the rotated one. Fails the
+// test on any non-200 response.
+func rotate(t *testing.T, h *oauthHarness, refresh string) string {
+	t.Helper()
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("refresh_token", refresh)
+	status, body := h.token(t, form)
+	if status != http.StatusOK {
+		t.Fatalf("rotate status = %d, body=%v", status, body)
+	}
+	r, _ := body["refresh_token"].(string)
+	if r == "" {
+		t.Fatalf("rotation returned no refresh token: %v", body)
+	}
+	return r
 }
 
 // ─── scenario 7 — client allowlist rejects unknown client_id ─────────────────
