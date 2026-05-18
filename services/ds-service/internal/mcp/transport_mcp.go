@@ -25,7 +25,10 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/sse"
 )
 
 // MCP protocol version negotiated at initialize. Bumped when this server
@@ -145,6 +148,12 @@ func RegisterMCPRoutes(mux *http.ServeMux, deps HandlerDeps, requireAuth func(ht
 		panic("mcp: RegisterMCPRoutes called with nil Log")
 	}
 	mux.HandleFunc("POST /mcp", requireAuth(handleMCP(deps)))
+	// Plan 002 U10 — Streamable HTTP optional GET-upgrade-to-SSE path.
+	// Clients send `Accept: text/event-stream` to receive server-initiated
+	// notifications (today: tools/list_changed). The registry is static
+	// post-boot so no publisher exists yet; the wire is in place for
+	// future per-user capability filtering.
+	mux.HandleFunc("GET /mcp", requireAuth(handleMCPStream(deps)))
 }
 
 func handleMCP(deps HandlerDeps) http.HandlerFunc {
@@ -340,6 +349,152 @@ func wrapMCPContent(res Result, invokeErr error) mcpToolResult {
 }
 
 // ─── helpers ───────────────────────────────────────────────────────────────
+
+// ─── GET /mcp — SSE upgrade for server-initiated notifications (U10) ──────
+
+func handleMCPStream(deps HandlerDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if accept := r.Header.Get("Accept"); accept != "" && accept != "*/*" {
+			// Allow text/event-stream OR application/json (some clients
+			// probe both). Reject anything else.
+			if !containsMediaType(accept, "text/event-stream") {
+				writeJRPCError(w, nil, jrpcInvalidRequest, "Accept must include text/event-stream", accept)
+				return
+			}
+		}
+		if deps.Broker == nil {
+			writeJRPCError(w, nil, jrpcInternalError, "broker not configured", nil)
+			return
+		}
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			writeJRPCError(w, nil, jrpcInternalError, "streaming not supported", nil)
+			return
+		}
+		tenantID, err := resolveTenant(deps.ClaimsReader, r)
+		if err != nil {
+			writeJRPCError(w, nil, jrpcInvalidRequest, "no tenant", err.Error())
+			return
+		}
+		claims := deps.ClaimsReader(r)
+		userID := ""
+		if claims != nil {
+			userID = claims.Sub
+		}
+
+		// Trace ID comes from the X-Trace-ID header if present (Atlas
+		// propagates it) — otherwise we mint one so the leak sentinel has
+		// a stable key. Future publishers fanning tools_list_changed will
+		// need to publish on the same trace id to reach this subscriber.
+		traceID := r.Header.Get("X-Trace-ID")
+		if traceID == "" {
+			traceID = uuid.NewString()
+		}
+
+		ch, unsub, err := deps.Broker.Subscribe(traceID, tenantID, userID)
+		if err != nil {
+			writeJRPCError(w, nil, jrpcInternalError, "subscribe", err.Error())
+			return
+		}
+		defer unsub()
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Trace-ID", traceID)
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
+
+		clientGone := r.Context().Done()
+		for {
+			select {
+			case <-clientGone:
+				return
+			case ev, alive := <-ch:
+				if !alive {
+					return
+				}
+				if sse.IsHeartbeat(ev) {
+					_, _ = w.Write([]byte(": keepalive\n\n"))
+					flusher.Flush()
+					continue
+				}
+				if _, ok := ev.(sse.MCPToolsListChanged); ok {
+					// JSON-RPC notification frame. No `id` per spec —
+					// notifications/* never carry one.
+					frame := jrpcResponse{
+						JSONRPC: "2.0",
+						Result: map[string]any{
+							"method": "notifications/tools/list_changed",
+						},
+					}
+					// We emit it as the SSE `data:` payload with the
+					// MCP-spec method as the event name so a client can
+					// filter by SSE event type if it wants.
+					body, _ := json.Marshal(map[string]any{
+						"jsonrpc": "2.0",
+						"method":  "notifications/tools/list_changed",
+					})
+					_, _ = fmt.Fprintf(w, "event: notifications/tools/list_changed\ndata: %s\n\n", body)
+					_ = frame // structured form retained for future emit paths
+					flusher.Flush()
+				}
+				// Other event types are not forwarded over the MCP
+				// stream — they belong to the Atlas SSE handler.
+			}
+		}
+	}
+}
+
+// containsMediaType is a forgiving `Accept` header check — splits on
+// comma, trims surrounding whitespace + q-values, matches the bare media
+// type. Good enough for "Accept: text/event-stream, */*" style headers
+// without pulling in a full RFC 7231 parser.
+func containsMediaType(accept, want string) bool {
+	for len(accept) > 0 {
+		i := indexOfComma(accept)
+		var part string
+		if i < 0 {
+			part = accept
+			accept = ""
+		} else {
+			part = accept[:i]
+			accept = accept[i+1:]
+		}
+		// Strip whitespace + q-value tail.
+		for len(part) > 0 && (part[0] == ' ' || part[0] == '\t') {
+			part = part[1:]
+		}
+		if j := indexOfSemi(part); j >= 0 {
+			part = part[:j]
+		}
+		for len(part) > 0 && (part[len(part)-1] == ' ' || part[len(part)-1] == '\t') {
+			part = part[:len(part)-1]
+		}
+		if part == want {
+			return true
+		}
+	}
+	return false
+}
+
+func indexOfComma(s string) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == ',' {
+			return i
+		}
+	}
+	return -1
+}
+
+func indexOfSemi(s string) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == ';' {
+			return i
+		}
+	}
+	return -1
+}
 
 func writeJRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {
 	w.Header().Set("Content-Type", "application/json")

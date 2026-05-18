@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -9,8 +10,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/auth"
+	"github.com/indmoney/design-system-docs/services/ds-service/internal/sse"
 )
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -420,5 +423,115 @@ func TestWrapMCPContent_NextActions_AppendedAsExtraContentBlock(t *testing.T) {
 	}
 	if !strings.Contains(out.Content[1].Text, "Next actions") {
 		t.Errorf("content[1] should carry next-actions hint, got %q", out.Content[1].Text)
+	}
+}
+
+// ─── tools/list_changed SSE (U10) ─────────────────────────────────────────
+
+// TestTransportMCP_Stream_PublishedEventReachesSubscriber wires a real
+// MemoryBroker, opens GET /mcp as an SSE stream, publishes an
+// MCPToolsListChanged event on the subscriber's trace id, and asserts
+// the JSON-RPC notification frame is written to the response within 1s.
+func TestTransportMCP_Stream_PublishedEventReachesSubscriber(t *testing.T) {
+	h := newTestHarness(t)
+	broker := sse.NewMemoryBroker(sse.BrokerOptions{Heartbeat: time.Hour})
+
+	deps := HandlerDeps{
+		DB:           h.d,
+		Broker:       broker,
+		ClaimsReader: func(*http.Request) *auth.Claims { return &auth.Claims{Sub: h.userA, Tenants: []string{h.tenantA}} },
+		Registry:     h.registry,
+		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	mux := http.NewServeMux()
+	noAuth := func(fn http.HandlerFunc) http.HandlerFunc { return fn }
+	RegisterMCPRoutes(mux, deps, noAuth)
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	traceID := "u10-test-trace"
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/mcp", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("X-Trace-ID", traceID)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET /mcp: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want text/event-stream", ct)
+	}
+
+	// Give the handler a beat to wire up Subscribe, then publish.
+	time.Sleep(50 * time.Millisecond)
+	broker.Publish(traceID, sse.MCPToolsListChanged{Tenant: h.tenantA})
+
+	// Read up to ~1s, looking for the JSON-RPC notification frame.
+	type chunkErr struct {
+		body []byte
+		err  error
+	}
+	done := make(chan chunkErr, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		n, err := resp.Body.Read(buf)
+		done <- chunkErr{body: buf[:n], err: err}
+	}()
+
+	select {
+	case got := <-done:
+		if got.err != nil && got.err != io.EOF {
+			t.Fatalf("read SSE: %v", got.err)
+		}
+		body := string(got.body)
+		if !strings.Contains(body, "notifications/tools/list_changed") {
+			t.Errorf("did not see JSON-RPC notification in body, got:\n%s", body)
+		}
+		if !strings.Contains(body, "event: notifications/tools/list_changed") {
+			t.Errorf("did not see SSE event-type header, got:\n%s", body)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("did not receive notification within 1s")
+	}
+}
+
+// TestTransportMCP_Stream_RejectsNonEventStreamAccept asserts the GET
+// upgrade rejects clients that don't ask for text/event-stream.
+func TestTransportMCP_Stream_RejectsNonEventStreamAccept(t *testing.T) {
+	h := newTestHarness(t)
+	broker := sse.NewMemoryBroker(sse.BrokerOptions{Heartbeat: time.Hour})
+	deps := HandlerDeps{
+		DB:           h.d,
+		Broker:       broker,
+		ClaimsReader: func(*http.Request) *auth.Claims { return &auth.Claims{Sub: h.userA, Tenants: []string{h.tenantA}} },
+		Registry:     h.registry,
+		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	handler := handleMCPStream(deps)
+
+	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	req.Header.Set("Accept", "application/xml")
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+
+	var resp jrpcResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Error == nil || resp.Error.Code != jrpcInvalidRequest {
+		t.Errorf("expected invalid-request error, got %+v", resp.Error)
 	}
 }

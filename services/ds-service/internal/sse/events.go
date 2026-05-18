@@ -306,3 +306,23 @@ func (e DRDPrototypeAttached) Type() string { return "drd.prototype_attached" }
 
 // Payload implements Event.
 func (e DRDPrototypeAttached) Payload() any { return e }
+
+// MCPToolsListChanged (plan 002 U10) fires when the MCP tool registry's
+// visible surface changes — today the registry is static post-boot, so
+// no publisher exists; the type sits in place so future per-user
+// capability filtering (e.g. role-gated tools) has a wire to ride. The
+// MCP transport's SSE upgrade translates this into a JSON-RPC
+// `notifications/tools/list_changed` frame on the open `GET /mcp`
+// stream.
+type MCPToolsListChanged struct {
+	Tenant string `json:"tenant_id"`
+}
+
+// TenantID implements Event.
+func (e MCPToolsListChanged) TenantID() string { return e.Tenant }
+
+// Type implements Event.
+func (e MCPToolsListChanged) Type() string { return "mcp.tools_list_changed" }
+
+// Payload implements Event.
+func (e MCPToolsListChanged) Payload() any { return e }
