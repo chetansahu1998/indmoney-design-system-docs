@@ -1,11 +1,22 @@
 ---
 title: "feat: ds-service MCP layer — spec compliance + Claude Connector readiness"
-status: active
+status: completed
 created: 2026-05-18
+completed: 2026-05-18
 type: feat
 depth: deep
 audit_source: chat-audit, late 2025/2026 best-practices research
 target_repo: indmoney-design-system-docs
+ship_commits:
+  - 09357ba  # U4 — Tool metadata satellite interfaces (Title/SideEffects/DeferLoading)
+  - 0632270  # U1+U2+U3 — JSON-RPC transport, envelope adapter, constitution doc
+  - 9fa6fc2  # U5 — boundary descriptions + per-param schemas (26 tools)
+  - 15c559d  # U9 — nested _meta object on tools/list descriptors
+  - 5f5fda1  # U6 — promote 11 prd.author sub-ops to first-class Visible tools
+  - 3aa57d8  # U7 — Atlas /api/prd/.../full migrated to prd.get
+  - b5685d4  # U8 — OAuth 2.1 + PKCE for the Claude.ai Connector flow
+  - 2211189  # U10 — SSE upgrade on GET /mcp + tools/list_changed notification
+  - 2114649  # U11 — HTTP-layer integration tests (incl. OAuth → MCP bridge)
 ---
 
 # feat: ds-service MCP layer — spec compliance + Claude Connector readiness
