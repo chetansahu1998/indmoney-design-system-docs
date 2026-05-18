@@ -50,6 +50,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -758,8 +759,25 @@ func writeTokenResponse(w http.ResponseWriter, access, refresh, scope string, tt
 
 // ─── /v1/oauth/revoke ─────────────────────────────────────────────────────────
 
+// revokeRateLimiter rate-limits /v1/oauth/revoke per source IP. RFC 7009
+// §2.1 makes revoke unauthenticated by design — anyone who knows a
+// refresh token can revoke it — but §2.2 acknowledges this opens a DoS
+// vector if an attacker who learns one token can spam the endpoint to
+// thrash the DB / log fan-out. /ce-code-review finding #26.
+//
+// 60 ops/min/IP is generous for legitimate clients (a connector that
+// rotates tokens hourly hits this maybe twice an hour) and tight
+// against scripted abuse. Tunable via OAuthConfig.RevokeRateLimit.
+var revokeRateLimiter = newPerIPRateLimiter(60, time.Minute)
+
 func handleOAuthRevoke(db *sql.DB, cfg OAuthConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !revokeRateLimiter.Allow(clientIP(r)) {
+			w.Header().Set("Retry-After", "60")
+			writeOAuthError(w, http.StatusTooManyRequests, errInvalidRequest,
+				"rate limit exceeded — retry after 60s")
+			return
+		}
 		if err := r.ParseForm(); err != nil {
 			writeOAuthError(w, http.StatusBadRequest, errInvalidRequest, "parse form: "+err.Error())
 			return
@@ -853,6 +871,112 @@ func ParseClients(env string) ([]OAuthClient, error) {
 	return out, nil
 }
 
+// ─── reaper — periodic cleanup of expired / long-revoked rows ────────────────
+
+// reaperRevokedRetention is how long a revoked row stays around before
+// being purged. 30 days gives security forensics a window to inspect
+// recently-revoked tokens (replay investigations, leak audits).
+const reaperRevokedRetention = 30 * 24 * time.Hour
+
+// reaperInterval is how often the reaper wakes up. 1h keeps the table
+// bounded without thrashing the disk; the per-row work is a single
+// indexed DELETE.
+const reaperInterval = time.Hour
+
+// StartOAuthTokenReaper spawns a background goroutine that periodically
+// purges expired authorization_codes (60s TTL — fast-rotating, big
+// volume contributor) and long-revoked rows (refresh + auth-code).
+// /ce-code-review finding #20. Returns immediately; the goroutine
+// shuts down when ctx is cancelled.
+//
+// The reaper is deliberately tolerant of failure: errors are logged
+// but don't terminate the loop. A failed cleanup leaves rows for the
+// next tick to retry. There's no leadership / lock — running on multi-
+// replica deploys means each replica does its own DELETE pass, but
+// the WHERE clause is idempotent and the DB serializes the writes.
+func StartOAuthTokenReaper(ctx context.Context, db *sql.DB, log *slog.Logger) {
+	if log == nil {
+		log = slog.Default()
+	}
+	go func() {
+		ticker := time.NewTicker(reaperInterval)
+		defer ticker.Stop()
+		// Run once immediately on startup — clears anything that piled
+		// up while the process was down.
+		runOAuthReaperPass(ctx, db, log)
+		for {
+			select {
+			case <-ctx.Done():
+				log.Info("oauth_token_reaper_stopped")
+				return
+			case <-ticker.C:
+				runOAuthReaperPass(ctx, db, log)
+			}
+		}
+	}()
+}
+
+// runOAuthReaperPass executes a single DELETE pass. Exported as a
+// distinct function so tests can call it deterministically without
+// waiting on the ticker.
+func runOAuthReaperPass(ctx context.Context, db *sql.DB, log *slog.Logger) {
+	now := time.Now()
+
+	// Expired authorization codes that were never consumed (user
+	// abandoned mid-flow). idx_oauth_tokens_kind_expires covers this.
+	res1, err := db.ExecContext(ctx,
+		`DELETE FROM oauth_tokens
+		 WHERE kind = 'authorization_code'
+		   AND expires_at < ?`,
+		now.Unix())
+	codeRows := int64(0)
+	if err != nil {
+		log.Warn("oauth_token_reaper_codes_failed", "err", err.Error())
+	} else {
+		codeRows, _ = res1.RowsAffected()
+	}
+
+	// Long-revoked refresh + code rows. Retention horizon lets us
+	// investigate a replay incident post-mortem.
+	retentionCutoff := now.Add(-reaperRevokedRetention).Unix()
+	res2, err := db.ExecContext(ctx,
+		`DELETE FROM oauth_tokens
+		 WHERE revoked_at IS NOT NULL
+		   AND revoked_at < ?`,
+		retentionCutoff)
+	revokedRows := int64(0)
+	if err != nil {
+		log.Warn("oauth_token_reaper_revoked_failed", "err", err.Error())
+	} else {
+		revokedRows, _ = res2.RowsAffected()
+	}
+
+	// Expired refresh tokens that were never rotated or revoked
+	// (orphans — user disconnected the connector without explicit
+	// revoke). Keep these around for the same retention window so
+	// the row's last_access_jti is still queryable during incident
+	// review.
+	res3, err := db.ExecContext(ctx,
+		`DELETE FROM oauth_tokens
+		 WHERE kind = 'refresh_token'
+		   AND revoked_at IS NULL
+		   AND expires_at < ?`,
+		retentionCutoff)
+	expiredRows := int64(0)
+	if err != nil {
+		log.Warn("oauth_token_reaper_expired_failed", "err", err.Error())
+	} else {
+		expiredRows, _ = res3.RowsAffected()
+	}
+
+	if codeRows+revokedRows+expiredRows > 0 {
+		log.Info("oauth_token_reaper_pass",
+			"expired_codes", codeRows,
+			"long_revoked", revokedRows,
+			"long_expired_refreshes", expiredRows)
+	}
+}
+
 // DefaultClients returns the production-default client allowlist —
 // claude.ai with its documented Custom Connector callback. Used when
 // OAUTH_CLIENTS env is unset.
@@ -861,4 +985,142 @@ func DefaultClients() []OAuthClient {
 		ID:                  "claude.ai",
 		AllowedRedirectURIs: []string{"https://claude.ai/api/mcp/auth_callback"},
 	}}
+}
+
+// ─── per-IP rate limiter (minimal in-memory token bucket) ────────────────────
+
+// perIPRateLimiter caps requests per source IP at `maxOps` per `window`.
+// Self-contained — no x/time/rate dependency. Buckets are stored in a
+// sync.Map keyed by IP string; entries are GC'd lazily when a request
+// for that IP refills its full bucket (no background sweep needed).
+// Acceptable for /v1/oauth/revoke's traffic profile (low-frequency,
+// high-cardinality IPs); switch to a real LRU if revoke moves to a
+// hot path.
+type perIPRateLimiter struct {
+	maxOps int
+	window time.Duration
+	mu     sync.Mutex
+	state  map[string]*ipBucket
+}
+
+type ipBucket struct {
+	tokens  int
+	refill  time.Time // wall clock when next token regenerates
+	updated time.Time // last activity — for sloppy eviction
+}
+
+func newPerIPRateLimiter(maxOps int, window time.Duration) *perIPRateLimiter {
+	return &perIPRateLimiter{
+		maxOps: maxOps,
+		window: window,
+		state:  make(map[string]*ipBucket),
+	}
+}
+
+// Allow returns true and consumes one token if available; false when
+// the IP has exceeded its budget for the current window.
+func (l *perIPRateLimiter) Allow(ip string) bool {
+	if ip == "" {
+		// No source IP — best-effort allow; the rate limiter is one
+		// layer of defense, not the only one.
+		return true
+	}
+	now := time.Now()
+	tokenInterval := l.window / time.Duration(l.maxOps)
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	b, ok := l.state[ip]
+	if !ok {
+		// First-seen IP — full bucket minus this op.
+		l.state[ip] = &ipBucket{
+			tokens:  l.maxOps - 1,
+			refill:  now.Add(tokenInterval),
+			updated: now,
+		}
+		l.gcExpired(now)
+		return true
+	}
+	// Refill: add as many tokens as elapsed full intervals, capped at maxOps.
+	if now.After(b.refill) {
+		elapsed := now.Sub(b.refill)
+		add := int(elapsed/tokenInterval) + 1
+		b.tokens += add
+		if b.tokens > l.maxOps {
+			b.tokens = l.maxOps
+		}
+		b.refill = now.Add(tokenInterval)
+	}
+	b.updated = now
+	if b.tokens <= 0 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
+// gcExpired drops bucket entries idle for >5× the window. Called
+// opportunistically on new-IP inserts so the map doesn't grow
+// unbounded under burst traffic from many IPs.
+func (l *perIPRateLimiter) gcExpired(now time.Time) {
+	cutoff := now.Add(-5 * l.window)
+	for k, b := range l.state {
+		if b.updated.Before(cutoff) {
+			delete(l.state, k)
+		}
+	}
+}
+
+// clientIP extracts the request's source IP. Honors X-Forwarded-For
+// (first hop) when present — Fly's proxy sets it — and falls back to
+// RemoteAddr's host portion. Returns "" if neither yields anything.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// First IP in the list is the original client per RFC 7239.
+		if comma := indexByte(xff, ','); comma > 0 {
+			xff = xff[:comma]
+		}
+		xff = trimSpaces(xff)
+		if xff != "" {
+			return xff
+		}
+	}
+	if r.RemoteAddr == "" {
+		return ""
+	}
+	// RemoteAddr is "host:port"; strip the port.
+	if colon := lastIndexByte(r.RemoteAddr, ':'); colon > 0 {
+		return r.RemoteAddr[:colon]
+	}
+	return r.RemoteAddr
+}
+
+func indexByte(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+func lastIndexByte(s string, c byte) int {
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+func trimSpaces(s string) string {
+	start, end := 0, len(s)
+	for start < end && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
+		end--
+	}
+	return s[start:end]
 }

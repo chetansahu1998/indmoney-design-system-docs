@@ -526,6 +526,14 @@ func main() {
 		inventoryPoller.Start(workerCtx)
 	}
 
+	// OAuth tokens reaper — /ce-code-review #20. Periodically purges
+	// expired authorization_codes (60s TTL — biggest growth vector),
+	// long-revoked rows (30-day forensic retention), and unrevoked
+	// expired refresh tokens. Lives off workerCtx so SIGTERM cancels
+	// the loop cleanly. Multi-replica safe: WHERE clauses are
+	// idempotent and the DB serializes the DELETEs.
+	auth.StartOAuthTokenReaper(workerCtx, dbConn.DB, log)
+
 	// Autosync auto-retry ticker. Re-runs the Planner+Executor across
 	// every in-window allowlist file at a regular cadence. The planner
 	// now treats project_versions.status='failed' as a retry trigger

@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -281,6 +283,123 @@ func TestOAuth_HappyPath_AuthorizeTokenRefresh(t *testing.T) {
 	}
 	if !revoked.Valid {
 		t.Error("old refresh token revoked_at is NULL after rotation")
+	}
+}
+
+// TestOAuth_TokenReaper_PurgesExpectedRows — finding #20 (P2). One
+// reaper pass should delete expired authorization_codes, long-revoked
+// rows (past retention), and long-expired refresh tokens; while
+// leaving live refresh tokens + recently-revoked rows alone.
+func TestOAuth_TokenReaper_PurgesExpectedRows(t *testing.T) {
+	h := newHarness(t, OAuthConfig{})
+	seedUser(t, h.db, "u-reaper", "u-reaper@example.com")
+
+	now := time.Now().Unix()
+	longAgo := time.Now().Add(-(reaperRevokedRetention + time.Hour)).Unix()
+	recent := time.Now().Add(-time.Minute).Unix()
+	future := time.Now().Add(time.Hour).Unix()
+
+	insert := func(id, kind string, expiresAt, revokedAt int64) {
+		t.Helper()
+		var revokedArg any
+		if revokedAt != 0 {
+			revokedArg = revokedAt
+		}
+		_, err := h.db.Exec(`
+			INSERT INTO oauth_tokens (id, user_id, tenant_id, kind, client_id, redirect_uri, scope, expires_at, created_at, revoked_at)
+			VALUES (?, 'u-reaper', 't-alpha', ?, 'claude.ai', 'https://x/cb', '', ?, ?, ?)`,
+			id, kind, expiresAt, now, revokedArg)
+		if err != nil {
+			t.Fatalf("seed row %s: %v", id, err)
+		}
+	}
+
+	// Should be reaped:
+	insert("code-expired", "authorization_code", now-300, 0)             // expired authz code
+	insert("refresh-long-revoked", "refresh_token", future, longAgo)     // revoked past retention
+	insert("refresh-long-expired", "refresh_token", longAgo, 0)          // expired past retention
+
+	// Should survive:
+	insert("code-live", "authorization_code", future, 0)                 // unconsumed live code
+	insert("refresh-live", "refresh_token", future, 0)                   // live refresh
+	insert("refresh-recently-revoked", "refresh_token", future, recent)  // within retention
+
+	runOAuthReaperPass(context.Background(), h.db, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	survives := func(id string) bool {
+		t.Helper()
+		var c int
+		if err := h.db.QueryRow(`SELECT COUNT(*) FROM oauth_tokens WHERE id = ?`, id).Scan(&c); err != nil {
+			t.Fatal(err)
+		}
+		return c == 1
+	}
+
+	// Reaped — must be gone.
+	for _, gone := range []string{"code-expired", "refresh-long-revoked", "refresh-long-expired"} {
+		if survives(gone) {
+			t.Errorf("reaper did not delete %s", gone)
+		}
+	}
+	// Survived — must still be there.
+	for _, kept := range []string{"code-live", "refresh-live", "refresh-recently-revoked"} {
+		if !survives(kept) {
+			t.Errorf("reaper deleted %s — should have been kept", kept)
+		}
+	}
+}
+
+// TestOAuth_RevokeEndpoint_RateLimited — finding #26 (P3). RFC 7009
+// makes /v1/oauth/revoke unauthenticated by design, which opens a DoS
+// vector when an attacker who learns one token can spam the endpoint.
+// Per-IP token bucket caps it at 60/min by default.
+func TestOAuth_RevokeEndpoint_RateLimited(t *testing.T) {
+	h := newHarness(t, OAuthConfig{})
+
+	// Use a fresh limiter scoped to this test so other tests' traffic
+	// doesn't bleed into the budget. The production limiter is a
+	// package var; for the test we directly hammer it via the harness.
+	originalLimiter := revokeRateLimiter
+	revokeRateLimiter = newPerIPRateLimiter(3, time.Minute)
+	t.Cleanup(func() { revokeRateLimiter = originalLimiter })
+
+	form := url.Values{}
+	form.Set("token", "doesnt-matter-rate-limit-runs-first")
+
+	// First 3 requests succeed (status 200 — RFC 7009 §2.2 silent ack
+	// regardless of whether the token existed).
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/v1/oauth/revoke", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = "192.0.2.1:54321"
+		w := httptest.NewRecorder()
+		h.mux.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("req %d: status=%d, want 200", i+1, w.Code)
+		}
+	}
+
+	// 4th request from same IP → 429 + Retry-After.
+	req := httptest.NewRequest(http.MethodPost, "/v1/oauth/revoke", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "192.0.2.1:54321"
+	w := httptest.NewRecorder()
+	h.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Errorf("4th req status = %d, want 429", w.Code)
+	}
+	if w.Header().Get("Retry-After") == "" {
+		t.Error("429 response missing Retry-After header")
+	}
+
+	// Different IP → fresh budget, allowed.
+	req = httptest.NewRequest(http.MethodPost, "/v1/oauth/revoke", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "192.0.2.2:54321"
+	w = httptest.NewRecorder()
+	h.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("different-IP status = %d, want 200 (separate budget)", w.Code)
 	}
 }
 
