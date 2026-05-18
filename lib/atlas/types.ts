@@ -148,6 +148,25 @@ export interface Leaf {
    * Optional by design — legacy leaves render the 6-tab inspector as today.
    */
   subFlow?: SubFlowSummary;
+  /**
+   * Figma file key — the file this section lives in. Used to disambiguate
+   * same-named sections across files (Wallet in V3 vs Wallet in V4).
+   */
+  fileKey?: string;
+  /**
+   * Human-readable file name shown as metadata on the section node
+   * (e.g. "INDstocks V4"). Pure metadata — the file is NOT a separate
+   * brain node in the user-described hierarchy.
+   */
+  fileName?: string;
+  /** Raw figma_section.section_id — pairs with fileKey for uniqueness. */
+  sectionID?: string;
+  /**
+   * Project slug for back-compat file-canvas navigation. Multiple
+   * section leaves can share the same projectSlug (sections within one
+   * file all map to the same project row).
+   */
+  projectSlug?: string;
 }
 
 /**
@@ -298,7 +317,7 @@ export interface DRDDocument {
 }
 
 /**
- * PRDFull — typed PRD document returned by the MCP `prd.author op:get` tool.
+ * PRDFull — typed PRD document returned by the MCP `prd.get` tool.
  *
  * Snake-case keys mirror the Go-side JSON tags in
  * services/ds-service/internal/projects/prd.go (PRD, PRDTab, PRDState, and

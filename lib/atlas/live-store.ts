@@ -244,7 +244,7 @@ interface AtlasStoreState {
   attachSubFlowToLeaf: (leafID: string, subFlow: SubFlowSummary | null) => void;
   /**
    * Plan 005 U2 — lazy-fetch the PRD doc for a leaf's sub_flow. Stub today;
-   * U2 wires it to the MCP `prd.author op:get` proxy. Marked async + returns
+   * U2 wires it to the MCP `prd.get` proxy. Marked async + returns
    * Promise<void> so U2 can flesh out without changing the contract.
    */
   loadLeafPRD: (leafID: string) => Promise<void>;
@@ -587,7 +587,20 @@ export const useAtlas = create<AtlasStoreState>()(
           // Fetch canvas + overlays from the LEAF's own project slug. flowID=""
           // tells fetchLeafCanvas/Overlays to pull the whole project (all flows
           // collapsed) rather than filter to one section.
-          const projectSlug = leaf.id;
+          //
+          // May 18, 2026: leaves became sections (leaf.id is now
+          // "<file_key>/<section_id>"), so prefer the explicit
+          // `projectSlug` field threaded through by productLeafToLeaf.
+          // The fall-through to leaf.id keeps legacy file-leaf flows
+          // (e.g. brain-nodes path) working untouched.
+          const projectSlug = leaf.projectSlug || leaf.id;
+          if (!projectSlug) {
+            // Section in a file that never had an export run — no
+            // project_versions, no screens. Leaving the slot unloaded
+            // is the right UX: the inspector will show "Not yet
+            // extracted" instead of fetching a 404 and erroring.
+            return;
+          }
           const canvas = await fetchLeafCanvas(projectSlug, "", undefined);
           const framesByID = new Map(canvas.frames.map((f) => [f.id, f]));
           const overlays = await fetchLeafOverlays(

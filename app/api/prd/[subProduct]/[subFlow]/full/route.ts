@@ -1,9 +1,10 @@
 /**
  * GET /api/prd/{subProduct}/{subFlow}/full
  *
- * Document-view companion to /api/projects/.../prd. Calls prd.author with
- * `op=get` (which dispatches to the deep prd.get tool) and returns the
- * full PRD shape (tabs → states → typed stems → frame tags).
+ * Document-view companion to /api/projects/.../prd. Calls the top-level
+ * prd.get tool directly (plan 002 U6 promoted it from a prd.author op
+ * to a first-class MCP tool) and returns the full PRD shape
+ * (tabs → states → typed stems → frame tags).
  *
  * Lives separately from /prd because the wall path is cheap (section.inspect
  * returns it inline) and most viewer visits sit on the Wall tab. The
@@ -61,7 +62,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
   try {
     const upstream = await fetch(
-      `${DS_SERVICE_URL}/v1/mcp/invoke/prd.author`,
+      `${DS_SERVICE_URL}/v1/mcp/invoke/prd.get`,
       {
         method: "POST",
         headers: {
@@ -69,10 +70,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           "Content-Type": "application/json",
           "X-Trace-ID": traceId,
         },
-        body: JSON.stringify({
-          op: "get",
-          args: { sub_flow_slug: fullSlug },
-        }),
+        body: JSON.stringify({ sub_flow_slug: fullSlug }),
         signal: AbortSignal.timeout(15_000),
       },
     );
