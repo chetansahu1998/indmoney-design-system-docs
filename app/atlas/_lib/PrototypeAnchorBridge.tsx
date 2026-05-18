@@ -125,7 +125,7 @@ export function PrototypeAnchorBridge({ iframeRef, subFlowSlug }: Props) {
           (a) => a.screen_id === data.screenId,
         );
         if (direct) {
-          anchorToBlockId(direct.block_id, data.screenId!);
+          anchorToBlockId(direct.block_id, data.screenId!, data.label ?? "");
         } else {
           // Phase A fallback — heuristic by label-token match. Useful
           // for prototypes that haven't been anchored yet.
@@ -253,16 +253,26 @@ function anchorToBlock(screenId: string, label: string) {
  * and pulse it. Falls back to the Phase A heuristic only when the
  * anchor table has no entry for the screen id.
  */
-function anchorToBlockId(blockId: string, screenId: string) {
+function anchorToBlockId(
+  blockId: string,
+  screenId: string,
+  label: string,
+) {
   const drdHost = document.querySelector(".lc-ins-drd-host, .lc-drd-editor-host");
   if (!drdHost) return;
   const block = drdHost.querySelector<HTMLElement>(
     `.bn-block[data-id="${cssEscape(blockId)}"]`,
   );
   if (!block) {
-    // Anchored to a block that no longer exists (deleted in a recent
-    // edit). Fall through to heuristic so the click still does
-    // something useful.
+    // Anchor row exists in the DB but the BlockNote block was deleted
+    // (or the DRD content_json was regenerated, which re-rolls all
+    // block UUIDs). Fall through to the Phase A heuristic so the
+    // click still lands somewhere useful instead of silently no-op.
+    // eslint-disable-next-line no-console
+    console.info(
+      `[atlas-anchor] anchored block_id ${blockId} missing for ${screenId} — falling back to heuristic`,
+    );
+    anchorToBlock(screenId, label);
     return;
   }
   pulseOverlay(drdHost as HTMLElement, block, screenId);
