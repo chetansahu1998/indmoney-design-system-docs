@@ -132,6 +132,9 @@ type resolveArgs struct {
 
 func (resolveTool) Name() string               { return "resolve" }
 func (resolveTool) Visibility() ToolVisibility { return Deep }
+func (resolveTool) Title() string              { return "Universal Slug Resolver" }
+func (resolveTool) SideEffects() SideEffect    { return ReadOnly }
+func (resolveTool) DeferLoading() bool         { return true }
 func (resolveTool) Description() string {
 	return "Resolve a universal sub-product slug ({sub_product}/{sub_flow} or " +
 		"{sub_product}/{sub_flow}/{state}) to its joined view: sub_flow + " +

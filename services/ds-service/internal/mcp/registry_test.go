@@ -573,3 +573,50 @@ func TestTenantIsolation_SubflowsFromTenantBNotVisible(t *testing.T) {
 		t.Fatalf("expected not-found error from tenantB lookup, got nil")
 	}
 }
+
+// TestRegistry_AllToolsHaveCompleteMetadata enforces plan 002 U4 — every
+// registered tool must implement the extended Tool interface with a
+// non-empty Title, a valid SideEffects classification, and a sensible
+// DeferLoading default (Visible→false, Deep→true).
+func TestRegistry_AllToolsHaveCompleteMetadata(t *testing.T) {
+	r := NewDefaultRegistry()
+	all := r.ListAll()
+	if len(all) == 0 {
+		t.Fatal("expected NewDefaultRegistry to register at least one tool")
+	}
+	for _, tool := range all {
+		name := tool.Name()
+		titled, hasTitle := tool.(ToolTitled)
+		if !hasTitle {
+			t.Errorf("%s: missing ToolTitled (no Title() method)", name)
+		} else if title := titled.Title(); title == "" {
+			t.Errorf("%s: Title() is empty", name)
+		} else if len(title) > 60 {
+			t.Errorf("%s: Title() exceeds 60 chars (%d): %q", name, len(title), title)
+		}
+		sided, hasSide := tool.(ToolSideEffected)
+		if !hasSide {
+			t.Errorf("%s: missing ToolSideEffected (no SideEffects() method)", name)
+		} else {
+			side := sided.SideEffects()
+			if side < ReadOnly || side > Destructive {
+				t.Errorf("%s: SideEffects() out of valid range: %d", name, side)
+			}
+		}
+		deferable, hasDefer := tool.(ToolDeferable)
+		if !hasDefer {
+			t.Errorf("%s: missing ToolDeferable (no DeferLoading() method)", name)
+			continue
+		}
+		visible := tool.Visibility() == Visible
+		d := deferable.DeferLoading()
+		// Default convention: Visible→false, Deep→true. The interface
+		// allows override, but flag anything unexpected for review.
+		if visible && d {
+			t.Errorf("%s: Visible tool with DeferLoading()==true — Claude eager-loads visible tools, this annotation is contradictory", name)
+		}
+		if !visible && !d {
+			t.Logf("note: %s is Deep but DeferLoading()==false — verify this is intentional", name)
+		}
+	}
+}

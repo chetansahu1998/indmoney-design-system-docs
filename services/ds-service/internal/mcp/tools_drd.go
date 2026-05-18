@@ -39,6 +39,9 @@ type drdAppendResult struct {
 
 func (drdAppendTool) Name() string               { return "drd.append" }
 func (drdAppendTool) Visibility() ToolVisibility { return Deep }
+func (drdAppendTool) Title() string              { return "Append DRD Snapshot" }
+func (drdAppendTool) SideEffects() SideEffect    { return Mutating }
+func (drdAppendTool) DeferLoading() bool         { return true }
 func (drdAppendTool) Description() string {
 	return "Seed (or append a snapshot to) the DRD YDoc for a sub_flow. Orchestrates UpsertFlow → CreateDRDForSubFlow → PersistYDocSnapshotBySubFlow."
 }
@@ -107,6 +110,9 @@ type drdAttachPrototypeArgs struct {
 
 func (drdAttachPrototypeTool) Name() string               { return "drd.attach_prototype" }
 func (drdAttachPrototypeTool) Visibility() ToolVisibility { return Deep }
+func (drdAttachPrototypeTool) Title() string              { return "Attach Prototype URL" }
+func (drdAttachPrototypeTool) SideEffects() SideEffect    { return Mutating }
+func (drdAttachPrototypeTool) DeferLoading() bool         { return true }
 func (drdAttachPrototypeTool) Description() string {
 	return "Attach an HTML prototype URL to a sub_flow as the placeholder canvas (KTD-8). Publishes drd.prototype_attached SSE."
 }
@@ -155,6 +161,9 @@ type drdDetachPrototypeArgs struct {
 
 func (drdDetachPrototypeTool) Name() string               { return "drd.detach_prototype" }
 func (drdDetachPrototypeTool) Visibility() ToolVisibility { return Deep }
+func (drdDetachPrototypeTool) Title() string              { return "Detach Prototype URL" }
+func (drdDetachPrototypeTool) SideEffects() SideEffect    { return Destructive }
+func (drdDetachPrototypeTool) DeferLoading() bool         { return true }
 func (drdDetachPrototypeTool) Description() string {
 	return "Detach the prototype URL from a sub_flow. No-op when nothing is attached."
 }
@@ -204,6 +213,9 @@ type drdAttachAnchorArgs struct {
 
 func (drdAttachAnchorTool) Name() string               { return "drd.attach_anchor" }
 func (drdAttachAnchorTool) Visibility() ToolVisibility { return Deep }
+func (drdAttachAnchorTool) Title() string              { return "Attach DRD Anchor" }
+func (drdAttachAnchorTool) SideEffects() SideEffect    { return Mutating }
+func (drdAttachAnchorTool) DeferLoading() bool         { return true }
 func (drdAttachAnchorTool) Description() string {
 	return "Bind a DRD BlockNote block id to a prototype screen id. Idempotent."
 }
@@ -255,6 +267,9 @@ type drdDetachAnchorArgs struct {
 
 func (drdDetachAnchorTool) Name() string               { return "drd.detach_anchor" }
 func (drdDetachAnchorTool) Visibility() ToolVisibility { return Deep }
+func (drdDetachAnchorTool) Title() string              { return "Detach DRD Anchor" }
+func (drdDetachAnchorTool) SideEffects() SideEffect    { return Destructive }
+func (drdDetachAnchorTool) DeferLoading() bool         { return true }
 func (drdDetachAnchorTool) Description() string {
 	return "Remove one DRD block ↔ prototype screen anchor. No-op when the pair isn't anchored."
 }
@@ -293,6 +308,9 @@ type drdListAnchorsArgs struct {
 
 func (drdListAnchorsTool) Name() string               { return "drd.list_anchors" }
 func (drdListAnchorsTool) Visibility() ToolVisibility { return Deep }
+func (drdListAnchorsTool) Title() string              { return "List DRD Anchors" }
+func (drdListAnchorsTool) SideEffects() SideEffect    { return ReadOnly }
+func (drdListAnchorsTool) DeferLoading() bool         { return true }
 func (drdListAnchorsTool) Description() string {
 	return "List every DRD block ↔ prototype screen anchor under a sub_flow. Atlas bridge consumes this on leaf-open."
 }

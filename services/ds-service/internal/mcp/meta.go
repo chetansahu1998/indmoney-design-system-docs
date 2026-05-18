@@ -53,7 +53,10 @@ type drdReadDRD struct {
 }
 
 func (drdReadTool) Name() string               { return "drd.read" }
+func (drdReadTool) Title() string              { return "Read DRD Content" }
 func (drdReadTool) Visibility() ToolVisibility { return Visible }
+func (drdReadTool) SideEffects() SideEffect    { return ReadOnly }
+func (drdReadTool) DeferLoading() bool         { return false }
 func (drdReadTool) Description() string {
 	return "Read a sub_flow's DRD content. Returns the YDoc state (base64) plus canvas lifecycle hints. Use this first when a PM names a sub_flow."
 }
@@ -176,7 +179,14 @@ var prdAuthorOpToTool = map[string]string{
 }
 
 func (prdAuthorTool) Name() string               { return "prd.author" }
+func (prdAuthorTool) Title() string              { return "Author PRD (Op-Dispatched)" }
 func (prdAuthorTool) Visibility() ToolVisibility { return Visible }
+// SideEffects: prd.author is a meta-verb that dispatches to one of 11
+// sub-ops. Conservatively classified as Mutating — most ops write; the
+// read-only op:get is the exception. The top-level prd.* tools (plan
+// 002 U6) carry precise per-op classifications.
+func (prdAuthorTool) SideEffects() SideEffect { return Mutating }
+func (prdAuthorTool) DeferLoading() bool      { return false }
 func (prdAuthorTool) Description() string {
 	return "Author or read a PRD. Op-dispatched: {op: get|upsert_tab|add_state|add_event|add_acceptance_criterion|add_edge_case|upsert_copy_string|add_a11y_note|attach_frame|detach_frame|export, args: {...}}. Schema for args is op-specific; on first invocation, send op:get for the current shape."
 }
@@ -320,7 +330,10 @@ type sectionPRDSummary struct {
 }
 
 func (sectionInspectTool) Name() string               { return "section.inspect" }
+func (sectionInspectTool) Title() string              { return "Inspect Sub-Flow" }
 func (sectionInspectTool) Visibility() ToolVisibility { return Visible }
+func (sectionInspectTool) SideEffects() SideEffect    { return ReadOnly }
+func (sectionInspectTool) DeferLoading() bool         { return false }
 func (sectionInspectTool) Description() string {
 	return "Inspect a sub_flow: returns sub_flow metadata, DRD/PRD existence summary, and the frames in the bound Figma section. The PM's default first call."
 }

@@ -40,6 +40,9 @@ type prdGetArgs struct {
 
 func (prdGetTool) Name() string               { return "prd.get" }
 func (prdGetTool) Visibility() ToolVisibility { return Deep }
+func (prdGetTool) Title() string              { return "Get PRD" }
+func (prdGetTool) SideEffects() SideEffect    { return ReadOnly }
+func (prdGetTool) DeferLoading() bool         { return true }
 func (prdGetTool) Description() string {
 	return "Load the full PRD (tabs, states, all stems, frame tags) for a sub_flow."
 }
@@ -87,6 +90,9 @@ type prdUpsertTabArgs struct {
 
 func (prdUpsertTabTool) Name() string               { return "prd.upsert_tab" }
 func (prdUpsertTabTool) Visibility() ToolVisibility { return Deep }
+func (prdUpsertTabTool) Title() string              { return "Upsert PRD Tab" }
+func (prdUpsertTabTool) SideEffects() SideEffect    { return Mutating }
+func (prdUpsertTabTool) DeferLoading() bool         { return true }
 func (prdUpsertTabTool) Description() string {
 	return "Create or update a PRD tab keyed by (prd, name). Auto-creates the parent PRD row if missing."
 }
@@ -150,6 +156,9 @@ type prdAddStateArgs struct {
 
 func (prdAddStateTool) Name() string               { return "prd.add_state" }
 func (prdAddStateTool) Visibility() ToolVisibility { return Deep }
+func (prdAddStateTool) Title() string              { return "Add PRD State" }
+func (prdAddStateTool) SideEffects() SideEffect    { return Mutating }
+func (prdAddStateTool) DeferLoading() bool         { return true }
 func (prdAddStateTool) Description() string {
 	return "Add (or update via idempotent restore) a PRD state in a tab. Tab + PRD auto-created if missing."
 }
@@ -211,6 +220,9 @@ type prdAddEventArgs struct {
 
 func (prdAddEventTool) Name() string               { return "prd.add_event" }
 func (prdAddEventTool) Visibility() ToolVisibility { return Deep }
+func (prdAddEventTool) Title() string              { return "Add Mixpanel Event" }
+func (prdAddEventTool) SideEffects() SideEffect    { return Mutating }
+func (prdAddEventTool) DeferLoading() bool         { return true }
 func (prdAddEventTool) Description() string {
 	return "Add (or update idempotent on name) a Mixpanel event row tied to a PRD state."
 }
@@ -269,6 +281,9 @@ func (prdAddAcceptanceCriterionTool) Name() string { return "prd.add_acceptance_
 func (prdAddAcceptanceCriterionTool) Visibility() ToolVisibility {
 	return Deep
 }
+func (prdAddAcceptanceCriterionTool) Title() string              { return "Add Acceptance Criterion" }
+func (prdAddAcceptanceCriterionTool) SideEffects() SideEffect    { return Mutating }
+func (prdAddAcceptanceCriterionTool) DeferLoading() bool         { return true }
 func (prdAddAcceptanceCriterionTool) Description() string {
 	return "Append an acceptance criterion to a PRD state."
 }
@@ -321,6 +336,9 @@ type prdAddEdgeCaseArgs struct {
 
 func (prdAddEdgeCaseTool) Name() string               { return "prd.add_edge_case" }
 func (prdAddEdgeCaseTool) Visibility() ToolVisibility { return Deep }
+func (prdAddEdgeCaseTool) Title() string              { return "Add Edge Case" }
+func (prdAddEdgeCaseTool) SideEffects() SideEffect    { return Mutating }
+func (prdAddEdgeCaseTool) DeferLoading() bool         { return true }
 func (prdAddEdgeCaseTool) Description() string {
 	return "Append an edge case to a PRD state."
 }
@@ -374,6 +392,9 @@ type prdUpsertCopyStringArgs struct {
 
 func (prdUpsertCopyStringTool) Name() string               { return "prd.upsert_copy_string" }
 func (prdUpsertCopyStringTool) Visibility() ToolVisibility { return Deep }
+func (prdUpsertCopyStringTool) Title() string              { return "Upsert Copy String" }
+func (prdUpsertCopyStringTool) SideEffects() SideEffect    { return Mutating }
+func (prdUpsertCopyStringTool) DeferLoading() bool         { return true }
 func (prdUpsertCopyStringTool) Description() string {
 	return "Upsert an i18n copy_string on a PRD state, idempotent on (key, locale)."
 }
@@ -428,6 +449,9 @@ type prdAddA11yNoteArgs struct {
 
 func (prdAddA11yNoteTool) Name() string               { return "prd.add_a11y_note" }
 func (prdAddA11yNoteTool) Visibility() ToolVisibility { return Deep }
+func (prdAddA11yNoteTool) Title() string              { return "Add A11y Note" }
+func (prdAddA11yNoteTool) SideEffects() SideEffect    { return Mutating }
+func (prdAddA11yNoteTool) DeferLoading() bool         { return true }
 func (prdAddA11yNoteTool) Description() string {
 	return "Append an accessibility note to a PRD state."
 }
@@ -481,6 +505,9 @@ type prdAttachFrameArgs struct {
 
 func (prdAttachFrameTool) Name() string               { return "prd.attach_frame" }
 func (prdAttachFrameTool) Visibility() ToolVisibility { return Deep }
+func (prdAttachFrameTool) Title() string              { return "Attach Figma Frame" }
+func (prdAttachFrameTool) SideEffects() SideEffect    { return Mutating }
+func (prdAttachFrameTool) DeferLoading() bool         { return true }
 func (prdAttachFrameTool) Description() string {
 	return "Attach a Figma node to a PRD state (with optional platform variant)."
 }
@@ -531,6 +558,9 @@ type prdDetachFrameArgs struct {
 
 func (prdDetachFrameTool) Name() string               { return "prd.detach_frame" }
 func (prdDetachFrameTool) Visibility() ToolVisibility { return Deep }
+func (prdDetachFrameTool) Title() string              { return "Detach Figma Frame" }
+func (prdDetachFrameTool) SideEffects() SideEffect    { return Destructive }
+func (prdDetachFrameTool) DeferLoading() bool         { return true }
 func (prdDetachFrameTool) Description() string {
 	return "Detach a frame_tag by its tag_id."
 }
@@ -602,6 +632,9 @@ type prdExportResult struct {
 
 func (prdExportTool) Name() string               { return "prd.export" }
 func (prdExportTool) Visibility() ToolVisibility { return Deep }
+func (prdExportTool) Title() string              { return "Export PRD as JSON" }
+func (prdExportTool) SideEffects() SideEffect    { return ReadOnly }
+func (prdExportTool) DeferLoading() bool         { return true }
 func (prdExportTool) Description() string {
 	return "Render the PRD as deterministic markdown and a typed JSON sidecar (PRDFull shape). No filesystem write — the caller (bridge / skill) decides where the bytes land."
 }

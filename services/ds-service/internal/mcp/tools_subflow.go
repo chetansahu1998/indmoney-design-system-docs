@@ -93,6 +93,9 @@ type subflowListArgs struct {
 
 func (subflowListTool) Name() string               { return "subflow.list" }
 func (subflowListTool) Visibility() ToolVisibility { return Deep }
+func (subflowListTool) Title() string              { return "List Sub-Flows" }
+func (subflowListTool) SideEffects() SideEffect    { return ReadOnly }
+func (subflowListTool) DeferLoading() bool         { return true }
 func (subflowListTool) Description() string {
 	return "List sub_flows in the tenant. Optional sub_product_filter (slug) scopes the result."
 }
@@ -158,6 +161,9 @@ type subflowGetArgs struct {
 
 func (subflowGetTool) Name() string               { return "subflow.get" }
 func (subflowGetTool) Visibility() ToolVisibility { return Deep }
+func (subflowGetTool) Title() string              { return "Get Sub-Flow" }
+func (subflowGetTool) SideEffects() SideEffect    { return ReadOnly }
+func (subflowGetTool) DeferLoading() bool         { return true }
 func (subflowGetTool) Description() string {
 	return "Get one sub_flow by its universal slug \"{sub_product_slug}/{sub_flow_slug}\"."
 }
@@ -205,6 +211,9 @@ type prototypeSummary struct {
 
 func (subflowCreateTool) Name() string               { return "subflow.create" }
 func (subflowCreateTool) Visibility() ToolVisibility { return Deep }
+func (subflowCreateTool) Title() string              { return "Create Sub-Flow" }
+func (subflowCreateTool) SideEffects() SideEffect    { return Mutating }
+func (subflowCreateTool) DeferLoading() bool         { return true }
 func (subflowCreateTool) Description() string {
 	return "Create (or upsert) a sub_product + sub_flow pair. Optional prototype URL attaches an HTML placeholder until the designer ships."
 }

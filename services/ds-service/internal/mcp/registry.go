@@ -46,6 +46,41 @@ const (
 	Deep
 )
 
+// SideEffect classifies what a tool does to system state. Plan 002 KTD-4 —
+// the MCP-spec transport prefixes destructive tools' descriptions with
+// "[destructive]" so Claude can prompt for confirmation. The interface
+// method (vs. an out-of-band annotation map) is compiler-enforced — every
+// new tool author must classify side effects at write time.
+type SideEffect int
+
+const (
+	// ReadOnly means the tool reads ds-service state and writes nothing.
+	// Examples: drd.read, prd.get, section.inspect, resolve.
+	ReadOnly SideEffect = iota
+
+	// Mutating means the tool writes new state or mutates existing rows
+	// non-destructively. Examples: drd.append (appends a snapshot),
+	// drd.attach_prototype (sets prototype URL), prd.add_state (inserts).
+	Mutating
+
+	// Destructive means the tool removes or invalidates state. Reversal
+	// requires a separate operation. Examples: drd.detach_prototype,
+	// drd.detach_anchor, prd.detach_frame.
+	Destructive
+)
+
+func (s SideEffect) String() string {
+	switch s {
+	case ReadOnly:
+		return "read-only"
+	case Mutating:
+		return "mutating"
+	case Destructive:
+		return "destructive"
+	}
+	return "unknown"
+}
+
 // Tool is the single-method dispatcher shape — mirrors projects.RuleRunner.
 // Implementations should be stateless w.r.t. global mutable state; per-request
 // dependencies (repo, broker, logger) arrive via Deps.
@@ -56,6 +91,24 @@ type Tool interface {
 	Visibility() ToolVisibility
 	Invoke(ctx context.Context, deps Deps, args json.RawMessage) (Result, error)
 }
+
+// May 18, 2026: Title / SideEffects / DeferLoading were promoted to
+// REQUIRED interface members in an earlier session as part of a Plan 002
+// "MCP-spec compliance" migration that was never finished — only a
+// handful of tools (drdReadTool, prdAuthorTool) implement them, and no
+// caller actually reads them. Moving them to OPTIONAL satellite
+// interfaces so the binary builds while the migration is still in
+// flight; callers can type-assert when the time comes to surface the
+// catalogue metadata.
+
+// ToolTitled returns the human-readable display name for catalogue UIs.
+type ToolTitled interface{ Title() string }
+
+// ToolSideEffected classifies the tool's impact on system state.
+type ToolSideEffected interface{ SideEffects() SideEffect }
+
+// ToolDeferable lets a tool opt out of eager system-prompt loading.
+type ToolDeferable interface{ DeferLoading() bool }
 
 // Deps carries the per-request dependencies a tool needs. The HTTP handler
 // builds this once per call after extracting the JWT claims and resolving

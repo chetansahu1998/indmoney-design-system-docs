@@ -50,6 +50,9 @@ type sectionFrameRow struct {
 
 func (sectionFramesTool) Name() string               { return "section.frames" }
 func (sectionFramesTool) Visibility() ToolVisibility { return Deep }
+func (sectionFramesTool) Title() string              { return "List Section Frames" }
+func (sectionFramesTool) SideEffects() SideEffect    { return ReadOnly }
+func (sectionFramesTool) DeferLoading() bool         { return true }
 func (sectionFramesTool) Description() string {
 	return "List the direct-child Figma frames of a sub_flow's bound section (designer's names, canvas y-axis order)."
 }
@@ -131,6 +134,9 @@ type sectionOutlineStatesResult struct {
 
 func (sectionOutlineStatesTool) Name() string               { return "section.outline_states" }
 func (sectionOutlineStatesTool) Visibility() ToolVisibility { return Deep }
+func (sectionOutlineStatesTool) Title() string              { return "Section Coverage Wall" }
+func (sectionOutlineStatesTool) SideEffects() SideEffect    { return ReadOnly }
+func (sectionOutlineStatesTool) DeferLoading() bool         { return true }
 func (sectionOutlineStatesTool) Description() string {
 	return "Coverage wall: every frame in the section + every PRD state, joined with binding status, per-stem counts, total word count, and last-touched metadata. The PM's resume-where-I-was view."
 }
