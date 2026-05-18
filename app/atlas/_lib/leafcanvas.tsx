@@ -1135,7 +1135,9 @@ function DRDTab({ leaf, frame }) {
     // Post brain-products: leaf.id is the ds-service project slug; the
     // DRD endpoint is keyed by (project_slug, flow_uuid). The editor
     // resolves the project's first flow itself when flowID is empty.
-    return <Editor slug={leaf.id} flowID="" />;
+    // Plan 005 Phase B+ — thread sub_flow_slug so the anchor chip layer +
+    // future slash command know which sub_flow's anchors to fetch.
+    return <Editor slug={leaf.id} flowID="" subFlowSlug={leaf.subFlow?.fullSlug ?? null} />;
   }
   // Fallback skeleton — rendered for the standalone HTML preview (no
   // window.__AtlasDRDEditor injection) or if the editor module fails to

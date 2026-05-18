@@ -31,12 +31,16 @@
 
 import "@blocknote/core/fonts/inter.css";
 import { BlockNoteView } from "@blocknote/mantine";
+
+import { DRDAnchorChips } from "./DRDAnchorChips";
 import "@blocknote/mantine/style.css";
+import { filterSuggestionItems } from "@blocknote/core";
 import {
   FormattingToolbarController,
   LinkToolbarController,
   SideMenuController,
   SuggestionMenuController,
+  getDefaultReactSlashMenuItems,
   useCreateBlockNote,
 } from "@blocknote/react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -74,11 +78,15 @@ export interface AtlasDRDEditorProps {
   slug: string;
   /** Our DB flows.id (= leaf.id in the reference UI). */
   flowID: string;
+  /** Plan 005 Phase B+ — sub_flow slug used by the anchor chip layer +
+   *  /anchor slash command to scope drd_anchor rows. Null/undefined for
+   *  legacy leaves without a sub_flow binding. */
+  subFlowSlug?: string | null;
 }
 
 type SaveState = "idle" | "saving" | "saved" | "conflict" | "error";
 
-export default function AtlasDRDEditor({ slug, flowID }: AtlasDRDEditorProps) {
+export default function AtlasDRDEditor({ slug, flowID, subFlowSlug }: AtlasDRDEditorProps) {
   const auth = useAuth();
   const [initialContent, setInitialContent] = useState<any[] | undefined>(undefined);
   const [revision, setRevision] = useState<number>(0);
@@ -284,22 +292,99 @@ export default function AtlasDRDEditor({ slug, flowID }: AtlasDRDEditorProps) {
         <BlockNoteView
           editor={editor}
           theme="dark"
-          // All four UI controllers ON — BlockNote default but we declare
-          // explicitly so the intent survives future API churn.
-          slashMenu
+          // Default slash menu OFF — we replace it with a custom
+          // <SuggestionMenuController> below that adds the
+          // "Anchor to prototype" items underneath the BlockNote defaults.
+          slashMenu={false}
           sideMenu
           formattingToolbar
           linkToolbar
           filePanel
           tableHandles
-          // Custom suggestion menu (slash) is opt-in via `<SuggestionMenuController>`;
-          // we omit the override so BlockNote's full default menu (heading,
-          // bullet, numbered, todo, code, quote, table, image, divider,
-          // toggleable heading, etc.) shows.
-        />
+        >
+          <SuggestionMenuController
+            triggerCharacter="/"
+            getItems={async (query) =>
+              filterSuggestionItems(
+                [
+                  ...getDefaultReactSlashMenuItems(editor),
+                  ...anchorSlashItems(editor, subFlowSlug ?? null),
+                ],
+                query,
+              )
+            }
+          />
+        </BlockNoteView>
+        {subFlowSlug && <DRDAnchorChips subFlowSlug={subFlowSlug} />}
       </div>
     </div>
   );
+}
+
+/**
+ * Build slash-menu items for "Anchor to <screen>" — one per prototype
+ * screen the bridge advertised via `window.__atlasPrototypeScreens`.
+ * Returns [] when no prototype is mounted yet (the menu just shows
+ * BlockNote defaults).
+ *
+ * On select, the item POSTs to MCP `drd.attach_anchor` for the
+ * currently-focused block, then dispatches `atlas:anchors-changed` so
+ * <DRDAnchorChips> refetches and re-renders the chip layer.
+ */
+function anchorSlashItems(editor: any, subFlowSlug: string | null) {
+  if (!subFlowSlug || typeof window === "undefined") return [];
+  const cat = (window as any).__atlasPrototypeScreens as
+    | { slug: string; screens: Array<{ screenId: string; label: string }> }
+    | undefined;
+  if (!cat || cat.slug !== subFlowSlug || !Array.isArray(cat.screens)) {
+    return [];
+  }
+  return cat.screens.map((s) => ({
+    title: `Anchor to ${s.screenId}`,
+    subtext: s.label,
+    aliases: ["anchor", "prototype", s.screenId.toLowerCase()],
+    group: "Prototype anchors",
+    onItemClick: () => {
+      const block = editor.getTextCursorPosition?.()?.block;
+      if (!block?.id) return;
+      void postAttachAnchor(subFlowSlug, block.id, s.screenId);
+    },
+  }));
+}
+
+async function postAttachAnchor(
+  subFlowSlug: string,
+  blockID: string,
+  screenID: string,
+) {
+  const dsBase =
+    (process.env.NEXT_PUBLIC_DS_SERVICE_URL as string | undefined) ??
+    "http://localhost:8080";
+  let token = "";
+  try {
+    const raw = localStorage.getItem("indmoney-ds-auth");
+    if (raw) token = JSON.parse(raw)?.state?.token ?? "";
+  } catch {
+    /* ignore */
+  }
+  try {
+    const r = await fetch(`${dsBase}/v1/mcp/invoke/drd.attach_anchor`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        sub_flow_slug: subFlowSlug,
+        block_id: blockID,
+        screen_id: screenID,
+      }),
+    });
+    if (!r.ok) return;
+    window.dispatchEvent(new CustomEvent("atlas:anchors-changed"));
+  } catch {
+    /* surface via console only — the slash menu already closed */
+  }
 }
 
 function prettyName(emailOrID: string): string {

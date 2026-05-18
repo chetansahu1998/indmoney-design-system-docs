@@ -1675,3 +1675,33 @@
     box-shadow: 0 0 0 0 rgba(120, 200, 255, 0);
   }
 }
+
+/* ─── Plan 005 Phase B+ ─ Anchor chips next to DRD blocks ─────────────────── */
+
+.lc-drd-anchor-chip-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.lc-drd-anchor-chip {
+  position: absolute;
+  pointer-events: auto;
+  cursor: default;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  background: rgba(120, 200, 255, 0.08);
+  border: 1px solid rgba(120, 200, 255, 0.45);
+  border-radius: 4px;
+  white-space: nowrap;
+  user-select: none;
+  transition: background 0.12s, border-color 0.12s;
+}
+.lc-drd-anchor-chip:hover {
+  background: rgba(120, 200, 255, 0.16);
+  border-color: rgba(120, 200, 255, 0.7);
+}

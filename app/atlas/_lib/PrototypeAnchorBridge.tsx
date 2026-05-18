@@ -133,9 +133,16 @@ export function PrototypeAnchorBridge({ iframeRef, subFlowSlug }: Props) {
         }
       }
       if (data.type === "hello") {
-        // The bridge announces itself + its screen catalogue. Phase B
-        // reads this off a custom event so the slash-menu picker can
-        // populate.
+        // The bridge announces itself + its screen catalogue. Phase B+
+        // reads this off the window global so the BlockNote slash menu
+        // can list "Anchor to S3", "Anchor to S4" … dynamically. The
+        // custom event is fired too so React subscribers can refresh.
+        if (subFlowSlug && Array.isArray(data.screens)) {
+          (window as any).__atlasPrototypeScreens = {
+            slug: subFlowSlug,
+            screens: data.screens,
+          };
+        }
         window.dispatchEvent(
           new CustomEvent("atlas:prototype-hello", { detail: data }),
         );
