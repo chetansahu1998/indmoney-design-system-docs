@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -703,5 +704,77 @@ func TestPRDExport_MarkdownUnchangedFromPriorBehavior(t *testing.T) {
 	}
 	if md != out.Markdown {
 		t.Errorf("markdown drift between prd.export and RenderPRDMarkdown:\n--- export ---\n%s\n--- wrapper ---\n%s", out.Markdown, md)
+	}
+}
+
+// ─── Plan 002 U6 — promoted prd.* tools ────────────────────────────────────
+
+// TestPRDAuthor_EmitsDeprecationNextAction asserts that every prd.author
+// call now surfaces a deprecation hint pointing at the equivalent
+// top-level tool (e.g. prd.author{op:"add_state"} → prd.add_state). This
+// is how callers (Atlas, ind-prd skill) get migrated off the dispatch
+// shim — the LLM sees the hint in NextActions and stops re-dispatching.
+func TestPRDAuthor_EmitsDeprecationNextAction(t *testing.T) {
+	h := newTestHarness(t)
+	h.seedSubFlow("Wallet", "M2M")
+
+	res, err := h.invoke("prd.author", map[string]any{
+		"op": "add_state",
+		"args": map[string]any{
+			"sub_flow_slug": "wallet/m2m",
+			"tab_name":      "Investment",
+			"label":         "Loading",
+		},
+	})
+	if err != nil {
+		t.Fatalf("prd.author add_state: %v", err)
+	}
+	var found bool
+	for _, na := range res.NextActions {
+		if na.Tool == "prd.add_state" && strings.Contains(na.When, "deprecated") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected deprecation NextAction pointing at prd.add_state, got %+v", res.NextActions)
+	}
+}
+
+// TestPromotedPRDTools_DirectInvoke_ParityWithAuthorDispatch asserts that
+// calling prd.add_state directly produces the same shape Data as
+// prd.author{op:"add_state"} for the same args. This is the contract
+// Atlas/ind-prd consumers depend on as they migrate off the dispatch shim.
+func TestPromotedPRDTools_DirectInvoke_ParityWithAuthorDispatch(t *testing.T) {
+	h := newTestHarness(t)
+	h.seedSubFlow("Wallet", "M2M")
+
+	addArgs := map[string]any{
+		"sub_flow_slug": "wallet/m2m",
+		"tab_name":      "Investment",
+		"label":         "Empty",
+	}
+
+	viaAuthor, err := h.invoke("prd.author", map[string]any{"op": "add_state", "args": addArgs})
+	if err != nil {
+		t.Fatalf("prd.author add_state: %v", err)
+	}
+	viaDirect, err := h.invoke("prd.add_state", map[string]any{
+		"sub_flow_slug": "wallet/m2m",
+		"tab_name":      "Investment",
+		"label":         "Direct",
+	})
+	if err != nil {
+		t.Fatalf("prd.add_state direct: %v", err)
+	}
+	// Both responses must return a non-nil Data of the same Go type. The
+	// label differs (parity is on shape, not content), so we compare type
+	// rather than DeepEqual.
+	if viaAuthor.Data == nil || viaDirect.Data == nil {
+		t.Fatalf("expected both responses to have Data; author=%+v direct=%+v",
+			viaAuthor.Data, viaDirect.Data)
+	}
+	if fmt.Sprintf("%T", viaAuthor.Data) != fmt.Sprintf("%T", viaDirect.Data) {
+		t.Errorf("Data type drift: author=%T direct=%T", viaAuthor.Data, viaDirect.Data)
 	}
 }

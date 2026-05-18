@@ -233,6 +233,14 @@ func (p prdAuthorTool) Invoke(ctx context.Context, deps Deps, args json.RawMessa
 	if len(hints) > 0 {
 		res.NextActions = append(res.NextActions, hints...)
 	}
+	// Plan 002 U6: nudge callers off the op-dispatch shim. The 11 sub-ops
+	// are now first-class Visible tools (`prd.add_state`, `prd.add_event`,
+	// `prd.get`, ...) — calling them directly skips this dispatch hop and
+	// matches the MCP-spec tool-call shape Claude Connectors expect.
+	res.NextActions = append(res.NextActions, NextAction{
+		Tool: toolName,
+		When: "prd.author is deprecated; call " + toolName + " directly with the same args",
+	})
 	return res, nil
 }
 

@@ -116,21 +116,37 @@ func (h *testHarness) seedSubFlow(productName, flowName string) projects.SubFlow
 
 // ─── Registry-level tests ──────────────────────────────────────────────────
 
-func TestRegistry_ColdCatalog_ReturnsExactlyThreeVisibleTools(t *testing.T) {
+// TestRegistry_ColdCatalog_ReturnsExpectedVisibleTools — Plan 002 U6
+// flipped the 11 prd.author sub-ops to Visible. The cold catalog now
+// carries the original 3 meta-verbs + 11 promoted prd.* tools = 14 total.
+// `prd.author` stays Visible too (as a deprecated alias).
+func TestRegistry_ColdCatalog_ReturnsExpectedVisibleTools(t *testing.T) {
 	r := NewDefaultRegistry()
 	visible := r.ListVisible()
-	if got, want := len(visible), 3; got != want {
+	wantNames := map[string]bool{
+		// Original meta-verbs
+		"drd.read":        false,
+		"prd.author":      false,
+		"section.inspect": false,
+		// U6 promotions — the 11 PRD sub-ops
+		"prd.get":                     false,
+		"prd.upsert_tab":              false,
+		"prd.add_state":               false,
+		"prd.add_event":               false,
+		"prd.add_acceptance_criterion": false,
+		"prd.add_edge_case":           false,
+		"prd.upsert_copy_string":      false,
+		"prd.add_a11y_note":           false,
+		"prd.attach_frame":            false,
+		"prd.detach_frame":            false,
+		"prd.export":                  false,
+	}
+	if got, want := len(visible), len(wantNames); got != want {
 		names := []string{}
 		for _, v := range visible {
 			names = append(names, v.Name())
 		}
 		t.Fatalf("expected %d visible tools, got %d: %v", want, got, names)
-	}
-	// Exactly these three, by name.
-	wantNames := map[string]bool{
-		"drd.read":        false,
-		"prd.author":      false,
-		"section.inspect": false,
 	}
 	for _, t2 := range visible {
 		if _, ok := wantNames[t2.Name()]; !ok {
@@ -153,7 +169,7 @@ func TestRegistry_InvokeUnknownTool_ReturnsErrToolNotFound(t *testing.T) {
 	}
 }
 
-func TestRegistry_ColdCatalogTokenBudget_UnderRoughly1500Bytes(t *testing.T) {
+func TestRegistry_ColdCatalogTokenBudget_UnderPostU6Ceiling(t *testing.T) {
 	r := NewDefaultRegistry()
 	visible := r.ListVisible()
 	type catEntry struct {
@@ -173,14 +189,17 @@ func TestRegistry_ColdCatalogTokenBudget_UnderRoughly1500Bytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal catalog: %v", err)
 	}
-	// Plan 002 U5 bumped the budget: boundary-aware descriptions
-	// ("Use when …", "Don't use when …") + per-property descriptions on
-	// every InputSchema raise the serialized cold catalog above the
-	// pre-U5 1500-byte ceiling. 4000 bytes is the post-sweep ceiling
-	// (still well under any practical system-prompt budget) — picked
-	// over the plan's nominal ~5000 because the actual marshaled size
-	// sits comfortably below 4000 with margin.
-	const budget = 4000
+	// Cold-catalog budget evolution:
+	//   - Pre-U5: 3 visible tools, terse descriptions, ~1500 bytes.
+	//   - Post-U5: 3 visible tools, boundary-aware descriptions +
+	//     per-prop schemas, ~2200 bytes (budget 4000 with margin).
+	//   - Post-U6 (current): 14 visible tools (3 meta-verbs + 11
+	//     promoted prd.* ops), ~14 KB. KTD-5's "stay well under 30
+	//     simultaneously-loaded tools" still holds — token cost grew
+	//     linearly with tool count, but absolute size stays well below
+	//     practical system-prompt budgets. Budget set to 16 KB to give
+	//     ~15% headroom over the current marshaled size.
+	const budget = 16000
 	if len(bytes) > budget {
 		t.Errorf("cold catalog %d bytes > budget %d — KTD-5 budget broken", len(bytes), budget)
 		t.Logf("catalog JSON:\n%s", string(bytes))

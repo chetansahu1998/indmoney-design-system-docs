@@ -39,10 +39,10 @@ type prdGetArgs struct {
 }
 
 func (prdGetTool) Name() string               { return "prd.get" }
-func (prdGetTool) Visibility() ToolVisibility { return Deep }
+func (prdGetTool) Visibility() ToolVisibility { return Visible }
 func (prdGetTool) Title() string              { return "Get PRD" }
 func (prdGetTool) SideEffects() SideEffect    { return ReadOnly }
-func (prdGetTool) DeferLoading() bool         { return true }
+func (prdGetTool) DeferLoading() bool         { return false }
 func (prdGetTool) Description() string {
 	return "Load the full PRD tree for a sub_flow (tabs, states, all typed stems, frame tags). Use when you need the complete authored shape before mutating — e.g. to confirm a state exists or count criteria. Don't use when you only need a summary (call section.inspect — it carries DRD/PRD/frames counts in one round-trip). Returns prd:nil when no PRD has been seeded yet."
 }
@@ -89,10 +89,10 @@ type prdUpsertTabArgs struct {
 }
 
 func (prdUpsertTabTool) Name() string               { return "prd.upsert_tab" }
-func (prdUpsertTabTool) Visibility() ToolVisibility { return Deep }
+func (prdUpsertTabTool) Visibility() ToolVisibility { return Visible }
 func (prdUpsertTabTool) Title() string              { return "Upsert PRD Tab" }
 func (prdUpsertTabTool) SideEffects() SideEffect    { return Mutating }
-func (prdUpsertTabTool) DeferLoading() bool         { return true }
+func (prdUpsertTabTool) DeferLoading() bool         { return false }
 func (prdUpsertTabTool) Description() string {
 	return "Create or update a PRD tab keyed by (prd, name); auto-creates the parent PRD row if missing. Use when you need a new tab (e.g. \"Investment\", \"Reconciliation\") before adding states to it, or to refresh a tab's overview markdown. Don't use when you just want to add a state — prd.add_state creates the tab on demand via resolveTab. Idempotent on (prd, name). Tab writes do not emit prd_audit rows."
 }
@@ -155,10 +155,10 @@ type prdAddStateArgs struct {
 }
 
 func (prdAddStateTool) Name() string               { return "prd.add_state" }
-func (prdAddStateTool) Visibility() ToolVisibility { return Deep }
+func (prdAddStateTool) Visibility() ToolVisibility { return Visible }
 func (prdAddStateTool) Title() string              { return "Add PRD State" }
 func (prdAddStateTool) SideEffects() SideEffect    { return Mutating }
-func (prdAddStateTool) DeferLoading() bool         { return true }
+func (prdAddStateTool) DeferLoading() bool         { return false }
 func (prdAddStateTool) Description() string {
 	return "Add (or update via idempotent restore) a PRD state inside a tab; tab + PRD auto-created. Use when the PM names a state (e.g. \"Cold state\", \"Loading\") and you want to record its condition / design / FE handling notes. Don't use when you want to bind a Figma frame — prd.attach_frame is the per-state binding. Idempotent on (tab, label); records prd_audit with op=upsert_state."
 }
@@ -219,10 +219,10 @@ type prdAddEventArgs struct {
 }
 
 func (prdAddEventTool) Name() string               { return "prd.add_event" }
-func (prdAddEventTool) Visibility() ToolVisibility { return Deep }
+func (prdAddEventTool) Visibility() ToolVisibility { return Visible }
 func (prdAddEventTool) Title() string              { return "Add Mixpanel Event" }
 func (prdAddEventTool) SideEffects() SideEffect    { return Mutating }
-func (prdAddEventTool) DeferLoading() bool         { return true }
+func (prdAddEventTool) DeferLoading() bool         { return false }
 func (prdAddEventTool) Description() string {
 	return "Declare a Mixpanel event tied to a PRD state (name, properties schema, fires_on guard). Use when the PM specifies analytics on a state — the event name becomes part of the resolver's mixpanel_event_names array. Don't use when the trigger is an acceptance criterion or copy string — use prd.add_acceptance_criterion or prd.upsert_copy_string respectively. Idempotent on (state, name); records prd_audit op=add_event."
 }
@@ -279,11 +279,11 @@ type prdAddAcceptanceCriterionArgs struct {
 
 func (prdAddAcceptanceCriterionTool) Name() string { return "prd.add_acceptance_criterion" }
 func (prdAddAcceptanceCriterionTool) Visibility() ToolVisibility {
-	return Deep
+	return Visible
 }
 func (prdAddAcceptanceCriterionTool) Title() string              { return "Add Acceptance Criterion" }
 func (prdAddAcceptanceCriterionTool) SideEffects() SideEffect    { return Mutating }
-func (prdAddAcceptanceCriterionTool) DeferLoading() bool         { return true }
+func (prdAddAcceptanceCriterionTool) DeferLoading() bool         { return false }
 func (prdAddAcceptanceCriterionTool) Description() string {
 	return "Append an acceptance criterion (testable assertion) to a PRD state. Use when the PM articulates a must-be-true rule for a state — the QA / Playwright stub generator reads these. Don't use when the rule is an edge case (call prd.add_edge_case) or an accessibility rule (call prd.add_a11y_note); each stem has its own slot. Not deduped — repeated calls append additional rows; records prd_audit op=add_acceptance_criterion."
 }
@@ -335,10 +335,10 @@ type prdAddEdgeCaseArgs struct {
 }
 
 func (prdAddEdgeCaseTool) Name() string               { return "prd.add_edge_case" }
-func (prdAddEdgeCaseTool) Visibility() ToolVisibility { return Deep }
+func (prdAddEdgeCaseTool) Visibility() ToolVisibility { return Visible }
 func (prdAddEdgeCaseTool) Title() string              { return "Add Edge Case" }
 func (prdAddEdgeCaseTool) SideEffects() SideEffect    { return Mutating }
-func (prdAddEdgeCaseTool) DeferLoading() bool         { return true }
+func (prdAddEdgeCaseTool) DeferLoading() bool         { return false }
 func (prdAddEdgeCaseTool) Description() string {
 	return "Append an edge case (boundary / failure scenario) to a PRD state. Use when the PM names a specific corner — e.g. \"empty list\", \"network 500\", \"user has no KYC\". Don't use when the rule is a happy-path expectation (call prd.add_acceptance_criterion) or an accessibility concern (call prd.add_a11y_note). Not deduped — repeated calls append; records prd_audit op=add_edge_case."
 }
@@ -391,10 +391,10 @@ type prdUpsertCopyStringArgs struct {
 }
 
 func (prdUpsertCopyStringTool) Name() string               { return "prd.upsert_copy_string" }
-func (prdUpsertCopyStringTool) Visibility() ToolVisibility { return Deep }
+func (prdUpsertCopyStringTool) Visibility() ToolVisibility { return Visible }
 func (prdUpsertCopyStringTool) Title() string              { return "Upsert Copy String" }
 func (prdUpsertCopyStringTool) SideEffects() SideEffect    { return Mutating }
-func (prdUpsertCopyStringTool) DeferLoading() bool         { return true }
+func (prdUpsertCopyStringTool) DeferLoading() bool         { return false }
 func (prdUpsertCopyStringTool) Description() string {
 	return "Upsert an i18n copy_string on a PRD state (the canonical user-facing text for a slot). Use when the PM dictates copy — title, body, CTA, error — for a specific state. Don't use when the text is a guard condition or design note (those go inside prd.add_state's *_md fields). Idempotent on (state, key, locale); records prd_audit op=upsert_copy_string."
 }
@@ -448,10 +448,10 @@ type prdAddA11yNoteArgs struct {
 }
 
 func (prdAddA11yNoteTool) Name() string               { return "prd.add_a11y_note" }
-func (prdAddA11yNoteTool) Visibility() ToolVisibility { return Deep }
+func (prdAddA11yNoteTool) Visibility() ToolVisibility { return Visible }
 func (prdAddA11yNoteTool) Title() string              { return "Add A11y Note" }
 func (prdAddA11yNoteTool) SideEffects() SideEffect    { return Mutating }
-func (prdAddA11yNoteTool) DeferLoading() bool         { return true }
+func (prdAddA11yNoteTool) DeferLoading() bool         { return false }
 func (prdAddA11yNoteTool) Description() string {
 	return "Append an accessibility note (aria, focus, screen-reader behaviour) to a PRD state. Use when the PM or designer specifies a11y handling — keyboard nav, label text, contrast notes, motion-sensitivity. Don't use when the note is a general acceptance criterion (call prd.add_acceptance_criterion) or a copy string (call prd.upsert_copy_string). Not deduped; records prd_audit op=add_a11y_note."
 }
@@ -504,10 +504,10 @@ type prdAttachFrameArgs struct {
 }
 
 func (prdAttachFrameTool) Name() string               { return "prd.attach_frame" }
-func (prdAttachFrameTool) Visibility() ToolVisibility { return Deep }
+func (prdAttachFrameTool) Visibility() ToolVisibility { return Visible }
 func (prdAttachFrameTool) Title() string              { return "Attach Figma Frame" }
 func (prdAttachFrameTool) SideEffects() SideEffect    { return Mutating }
-func (prdAttachFrameTool) DeferLoading() bool         { return true }
+func (prdAttachFrameTool) DeferLoading() bool         { return false }
 func (prdAttachFrameTool) Description() string {
 	return "Bind a Figma node id to a PRD state, with an optional platform variant (android | ios | desktop). Use when the PM picks the canonical frame for a state from the coverage wall — this is the load-bearing authoring action the wall's last_touched_* lights up on. Don't use when you only need a prototype URL for the whole sub_flow (call drd.attach_prototype). Records prd_audit op=attach_frame_tag."
 }
@@ -557,10 +557,10 @@ type prdDetachFrameArgs struct {
 }
 
 func (prdDetachFrameTool) Name() string               { return "prd.detach_frame" }
-func (prdDetachFrameTool) Visibility() ToolVisibility { return Deep }
+func (prdDetachFrameTool) Visibility() ToolVisibility { return Visible }
 func (prdDetachFrameTool) Title() string              { return "Detach Figma Frame" }
 func (prdDetachFrameTool) SideEffects() SideEffect    { return Destructive }
-func (prdDetachFrameTool) DeferLoading() bool         { return true }
+func (prdDetachFrameTool) DeferLoading() bool         { return false }
 func (prdDetachFrameTool) Description() string {
 	return "Remove one frame_tag row by its tag_id (destructive: the binding is deleted). Use when a frame was attached to the wrong state or the Figma node was retired. Don't use when you want to rebind to a different node — call prd.attach_frame instead (the new binding coexists or supersedes via position). No audit row is emitted (prd_audit keys on state_id, which is gone post-delete)."
 }
@@ -631,10 +631,10 @@ type prdExportResult struct {
 }
 
 func (prdExportTool) Name() string               { return "prd.export" }
-func (prdExportTool) Visibility() ToolVisibility { return Deep }
+func (prdExportTool) Visibility() ToolVisibility { return Visible }
 func (prdExportTool) Title() string              { return "Export PRD as JSON" }
 func (prdExportTool) SideEffects() SideEffect    { return ReadOnly }
-func (prdExportTool) DeferLoading() bool         { return true }
+func (prdExportTool) DeferLoading() bool         { return false }
 func (prdExportTool) Description() string {
 	return "Render the PRD as deterministic markdown plus a typed JSON sidecar (PRDFull shape). Use when the PM wants to publish docs, hand off to FE, or feed downstream stub generators (Storybook, Playwright, JIRA, tracking-plan). Don't use when you only want the typed tree for in-process consumption — call prd.get directly. Read-only; no filesystem write — the caller decides where the bytes land."
 }
