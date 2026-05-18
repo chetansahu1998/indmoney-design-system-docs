@@ -177,13 +177,16 @@ func TestTransportMCP_ToolsList_ReturnsAllToolsWithMetadata(t *testing.T) {
 	if inspect == nil {
 		t.Fatal("section.inspect not in tools/list")
 	}
-	if inspect.DeferLoading {
+	if inspect.Meta == nil {
+		t.Fatal("section.inspect: missing _meta")
+	}
+	if inspect.Meta.DeferLoading {
 		t.Errorf("section.inspect: defer_loading=true, want false (Visible tool)")
 	}
 	if inspect.Title == "" {
 		t.Error("section.inspect: missing title")
 	}
-	if inspect.SideEffects == "" {
+	if inspect.Meta.SideEffects == "" {
 		t.Error("section.inspect: missing side_effects classification")
 	}
 }
@@ -300,6 +303,86 @@ func TestTransportMCP_UnknownMethod_ReturnsMethodNotFound(t *testing.T) {
 	resp := jrpcCall(t, handler, "totally/madeup", nil, 7)
 	if resp.Error == nil || resp.Error.Code != jrpcMethodNotFound {
 		t.Errorf("expected method-not-found, got %+v", resp.Error)
+	}
+}
+
+// ─── defer_loading wire shape (U9) ────────────────────────────────────────
+
+// TestTransportMCP_ToolsList_MetaShapeAndDeferLoading enforces the MCP-spec
+// `_meta` shape: every tool descriptor carries a nested `_meta` object
+// (not flat `_meta.x` dot-keys), and Visible/Deep tools default
+// defer_loading correctly. Anthropic's Connector client reads this to
+// decide tool_search eligibility — getting the shape wrong silently
+// degrades to eager-load.
+func TestTransportMCP_ToolsList_MetaShapeAndDeferLoading(t *testing.T) {
+	h := newTestHarness(t)
+	handler := newTransportHandler(t, h, nil)
+
+	// Use the raw JSON body — we want to assert on the wire shape, not
+	// the typed Go struct that happens to deserialize.
+	body := []byte(`{"jsonrpc":"2.0","method":"tools/list","id":42}`)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+
+	var envelope struct {
+		Result struct {
+			Tools []map[string]any `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(envelope.Result.Tools) == 0 {
+		t.Fatal("no tools returned")
+	}
+
+	var visibleSeen, deepSeen int
+	for _, td := range envelope.Result.Tools {
+		name, _ := td["name"].(string)
+
+		// Reject the legacy flat-key shape outright.
+		if _, bad := td["_meta.defer_loading"]; bad {
+			t.Errorf("%s: emits flat key `_meta.defer_loading` — must be nested under `_meta`", name)
+		}
+		if _, bad := td["_meta.side_effects"]; bad {
+			t.Errorf("%s: emits flat key `_meta.side_effects` — must be nested under `_meta`", name)
+		}
+
+		metaRaw, ok := td["_meta"]
+		if !ok {
+			t.Errorf("%s: missing `_meta` object", name)
+			continue
+		}
+		meta, ok := metaRaw.(map[string]any)
+		if !ok {
+			t.Errorf("%s: `_meta` must be an object, got %T", name, metaRaw)
+			continue
+		}
+		// SideEffects must always be set (every tool implements
+		// ToolSideEffected per U4).
+		if se, _ := meta["side_effects"].(string); se == "" {
+			t.Errorf("%s: _meta.side_effects must be non-empty", name)
+		}
+		// DeferLoading is omitempty — present as false defaults to absent
+		// in JSON. Parse from the registry to compare expected vs actual.
+		tool, _ := h.registry.Lookup(name)
+		if tool == nil {
+			continue
+		}
+		expectedDefer := tool.DeferLoading()
+		actualDefer, _ := meta["defer_loading"].(bool)
+		if expectedDefer != actualDefer {
+			t.Errorf("%s: _meta.defer_loading = %v, want %v", name, actualDefer, expectedDefer)
+		}
+		if tool.Visibility() == Visible {
+			visibleSeen++
+		} else {
+			deepSeen++
+		}
+	}
+	if visibleSeen == 0 || deepSeen == 0 {
+		t.Errorf("expected both Visible and Deep tools in catalog; visible=%d deep=%d", visibleSeen, deepSeen)
 	}
 }
 

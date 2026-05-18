@@ -95,12 +95,22 @@ type mcpServerInfo struct {
 }
 
 type mcpToolDescriptor struct {
-	Name         string          `json:"name"`
-	Title        string          `json:"title,omitempty"`
-	Description  string          `json:"description"`
-	InputSchema  json.RawMessage `json:"inputSchema"`
-	DeferLoading bool            `json:"_meta.defer_loading,omitempty"`
-	SideEffects  string          `json:"_meta.side_effects,omitempty"`
+	Name        string          `json:"name"`
+	Title       string          `json:"title,omitempty"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema"`
+
+	// Meta carries Anthropic-specific extensions per the MCP spec's
+	// `_meta` escape hatch. Claude Connectors read defer_loading to decide
+	// whether a tool is eager-loaded into the system prompt or lazy-loaded
+	// via tool_search; side_effects is surfaced in confirmation prompts
+	// for Destructive tools.
+	Meta *mcpToolMeta `json:"_meta,omitempty"`
+}
+
+type mcpToolMeta struct {
+	DeferLoading bool   `json:"defer_loading,omitempty"`
+	SideEffects  string `json:"side_effects,omitempty"`
 }
 
 type mcpListToolsResult struct {
@@ -207,18 +217,19 @@ func handleToolsList(w http.ResponseWriter, req jrpcRequest, deps HandlerDeps) {
 			Name:        t.Name(),
 			Description: t.Description(),
 			InputSchema: t.InputSchema(),
+			Meta:        &mcpToolMeta{},
 		}
 		if titled, ok := t.(ToolTitled); ok {
 			desc.Title = titled.Title()
 		}
 		if defer_, ok := t.(ToolDeferable); ok {
-			desc.DeferLoading = defer_.DeferLoading()
+			desc.Meta.DeferLoading = defer_.DeferLoading()
 		} else {
 			// Default: visible→false, deep→true.
-			desc.DeferLoading = t.Visibility() != Visible
+			desc.Meta.DeferLoading = t.Visibility() != Visible
 		}
 		if sided, ok := t.(ToolSideEffected); ok {
-			desc.SideEffects = sided.SideEffects().String()
+			desc.Meta.SideEffects = sided.SideEffects().String()
 		}
 		out = append(out, desc)
 	}
