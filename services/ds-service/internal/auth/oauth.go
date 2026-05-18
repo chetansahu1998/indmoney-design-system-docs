@@ -543,13 +543,26 @@ func mintAccessAndRefresh(ctx context.Context, db *sql.DB, signer *SigningKey, c
 	// merging with any other source.
 	tenants := []string{tenantID}
 
-	// MintAccessToken needs email + role for the JWT claims. We don't
-	// re-fetch from users — for OAuth-minted tokens the role is
-	// implicitly "designer" (least-privilege agent role; not super_admin)
-	// and email is unused inside the MCP transport. Future iteration:
-	// if a downstream handler needs the user's actual role, look it up
-	// here from users by userID.
-	access, err = signer.MintAccessToken(userID, "", RoleDesigner, tenants, cfg.accessTTL())
+	// Preserve the user's actual role + email in the OAuth-minted JWT.
+	// Earlier shape hardcoded Role="designer" as "least-privilege agent"
+	// — wrong reasoning: OAuth delegates the USER's identity to the
+	// client, so a super-admin user driving Claude.ai should retain
+	// super-admin reach. Least-privilege belongs at scope-granularity
+	// (which we don't enforce yet), not at role-granularity. Looking up
+	// the role from `users` once per mint is cheap.
+	var userEmail, userRole string
+	err = db.QueryRowContext(ctx,
+		`SELECT email, role FROM users WHERE id = ?`, userID).
+		Scan(&userEmail, &userRole)
+	if err != nil {
+		return "", "", fmt.Errorf("lookup user %q: %w", userID, err)
+	}
+	if userRole == "" {
+		// Defensive: every user row should have a role; if NULL somehow,
+		// fall back to the most conservative default.
+		userRole = RoleDesigner
+	}
+	access, err = signer.MintAccessToken(userID, userEmail, userRole, tenants, cfg.accessTTL())
 	if err != nil {
 		return "", "", fmt.Errorf("mint access: %w", err)
 	}

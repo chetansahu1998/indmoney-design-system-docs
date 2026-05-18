@@ -76,6 +76,16 @@ type config struct {
 	DevAuthBypassTenant string
 	DevAuthBypassEmail  string
 
+	// DevAuthBypassAdmin — opt-in escalation on top of DevAuthBypass. When
+	// true (env DEV_AUTH_BYPASS_ADMIN=1) AND DevAuthBypass is true, the
+	// synthetic dev claims also carry Role=super_admin / IsAdmin=true so
+	// local devs can hit /v1/admin/* routes without minting a separate
+	// super-admin JWT. Defaults to false — the conservative shape keeps
+	// the bypass at Role=user. Production refusal (looksLikeProd guard
+	// above) still blocks any DEV_AUTH_BYPASS variant; this var only
+	// changes the local-dev role.
+	DevAuthBypassAdmin bool
+
 	// HTTP/2 via TLS. When both cert + key paths are non-empty the server
 	// also binds a TLS listener on TLSAddr (default :8443). Browsers won't
 	// negotiate HTTP/2 over cleartext, so this is the only way the canvas
@@ -647,6 +657,7 @@ func loadConfig(log *slog.Logger) (*config, error) {
 		DevAuthBypass:       os.Getenv("DEV_AUTH_BYPASS") == "1",
 		DevAuthBypassTenant: getenv("DEV_AUTH_BYPASS_TENANT", "e090530f-2698-489d-934a-c821cb925c8a"),
 		DevAuthBypassEmail:  getenv("DEV_AUTH_BYPASS_EMAIL", "dev@local"),
+		DevAuthBypassAdmin:  os.Getenv("DEV_AUTH_BYPASS_ADMIN") == "1",
 
 		// HTTP/2 TLS — see config struct comment for the why. Both DS_TLS_CERT
 		// and DS_TLS_KEY must be set for the TLS listener to bind; either
@@ -674,7 +685,12 @@ func loadConfig(log *slog.Logger) (*config, error) {
 		}
 		log.Warn("DEV_AUTH_BYPASS=1 — JWT verification SKIPPED for every request",
 			"tenant", c.DevAuthBypassTenant, "email", c.DevAuthBypassEmail,
+			"admin_escalation", c.DevAuthBypassAdmin,
 			"warning", "MUST NOT be set in production. Unset on Fly to disable.")
+		if c.DevAuthBypassAdmin {
+			log.Warn("DEV_AUTH_BYPASS_ADMIN=1 — synthetic claims escalated to Role=super_admin / IsAdmin=true",
+				"warning", "Local dev only; production startup refuses both vars.")
+		}
 	}
 
 	// Ensure data dir exists
@@ -1475,15 +1491,23 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		// The synthetic user is pinned to DevAuthBypassTenant so cross-
 		// tenant data still segregates.
 		if s.cfg.DevAuthBypass {
-			// IsAdmin=true under DEV_AUTH_BYPASS lets local devs hit
-			// /v1/admin/* endpoints without minting a super-admin JWT.
-			// Production never sets DEV_AUTH_BYPASS so this is dev-only.
+			// DEV_AUTH_BYPASS alone gives a regular user (Role=user,
+			// IsAdmin=false). Devs who need /v1/admin/* access (e.g. the
+			// Figma inventory + organism dashboards) opt in separately via
+			// DEV_AUTH_BYPASS_ADMIN=1. Splitting the two keeps the
+			// security-relevant escalation explicit at config time rather
+			// than silently bundled with the bypass. The startup banner
+			// (looksLikeProd guard) prevents either var from firing on Fly.
 			devClaims := &auth.Claims{
 				Sub:     "dev-user-local",
 				Email:   s.cfg.DevAuthBypassEmail,
-				Role:    "super_admin",
+				Role:    "user",
 				Tenants: []string{s.cfg.DevAuthBypassTenant},
-				IsAdmin: true,
+				IsAdmin: false,
+			}
+			if s.cfg.DevAuthBypassAdmin {
+				devClaims.Role = "super_admin"
+				devClaims.IsAdmin = true
 			}
 			devClaims.ID = "dev-bypass"
 			ctx := context.WithValue(r.Context(), ctxClaims, devClaims)
