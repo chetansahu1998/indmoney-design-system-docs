@@ -3,6 +3,8 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -118,8 +120,19 @@ func TestTransportMCP_Constitution_VersionAndLengthBudget(t *testing.T) {
 		// bound deliberately when adding workflows.
 		t.Errorf("Constitution length %d out of budget [1500, 6000]", got)
 	}
-	if ConstitutionVersion != 1 {
-		t.Errorf("ConstitutionVersion = %d, want pinned 1 (bump deliberately on schema changes)", ConstitutionVersion)
+	if ConstitutionVersion != 2 {
+		t.Errorf("ConstitutionVersion = %d, want pinned 2 (bump deliberately on schema changes)", ConstitutionVersion)
+	}
+	// Content hash — pinning the int alone is self-referential, so we
+	// fingerprint the embedded markdown too. Any edit to constitution.md
+	// forces a deliberate version bump AND a re-derive of this digest;
+	// either drift surfaces here.
+	sum := sha256.Sum256([]byte(c))
+	gotDigest := hex.EncodeToString(sum[:])
+	const wantDigest = "24177843f0cdacf07edc8a3667b9fb30ab51c60e78d38f43d5128036d31d8029"
+	if gotDigest != wantDigest {
+		t.Errorf("Constitution sha256 = %s, want %s — bump ConstitutionVersion and update this digest after editing constitution.md",
+			gotDigest, wantDigest)
 	}
 }
 
@@ -475,9 +488,13 @@ func TestTransportMCP_Stream_PublishedEventReachesSubscriber(t *testing.T) {
 		t.Errorf("Content-Type = %q, want text/event-stream", ct)
 	}
 
-	// Give the handler a beat to wire up Subscribe, then publish.
+	// Give the handler a beat to wire up Subscribe, then publish. The
+	// MCP stream subscribes on the logical channel `mcp:tools:<tenant>`,
+	// not on the request's X-Trace-ID (which clients can spoof). Match
+	// that here so the test exercises the same fanout key the
+	// notifications/tools/list_changed publisher would use in production.
 	time.Sleep(50 * time.Millisecond)
-	broker.Publish(traceID, sse.MCPToolsListChanged{Tenant: h.tenantA})
+	broker.Publish("mcp:tools:"+h.tenantA, sse.MCPToolsListChanged{Tenant: h.tenantA})
 
 	// Read up to ~1s, looking for the JSON-RPC notification frame.
 	type chunkErr struct {

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -382,17 +383,32 @@ func handleMCPStream(deps HandlerDeps) http.HandlerFunc {
 			userID = claims.Sub
 		}
 
-		// Trace ID comes from the X-Trace-ID header if present (Atlas
-		// propagates it) — otherwise we mint one so the leak sentinel has
-		// a stable key. Future publishers fanning tools_list_changed will
-		// need to publish on the same trace id to reach this subscriber.
+		// Broker subscribe-key is the logical channel name keyed by tenant,
+		// matching the convention every prior SSE feature in this codebase
+		// uses (`mcp:tools:<tenant_id>`). Publishers of tools_list_changed
+		// fan out on the same key.
+		//
+		// X-Trace-ID is preserved for observability (Atlas propagates it,
+		// we echo it back), but it is NOT the broker subscribe key —
+		// clients can set arbitrary trace IDs and using one as the
+		// subscribe key would let an unauthenticated header decide which
+		// fanout bucket the subscriber lands in.
+		subscribeKey := "mcp:tools:" + tenantID
 		traceID := r.Header.Get("X-Trace-ID")
 		if traceID == "" {
 			traceID = uuid.NewString()
 		}
 
-		ch, unsub, err := deps.Broker.Subscribe(traceID, tenantID, userID)
+		ch, unsub, err := deps.Broker.Subscribe(subscribeKey, tenantID, userID)
 		if err != nil {
+			if errors.Is(err, sse.ErrSubscriberCapReached) {
+				// Mirror the projects.server handler: protocol-stream
+				// failure due to capacity is a transport-level 503, not a
+				// JSON-RPC error frame. Operational signal for clients +
+				// load balancers; matches existing convention.
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 			writeJRPCError(w, nil, jrpcInternalError, "subscribe", err.Error())
 			return
 		}
@@ -420,23 +436,15 @@ func handleMCPStream(deps HandlerDeps) http.HandlerFunc {
 					continue
 				}
 				if _, ok := ev.(sse.MCPToolsListChanged); ok {
-					// JSON-RPC notification frame. No `id` per spec —
-					// notifications/* never carry one.
-					frame := jrpcResponse{
-						JSONRPC: "2.0",
-						Result: map[string]any{
-							"method": "notifications/tools/list_changed",
-						},
-					}
-					// We emit it as the SSE `data:` payload with the
-					// MCP-spec method as the event name so a client can
-					// filter by SSE event type if it wants.
+					// JSON-RPC notification frame — no `id` per spec
+					// (notifications/* never carry one). Emitted as the
+					// SSE `data:` payload with the MCP-spec method as the
+					// SSE event name so a client can filter on it.
 					body, _ := json.Marshal(map[string]any{
 						"jsonrpc": "2.0",
 						"method":  "notifications/tools/list_changed",
 					})
 					_, _ = fmt.Fprintf(w, "event: notifications/tools/list_changed\ndata: %s\n\n", body)
-					_ = frame // structured form retained for future emit paths
 					flusher.Flush()
 				}
 				// Other event types are not forwarded over the MCP
@@ -451,49 +459,16 @@ func handleMCPStream(deps HandlerDeps) http.HandlerFunc {
 // type. Good enough for "Accept: text/event-stream, */*" style headers
 // without pulling in a full RFC 7231 parser.
 func containsMediaType(accept, want string) bool {
-	for len(accept) > 0 {
-		i := indexOfComma(accept)
-		var part string
-		if i < 0 {
-			part = accept
-			accept = ""
-		} else {
-			part = accept[:i]
-			accept = accept[i+1:]
-		}
-		// Strip whitespace + q-value tail.
-		for len(part) > 0 && (part[0] == ' ' || part[0] == '\t') {
-			part = part[1:]
-		}
-		if j := indexOfSemi(part); j >= 0 {
-			part = part[:j]
-		}
-		for len(part) > 0 && (part[len(part)-1] == ' ' || part[len(part)-1] == '\t') {
-			part = part[:len(part)-1]
+	for _, part := range strings.Split(accept, ",") {
+		part = strings.TrimSpace(part)
+		if i := strings.IndexByte(part, ';'); i >= 0 {
+			part = strings.TrimSpace(part[:i])
 		}
 		if part == want {
 			return true
 		}
 	}
 	return false
-}
-
-func indexOfComma(s string) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == ',' {
-			return i
-		}
-	}
-	return -1
-}
-
-func indexOfSemi(s string) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == ';' {
-			return i
-		}
-	}
-	return -1
 }
 
 func writeJRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {
