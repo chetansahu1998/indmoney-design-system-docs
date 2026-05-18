@@ -162,6 +162,10 @@ func TestRegistry_ColdCatalog_ReturnsExpectedVisibleTools(t *testing.T) {
 		"prd.export":                   false,
 		// /ce-code-review #23 — hot-path read consumed on every leaf-open.
 		"drd.list_anchors": false,
+		// /ce-code-review #4 + #5 — Atlas-parity capability gaps closed.
+		"comment.create": false,
+		"comment.list":   false,
+		"activity.list":  false,
 	}
 	if got, want := len(visible), len(wantNames); got != want {
 		names := []string{}
@@ -215,13 +219,15 @@ func TestRegistry_ColdCatalogTokenBudget_UnderPostU6Ceiling(t *testing.T) {
 	//   - Pre-U5: 3 visible tools, terse descriptions, ~1500 bytes.
 	//   - Post-U5: 3 visible tools, boundary-aware descriptions +
 	//     per-prop schemas, ~2200 bytes (budget 4000 with margin).
-	//   - Post-U6 (current): 14 visible tools (3 meta-verbs + 11
-	//     promoted prd.* ops), ~14 KB. KTD-5's "stay well under 30
-	//     simultaneously-loaded tools" still holds — token cost grew
-	//     linearly with tool count, but absolute size stays well below
-	//     practical system-prompt budgets. Budget set to 16 KB to give
-	//     ~15% headroom over the current marshaled size.
-	const budget = 16000
+	//   - Post-U6: 14 visible tools, ~14 KB (budget 16 KB).
+	//   - /ce-code-review (current): 18 visible tools — added
+	//     drd.list_anchors (#23 hot-path promotion) + comment.create /
+	//     comment.list (#4) + activity.list (#5), ~17.5 KB. KTD-5's
+	//     "stay well under 30 simultaneously-loaded tools" still holds
+	//     (18 ≪ 30); absolute size stays below any practical system-
+	//     prompt budget. Budget bumped to 20 KB for headroom on the
+	//     next promotion.
+	const budget = 20000
 	if len(bytes) > budget {
 		t.Errorf("cold catalog %d bytes > budget %d — KTD-5 budget broken", len(bytes), budget)
 		t.Logf("catalog JSON:\n%s", string(bytes))

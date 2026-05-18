@@ -8,7 +8,7 @@ import _ "embed"
 // The corresponding test in constitution_test.go pins this constant so
 // edits to constitution.md force a deliberate version bump rather than
 // drifting silently.
-const ConstitutionVersion = 2
+const ConstitutionVersion = 3
 
 //go:embed constitution.md
 var constitutionMD string

@@ -117,15 +117,17 @@ func TestTransportMCP_Constitution_VersionAndLengthBudget(t *testing.T) {
 	if c == "" {
 		t.Fatal("Constitution() returned empty string — //go:embed failed?")
 	}
-	if got := len(c); got < 1500 || got > 6000 {
+	if got := len(c); got < 1500 || got > 8000 {
 		// Spec doesn't mandate a length, but the budget for
 		// serverInfo.instructions is bounded by Claude's context. Keep
-		// the constitution between 1.5k and 6k chars; bump the upper
-		// bound deliberately when adding workflows.
-		t.Errorf("Constitution length %d out of budget [1500, 6000]", got)
+		// the constitution between 1.5k and 8k chars; bump the upper
+		// bound deliberately when adding workflows. Bumped 6k → 8k
+		// when /ce-code-review #4+#5 added the comment + activity
+		// workflow sections.
+		t.Errorf("Constitution length %d out of budget [1500, 8000]", got)
 	}
-	if ConstitutionVersion != 2 {
-		t.Errorf("ConstitutionVersion = %d, want pinned 2 (bump deliberately on schema changes)", ConstitutionVersion)
+	if ConstitutionVersion != 3 {
+		t.Errorf("ConstitutionVersion = %d, want pinned 3 (bump deliberately on schema changes)", ConstitutionVersion)
 	}
 	// Content hash — pinning the int alone is self-referential, so we
 	// fingerprint the embedded markdown too. Any edit to constitution.md
@@ -133,7 +135,7 @@ func TestTransportMCP_Constitution_VersionAndLengthBudget(t *testing.T) {
 	// either drift surfaces here.
 	sum := sha256.Sum256([]byte(c))
 	gotDigest := hex.EncodeToString(sum[:])
-	const wantDigest = "24177843f0cdacf07edc8a3667b9fb30ab51c60e78d38f43d5128036d31d8029"
+	const wantDigest = "c6117833d029de54f27e0c34ed5555980816e74435cb831be6722242c0921f72"
 	if gotDigest != wantDigest {
 		t.Errorf("Constitution sha256 = %s, want %s — bump ConstitutionVersion and update this digest after editing constitution.md",
 			gotDigest, wantDigest)

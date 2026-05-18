@@ -99,4 +99,12 @@ Tool-level errors return `isError: true` in the response envelope, NOT a JSON-RP
 2. `drd.read` → fetch BlockNote JSON.
 3. `drd.list_anchors` → see which prototype clicks already wire to blocks.
 
-Always prefer composite tools (`section.inspect`, `resolve`) for context-gathering, and granular `prd.*` / `drd.*` tools for mutations.
+**Comment on an artifact:**
+1. `comment.list` (`target_kind`, `target_id`) → read the existing thread.
+2. `comment.create` → post a new comment (or a reply via `parent_comment_id`). `@name` mentions fan out as notifications automatically.
+3. `comment.delete` → soft-resolve when the thread is settled (audit-preserving).
+
+**Review what changed:**
+1. `activity.list` → sub_flow-wide prd_audit timeline, newest-first. Pass `since_unix` to fetch "what changed since I last looked".
+
+Always prefer composite tools (`section.inspect`, `resolve`) for context-gathering, and granular `prd.*` / `drd.*` / `comment.*` tools for mutations.

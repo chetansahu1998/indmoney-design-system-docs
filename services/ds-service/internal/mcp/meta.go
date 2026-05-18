@@ -542,6 +542,13 @@ func NewDefaultRegistry() *Registry {
 	// Deep — universal slug resolver (U9b, KTD-6).
 	r.Register(resolveTool{})
 
+	// /ce-code-review #4 — Atlas-parity comment authoring.
+	r.Register(commentCreateTool{})
+	r.Register(commentListTool{})
+	r.Register(commentDeleteTool{})
+	// /ce-code-review #5 — sub_flow activity timeline (reads prd_audit).
+	r.Register(activityListTool{})
+
 	metaRegistry = r
 	return r
 }
