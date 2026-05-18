@@ -24,6 +24,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"database/sql"
@@ -32,6 +33,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -895,6 +898,15 @@ type server struct {
 func (s *server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /__health", s.handleHealth)
 	mux.HandleFunc("POST /v1/auth/login", s.handleLogin)
+
+	// OAuth 2.0 authorization-server metadata (RFC 8414). Claude.ai and
+	// other MCP clients hit this to auto-discover the authorize / token
+	// endpoints; without it they fall through to manual config or fail
+	// "could not connect". Returned content is static — we don't expose
+	// DCR (registration_endpoint), and grant_types reflect what
+	// /v1/oauth/token actually supports.
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", s.handleOAuthDiscovery)
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource", s.handleOAuthProtectedResource)
 	mux.HandleFunc("POST /v1/admin/bootstrap", s.handleBootstrap)
 	mux.HandleFunc("POST /v1/admin/figma-token", s.requireSuperAdmin(s.handleFigmaTokenUpload))
 	mux.HandleFunc("GET /v1/admin/prerender/status", s.requireSuperAdmin(projects.HandlePrerenderStatus(s.prerenderStatus)))
@@ -1375,9 +1387,47 @@ func (s *server) routes(mux *http.ServeMux) {
 		s.log.Error("OAUTH_CLIENTS parse failed", "err", err)
 		os.Exit(2)
 	}
+	// Browser-friendly wrapper for /v1/oauth/authorize: when the user
+	// hits authorize via a redirect from Claude.ai's Connector UI, they
+	// don't have an Authorization header. If our cookie isn't there
+	// either, the standard requireAuth returns JSON 401 — Claude.ai's
+	// UI shows "could not connect" because it expected a 302 to a
+	// login flow. Wrap requireAuth so unauth'd browser requests get
+	// redirected to /oauth/login?next=<original-url> instead. The
+	// login page sets the cookie and bounces back to authorize.
+	requireAuthOrLoginRedirect := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			// Check for any of the auth signals requireAuth accepts.
+			hasAuth := r.Header.Get("Authorization") != ""
+			if !hasAuth {
+				if c, err := r.Cookie("__Host-ds_session"); err == nil && c.Value != "" {
+					hasAuth = true
+				}
+			}
+			if !hasAuth {
+				// No session → bounce to the inline login page. Encode
+				// the full original URL (path + query) so login can
+				// resume exactly where we left off.
+				origURL := r.URL.RequestURI()
+				http.Redirect(w, r, "/oauth/login?next="+url.QueryEscape(origURL), http.StatusFound)
+				return
+			}
+			// Has auth → defer to the standard requireAuth so claims
+			// land in the request context the way the handler expects.
+			s.requireAuth(next)(w, r)
+		}
+	}
 	auth.RegisterOAuthRoutes(mux, s.db.DB, s.jwt, auth.OAuthConfig{
 		Clients: clients,
-	}, s.requireAuth, claimsFrom)
+	}, requireAuthOrLoginRedirect, claimsFrom)
+
+	// Inline login page for the OAuth browser flow. Serves an HTML form
+	// on GET; on POST, runs the same handleLogin path then 302s to the
+	// `next` URL (which is the original /v1/oauth/authorize that
+	// triggered the redirect). Kept tiny + self-contained so we don't
+	// need cross-origin coordination with the Atlas frontend.
+	mux.HandleFunc("GET /oauth/login", s.handleOAuthLoginPage)
+	mux.HandleFunc("POST /oauth/login", s.handleOAuthLoginSubmit)
 }
 
 // ─── Middleware ─────────────────────────────────────────────────────────────
@@ -1562,6 +1612,17 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Cookie fallback for browser-driven flows that can't set custom
+		// headers — specifically /v1/oauth/authorize, which Claude.ai
+		// redirects the browser to during the Connector setup. The
+		// cookie is minted by /v1/auth/login with HttpOnly + Secure +
+		// SameSite=Lax + __Host- prefix. Same JWT, same signer — just a
+		// different transport.
+		if token == "" {
+			if c, err := r.Cookie("__Host-ds_session"); err == nil && c.Value != "" {
+				token = c.Value
+			}
+		}
 		if token == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "missing bearer token"})
 			return
@@ -1664,6 +1725,28 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	// Set the JWT as a session cookie so browser-driven flows
+	// (specifically /v1/oauth/authorize, which is hit as a redirect from
+	// Claude.ai's Connector UI) can authenticate without setting an
+	// Authorization header. Atlas keeps using the access_token in
+	// localStorage + the Authorization header for its API calls — both
+	// auth paths verify the same JWT against the same signer.
+	//
+	// `__Host-` prefix enforces Secure + Path=/ + no Domain attribute,
+	// the strongest cookie-isolation policy modern browsers offer.
+	// HttpOnly blocks JS access, so this cookie can't be exfiltrated by
+	// XSS the way localStorage can. SameSite=Lax lets it ride
+	// top-level GET navigations (the OAuth redirect) but not silent
+	// cross-site POSTs.
+	http.SetCookie(w, &http.Cookie{
+		Name:     "__Host-ds_session",
+		Value:    tok,
+		Path:     "/",
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int((7 * 24 * time.Hour).Seconds()),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"access_token": tok,
 		"expires_in":   int((7 * 24 * time.Hour).Seconds()),
@@ -1673,6 +1756,176 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			"role":  u.Role,
 		},
 	})
+}
+
+// handleOAuthLoginPage serves a minimal HTML email/password form. The
+// form action is `/oauth/login` (POST); the `next` query param carries
+// the destination to bounce to after the cookie is set. This page
+// fires when an unauthenticated browser hits /v1/oauth/authorize
+// (typically via Claude.ai's Connector redirect).
+//
+// Self-contained — no JS, no external assets, no Atlas dependency. The
+// styling is inline so the page survives even if the Atlas frontend is
+// down or unreachable from the user's network.
+func (s *server) handleOAuthLoginPage(w http.ResponseWriter, r *http.Request) {
+	next := r.URL.Query().Get("next")
+	// Defense: only accept same-origin / relative `next` URLs. Anything
+	// starting with "http" or "//" would be an open-redirect primitive.
+	if next == "" || strings.HasPrefix(next, "http") || strings.HasPrefix(next, "//") {
+		next = "/v1/oauth/authorize"
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	// html/template would be overkill for a static form; the only
+	// dynamic value is `next`, which we run through html-escape to
+	// block injection via a crafted authorize URL.
+	escapedNext := htmlEscapeForAttr(next)
+	_, _ = w.Write([]byte(`<!doctype html><html><head><meta charset="utf-8">
+<title>Sign in — INDmoney DS</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f7f9;color:#1f2937;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}
+.card{background:#fff;border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,.08);padding:28px 32px;width:340px}
+h1{margin:0 0 4px;font-size:20px}
+.sub{color:#6b7280;font-size:13px;margin-bottom:20px}
+label{display:block;font-weight:600;font-size:12px;margin:14px 0 6px;color:#374151}
+input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:14px}
+input:focus{outline:none;border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.15)}
+button{width:100%;margin-top:18px;padding:10px 12px;background:#111827;color:#fff;border:0;border-radius:8px;font-weight:600;font-size:14px;cursor:pointer}
+button:hover{background:#0b1220}
+.foot{margin-top:14px;font-size:12px;color:#6b7280;text-align:center}
+.err{margin-top:14px;color:#b91c1c;font-size:13px;background:#fee2e2;border-radius:8px;padding:8px 12px;display:none}
+.err.show{display:block}
+</style></head><body>
+<form class="card" method="post" action="/oauth/login">
+  <h1>Sign in</h1>
+  <div class="sub">Continue to authorize the connector.</div>
+  <input type="hidden" name="next" value="` + escapedNext + `">
+  <label for="e">Email</label>
+  <input id="e" name="email" type="email" autocomplete="email" required autofocus>
+  <label for="p">Password</label>
+  <input id="p" name="password" type="password" autocomplete="current-password" required>
+  <button type="submit">Sign in &amp; continue</button>
+  <div class="foot">indmoney-ds-service.fly.dev</div>
+</form>
+</body></html>`))
+}
+
+// handleOAuthLoginSubmit accepts the form POST from the inline login
+// page. Runs the same credentials check as POST /v1/auth/login (DRY via
+// a shared verifyUser helper), sets the session cookie on success, and
+// 302s to the `next` URL. On failure, re-renders the form with an
+// error banner (kept minimal — the dev workflow is "log in correctly
+// or try again").
+func (s *server) handleOAuthLoginSubmit(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad form", http.StatusBadRequest)
+		return
+	}
+	email := r.PostFormValue("email")
+	password := r.PostFormValue("password")
+	next := r.PostFormValue("next")
+	if next == "" || strings.HasPrefix(next, "http") || strings.HasPrefix(next, "//") {
+		next = "/v1/oauth/authorize"
+	}
+
+	// Reuse handleLogin's verification path by dispatching a JSON
+	// request to it internally — keeps credential logic single-sourced.
+	loginBody, _ := json.Marshal(map[string]string{"email": email, "password": password})
+	loginReq := httptest.NewRequest(http.MethodPost, "/v1/auth/login", bytes.NewReader(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginResp := httptest.NewRecorder()
+	s.handleLogin(loginResp, loginReq)
+
+	if loginResp.Code != http.StatusOK {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`<!doctype html><body style="font:14px sans-serif;padding:40px;background:#f6f7f9">
+<div style="max-width:340px;margin:0 auto;background:#fff;padding:24px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.06)">
+<h2 style="margin:0 0 8px">Sign in failed</h2>
+<p style="color:#6b7280;margin:0 0 16px">Check your email and password, then try again.</p>
+<a href="/oauth/login?next=` + htmlEscapeForAttr(next) + `" style="color:#4f46e5">&larr; Back to sign in</a>
+</div></body>`))
+		return
+	}
+	// Replay the Set-Cookie header from handleLogin onto our response so
+	// the browser actually persists the session.
+	for _, c := range loginResp.Result().Cookies() {
+		http.SetCookie(w, c)
+	}
+	http.Redirect(w, r, next, http.StatusFound)
+}
+
+// htmlEscapeForAttr escapes a string for safe placement inside a
+// double-quoted HTML attribute. Sufficient for our single use case
+// (the `next` URL); does not handle textnode or script contexts.
+func htmlEscapeForAttr(s string) string {
+	r := strings.NewReplacer(
+		`&`, `&amp;`,
+		`"`, `&quot;`,
+		`'`, `&#39;`,
+		`<`, `&lt;`,
+		`>`, `&gt;`,
+	)
+	return r.Replace(s)
+}
+
+// handleOAuthDiscovery returns the RFC 8414 OAuth 2.0
+// Authorization-Server Metadata document. Lets Claude.ai's Custom
+// Connector auto-discover the authorize/token URLs instead of
+// requiring manual config. Static fields — we don't expose Dynamic
+// Client Registration; grant_types_supported matches what
+// /v1/oauth/token actually accepts.
+func (s *server) handleOAuthDiscovery(w http.ResponseWriter, r *http.Request) {
+	base := serverPublicBaseURL(r)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"issuer":                                base,
+		"authorization_endpoint":                base + "/v1/oauth/authorize",
+		"token_endpoint":                        base + "/v1/oauth/token",
+		"revocation_endpoint":                   base + "/v1/oauth/revoke",
+		"response_types_supported":              []string{"code"},
+		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
+		"code_challenge_methods_supported":      []string{"S256"},
+		"token_endpoint_auth_methods_supported": []string{"none"}, // public client (PKCE) per RFC 8252
+		"scopes_supported":                      []string{}, // scopes captured but not enforced (yet)
+	})
+}
+
+// handleOAuthProtectedResource returns the RFC 9728 Protected Resource
+// Metadata for /mcp. Anthropic Claude Connectors fetch this off the
+// resource URL to discover which authorization server to use.
+func (s *server) handleOAuthProtectedResource(w http.ResponseWriter, r *http.Request) {
+	base := serverPublicBaseURL(r)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"resource":              base + "/mcp",
+		"authorization_servers": []string{base},
+		"bearer_methods_supported": []string{"header"},
+	})
+}
+
+// serverPublicBaseURL derives the public origin (scheme + host) the
+// client used to reach us. Honors X-Forwarded-Proto/Host (Fly's proxy
+// sets these) so the discovery doc returns https://indmoney-ds-service.fly.dev/
+// not http://internal-vm-name/.
+func serverPublicBaseURL(r *http.Request) string {
+	scheme := r.Header.Get("X-Forwarded-Proto")
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	return scheme + "://" + host
 }
 
 type bootstrapReq struct {
