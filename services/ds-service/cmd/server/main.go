@@ -907,6 +907,12 @@ func (s *server) routes(mux *http.ServeMux) {
 	// /v1/oauth/token actually supports.
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", s.handleOAuthDiscovery)
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource", s.handleOAuthProtectedResource)
+	// MCP-spec resource discovery path. RFC 9728 §3.1 says the metadata
+	// URL is the resource path with `/.well-known/oauth-protected-resource`
+	// prepended — so for resource `/mcp` Claude looks for
+	// `/.well-known/oauth-protected-resource/mcp`. Same handler body;
+	// both URLs return identical JSON.
+	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", s.handleOAuthProtectedResource)
 	mux.HandleFunc("POST /v1/admin/bootstrap", s.handleBootstrap)
 	mux.HandleFunc("POST /v1/admin/figma-token", s.requireSuperAdmin(s.handleFigmaTokenUpload))
 	mux.HandleFunc("GET /v1/admin/prerender/status", s.requireSuperAdmin(projects.HandlePrerenderStatus(s.prerenderStatus)))
@@ -1435,13 +1441,37 @@ func (s *server) routes(mux *http.ServeMux) {
 func (s *server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		for _, raw := range s.cfg.CORSAllowOrigin {
-			allowed := strings.TrimSpace(raw)
-			if originMatchesAllowed(origin, allowed) {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
-				w.Header().Set("Vary", "Origin")
-				break
+
+		// Public endpoints that Claude Connectors (and any RFC 9728 /
+		// MCP-spec client) need to read cross-origin: the OAuth
+		// discovery doc, the protected-resource metadata, and the MCP
+		// transport itself. These don't carry browser cookies — the
+		// MCP client uses Bearer tokens — so wildcard ACAO is safe and
+		// avoids the per-origin allowlist's need-to-know-every-client
+		// problem. Anthropic doesn't publish a stable list of edge IPs
+		// or origins for claude.ai's connector backend.
+		isPublicMCPEndpoint := strings.HasPrefix(r.URL.Path, "/.well-known/") ||
+			r.URL.Path == "/mcp"
+
+		corsApplied := false
+		if isPublicMCPEndpoint {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			// `*` ACAO can't be combined with Allow-Credentials per spec,
+			// so we don't set the credentials header here. MCP clients
+			// use Authorization: Bearer headers (set explicitly, not
+			// cookie-driven), so credentials aren't needed.
+			w.Header().Set("Vary", "Origin")
+			corsApplied = true
+		}
+		if !corsApplied {
+			for _, raw := range s.cfg.CORSAllowOrigin {
+				allowed := strings.TrimSpace(raw)
+				if originMatchesAllowed(origin, allowed) {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+					w.Header().Set("Vary", "Origin")
+					break
+				}
 			}
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
@@ -1624,11 +1654,23 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			}
 		}
 		if token == "" {
+			// RFC 9728 §5.3 — when an MCP-shaped resource (/mcp) returns
+			// 401, advertise the resource_metadata URL so the client can
+			// discover the auth server. Without this, Claude Connectors
+			// hit /mcp, get a bare 401, and report "could not connect"
+			// with no recovery path. Scoped to /mcp only — the legacy
+			// REST surface doesn't speak this header.
+			if r.URL.Path == "/mcp" {
+				setMCPWWWAuthenticate(w, r)
+			}
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "missing bearer token"})
 			return
 		}
 		claims, err := s.jwt.VerifyAccessToken(token)
 		if err != nil {
+			if r.URL.Path == "/mcp" {
+				setMCPWWWAuthenticate(w, r)
+			}
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid token", "detail": err.Error()})
 			return
 		}
@@ -1906,6 +1948,18 @@ func (s *server) handleOAuthProtectedResource(w http.ResponseWriter, r *http.Req
 		"authorization_servers": []string{base},
 		"bearer_methods_supported": []string{"header"},
 	})
+}
+
+// setMCPWWWAuthenticate writes the RFC 9728 §5.3 WWW-Authenticate
+// header on the response, pointing the MCP client at the
+// protected-resource metadata URL for /mcp. Claude Connectors look
+// for this on a 401 from the MCP endpoint to bootstrap OAuth
+// discovery — without it, they have no way to find our auth server
+// and surface "could not connect" with no recovery path.
+func setMCPWWWAuthenticate(w http.ResponseWriter, r *http.Request) {
+	base := serverPublicBaseURL(r)
+	w.Header().Set("WWW-Authenticate",
+		`Bearer realm="mcp", resource_metadata="`+base+`/.well-known/oauth-protected-resource/mcp"`)
 }
 
 // serverPublicBaseURL derives the public origin (scheme + host) the
