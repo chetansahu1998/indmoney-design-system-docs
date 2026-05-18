@@ -43,10 +43,18 @@ func newOAuthTestDB(t *testing.T) *sql.DB {
 			created_at TEXT NOT NULL DEFAULT '',
 			last_login_at TEXT
 		)`,
+		`CREATE TABLE tenants (
+			id   TEXT PRIMARY KEY,
+			name TEXT NOT NULL
+		)`,
+		// Seed both tenants the test harness uses so the FK
+		// REFERENCES tenants(id) holds.
+		`INSERT INTO tenants(id, name) VALUES ('t-alpha', 'Tenant Alpha')`,
+		`INSERT INTO tenants(id, name) VALUES ('t-bravo', 'Tenant Bravo')`,
 		`CREATE TABLE oauth_tokens (
 			id                    TEXT PRIMARY KEY,
 			user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-			tenant_id             TEXT NOT NULL,
+			tenant_id             TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
 			kind                  TEXT NOT NULL CHECK (kind IN ('authorization_code','refresh_token')),
 			client_id             TEXT NOT NULL,
 			redirect_uri          TEXT NOT NULL,
@@ -272,6 +280,123 @@ func TestOAuth_HappyPath_AuthorizeTokenRefresh(t *testing.T) {
 	}
 	if !revoked.Valid {
 		t.Error("old refresh token revoked_at is NULL after rotation")
+	}
+}
+
+// TestOAuth_MultiTenant_RequiresExplicitTenantID — finding #18 (P2).
+// Previously the authorize handler silently pinned multi-tenant users
+// to claims.Tenants[0]. With no UI signal of which tenant was being
+// connected, and non-default tenants unreachable, the connector was
+// half-broken for multi-tenant accounts. Fix: require tenant_id query
+// param, enforce it's a member of claims.Tenants.
+func TestOAuth_MultiTenant_RequiresExplicitTenantID(t *testing.T) {
+	h := newHarness(t, OAuthConfig{})
+	seedUser(t, h.db, "u-multi", "u-multi@example.com")
+	h.curClaims = &Claims{
+		Sub:     "u-multi",
+		Email:   "u-multi@example.com",
+		Role:    RoleDesigner,
+		Tenants: []string{"t-alpha", "t-bravo"},
+	}
+	defer func() { h.curClaims = nil }()
+
+	authzURL := func(extraParams map[string]string) string {
+		p := url.Values{}
+		p.Set("response_type", "code")
+		p.Set("client_id", "claude.ai")
+		p.Set("redirect_uri", "https://claude.ai/oauth/callback")
+		p.Set("code_challenge", pkceChallenge(pkceVerifier))
+		p.Set("code_challenge_method", "S256")
+		for k, v := range extraParams {
+			p.Set(k, v)
+		}
+		return "/v1/oauth/authorize?" + p.Encode()
+	}
+
+	cases := []struct {
+		name       string
+		params     map[string]string
+		wantStatus int
+		wantError  string
+	}{
+		{
+			name:       "no_tenant_id",
+			params:     map[string]string{},
+			wantStatus: http.StatusBadRequest,
+			wantError:  "invalid_request",
+		},
+		{
+			name:       "non_member_tenant",
+			params:     map[string]string{"tenant_id": "t-charlie"},
+			wantStatus: http.StatusForbidden,
+			wantError:  "invalid_request",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, authzURL(tc.params), nil)
+			w := httptest.NewRecorder()
+			h.mux.ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tc.wantStatus)
+			}
+			body := map[string]any{}
+			_ = json.Unmarshal(w.Body.Bytes(), &body)
+			if got, _ := body["error"].(string); got != tc.wantError {
+				t.Errorf("error = %q, want %q", got, tc.wantError)
+			}
+		})
+	}
+
+	// Member tenant — accepted, 302 redirect with code.
+	req := httptest.NewRequest(http.MethodGet, authzURL(map[string]string{"tenant_id": "t-bravo"}), nil)
+	w := httptest.NewRecorder()
+	h.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("member tenant_id: status = %d, want 302; body=%s", w.Code, w.Body.String())
+	}
+	loc, err := url.Parse(w.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse location: %v", err)
+	}
+	code := loc.Query().Get("code")
+	// Verify the stored row was pinned to t-bravo, not t-alpha.
+	var storedTenant string
+	if err := h.db.QueryRow(`SELECT tenant_id FROM oauth_tokens WHERE id = ?`, code).Scan(&storedTenant); err != nil {
+		t.Fatalf("lookup code: %v", err)
+	}
+	if storedTenant != "t-bravo" {
+		t.Errorf("stored tenant = %q, want t-bravo (caller's explicit pick, not Tenants[0])", storedTenant)
+	}
+}
+
+// TestOAuth_TenantFK_DeleteCascadesToRows — finding #11 (P1). Migration
+// 0045 retrofits REFERENCES tenants(id) ON DELETE CASCADE on the
+// oauth_tokens.tenant_id column. Deleting a tenant must wipe its
+// oauth_tokens rows; without the FK orphans would accumulate.
+func TestOAuth_TenantFK_DeleteCascadesToRows(t *testing.T) {
+	h := newHarness(t, OAuthConfig{})
+	_ = runFullAuthorizeStep(t, h, "u-fk", "t-alpha")
+
+	// One row should exist for t-alpha after the authorize step.
+	var before int
+	if err := h.db.QueryRow(`SELECT COUNT(*) FROM oauth_tokens WHERE tenant_id = ?`, "t-alpha").Scan(&before); err != nil {
+		t.Fatalf("count before: %v", err)
+	}
+	if before == 0 {
+		t.Fatal("expected at least one oauth_tokens row for t-alpha")
+	}
+
+	if _, err := h.db.Exec(`DELETE FROM tenants WHERE id = ?`, "t-alpha"); err != nil {
+		t.Fatalf("delete tenant: %v", err)
+	}
+
+	var after int
+	if err := h.db.QueryRow(`SELECT COUNT(*) FROM oauth_tokens WHERE tenant_id = ?`, "t-alpha").Scan(&after); err != nil {
+		t.Fatalf("count after: %v", err)
+	}
+	if after != 0 {
+		t.Errorf("cascade did not fire: %d orphan oauth_tokens rows after tenant delete", after)
 	}
 }
 
@@ -599,6 +724,10 @@ func TestOAuth_CrossTenantIsolation(t *testing.T) {
 	params.Set("redirect_uri", "https://claude.ai/oauth/callback")
 	params.Set("code_challenge", pkceChallenge(pkceVerifier))
 	params.Set("code_challenge_method", "S256")
+	// Multi-tenant user — per #18, explicit tenant_id required.
+	// The pin to t-alpha here is exactly what the test asserts ends
+	// up in the issued token regardless of session-list tampering.
+	params.Set("tenant_id", "t-alpha")
 	status, loc := h.authorize(t, params)
 	if status != http.StatusFound {
 		t.Fatalf("authorize status = %d", status)

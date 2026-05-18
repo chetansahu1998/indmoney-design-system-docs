@@ -270,17 +270,51 @@ func handleOAuthAuthorize(db *sql.DB, cfg OAuthConfig, claimsFromRequest func(*h
 			writeOAuthError(w, http.StatusUnauthorized, errInvalidRequest, "no session")
 			return
 		}
-		// Capture exactly one tenant_id at authorize time. The session
-		// JWT lists every tenant the user belongs to; for the connector
-		// flow we pin the OAuth grant to the first one. A user who needs
-		// to connect a different tenant logs into that tenant first
-		// (forthcoming UX). NEVER trust caller-supplied tenant in this
-		// flow — see Rule 4 in CLAUDE.md.
+		// Pin exactly one tenant_id at authorize time. Single-tenant
+		// users get auto-pinned; multi-tenant users MUST pass an
+		// explicit `?tenant_id=` query param naming a tenant they belong
+		// to. Silently defaulting multi-tenant users to Tenants[0]
+		// (the pre-#18 behavior) was wrong — there's no UI signal of
+		// which tenant is being delegated to the connector, and a
+		// non-default tenant would be unreachable. NEVER trust caller-
+		// supplied tenant beyond the membership check — see Rule 4 in
+		// CLAUDE.md.
 		if len(claims.Tenants) == 0 {
 			writeOAuthError(w, http.StatusForbidden, errInvalidRequest, "session has no tenant membership")
 			return
 		}
-		tenantID := claims.Tenants[0]
+		requestedTenant := q.Get("tenant_id")
+		var tenantID string
+		switch {
+		case len(claims.Tenants) == 1:
+			// Single-tenant user — auto-pin. If they passed tenant_id
+			// anyway, enforce it matches.
+			tenantID = claims.Tenants[0]
+			if requestedTenant != "" && requestedTenant != tenantID {
+				writeOAuthError(w, http.StatusForbidden, errInvalidRequest,
+					"tenant_id does not match session membership")
+				return
+			}
+		case requestedTenant == "":
+			writeOAuthError(w, http.StatusBadRequest, errInvalidRequest,
+				"tenant_id query param required for multi-tenant sessions")
+			return
+		default:
+			// Multi-tenant + explicit pick. Verify membership.
+			found := false
+			for _, t := range claims.Tenants {
+				if t == requestedTenant {
+					found = true
+					break
+				}
+			}
+			if !found {
+				writeOAuthError(w, http.StatusForbidden, errInvalidRequest,
+					"tenant_id not in session membership")
+				return
+			}
+			tenantID = requestedTenant
+		}
 
 		now := cfg.now()
 		code := uuid.NewString()
