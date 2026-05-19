@@ -135,7 +135,9 @@ func (c OAuthConfig) now() time.Time {
 	return time.Now()
 }
 
-// lookupClient returns the registered OAuthClient for an id, or false.
+// lookupClient checks ONLY the static config slice. Kept for callers
+// that need to distinguish pre-configured clients from DCR'd ones (none
+// today, but the symmetry helps tests).
 func (c OAuthConfig) lookupClient(id string) (OAuthClient, bool) {
 	for _, cl := range c.Clients {
 		if cl.ID == id {
@@ -145,8 +147,23 @@ func (c OAuthConfig) lookupClient(id string) (OAuthClient, bool) {
 	return OAuthClient{}, false
 }
 
+// lookupAnyClient tries the static config first, then falls back to the
+// oauth_clients table (RFC 7591 dynamically-registered clients). The
+// Claude.ai connector flow registers itself dynamically per-install, so
+// every real-world OAuth client_id we see at authorize/token time comes
+// from the DB, not the static slice. Static remains as a configuration
+// affordance for hand-curated test clients.
+func lookupAnyClient(ctx context.Context, db *sql.DB, cfg OAuthConfig, id string) (OAuthClient, bool) {
+	if c, ok := cfg.lookupClient(id); ok {
+		return c, true
+	}
+	return LookupDynamicClient(ctx, db, id)
+}
+
 // clientAllowed is retained as a thin wrapper for the callers that
 // only care about id-level acceptance (revoke; rate-limited paths).
+// Checks static only — dynamic clients hit lookupAnyClient where the
+// caller has a context + db handy.
 func (c OAuthConfig) clientAllowed(id string) bool {
 	_, ok := c.lookupClient(id)
 	return ok
@@ -193,6 +210,12 @@ func RegisterOAuthRoutes(
 		handleOAuthToken(db, signer, cfg))
 	mux.HandleFunc("POST /v1/oauth/revoke",
 		handleOAuthRevoke(db, cfg))
+	// RFC 7591 Dynamic Client Registration — open (no auth). Required
+	// by Anthropic's Claude.ai Custom Connector flow: Claude mints its
+	// own client_id per install via this endpoint, then runs the
+	// standard authorize+token dance with that client_id.
+	mux.HandleFunc("POST /v1/oauth/register",
+		handleOAuthRegister(db))
 }
 
 // ─── error helpers (RFC 6749 §5.2) ────────────────────────────────────────────
@@ -237,7 +260,7 @@ func handleOAuthAuthorize(db *sql.DB, cfg OAuthConfig, claimsFromRequest func(*h
 			writeOAuthError(w, http.StatusBadRequest, errInvalidRequest, "client_id required")
 			return
 		}
-		client, ok := cfg.lookupClient(clientID)
+		client, ok := lookupAnyClient(r.Context(), db, cfg, clientID)
 		if !ok {
 			writeOAuthError(w, http.StatusUnauthorized, errInvalidClient, "client_id not allowlisted")
 			return
@@ -389,7 +412,7 @@ func handleTokenAuthCode(w http.ResponseWriter, r *http.Request, db *sql.DB, sig
 		writeOAuthError(w, http.StatusBadRequest, errInvalidRequest, "code, code_verifier, client_id, redirect_uri all required")
 		return
 	}
-	if !cfg.clientAllowed(clientID) {
+	if _, ok := lookupAnyClient(r.Context(), db, cfg, clientID); !ok {
 		writeOAuthError(w, http.StatusUnauthorized, errInvalidClient, "client_id not allowlisted")
 		return
 	}

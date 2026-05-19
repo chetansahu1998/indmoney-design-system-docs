@@ -1928,6 +1928,12 @@ func (s *server) handleOAuthDiscovery(w http.ResponseWriter, r *http.Request) {
 		"authorization_endpoint":                base + "/v1/oauth/authorize",
 		"token_endpoint":                        base + "/v1/oauth/token",
 		"revocation_endpoint":                   base + "/v1/oauth/revoke",
+		// RFC 7591 Dynamic Client Registration endpoint. This is what
+		// Anthropic's Claude.ai connector flow looks for to mint its
+		// own client_id; without this field, Claude's connector setup
+		// silently fails at the "start" step (no client_id → no
+		// authorize URL it can construct).
+		"registration_endpoint":                 base + "/v1/oauth/register",
 		"response_types_supported":              []string{"code"},
 		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},

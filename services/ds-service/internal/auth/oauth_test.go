@@ -78,6 +78,24 @@ func newOAuthTestDB(t *testing.T) *sql.DB {
 			revoked_by TEXT,
 			reason     TEXT
 		)`,
+		`CREATE TABLE oauth_clients (
+			id                         TEXT PRIMARY KEY,
+			client_name                TEXT NOT NULL DEFAULT '',
+			redirect_uris              TEXT NOT NULL,
+			grant_types                TEXT NOT NULL DEFAULT '["authorization_code","refresh_token"]',
+			response_types             TEXT NOT NULL DEFAULT '["code"]',
+			token_endpoint_auth_method TEXT NOT NULL DEFAULT 'none',
+			scope                      TEXT NOT NULL DEFAULT '',
+			contacts                   TEXT,
+			client_uri                 TEXT,
+			logo_uri                   TEXT,
+			tos_uri                    TEXT,
+			policy_uri                 TEXT,
+			software_id                TEXT,
+			software_version           TEXT,
+			created_at                 INTEGER NOT NULL,
+			last_used_at               INTEGER
+		)`,
 	}
 	for _, s := range ddl {
 		if _, err := db.Exec(s); err != nil {
@@ -874,6 +892,88 @@ func TestOAuth_ClientAllowlist_RejectsUnknown(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
 	if got, _ := body["error"].(string); got != "invalid_client" {
 		t.Errorf("error = %q, want invalid_client", got)
+	}
+}
+
+// TestOAuth_DCR_RegisterAndUse — end-to-end Dynamic Client Registration
+// (RFC 7591). Claude.ai's connector flow depends on this: POST a
+// registration body → get a client_id back → use that client_id at
+// the authorize endpoint. Without DCR, Claude can't initiate the OAuth
+// flow at all (it has no client_id to send).
+func TestOAuth_DCR_RegisterAndUse(t *testing.T) {
+	h := newHarness(t, OAuthConfig{})
+
+	// 1. Register a client via POST /v1/oauth/register.
+	regBody := `{
+		"redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+		"client_name": "Claude Test",
+		"token_endpoint_auth_method": "none"
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/oauth/register",
+		strings.NewReader(regBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("register status = %d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	var regResp RegisterClientResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &regResp); err != nil {
+		t.Fatalf("decode register response: %v", err)
+	}
+	if regResp.ClientID == "" {
+		t.Fatal("register response missing client_id")
+	}
+	if len(regResp.RedirectURIs) != 1 || regResp.RedirectURIs[0] != "https://claude.ai/api/mcp/auth_callback" {
+		t.Errorf("redirect_uris echoed wrong: %v", regResp.RedirectURIs)
+	}
+
+	// 2. Use the minted client_id at /v1/oauth/authorize.
+	seedUser(t, h.db, "u-dcr", "u-dcr@example.com")
+	h.curClaims = &Claims{
+		Sub: "u-dcr", Email: "u-dcr@example.com",
+		Role: RoleDesigner, Tenants: []string{"t-alpha"},
+	}
+	defer func() { h.curClaims = nil }()
+
+	params := url.Values{}
+	params.Set("response_type", "code")
+	params.Set("client_id", regResp.ClientID)
+	params.Set("redirect_uri", "https://claude.ai/api/mcp/auth_callback")
+	params.Set("code_challenge", pkceChallenge(pkceVerifier))
+	params.Set("code_challenge_method", "S256")
+	status, loc := h.authorize(t, params)
+	if status != http.StatusFound {
+		t.Fatalf("authorize with DCR'd client failed: status=%d", status)
+	}
+	u, _ := url.Parse(loc)
+	if u.Query().Get("code") == "" {
+		t.Fatal("authorize redirected without a code")
+	}
+}
+
+// TestOAuth_DCR_RejectsBadRedirectURI — the registration endpoint must
+// reject schemes other than https / http-localhost so the redirect_uri
+// security guarantee still holds.
+func TestOAuth_DCR_RejectsBadRedirectURI(t *testing.T) {
+	h := newHarness(t, OAuthConfig{})
+
+	for _, badURI := range []string{
+		"javascript:alert(1)",
+		"file:///etc/passwd",
+		"http://attacker.example.com/cb", // non-localhost http
+		"",
+	} {
+		body := `{"redirect_uris": ["` + badURI + `"]}`
+		req := httptest.NewRequest(http.MethodPost, "/v1/oauth/register",
+			strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.mux.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("register with redirect_uri=%q: status=%d, want 400", badURI, w.Code)
+		}
 	}
 }
 
