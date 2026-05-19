@@ -1682,6 +1682,25 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "token_revoked"})
 			return
 		}
+		// Ensure a `users` row exists for this JWT subject. The
+		// mint-tokens CLI signs JWTs against the same Ed25519 key the
+		// server verifies with, but it does NOT seed user rows — so
+		// any downstream write that has a FK to users(id) fails the
+		// first time that user actually does something. Idempotent
+		// INSERT keeps subsequent requests cheap (PK conflict short-
+		// circuits at the storage layer). password_hash stays empty
+		// because JWT-only users can't log in via /v1/auth/login;
+		// they ride the JWT directly.
+		if claims.Sub != "" && claims.Email != "" {
+			role := claims.Role
+			if role == "" {
+				role = "user"
+			}
+			_, _ = s.db.ExecContext(r.Context(),
+				`INSERT OR IGNORE INTO users (id, email, password_hash, role, created_at)
+				 VALUES (?, ?, '', ?, ?)`,
+				claims.Sub, claims.Email, role, time.Now().UTC().Format(time.RFC3339))
+		}
 		ctx := context.WithValue(r.Context(), ctxClaims, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}

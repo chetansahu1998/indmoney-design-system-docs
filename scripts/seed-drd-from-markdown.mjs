@@ -84,9 +84,12 @@ const b64 = Buffer.from(update).toString("base64");
 console.log(`YDoc encoded: ${update.length} bytes raw, ${b64.length} chars base64`);
 
 // 3. Push to ds-service via MCP drd.append.
+const authHeader = process.env.DS_AUTH_TOKEN
+  ? { Authorization: `Bearer ${process.env.DS_AUTH_TOKEN}` }
+  : {};
 const res = await fetch(`${DS}/v1/mcp/invoke/drd.append`, {
   method: "POST",
-  headers: { "Content-Type": "application/json" },
+  headers: { "Content-Type": "application/json", ...authHeader },
   body: JSON.stringify({
     sub_flow_slug: slug,
     content_bytes_base64: b64,
