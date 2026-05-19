@@ -173,22 +173,21 @@ func TestTransportMCP_Initialize_NegotiatesProtocolVersion(t *testing.T) {
 		t.Errorf("no-version: default = %q, want %q", res.ProtocolVersion, MCPProtocolVersion)
 	}
 
-	// 3. Client requests an unsupported version — invalid_params with
-	//    the supported set in error.data.
+	// 3. Client requests an unsupported version — server responds with
+	//    its preferred, NOT an error. Claude Connectors (and other
+	//    spec-compliant MCP clients) interpret JSON-RPC errors as fatal;
+	//    a lenient response lets them downgrade-or-disconnect on their
+	//    own terms instead of aborting the entire connection with a
+	//    cryptic "Authorization failed" surfacing.
 	resp = jrpcCall(t, handler, "initialize",
 		map[string]any{"protocolVersion": "2099-12-31"}, 3)
-	if resp.Error == nil {
-		t.Fatal("expected jrpc error for unsupported version")
+	if resp.Error != nil {
+		t.Fatalf("unsupported version must NOT return jrpc error (Claude reads it as McpServerError); got %+v", resp.Error)
 	}
-	if resp.Error.Code != jrpcInvalidParams {
-		t.Errorf("error.code = %d, want %d (invalid_params)", resp.Error.Code, jrpcInvalidParams)
-	}
-	if data, ok := resp.Error.Data.(map[string]any); ok {
-		if _, ok := data["supported"]; !ok {
-			t.Error("error.data missing `supported` field — clients need it to adapt")
-		}
-	} else {
-		t.Errorf("error.data shape = %T, want map", resp.Error.Data)
+	res = resultAs[mcpInitializeResult](t, resp)
+	if res.ProtocolVersion != MCPProtocolVersion {
+		t.Errorf("unsupported-version: server should fall back to its preferred (%q), got %q",
+			MCPProtocolVersion, res.ProtocolVersion)
 	}
 }
 

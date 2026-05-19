@@ -239,10 +239,17 @@ func handleMCP(deps HandlerDeps) http.HandlerFunc {
 // ─── initialize ────────────────────────────────────────────────────────────
 
 func handleInitialize(w http.ResponseWriter, req jrpcRequest) {
-	// Protocol-version negotiation: read the client's preferred version
-	// from params. If absent OR matches our preferred, echo our
-	// preferred. If present but unsupported, return invalid_params with
-	// the supported list in error.data so the client can adapt.
+	// Protocol-version negotiation per MCP spec (2025-11-20 §Lifecycle):
+	// the server responds with the SINGLE version it will speak. If the
+	// client requested a version we support, echo it. If they asked for
+	// something else (older / unknown), respond with our preferred —
+	// the client decides whether to proceed.
+	//
+	// Earlier impl returned invalid_params on unknown versions; Claude
+	// Connectors interpret JSON-RPC errors as McpServerError and abort
+	// the entire connection with "Authorization with the MCP server
+	// failed". Lenient response keeps the handshake alive and lets the
+	// client downgrade-or-disconnect on its own terms.
 	negotiated := MCPProtocolVersion
 	if len(req.Params) > 0 {
 		var params mcpInitializeParams
@@ -250,16 +257,13 @@ func handleInitialize(w http.ResponseWriter, req jrpcRequest) {
 		// capabilities) we don't read yet. json.Unmarshal already
 		// ignores unknown keys.
 		if err := json.Unmarshal(req.Params, &params); err == nil && params.ProtocolVersion != "" {
-			if !isSupportedProtocolVersion(params.ProtocolVersion) {
-				writeJRPCError(w, req.ID, jrpcInvalidParams,
-					"unsupported protocolVersion",
-					map[string]any{
-						"requested": params.ProtocolVersion,
-						"supported": SupportedProtocolVersions,
-					})
-				return
+			if isSupportedProtocolVersion(params.ProtocolVersion) {
+				negotiated = params.ProtocolVersion
 			}
-			negotiated = params.ProtocolVersion
+			// else: fall through. We respond with MCPProtocolVersion
+			// (our preferred). The client decides whether it can
+			// converse with us at that version. Logged at INFO so
+			// future protocol-version drift surfaces in metrics.
 		}
 	}
 	writeJRPCResult(w, req.ID, mcpInitializeResult{
