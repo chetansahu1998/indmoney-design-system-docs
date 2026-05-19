@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -302,6 +303,16 @@ func (t *TenantRepo) UpsertProject(ctx context.Context, p Project) (Project, err
 		if p.FileID != "" {
 			fileIDArg = p.FileID
 		}
+		// Diagnostic — surface the exact owner_user_id + tenant_id we're
+		// about to insert so we can match against the lazy-user-row
+		// fix in main.go::requireAuth. Remove once the prod end-to-end
+		// authoring test confirms the FK resolves.
+		slog.Info("project_insert_diag",
+			"project_id", p.ID,
+			"slug", slug,
+			"owner_user_id", p.OwnerUserID,
+			"tenant_id", t.tenantID,
+			"file_id", p.FileID)
 		_, err := t.handle().ExecContext(ctx,
 			`INSERT INTO projects (id, slug, name, platform, product, path, file_id, owner_user_id, tenant_id, created_at, updated_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -2702,10 +2713,17 @@ func (t *TenantRepo) ListVersionsByProject(ctx context.Context, projectID string
 		return nil, errors.New("projects: tenant_id required")
 	}
 	rows, err := t.r.db.QueryContext(ctx,
+		// May 18, 2026: hide pruned versions from the dropdown. Their
+		// on-disk PNGs may already be gone (retention sweeper), and after
+		// the per-section RunExport bug they're also semantically orphans
+		// — superseded by a newer keeper version for every flow they
+		// owned. Explicit `?v=<pruned-id>` drill-down still works
+		// because ListScreensByVersion doesn't filter on pruned_at.
 		`SELECT id, project_id, version_index, status, pipeline_started_at, pipeline_heartbeat_at,
 		        error, pruned_at, created_by_user_id, created_at
 		   FROM project_versions
 		  WHERE project_id = ? AND tenant_id = ?
+		    AND pruned_at IS NULL
 		  ORDER BY version_index DESC`,
 		projectID, t.tenantID,
 	)
@@ -2759,6 +2777,114 @@ func (t *TenantRepo) MarkVersionPruned(ctx context.Context, versionID string, at
 
 // ListScreensByVersion returns every screen for a specific version, ordered
 // by created_at to keep the atlas paint deterministic across re-fetches.
+// ListScreensLatestPerFlow returns the most-recent rendered screen for each
+// flow under the given project — picked by `project_versions.version_index`.
+//
+// Context (May 18, 2026 fix): the autosync executor was firing one
+// `RunExport` per section, so a file with N sections accumulated N
+// separate `project_versions` (each containing one section's frames).
+// `HandleProjectGet` used to render `versions[0].screens` — only the
+// last-exported section was visible; the other N-1 sections were
+// invisible despite their screens, canonical_trees, and PNGs all being
+// persisted correctly. This method fixes that asymmetry by reading
+// across versions and picking each flow's latest export, restoring
+// visibility for all of a file's sections in a single project view.
+//
+// Excludes screens with NULL png_storage_key (pipeline never finished /
+// failed Stage 4) and soft-deleted flows.
+func (t *TenantRepo) ListScreensLatestPerFlow(ctx context.Context, projectID string) ([]Screen, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	rows, err := t.r.db.QueryContext(ctx, `
+		WITH latest_per_flow AS (
+		  SELECT s.flow_id, MAX(pv.version_index) AS max_vi
+		    FROM screens s
+		    JOIN project_versions pv ON pv.id = s.version_id
+		   WHERE s.tenant_id = ?
+		     AND pv.project_id = ?
+		     AND s.png_storage_key IS NOT NULL
+		     AND pv.pruned_at IS NULL
+		   GROUP BY s.flow_id
+		)
+		SELECT s.id, s.version_id, s.flow_id, s.x, s.y, s.width, s.height,
+		       s.screen_logical_id, s.png_storage_key, s.created_at
+		  FROM screens s
+		  JOIN project_versions pv ON pv.id = s.version_id
+		  JOIN latest_per_flow l ON l.flow_id = s.flow_id AND l.max_vi = pv.version_index
+		 WHERE s.tenant_id = ?
+		   AND pv.project_id = ?
+		   AND s.png_storage_key IS NOT NULL
+		 ORDER BY s.flow_id, s.created_at
+	`, t.tenantID, projectID, t.tenantID, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list screens latest-per-flow: %w", err)
+	}
+	defer rows.Close()
+	var out []Screen
+	for rows.Next() {
+		var s Screen
+		var pngKey sql.NullString
+		var createdAt string
+		if err := rows.Scan(&s.ID, &s.VersionID, &s.FlowID, &s.X, &s.Y,
+			&s.Width, &s.Height, &s.ScreenLogicalID, &pngKey, &createdAt); err != nil {
+			return nil, err
+		}
+		s.TenantID = t.tenantID
+		s.CreatedAt = parseTime(createdAt)
+		if pngKey.Valid {
+			v := pngKey.String
+			s.PNGStorageKey = &v
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// ListScreenModesLatestPerFlow mirrors ListScreensLatestPerFlow for screen_modes.
+// Joins through screens so we only return modes whose screen survived the
+// latest-per-flow filter.
+func (t *TenantRepo) ListScreenModesLatestPerFlow(ctx context.Context, projectID string) ([]ScreenMode, error) {
+	if t.tenantID == "" {
+		return nil, errors.New("projects: tenant_id required")
+	}
+	rows, err := t.r.db.QueryContext(ctx, `
+		WITH latest_per_flow AS (
+		  SELECT s.flow_id, MAX(pv.version_index) AS max_vi
+		    FROM screens s
+		    JOIN project_versions pv ON pv.id = s.version_id
+		   WHERE s.tenant_id = ?
+		     AND pv.project_id = ?
+		     AND s.png_storage_key IS NOT NULL
+		     AND pv.pruned_at IS NULL
+		   GROUP BY s.flow_id
+		)
+		SELECT sm.id, sm.screen_id, sm.mode_label, sm.figma_frame_id,
+		       COALESCE(sm.explicit_variable_modes_json, '')
+		  FROM screen_modes sm
+		  JOIN screens s ON s.id = sm.screen_id
+		  JOIN project_versions pv ON pv.id = s.version_id
+		  JOIN latest_per_flow l ON l.flow_id = s.flow_id AND l.max_vi = pv.version_index
+		 WHERE sm.tenant_id = ?
+		   AND s.tenant_id = ?
+		   AND pv.project_id = ?
+	`, t.tenantID, projectID, t.tenantID, t.tenantID, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list screen_modes latest-per-flow: %w", err)
+	}
+	defer rows.Close()
+	var out []ScreenMode
+	for rows.Next() {
+		var sm ScreenMode
+		if err := rows.Scan(&sm.ID, &sm.ScreenID, &sm.ModeLabel, &sm.FigmaFrameID, &sm.ExplicitVariableModesJSON); err != nil {
+			return nil, err
+		}
+		sm.TenantID = t.tenantID
+		out = append(out, sm)
+	}
+	return out, rows.Err()
+}
+
 func (t *TenantRepo) ListScreensByVersion(ctx context.Context, versionID string) ([]Screen, error) {
 	if t.tenantID == "" {
 		return nil, errors.New("projects: tenant_id required")
