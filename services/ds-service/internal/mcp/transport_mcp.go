@@ -35,16 +35,24 @@ import (
 )
 
 // MCPProtocolVersion is the server's preferred version — echoed back
-// when the client doesn't request a specific one. Bumped when this
-// server adopts a newer revision of the MCP spec.
-const MCPProtocolVersion = "2025-11-20"
+// when the client doesn't request a specific one. Anthropic's
+// Claude.ai connector flow (observed via initialize request bodies)
+// sends 2025-11-25 as its preferred. Older clients on 2025-11-20 are
+// still common via the list below.
+const MCPProtocolVersion = "2025-11-25"
 
 // SupportedProtocolVersions enumerates every revision of the MCP spec
-// this server can speak. The initialize handshake's negotiation echoes
-// back the client's requested version IF it appears here, else returns
-// JSON-RPC invalid_params with the supported set in error.data. Most
-// recent first; the preferred version above MUST appear in this list.
+// this server can speak. The initialize handshake echoes back the
+// client's requested version if it appears here; otherwise we respond
+// with MCPProtocolVersion and the client decides whether to proceed.
+// Most recent first; MCPProtocolVersion MUST appear in this list.
+//
+// 2025-11-25 added the `capabilities.extensions` field (UI rendering
+// hooks per io.modelcontextprotocol/ui). Our server doesn't render UI
+// but accepting the version lets Claude pass the version check and
+// proceed to tools/list. The extension fields are ignored gracefully.
 var SupportedProtocolVersions = []string{
+	"2025-11-25",
 	"2025-11-20",
 }
 
