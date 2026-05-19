@@ -1700,15 +1700,38 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 				`INSERT OR IGNORE INTO users (id, email, password_hash, role, created_at)
 				 VALUES (?, ?, '', ?, ?)`,
 				claims.Sub, claims.Email, role, time.Now().UTC().Format(time.RFC3339))
-			if err != nil {
-				s.log.Warn("ensureUserRow_failed", "user_id", claims.Sub, "email", claims.Email, "err", err.Error())
-			} else if n, _ := res.RowsAffected(); n > 0 {
-				s.log.Info("ensureUserRow_inserted", "user_id", claims.Sub, "email", claims.Email)
+			rowsInserted := int64(0)
+			if res != nil {
+				rowsInserted, _ = res.RowsAffected()
 			}
+			// Read-back: confirm the row is queryable. Reveals whether a
+			// silent skip on the INSERT OR IGNORE (PK or UNIQUE conflict)
+			// left us with the right id or a stale row with the same
+			// email under a different id.
+			var found string
+			selErr := s.db.QueryRowContext(r.Context(),
+				`SELECT id FROM users WHERE id = ?`, claims.Sub).Scan(&found)
+			s.log.Info("ensureUserRow_diag",
+				"jwt_sub", claims.Sub,
+				"jwt_email", claims.Email,
+				"insert_err", errString(err),
+				"rows_inserted", rowsInserted,
+				"found_by_id", found != "",
+				"select_err", errString(selErr))
 		}
 		ctx := context.WithValue(r.Context(), ctxClaims, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
+}
+
+// errString returns the error's Error() string, or "" if nil. Used by
+// diagnostic logs that surface both success and failure in one line
+// without forcing a separate branch on every call site.
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (s *server) requireSuperAdmin(next http.HandlerFunc) http.HandlerFunc {
