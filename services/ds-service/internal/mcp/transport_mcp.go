@@ -215,6 +215,13 @@ func handleMCP(deps HandlerDeps) http.HandlerFunc {
 			return
 		}
 
+		// Method-level access log — the HTTP-layer log only shows
+		// "POST /mcp", which hides which JRPC method was actually
+		// called. This makes Claude.ai connector debugging tractable.
+		deps.Log.Info("mcp.jrpc",
+			"method", req.Method,
+			"body_bytes", len(body))
+
 		switch req.Method {
 		case "initialize":
 			handleInitialize(w, req)
@@ -295,6 +302,7 @@ func handleInitialize(w http.ResponseWriter, req jrpcRequest) {
 // both surfaces as-is.
 func handleToolsList(w http.ResponseWriter, req jrpcRequest, deps HandlerDeps) {
 	all := deps.Registry.ListAll()
+	deps.Log.Info("mcp.tools_list_responding", "tool_count", len(all))
 	out := make([]mcpToolDescriptor, 0, len(all))
 	for _, t := range all {
 		desc := mcpToolDescriptor{
