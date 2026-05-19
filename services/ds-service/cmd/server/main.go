@@ -1696,10 +1696,15 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			if role == "" {
 				role = "user"
 			}
-			_, _ = s.db.ExecContext(r.Context(),
+			res, err := s.db.ExecContext(r.Context(),
 				`INSERT OR IGNORE INTO users (id, email, password_hash, role, created_at)
 				 VALUES (?, ?, '', ?, ?)`,
 				claims.Sub, claims.Email, role, time.Now().UTC().Format(time.RFC3339))
+			if err != nil {
+				s.log.Warn("ensureUserRow_failed", "user_id", claims.Sub, "email", claims.Email, "err", err.Error())
+			} else if n, _ := res.RowsAffected(); n > 0 {
+				s.log.Info("ensureUserRow_inserted", "user_id", claims.Sub, "email", claims.Email)
+			}
 		}
 		ctx := context.WithValue(r.Context(), ctxClaims, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
