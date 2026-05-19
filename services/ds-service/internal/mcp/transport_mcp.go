@@ -222,6 +222,14 @@ func handleMCP(deps HandlerDeps) http.HandlerFunc {
 			"method", req.Method,
 			"body_bytes", len(body))
 
+		// Temporary diagnostic: dump the FULL request body for initialize
+		// calls so we can see exactly what Claude sends (params,
+		// protocolVersion, capabilities, clientInfo). To be removed
+		// once the connector flow works end-to-end.
+		if req.Method == "initialize" {
+			deps.Log.Info("mcp.initialize.request_body", "body", string(body))
+		}
+
 		switch req.Method {
 		case "initialize":
 			handleInitialize(w, req)
@@ -273,7 +281,7 @@ func handleInitialize(w http.ResponseWriter, req jrpcRequest) {
 			// future protocol-version drift surfaces in metrics.
 		}
 	}
-	writeJRPCResult(w, req.ID, mcpInitializeResult{
+	result := mcpInitializeResult{
 		ProtocolVersion: negotiated,
 		Capabilities: mcpCapabilities{
 			Tools: mcpToolsCapability{ListChanged: true},
@@ -283,7 +291,17 @@ func handleInitialize(w http.ResponseWriter, req jrpcRequest) {
 			Version:      MCPServerVersion,
 			Instructions: Constitution(),
 		},
-	})
+	}
+	// Diagnostic — log a compact view of what we're returning so we can
+	// compare against what Claude.ai expects. The Instructions field is
+	// 6.5kB so we omit its body and just log presence + length.
+	slog.Info("mcp.initialize.response_summary",
+		"protocolVersion", result.ProtocolVersion,
+		"capabilities_tools_listChanged", result.Capabilities.Tools.ListChanged,
+		"serverInfo_name", result.ServerInfo.Name,
+		"serverInfo_version", result.ServerInfo.Version,
+		"instructions_bytes", len(result.ServerInfo.Instructions))
+	writeJRPCResult(w, req.ID, result)
 }
 
 // ─── tools/list ────────────────────────────────────────────────────────────
