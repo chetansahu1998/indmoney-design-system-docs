@@ -23,9 +23,13 @@ package inventory
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strconv"
 
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/figma/client"
 	"github.com/indmoney/design-system-docs/services/ds-service/internal/projects"
@@ -208,11 +212,79 @@ func (e *NodeMetadataExtractor) ExtractForFile(
 			continue
 		}
 		totalRows += written
+
+		// Mig 0035 — compute per-section change-detection hash from the
+		// rows we just wrote and stamp it on figma_section.node_metadata_hash.
+		// The planner's diff branch consults this; a stale hash means
+		// frame metadata changed (rename, type change, position shift)
+		// → planner schedules a full_export on the next cycle.
+		bySection := map[string][]projects.FigmaNodeMetadataRow{}
+		for _, r := range rows {
+			bySection[r.SectionID] = append(bySection[r.SectionID], r)
+		}
+		for sectionID, sectionRows := range bySection {
+			hash := computeSectionNodeMetadataHash(sectionRows)
+			if uerr := repo.UpdateFigmaSectionNodeMetadataHash(ctx, fileKey, sectionID, hash); uerr != nil {
+				logger.Warn("node_metadata: section hash update failed",
+					"section_id", sectionID, "err", uerr.Error())
+				if firstErr == nil {
+					firstErr = uerr
+				}
+			}
+		}
 	}
 	logger.Info("node_metadata: extraction done",
 		"sections", len(sectionIDs), "rows_written", totalRows,
 		"errored", firstErr != nil)
 	return totalRows, firstErr
+}
+
+// computeSectionNodeMetadataHash produces a stable SHA-256 over a section's
+// direct-child rows. The hash changes if any of these change:
+//   - a child's name (this is what catches frame renames)
+//   - a child's type (FRAME ↔ INSTANCE ↔ COMPONENT promotion)
+//   - a child's parent_id (re-parented)
+//   - a child's bbox (position shift, resize)
+//
+// The hash does NOT include layout_mode or component_id because those
+// signals are noisy across pipeline reads and the goal is "did the
+// designer change something the autosync pipeline cares about?".
+//
+// Rows are sorted by node_id before hashing so a different fetch order
+// (e.g. Figma reorders children in a re-fetch) doesn't move the hash.
+//
+// Empty input returns the empty string — caller treats that as "no
+// metadata yet, force full_export".
+func computeSectionNodeMetadataHash(rows []projects.FigmaNodeMetadataRow) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	sorted := make([]projects.FigmaNodeMetadataRow, len(rows))
+	copy(sorted, rows)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].NodeID < sorted[j].NodeID })
+	h := sha256.New()
+	for _, r := range sorted {
+		// Each field separated by 0x1F (Unit Separator) so values can't
+		// run together ambiguously (e.g. name="foo" + type="BAR" vs
+		// name="fooBAR" + type="").
+		h.Write([]byte(r.NodeID))
+		h.Write([]byte{0x1F})
+		h.Write([]byte(r.Name))
+		h.Write([]byte{0x1F})
+		h.Write([]byte(r.NodeType))
+		h.Write([]byte{0x1F})
+		h.Write([]byte(r.ParentID))
+		h.Write([]byte{0x1F})
+		h.Write([]byte(strconv.FormatFloat(r.AbsX, 'f', 2, 64)))
+		h.Write([]byte{0x1F})
+		h.Write([]byte(strconv.FormatFloat(r.AbsY, 'f', 2, 64)))
+		h.Write([]byte{0x1F})
+		h.Write([]byte(strconv.FormatFloat(r.Width, 'f', 2, 64)))
+		h.Write([]byte{0x1F})
+		h.Write([]byte(strconv.FormatFloat(r.Height, 'f', 2, 64)))
+		h.Write([]byte{0x1E}) // record separator
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // buildNodeMetadataRows walks a /v1/files/<key>/nodes response and emits

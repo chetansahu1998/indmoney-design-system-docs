@@ -764,7 +764,17 @@ func (c *Client) GetFileDeepTree(ctx context.Context, fileKey string, depth int)
 		return nil, errors.New("fileKey is empty")
 	}
 	if depth <= 0 {
-		depth = 14
+		// Mig 0035 reframe: the inventory poller no longer needs depth=14
+		// for change detection — the per-section depth=1 NodeMetadataExtractor
+		// path now writes figma_section.node_metadata_hash, which the
+		// autosync planner consults. depth=2 still returns pages + sections
+		// (the data this call's downstream actually uses) and crucially
+		// never busts Figma's 1 GB response cap on big files like
+		// Mutual Funds V2 / INDstocks V4 / US Stocks V2 — the failure
+		// mode that historically left content_hash NULL for the largest,
+		// highest-traffic files. Callers that genuinely need deeper
+		// traversal must pass depth explicitly.
+		depth = 2
 	}
 	path := fmt.Sprintf("/v1/files/%s?depth=%d", fileKey, depth)
 	var out FileDeepTree

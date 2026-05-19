@@ -125,6 +125,10 @@ type PlannedSync struct {
 	// Live hashes from figma_section (compared against PriorContentHash).
 	LiveContentHash  string `json:"live_content_hash"`
 	LivePositionHash string `json:"live_position_hash"`
+	// Mig 0035 — per-section frame-metadata hash from the poller's
+	// NodeMetadataExtractor (depth=1 per section). Survives big-file
+	// fetch failures on the depth=14 content_hash path.
+	LiveNodeMetadataHash string `json:"live_node_metadata_hash"`
 
 	// Hashes from the last successful sync (figma_auto_sync_state).
 	// Empty when this is a new section.
@@ -316,8 +320,9 @@ func (p *Planner) Plan(ctx context.Context, tenantID, fileKey string) (FilePlan,
 				PersonaHint:      cp.PersonaHint,
 				Domain:           mapping.Domain,
 				Product:          mapping.Product,
-				LiveContentHash:  sec.ContentHash,
-				LivePositionHash: sec.PositionHash,
+				LiveContentHash:      sec.ContentHash,
+				LivePositionHash:     sec.PositionHash,
+				LiveNodeMetadataHash: sec.NodeMetadataHash,
 			}
 			// Prefer Claude/admin-supplied taxonomy overrides over the
 			// section-name parser when both fields are non-empty. The
@@ -331,13 +336,15 @@ func (p *Planner) Plan(ctx context.Context, tenantID, fileKey string) (FilePlan,
 				ps.SubProduct, ps.SubFlow = projects.ParseSectionName(sec.Name)
 			}
 
-			// Section's hashes not yet populated — same hash_not_ready treatment.
-			if sec.ContentHash == "" {
-				ps.Action = ActionSkipQuarantined
-				ps.SkipReason = SkipHashNotReady
-				fp.Sections = append(fp.Sections, ps)
-				continue
-			}
+			// Note: figma_section.content_hash may legitimately be empty when
+			// the poller can't write a depth-14 subtree blob (big files
+			// exceeding Figma's 1 GB response cap) or when section metadata
+			// is populated through the depth=3 inventory path. Treat empty
+			// the same as "new" and fall through to the state-comparison
+			// branch below — the executor will export and figma_auto_sync_state
+			// will record what was ingested. Future change-detection on these
+			// sections relies on position_hash + autosync state, not on the
+			// raw figma_section.content_hash.
 
 			// Compare to prior state row.
 			prior, err := repo.LookupAutoSyncState(ctx, fileKey, cp.PageID, sec.SectionID)
@@ -407,6 +414,21 @@ func (p *Planner) Plan(ctx context.Context, tenantID, fileKey string) (FilePlan,
 					fp.Sections = append(fp.Sections, ps)
 					continue
 				}
+			}
+
+			// Mig 0035 — node_metadata_hash diff catches frame renames /
+			// re-parents / moves on files where the depth=14 content_hash
+			// path failed. When BOTH sides have a populated hash and they
+			// differ, force a full_export. Skip this branch when either
+			// hash is empty so we don't false-trigger on the bootstrap
+			// pass before NodeMetadataExtractor has run.
+			if prior.LastAttemptStatus == "ok" &&
+				ps.LiveNodeMetadataHash != "" && prior.NodeMetadataHash != "" &&
+				ps.LiveNodeMetadataHash != prior.NodeMetadataHash {
+				ps.Action = ActionFullExport
+				ps.Reason = SkipContentChanged
+				fp.Sections = append(fp.Sections, ps)
+				continue
 			}
 
 			// Idempotent skip: prior was 'ok' AND hashes match. EXCEPT —

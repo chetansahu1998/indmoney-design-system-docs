@@ -78,6 +78,13 @@ type AutoSyncState struct {
 	// LookupAutoSyncState (planner hot path) and ListAutoSyncState
 	// (admin inspection — #21 audit fix made these symmetric).
 	PriorVersionStatus string
+	// NodeMetadataHash — what the SYNCED version's frame metadata hashed
+	// to (migration 0035). Written ONLY when LastAttemptStatus='ok'.
+	// Compared against figma_section.node_metadata_hash on every planner
+	// pass; mismatch → frame data changed (rename/re-parent/move) →
+	// full_export. This is the change-detection signal that survives
+	// big-file fetch failures on the depth=14 path.
+	NodeMetadataHash string
 }
 
 // UpsertAutoSyncState writes/refreshes one state row for a section.
@@ -148,12 +155,12 @@ func (t *TenantRepo) UpsertAutoSyncState(ctx context.Context, s AutoSyncState) e
 	_, err := t.handle().ExecContext(ctx, `
 		INSERT INTO figma_auto_sync_state (
 			tenant_id, file_key, page_id, section_id,
-			content_hash, position_hash, live_content_hash,
+			content_hash, position_hash, live_content_hash, node_metadata_hash,
 			last_synced_flow_id, last_synced_version_id, last_synced_at,
 			last_attempt_at, last_attempt_status, skip_reason, error_message,
 			first_seen_at,
 			retry_count, quarantined_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			CASE WHEN ? = 'error' THEN 1 ELSE 0 END,
 			CASE WHEN ? = 'quarantined' THEN ? END
 		)
@@ -165,6 +172,10 @@ func (t *TenantRepo) UpsertAutoSyncState(ctx context.Context, s AutoSyncState) e
 			position_hash          = CASE
 			    WHEN excluded.last_attempt_status = 'ok' THEN excluded.position_hash
 			    ELSE figma_auto_sync_state.position_hash
+			END,
+			node_metadata_hash     = CASE
+			    WHEN excluded.last_attempt_status = 'ok' THEN excluded.node_metadata_hash
+			    ELSE figma_auto_sync_state.node_metadata_hash
 			END,
 			live_content_hash      = COALESCE(excluded.live_content_hash, figma_auto_sync_state.live_content_hash),
 			last_synced_flow_id    = COALESCE(excluded.last_synced_flow_id,    figma_auto_sync_state.last_synced_flow_id),
@@ -203,7 +214,7 @@ func (t *TenantRepo) UpsertAutoSyncState(ctx context.Context, s AutoSyncState) e
 			END
 	`,
 		t.tenantID, s.FileKey, s.PageID, s.SectionID,
-		nullableStr(s.ContentHash), nullableStr(s.PositionHash), nullableStr(s.LiveContentHash),
+		nullableStr(s.ContentHash), nullableStr(s.PositionHash), nullableStr(s.LiveContentHash), nullableStr(s.NodeMetadataHash),
 		flowID, versionID, lastSyncedAt,
 		now, nullableStr(s.LastAttemptStatus),
 		nullableStr(s.SkipReason), nullableStr(s.ErrorMessage),
@@ -241,7 +252,8 @@ func (t *TenantRepo) LookupAutoSyncState(ctx context.Context, fileKey, pageID, s
 		       COALESCE(s.skip_reason, ''), COALESCE(s.error_message, ''),
 		       s.first_seen_at,
 		       s.retry_count, COALESCE(s.quarantined_at, ''),
-		       COALESCE(pv.status, '')
+		       COALESCE(pv.status, ''),
+		       COALESCE(s.node_metadata_hash, '')
 		  FROM figma_auto_sync_state s
 		  LEFT JOIN project_versions pv
 		         ON pv.id = s.last_synced_version_id
@@ -261,6 +273,7 @@ func (t *TenantRepo) LookupAutoSyncState(ctx context.Context, fileKey, pageID, s
 		&firstSeen,
 		&s.RetryCount, &quarantinedAt,
 		&s.PriorVersionStatus,
+		&s.NodeMetadataHash,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AutoSyncState{}, ErrNotFound
@@ -501,6 +514,13 @@ type FigmaSectionRowFull struct {
 	SubProductOverride string
 	SubFlowOverride    string
 	ClassifiedSource   string // 'section_name' | 'claude_heuristic' | 'admin_override' | ''
+	// Migration 0035 — per-section hash over the depth=1 frame-metadata
+	// children. Populated by the poller's NodeMetadataExtractor. The
+	// autosync planner diffs this against figma_auto_sync_state.node_metadata_hash
+	// to detect frame renames / re-parents / position shifts even when
+	// content_hash is NULL (which is the case on big files where the
+	// poller's depth=14 file-wide fetch fails).
+	NodeMetadataHash string
 }
 
 // ListFigmaSectionsForPage returns every live section under a page.
@@ -516,7 +536,8 @@ func (t *TenantRepo) ListFigmaSectionsForPage(ctx context.Context, fileKey, page
 		       COALESCE(content_hash, ''), COALESCE(position_hash, ''),
 		       COALESCE(sub_product_override, ''),
 		       COALESCE(sub_flow_override, ''),
-		       COALESCE(classified_source, '')
+		       COALESCE(classified_source, ''),
+		       COALESCE(node_metadata_hash, '')
 		  FROM figma_section
 		 WHERE tenant_id = ? AND file_key = ? AND page_id = ? AND deleted_at IS NULL
 		 ORDER BY order_index ASC, section_id ASC
@@ -532,6 +553,7 @@ func (t *TenantRepo) ListFigmaSectionsForPage(ctx context.Context, fileKey, page
 			&r.SectionID, &r.Name, &r.X, &r.Y, &r.Width, &r.Height, &r.OrderIndex,
 			&r.ContentHash, &r.PositionHash,
 			&r.SubProductOverride, &r.SubFlowOverride, &r.ClassifiedSource,
+			&r.NodeMetadataHash,
 		); err != nil {
 			return nil, fmt.Errorf("scan figma_section: %w", err)
 		}
@@ -1006,6 +1028,36 @@ func (t *TenantRepo) UpsertFigmaNodeMetadata(ctx context.Context, fileKey string
 		return 0, fmt.Errorf("commit figma_node_metadata tx: %w", err)
 	}
 	return written, nil
+}
+
+// UpdateFigmaSectionNodeMetadataHash stamps the per-section change-detection
+// hash (mig 0035) on figma_section. Called by the inventory poller's
+// NodeMetadataExtractor right after it writes the section's depth=1 rows.
+//
+// The hash is what the autosync planner reads to decide "did this section's
+// frame metadata change since we last synced". Mismatch against the
+// figma_auto_sync_state.node_metadata_hash → planner schedules full_export.
+//
+// Empty hash (e.g. extractor got 0 rows for the section) is written through
+// as NULL — the planner treats NULL as "never extracted, force full_export".
+func (t *TenantRepo) UpdateFigmaSectionNodeMetadataHash(ctx context.Context, fileKey, sectionID, hash string) error {
+	if t.tenantID == "" {
+		return errors.New("projects: tenant_id required")
+	}
+	if fileKey == "" || sectionID == "" {
+		return errors.New("projects: file_key and section_id required")
+	}
+	_, err := t.r.db.ExecContext(ctx, `
+		UPDATE figma_section
+		   SET node_metadata_hash = NULLIF(?, '')
+		 WHERE tenant_id = ?
+		   AND file_key  = ?
+		   AND section_id = ?
+	`, hash, t.tenantID, fileKey, sectionID)
+	if err != nil {
+		return fmt.Errorf("update figma_section.node_metadata_hash: %w", err)
+	}
+	return nil
 }
 
 // ─── autosync per-tenant advisory lease (#10) ────────────────────────────────

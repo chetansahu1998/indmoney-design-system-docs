@@ -394,21 +394,50 @@ func (t *TenantRepo) FilesNeedingPagesSync(ctx context.Context, limit int) ([]Fi
 	if limit <= 0 {
 		limit = 50
 	}
+	// Scope filter (added 2026-05-18): Tier-B deep-sync is the expensive
+	// path that drives autosync change detection. There is no point
+	// spending tier-1 budget on files the autosync planner will never
+	// look at — files outside the in-scope window, by an editor not on
+	// the allowlist, or in an unmapped/disabled figma project. Those
+	// constraints mirror autosync_planner.go's ListFigmaFilesForAutoSync.
+	//
+	// Tier-A (list teams/projects/files) still runs for ALL files —
+	// the cheap inventory walk shouldn't be filtered. Only Tier-B's
+	// candidate list is narrowed here.
+	//
+	// Edge cases:
+	//   - Empty figma_owner_allowlist for the tenant → "allow all"
+	//     (matches ListFigmaFilesForAutoSync's existing semantic).
+	//   - File without a project mapping → excluded. The autosync
+	//     planner would skip it with project_unmapped anyway.
+	//
+	// In-scope cutoff is hard-coded to '2025-01-01' for the indmoney
+	// rollout. Move to a config knob once we have a second tenant
+	// with different scoping needs.
 	rows, err := t.readHandle().QueryContext(ctx, `
-		SELECT file_key, project_id, team_id, name,
-		       COALESCE(last_modified, ''),
-		       COALESCE(version, ''),
-		       COALESCE(pages_sync_version, '')
-		  FROM figma_file
-		 WHERE tenant_id = ?
-		   AND deleted_at IS NULL
+		SELECT f.file_key, f.project_id, f.team_id, f.name,
+		       COALESCE(f.last_modified, ''),
+		       COALESCE(f.version, ''),
+		       COALESCE(f.pages_sync_version, '')
+		  FROM figma_file f
+		  JOIN figma_project_mapping pm
+		    ON pm.tenant_id = f.tenant_id
+		   AND pm.project_id = f.project_id
+		   AND pm.enabled_for_autosync = 1
+		 WHERE f.tenant_id = ?
+		   AND f.deleted_at IS NULL
+		   AND f.last_modified >= '2025-01-01'
 		   AND (
-		         pages_last_synced_at IS NULL
-		      OR last_modified IS NULL
-		      OR pages_sync_version IS NULL
-		      OR pages_sync_version <> COALESCE(version, last_modified)
+		         NOT EXISTS (SELECT 1 FROM figma_owner_allowlist a WHERE a.tenant_id = f.tenant_id)
+		      OR f.last_editor_name IN (SELECT full_name FROM figma_owner_allowlist WHERE tenant_id = f.tenant_id)
 		   )
-		 ORDER BY pages_last_synced_at IS NULL DESC, pages_last_synced_at ASC
+		   AND (
+		         f.pages_last_synced_at IS NULL
+		      OR f.last_modified IS NULL
+		      OR f.pages_sync_version IS NULL
+		      OR f.pages_sync_version <> COALESCE(f.version, f.last_modified)
+		   )
+		 ORDER BY f.pages_last_synced_at IS NULL DESC, f.pages_last_synced_at ASC
 		 LIMIT ?
 	`, t.tenantID, limit)
 	if err != nil {
@@ -1428,21 +1457,58 @@ type FigmaSectionFrameChild struct {
 	OrderIndex int
 }
 
-// ListFrameChildrenOfSection returns FRAME-type nodes whose parent_id is
-// the section, ordered by order_index. Used by the autosync executor
+// ListFrameChildrenOfSection returns FRAME-type direct children of the
+// section, ordered by order_index. Used by the autosync executor
 // (plan 001 U10) to build ExportRequest.frames.
 //
-// Pre-plan-002 this read directly from figma_node via SQL. Post-plan-002
-// (migration 0031 drops figma_node) it decodes the section's subtree blob
-// from figma_section.subtree_json_zstd via LoadSectionSubtree and filters
-// in-memory. Same signature, blob-backed implementation — autosync_executor
-// keeps working without changes.
+// History:
+//   - Pre-plan-002: read directly from figma_node via SQL.
+//   - Plan-002 (mig 0031 dropped figma_node): switched to decoding the
+//     section's subtree_json_zstd blob via LoadSectionSubtree.
+//   - Plan-003 (mig 0034 added figma_node_metadata): switched to reading
+//     direct rows from figma_node_metadata. The blob path only worked
+//     when the poller wrote subtrees, which only happens at depth≥14 —
+//     and depth=14 file-wide doesn't fit Figma's 1 GB cap on big files.
+//     figma_node_metadata is populated by the curl/-depth=3 path and is
+//     the canonical source of section-direct-child frames going forward.
 func (t *TenantRepo) ListFrameChildrenOfSection(ctx context.Context, fileKey, sectionID string) ([]FigmaSectionFrameChild, error) {
+	rows, err := t.r.db.QueryContext(ctx, `
+		SELECT node_id, name,
+		       COALESCE(abs_x, 0) AS x,
+		       COALESCE(abs_y, 0) AS y,
+		       COALESCE(width, 0) AS width,
+		       COALESCE(height, 0) AS height
+		  FROM figma_node_metadata
+		 WHERE tenant_id = ?
+		   AND file_key = ?
+		   AND section_id = ?
+		   AND parent_id = ?
+		   AND node_type IN ('FRAME', 'INSTANCE', 'COMPONENT')
+		   AND has_bbox = 1
+		   AND width >= 50 AND height >= 50
+		 ORDER BY order_index
+	`, t.tenantID, fileKey, sectionID, sectionID)
+	if err != nil {
+		return nil, fmt.Errorf("list frame children: %w", err)
+	}
+	defer rows.Close()
+	out := make([]FigmaSectionFrameChild, 0, 16)
+	for rows.Next() {
+		var c FigmaSectionFrameChild
+		if err := rows.Scan(&c.NodeID, &c.Name, &c.X, &c.Y, &c.Width, &c.Height); err != nil {
+			return nil, fmt.Errorf("scan frame child: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// _legacy: kept for reference; the path below is the original blob-driven
+// implementation. Switching to figma_node_metadata removed the need for
+// the blob; the function above is the active impl.
+func (t *TenantRepo) listFrameChildrenOfSectionLegacy(ctx context.Context, fileKey, sectionID string) ([]FigmaSectionFrameChild, error) {
 	nodes, err := t.LoadSectionSubtree(ctx, fileKey, sectionID)
 	if err != nil {
-		// ErrNotFound (no row or NULL blob) → empty slice, no error.
-		// The executor treats "no frames" as a normal skip; the previous
-		// SQL impl returned an empty slice in that case too.
 		if errors.Is(err, ErrNotFound) {
 			return []FigmaSectionFrameChild{}, nil
 		}

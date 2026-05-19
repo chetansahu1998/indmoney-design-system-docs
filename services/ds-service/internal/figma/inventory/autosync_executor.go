@@ -105,6 +105,15 @@ func (e *Executor) Execute(ctx context.Context, plan FilePlan) (ExecuteResult, e
 		return ExecuteResult{}, errors.New("executor: nil tenant repo")
 	}
 
+	// Two-pass approach (May 18, 2026 fix).
+	// Pass 1: handle skip/cheap-update in-place AND collect the FullExport
+	// PlannedSyncs into a slice. Pass 2 batches all FullExports into ONE
+	// RunExport call so the resulting project_version contains every
+	// section's screens together — not one version per section, which
+	// hides every-section-but-the-last on the frontend (UpsertProject
+	// keys on file_id alone, so per-section RunExport calls collide on
+	// the same project row and only the latest "wins").
+	var fullExports []PlannedSync
 	for _, ps := range plan.Sections {
 		res.Sections++
 		switch ps.Action {
@@ -139,14 +148,186 @@ func (e *Executor) Execute(ctx context.Context, plan FilePlan) (ExecuteResult, e
 			}
 			res.CheapUpdated++
 		case ActionFullExport:
-			if err := e.executeFullExport(ctx, repo, plan, ps); err != nil {
-				res.Errors = append(res.Errors, fmt.Sprintf("%s/%s full_export: %v", ps.PageID, ps.SectionID, err))
-				continue
-			}
-			res.FullExported++
+			fullExports = append(fullExports, ps)
 		}
 	}
+
+	// Pass 2 — batch all FullExports into a single RunExport per file.
+	if len(fullExports) > 0 {
+		batchErrs, batchOK := e.executeFullExportBatch(ctx, repo, plan, fullExports)
+		res.FullExported += batchOK
+		res.Errors = append(res.Errors, batchErrs...)
+	}
 	return res, nil
+}
+
+// executeFullExportBatch turns every PlannedSync with Action=FullExport on
+// `plan` into ONE ExportRequest containing one FlowPayload per section,
+// then calls runExport once. The resulting project_version owns every
+// section's screens, so the project page's default render shows the whole
+// file at once.
+//
+// Per-section bookkeeping (frame lookup, "no frame children" skip, state
+// row upsert) is preserved — the loop just batches the actual RunExport
+// instead of issuing N of them.
+//
+// Sections whose ListFrameChildrenOfSection returns 0 are dropped from
+// the batch with a "no_frame_children" state row written directly; they
+// don't pollute the ExportRequest.
+//
+// Sections whose frame count exceeds MaxFramesPerFlow are also dropped
+// here (with an error recorded) — validating big sections is the caller's
+// responsibility upstream; the executor refuses to send a malformed
+// request. We could chunk a single section into multiple flows but that
+// silently changes how the frontend sees the section, so failing loud is
+// the better default.
+//
+// On runExport error: every section in the batch gets an 'error' state
+// row (with shared error message). That's correct — they shared the
+// transaction; if it failed, all of them failed together. The next
+// planner cycle will re-pick them up via SkipRetryFailedPipeline.
+//
+// Returns (per-section error strings, number of sections that completed
+// successfully). Errors are descriptive enough for ExecuteResult.
+func (e *Executor) executeFullExportBatch(
+	ctx context.Context,
+	repo *projects.TenantRepo,
+	plan FilePlan,
+	syncs []PlannedSync,
+) (errs []string, okCount int) {
+	type ready struct {
+		ps     PlannedSync
+		frames []projects.FigmaSectionFrameChild
+	}
+	prepared := make([]ready, 0, len(syncs))
+	for _, ps := range syncs {
+		frames, err := repo.ListFrameChildrenOfSection(ctx, plan.FileKey, ps.SectionID)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s/%s list_frames: %v", ps.PageID, ps.SectionID, err))
+			continue
+		}
+		if len(frames) == 0 {
+			_ = repo.UpsertAutoSyncState(ctx, projects.AutoSyncState{
+				FileKey:           plan.FileKey,
+				PageID:            ps.PageID,
+				SectionID:         ps.SectionID,
+				ContentHash:       ps.LiveContentHash,
+				PositionHash:      ps.LivePositionHash,
+				LastAttemptStatus: "skipped",
+				SkipReason:        "no_frame_children",
+			})
+			continue
+		}
+		// Refuse oversized sections — see method header.
+		if len(frames) > projects.MaxFramesPerFlow {
+			errs = append(errs, fmt.Sprintf("%s/%s frames_exceeded: %d > %d",
+				ps.PageID, ps.SectionID, len(frames), projects.MaxFramesPerFlow))
+			_ = repo.UpsertAutoSyncState(ctx, projects.AutoSyncState{
+				FileKey:           plan.FileKey,
+				PageID:            ps.PageID,
+				SectionID:         ps.SectionID,
+				LiveContentHash:   ps.LiveContentHash,
+				LastAttemptStatus: "error",
+				ErrorMessage: truncate(fmt.Sprintf("section has %d frames, MaxFramesPerFlow=%d",
+					len(frames), projects.MaxFramesPerFlow), 400),
+			})
+			continue
+		}
+		prepared = append(prepared, ready{ps: ps, frames: frames})
+	}
+	if len(prepared) == 0 {
+		return errs, 0
+	}
+
+	flowPayloads := make([]projects.FlowPayload, 0, len(prepared))
+	for _, p := range prepared {
+		ps := p.ps
+		framePayloads := make([]projects.FramePayload, 0, len(p.frames))
+		frameIDs := make([]string, 0, len(p.frames))
+		for _, fr := range p.frames {
+			frameIDs = append(frameIDs, fr.NodeID)
+			framePayloads = append(framePayloads, projects.FramePayload{
+				FrameID: fr.NodeID, Name: fr.Name,
+				X: fr.X, Y: fr.Y, Width: fr.Width, Height: fr.Height,
+			})
+		}
+		persona := sanitizeForExport(ps.PersonaHint)
+		if persona == "default" {
+			persona = ""
+		}
+		flowName := sanitizeForExport(ps.SubFlow)
+		if flowName == "" {
+			flowName = sanitizeForExport(ps.Section)
+		}
+		if flowName == "" {
+			flowName = "Untitled"
+		}
+		path := sanitizeForExport(JoinFlowPath(ps.Domain, ps.Product, ps.SubProduct, ps.SubFlow))
+		product := sanitizeForExport(ps.Product)
+		sectionID := ps.SectionID
+		flowPayloads = append(flowPayloads, projects.FlowPayload{
+			SectionID:   &sectionID,
+			FrameIDs:    frameIDs,
+			Frames:      framePayloads,
+			Platform:    derivePlatform(plan, ps),
+			Product:     product,
+			Path:        path,
+			PersonaName: persona,
+			Name:        flowName,
+		})
+	}
+
+	req := projects.ExportRequest{
+		IdempotencyKey: uuid.NewString(),
+		FileID:         plan.FileKey,
+		FileName:       plan.FileName,
+		Flows:          flowPayloads,
+	}
+	result, runErr := e.runExport(ctx, projects.RunExportParams{
+		TenantID:  plan.TenantID,
+		UserID:    e.ServiceUserID,
+		Source:    "autosync",
+		ClientIP:  "autosync",
+		UserAgent: "ds-service/autosync",
+		Req:       req,
+	})
+	if runErr != nil {
+		errMsg := truncate(runErr.Error(), 400)
+		for _, p := range prepared {
+			_ = repo.UpsertAutoSyncState(ctx, projects.AutoSyncState{
+				FileKey:           plan.FileKey,
+				PageID:            p.ps.PageID,
+				SectionID:         p.ps.SectionID,
+				LiveContentHash:   p.ps.LiveContentHash,
+				LastAttemptStatus: "error",
+				ErrorMessage:      errMsg,
+			})
+			errs = append(errs, fmt.Sprintf("%s/%s full_export_batch: %v", p.ps.PageID, p.ps.SectionID, runErr))
+		}
+		return errs, 0
+	}
+
+	// Success — record state for every section in the batch. They all
+	// share the same project_version.
+	for _, p := range prepared {
+		ps := p.ps
+		if err := repo.UpsertAutoSyncState(ctx, projects.AutoSyncState{
+			FileKey:             plan.FileKey,
+			PageID:              ps.PageID,
+			SectionID:           ps.SectionID,
+			ContentHash:         ps.LiveContentHash,
+			PositionHash:        ps.LivePositionHash,
+			NodeMetadataHash:    ps.LiveNodeMetadataHash,
+			LiveContentHash:     ps.LiveContentHash,
+			LastSyncedVersionID: result.VersionID,
+			LastAttemptStatus:   "ok",
+		}); err != nil {
+			errs = append(errs, fmt.Sprintf("%s/%s persist_state: %v", ps.PageID, ps.SectionID, err))
+			continue
+		}
+		okCount++
+	}
+	return errs, okCount
 }
 
 // executeFullExport builds a synthetic ExportRequest from figma_node and
@@ -274,6 +455,7 @@ func (e *Executor) executeFullExport(
 		SectionID:           ps.SectionID,
 		ContentHash:         ps.LiveContentHash,
 		PositionHash:        ps.LivePositionHash,
+		NodeMetadataHash:    ps.LiveNodeMetadataHash,
 		LiveContentHash:     ps.LiveContentHash,
 		LastSyncedFlowID:    flowID,
 		LastSyncedVersionID: result.VersionID,
@@ -318,6 +500,7 @@ func (e *Executor) executeCheapUpdate(
 		SectionID:         ps.SectionID,
 		ContentHash:       ps.LiveContentHash,
 		PositionHash:      ps.LivePositionHash,
+		NodeMetadataHash:  ps.LiveNodeMetadataHash,
 		LastAttemptStatus: "ok",
 	}); err != nil {
 		return fmt.Errorf("persist state: %w", err)
