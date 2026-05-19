@@ -183,7 +183,7 @@ func TestIntegration_Initialize_HandshakeShape(t *testing.T) {
 		t.Error("capabilities.tools.listChanged must be true")
 	}
 	want := fmt.Sprintf("Slug grammar")
-	if !strings.Contains(init.ServerInfo.Instructions, want) {
+	if !strings.Contains(init.Instructions, want) {
 		t.Errorf("instructions missing %q heading", want)
 	}
 }
@@ -348,7 +348,7 @@ func TestIntegration_Initialize_ConstitutionContainsKeyHeadings(t *testing.T) {
 		"PRD typed-stems model",
 		"Common workflows",
 	} {
-		if !strings.Contains(init.ServerInfo.Instructions, heading) {
+		if !strings.Contains(init.Instructions, heading) {
 			t.Errorf("constitution missing heading %q", heading)
 		}
 	}

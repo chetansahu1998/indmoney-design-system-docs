@@ -101,13 +101,13 @@ func TestTransportMCP_Initialize_ReturnsCapabilitiesAndInstructions(t *testing.T
 	if res.ServerInfo.Name != MCPServerName {
 		t.Errorf("serverInfo.name = %q, want %q", res.ServerInfo.Name, MCPServerName)
 	}
-	if res.ServerInfo.Instructions == "" {
+	if res.Instructions == "" {
 		t.Fatal("serverInfo.instructions must be non-empty")
 	}
-	if !strings.Contains(res.ServerInfo.Instructions, "Slug grammar") {
+	if !strings.Contains(res.Instructions, "Slug grammar") {
 		t.Error("instructions missing slug-grammar heading")
 	}
-	if !strings.Contains(res.ServerInfo.Instructions, "Common workflows") {
+	if !strings.Contains(res.Instructions, "Common workflows") {
 		t.Error("instructions missing workflows heading")
 	}
 }

@@ -121,6 +121,14 @@ type mcpInitializeResult struct {
 	ProtocolVersion string          `json:"protocolVersion"`
 	Capabilities    mcpCapabilities `json:"capabilities"`
 	ServerInfo      mcpServerInfo   `json:"serverInfo"`
+	// `instructions` is a TOP-LEVEL field on InitializeResult per MCP
+	// spec 2025-11-25 (and 2025-11-20). The pre-fix code placed it
+	// inside serverInfo, which made Claude.ai's connector flow ignore
+	// the constitution AND, more importantly, abandon the handshake
+	// before calling tools/list. The misplacement matters because
+	// Claude's parser appears to require `instructions` to be visible
+	// at the result root.
+	Instructions string `json:"instructions,omitempty"`
 }
 
 type mcpCapabilities struct {
@@ -132,9 +140,8 @@ type mcpToolsCapability struct {
 }
 
 type mcpServerInfo struct {
-	Name         string `json:"name"`
-	Version      string `json:"version"`
-	Instructions string `json:"instructions,omitempty"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
 }
 
 type mcpToolDescriptor struct {
@@ -295,20 +302,19 @@ func handleInitialize(w http.ResponseWriter, req jrpcRequest) {
 			Tools: mcpToolsCapability{ListChanged: true},
 		},
 		ServerInfo: mcpServerInfo{
-			Name:         MCPServerName,
-			Version:      MCPServerVersion,
-			Instructions: Constitution(),
+			Name:    MCPServerName,
+			Version: MCPServerVersion,
 		},
+		Instructions: Constitution(),
 	}
 	// Diagnostic — log a compact view of what we're returning so we can
-	// compare against what Claude.ai expects. The Instructions field is
-	// 6.5kB so we omit its body and just log presence + length.
+	// compare against what Claude.ai expects.
 	slog.Info("mcp.initialize.response_summary",
 		"protocolVersion", result.ProtocolVersion,
 		"capabilities_tools_listChanged", result.Capabilities.Tools.ListChanged,
 		"serverInfo_name", result.ServerInfo.Name,
 		"serverInfo_version", result.ServerInfo.Version,
-		"instructions_bytes", len(result.ServerInfo.Instructions))
+		"instructions_bytes", len(result.Instructions))
 	writeJRPCResult(w, req.ID, result)
 }
 
